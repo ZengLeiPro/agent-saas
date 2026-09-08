@@ -80,7 +80,7 @@ describe('ModelManager write capability', () => {
   it('shows the production restriction BEFORE editing and keeps navigation usable', async () => {
     const user = userEvent.setup();
     render(<ModelManager />);
-    expect(await screen.findByText(/当前部署尚未提供生产配置在线发布能力/)).toBeTruthy();
+    expect((await screen.findByRole('status')).textContent).toContain('生产配置不能直接在线保存');
     const save = screen.getByRole('button', { name: '保存并生效' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     await user.click(save);
@@ -147,7 +147,9 @@ describe('ModelManager write capability', () => {
       target: { value: 'unsaved-model-value' },
     });
     await user.click(screen.getByRole('button', { name: '保存并生效' }));
-    expect(await screen.findByText(/当前部署尚未提供生产配置在线发布能力/)).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain('生产配置不能直接在线保存');
+    });
     expect(screen.getByDisplayValue('unsaved-model-value')).toBeTruthy();
     expect(screen.queryByText('已保存')).toBeNull();
     expect((screen.getByRole('button', { name: '保存并生效' }) as HTMLButtonElement).disabled).toBe(

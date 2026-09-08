@@ -14,6 +14,11 @@ ACR_SK="${ACR_SK:-${ALIBABACLOUD_ACCESS_KEY_SECRET:-}}"
 : "${ACR_SK:?ACR read access key secret is required}"
 export ACR_REGION_ID ACR_AK ACR_SK
 
+# The supervisor owns wall-clock deadlines, heartbeat, and exact-push recovery.
+if [ "${ACR_SINGLE_PROBE:-}" != true ]; then
+  exec python3 scripts/release/acr-image-supervisor.py
+fi
+
 printf '%s' "$RELEASE_SHA" | grep -Eq '^[a-f0-9]{40}$'
 short_sha="${RELEASE_SHA:0:6}"
 matches="$(git rev-list --all | grep -Ec "^${short_sha}" || true)"
@@ -24,10 +29,10 @@ test "$matches" = 1 || {
 
 records="$RUNNER_TEMP/acr-build-records.json"
 build="$RUNNER_TEMP/acr-build.json"
-selected_build_record_id=''
-attempt=0
-while [ "$attempt" -lt 60 ]; do
-  attempt=$((attempt + 1))
+selected_build_record_id="${ACR_SELECTED_RECORD_ID:-}"
+while true; do
+  # Keep the existing repository-scoped read permission. GetRepoBuildRecord
+  # requires a separate instance-wide action that Staging intentionally lacks.
   bash scripts/release/list-acr-build-records.sh "$records"
   rm -f -- "$build"
   node - "$short_sha" "$records" "$build" <<'NODE'
@@ -62,11 +67,12 @@ NODE
         echo "Exact ACR build failed: $status" >&2
         exit 1
         ;;
-      PENDING|BUILDING) ;;
+      PENDING) exit 75 ;;
+      BUILDING) exit 76 ;;
       *) echo "Unexpected ACR build status: $status" >&2; exit 1 ;;
     esac
   fi
-  sleep 30
+  exit 77 # No exact record: the supervisor may recover its failed push webhook.
 done
 test -s "$build" || { echo 'Exact ACR build record did not appear' >&2; exit 1; }
 test "$(jq -r .BuildStatus "$build")" = SUCCESS || {

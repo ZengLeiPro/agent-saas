@@ -37,6 +37,7 @@ case "$action" in
     printf 'list:%s\n' "$page" >> '${events}'
     calls=$(grep -c '^list:' '${events}')
     record_id=record-1
+    if [ '${scenario}' = pinned-drift ]; then record_id=record-2; fi
     if [ '${scenario}' = record-drift ] && [ "$calls" -gt 2 ]; then record_id=record-2; fi
     node - "$page" "$record_id" <<'NODE'
 const [pageText, recordId] = process.argv.slice(2);
@@ -89,6 +90,9 @@ esac
       ACR_REGISTRY: 'registry.example',
       ACR_REPOSITORY: 'namespace/image',
       OUTPUT_FILE: output,
+      ...(scenario.startsWith('pinned-')
+        ? { ACR_SINGLE_PROBE: 'true', ACR_SELECTED_RECORD_ID: 'record-1' }
+        : {}),
     },
   });
   return { root, output, events, result };
@@ -129,5 +133,27 @@ test('rejects a Staging ACR log whose commit info does not match the requested S
   const run = await runWait('log-sha-mismatch');
   assert.notEqual(run.result.status, 0);
   assert.match(run.result.stderr, /cloned bbbbbbb \(main\), not source commit/u);
+  await rm(run.root, { recursive: true, force: true });
+});
+
+test('preserves selected identity using existing repository-scoped read permissions', async () => {
+  const run = await runWait('pinned-success');
+  assert.equal(run.result.status, 0, run.result.stderr);
+  assert.deepEqual((await readFile(run.events, 'utf8')).trim().split('\n'), [
+    'list:1',
+    'list:2',
+    'log:record-1',
+    'tag:main-aaaaaa',
+    'list:1',
+    'list:2',
+    'tag:main-aaaaaa',
+  ]);
+  await rm(run.root, { recursive: true, force: true });
+});
+
+test('rejects identity drift between pinned observations', async () => {
+  const run = await runWait('pinned-drift');
+  assert.notEqual(run.result.status, 0);
+  assert.match(run.result.stderr, /selected ACR build record changed while polling/u);
   await rm(run.root, { recursive: true, force: true });
 });

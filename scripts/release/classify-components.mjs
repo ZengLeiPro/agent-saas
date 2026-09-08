@@ -75,6 +75,8 @@ const NON_RUNTIME_FILES = new Set([
   'scripts/pr-preflight.sh',
   'scripts/runtime-worker-rollout-order.test.mjs',
   'scripts/test_acs_operational_scripts.py',
+  'scripts/test_acr_image_supervisor.py',
+  'scripts/test_acr_webhook_redelivery.py',
   'scripts/typecheck-staged.mjs',
 ]);
 

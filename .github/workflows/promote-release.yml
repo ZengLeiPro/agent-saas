@@ -9,6 +9,12 @@ on:
         description: '已通过 Staging 确定性门禁的 RC ID'
         required: true
         type: string
+      recovery_mode:
+        description: 'normal 正常晋级；repair 允许旧 App 未就绪但安装字节与配置必须可验证'
+        required: true
+        type: choice
+        default: normal
+        options: [normal, repair]
       reason:
         description: '生产晋级原因与人工验收结论（写入 approval attestation）'
         required: true
@@ -37,7 +43,7 @@ jobs:
   promote:
     name: 晋级已批准的不可变产物
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: production
     env:
@@ -51,12 +57,14 @@ jobs:
       RELEASE_RECORD_OSS_REGION: cn-shenzhen
       RELEASE_ID_INPUT: ${{ inputs.release_id }}
       PROMOTION_REASON: ${{ inputs.reason }}
+      PRODUCTION_RECOVERY_MODE: ${{ inputs.recovery_mode || 'normal' }}
 
     steps:
       - name: 校验生产发布触发参数
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
+          case "$PRODUCTION_RECOVERY_MODE" in normal|repair) ;; *) exit 1 ;; esac
           [[ "$RELEASE_ID_INPUT" =~ ^rc-[0-9]{8}-[0-9]{2,}$ ]]
           test -n "$(printf '%s' "$PROMOTION_REASON" | tr -d '[:space:]')"
           printf 'RELEASE_ID=%s\n' "$RELEASE_ID_INPUT" >> "$GITHUB_ENV"
@@ -78,9 +86,7 @@ jobs:
       - name: 安装阿里云 CLI
         run: |
           set -euo pipefail
-          curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
-          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
-          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+          bash scripts/release/install-aliyun-cli.sh
 
       - name: 下载不可变 RC 证据
         id: release_evidence
@@ -174,9 +180,12 @@ jobs:
           staging_runtime_path="$(jq -r '.artifacts.stagingRuntimeAssets?.path // empty' \
             "$RUNNER_TEMP/release/artifact-index.json")"
           test "$(printf '%s' "$verification_summary" | jq -r .schemaVersion)" = 1
-          test "$(printf '%s' "$verification_summary" | jq -r .mode)" = deterministic-deployment-gates-v1
+          test "$(printf '%s' "$verification_summary" | jq -r .mode)" = deterministic-deployment-gates-v2 || {
+            echo 'Historical v1 RC cannot be promoted normally; create a new RC with core smoke evidence' >&2
+            exit 1
+          }
           test "$(printf '%s' "$verification_summary" | jq -r .status)" = passed
-          expected_checks='["acs-health","api-readiness","immutable-artifacts","migration-readback","reverse-isolation","runtime-identity","web-readback"]'
+          expected_checks='["acs-health","api-readiness","core-business-smoke","immutable-artifacts","migration-readback","reverse-isolation","runtime-identity","web-readback"]'
           test "$(printf '%s' "$verification_summary" | jq -c '.checks | sort')" = "$expected_checks"
           printf '%s' "$deployment_id" | grep -Eq '^[1-9][0-9]*$'
           printf '%s' "$staging_run_id" | grep -Eq '^[1-9][0-9]*$'
@@ -205,6 +214,17 @@ jobs:
           test "$(printf '%s' "$staging_run" | jq -r .head_sha)" = "$RELEASE_SHA"
           test "$(printf '%s' "$staging_run" | jq -r .conclusion)" = success
           test "$(printf '%s' "$staging_run" | jq -r .path)" = .github/workflows/deploy-staging.yml
+          staging_run_attempt="$(printf '%s' "$staging_run" | jq -r .run_attempt)"
+          printf '%s' "$staging_run_attempt" | grep -Eq '^[1-9][0-9]*$'
+          if ! gh run download "$staging_run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "staging-evidence-$RELEASE_ID-$staging_run_attempt" \
+            --dir "$RUNNER_TEMP/staging-attempt-evidence"; then
+            echo 'Core smoke evidence is missing or expired; deploy and verify a new RC before promotion' >&2
+            exit 1
+          fi
+          node scripts/release/staging-core-smoke-evidence.mjs \
+            "$RUNNER_TEMP/staging-attempt-evidence/staging-core-smoke.json" \
+            "$RUNNER_TEMP/manifest.json" "$staging_run_id" "$staging_run_attempt"
           approval_reason="$(jq -nc \
             --arg releaseId "$RELEASE_ID" --arg manifestDigest "$MANIFEST_DIGEST" \
             --arg stagingDeploymentId "$deployment_id" --arg stagingRunId "$staging_run_id" \
@@ -236,6 +256,19 @@ jobs:
           test "$(ssh-keygen -lf "$RUNNER_TEMP/production-known-host" -E sha256 | awk '{print $2}')" = \
             "$PRODUCTION_SSH_HOST_KEY_SHA256"
           cat "$RUNNER_TEMP/production-known-host" >> ~/.ssh/known_hosts
+          # Reuse the authenticated connection across lock-fenced phases and both readbacks.
+          # Host key pinning above remains authoritative for the shared connection.
+          install -d -m 700 "$RUNNER_TEMP/production-ssh"
+          cat >> ~/.ssh/config <<EOF
+          Host $ECS_HOST
+            ControlMaster auto
+            ControlPath $RUNNER_TEMP/production-ssh/%C
+            ControlPersist 60
+            ServerAliveInterval 15
+            ServerAliveCountMax 3
+            StrictHostKeyChecking yes
+          EOF
+          chmod 600 ~/.ssh/config
 
       - name: 写入前读取权威在线生产前缀
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
@@ -246,7 +279,8 @@ jobs:
           scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
             scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
-            "$ECS_USER@$ECS_HOST:$remote/"
+            scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
+            "$RUNNER_TEMP/manifest.json" "$ECS_USER@$ECS_HOST:$remote/"
           api_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
           worker_action="$(jq -r .components.runtimeWorker.action "$RUNNER_TEMP/manifest.json")"
           baseline_plan="$(node scripts/release/promotion-config-identity-state.mjs plan \
@@ -254,10 +288,14 @@ jobs:
             --runtime-worker-action "$worker_action")"
           reader="$(printf '%s' "$baseline_plan" | jq -r .reader)"
           reader_stage="$(printf '%s' "$baseline_plan" | jq -r .configIdentityStage)"
+          if ! ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "node '$remote/$reader' --config-identity-stage '$reader_stage' --output '$remote/production-before.json' >/dev/null"; then
+            test "$PRODUCTION_RECOVERY_MODE" = repair
+            ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              "sudo node '$remote/read-production-recovery-state.mjs' --manifest '$remote/manifest.json' --output '$remote/production-before.json' >/dev/null"
+          fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/$reader' --config-identity-stage '$reader_stage' --output '$remote/production-before.json' >/dev/null"
-          scp -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST:$remote/production-before.json" \
-            "$RUNNER_TEMP/production-before.json"
+            "sudo cat '$remote/production-before.json'" > "$RUNNER_TEMP/production-before.json"
           # This gate is deliberately before promotionGate, payload prefetch, the durable promoting
           # marker, receipts, and every production mutation.
           node scripts/release/promotion-config-identity-state.mjs assert-write-gate \
@@ -311,37 +349,11 @@ jobs:
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/built" "$RUNNER_TEMP/selected"
-          fetch() { case "$1" in oss://*) aliyun --secure oss cp "$1" "$2" --region "$RELEASE_RECORD_OSS_REGION" ;; https://*) curl -fsSL --retry 3 "$1" -o "$2" ;; *) return 1 ;; esac; }
-          cp "$RUNNER_TEMP/release/artifact-index.json" "$RUNNER_TEMP/built/artifact-index.json"
-          built_base="$RELEASE_RECORD_OSS_URI/$RELEASE_ID"
-          while IFS= read -r artifact_path; do
-            [[ "$artifact_path" =~ ^[A-Za-z0-9._-]+$ ]]
-            fetch "$built_base/$artifact_path" "$RUNNER_TEMP/built/$artifact_path"
-          done < <(jq -r '.artifacts[] | .path' "$RUNNER_TEMP/built/artifact-index.json")
-          sbom_path="$(jq -r .sbom.path "$RUNNER_TEMP/built/artifact-index.json")"
-          [[ "$sbom_path" =~ ^[A-Za-z0-9._-]+$ ]]
-          fetch "$built_base/$sbom_path" "$RUNNER_TEMP/built/$sbom_path"
-          # 历史 v1 index 早于 Runtime Dependency Identity，仍保留审计兼容。
-          if [ "$(jq -r .schemaVersion "$RUNNER_TEMP/built/artifact-index.json")" = 2 ]; then
-            runtime_path="$(jq -r .runtimeDependencies.path "$RUNNER_TEMP/built/artifact-index.json")"
-            [[ "$runtime_path" =~ ^[A-Za-z0-9._-]+$ ]]
-            fetch "$built_base/$runtime_path" "$RUNNER_TEMP/built/$runtime_path"
-          fi
+          node scripts/release/prefetch-promotion-artifacts.mjs \
+            "$RUNNER_TEMP/release/artifact-index.json" "$RUNNER_TEMP/manifest.json" \
+            "$RELEASE_RECORD_OSS_URI/$RELEASE_ID" "$RUNNER_TEMP" "$RELEASE_RECORD_OSS_REGION"
           node scripts/release/verify-artifact.mjs \
             "$RUNNER_TEMP/built/artifact-index.json" "$RELEASE_SHA"
-          for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
-            set -- $pair
-            uri="$(jq -r ".artifacts.$1.uri" "$RUNNER_TEMP/manifest.json")"
-            fetch "$uri" "$RUNNER_TEMP/selected/$2"
-          done
-
-          if [ "$(jq -r .schemaVersion "$RUNNER_TEMP/manifest.json")" = 2 ]; then
-            fetch "$(jq -r .artifacts.runtimeDependencies.server.uri "$RUNNER_TEMP/manifest.json")" \
-              "$RUNNER_TEMP/selected/runtime-dependencies-server.json"
-            fetch "$(jq -r .artifacts.runtimeDependencies.acs.uri "$RUNNER_TEMP/manifest.json")" \
-              "$RUNNER_TEMP/selected/runtime-dependencies-acs.json"
-          fi
           node scripts/release/verify-selected-release-artifacts.mjs \
             "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/selected"
           mkdir -p "$RUNNER_TEMP/selected-units"
@@ -436,9 +448,11 @@ jobs:
           mkdir -p "$upload_root/artifacts"
           cp "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-production-release.sh scripts/release/write-production-identity.mjs \
+            scripts/release/acs-deployment-drain.sh \
             scripts/release/verify-installed-release.mjs \
             scripts/release/read-live-production-components.mjs scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs scripts/release/verify-promotion-phase-state.mjs \
+            scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
             scripts/release/artifact-lib.mjs scripts/release/reuse-promotion-artifacts.mjs \
             "$upload_root/"
           if [ "$PRODUCTION_ALREADY_TARGET" != true ]; then
@@ -528,7 +542,7 @@ jobs:
           rm -f "$rollback_output" "$rollback_local_marker"
           set +e
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-acs' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            "sudo PRODUCTION_RECOVERY_MODE=$PRODUCTION_RECOVERY_MODE PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-acs' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
             2>&1 | tee "$rollback_output"
           pipeline_status=("${PIPESTATUS[@]}")
           set -e
@@ -592,14 +606,18 @@ jobs:
         run: |
           set -euo pipefail
           verify_only=false
+          resume_handoff=false
           if [ "$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")" = keep ]; then
             test "$(jq -r .components.runtimeWorker.action "$RUNNER_TEMP/manifest.json")" = keep
             echo 'API and Runtime Worker already equal the frozen production baseline; verify without cutover'
             verify_only=true
           fi
           if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
-            echo 'API and Runtime Worker already equal the immutable target; keep without cutover'
-            exit 0
+            verify_only=true
+            if [ "$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")" = deploy ]; then
+              resume_handoff=true
+            fi
+            echo 'App target already committed; verify it and complete any retired-generation handoff'
           fi
           rollback_output="$RUNNER_TEMP/deploy-app-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
           rollback_local_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-app"
@@ -607,7 +625,7 @@ jobs:
           rm -f "$rollback_output" "$rollback_local_marker"
           set +e
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app VERIFY_ONLY='$verify_only' RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-app' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            "sudo PRODUCTION_RECOVERY_MODE=$PRODUCTION_RECOVERY_MODE PHASE=app VERIFY_ONLY='$verify_only' RESUME_HANDOFF='$resume_handoff' RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-app' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
             2>&1 | tee "$rollback_output"
           pipeline_status=("${PIPESTATUS[@]}")
           set -e
@@ -617,7 +635,16 @@ jobs:
             fi
           fi
           if [ "${pipeline_status[0]}" -ne 0 ]; then exit "${pipeline_status[0]}"; fi
-          exit "${pipeline_status[1]}"
+          if [ "${pipeline_status[1]}" -ne 0 ]; then exit "${pipeline_status[1]}"; fi
+          if [ "$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")" = deploy ]; then
+            ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              "sudo cat '$PROMOTION_REMOTE/app-handoff-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json'" \
+              > "$RUNNER_TEMP/app-handoff.json"
+            jq -e --arg releaseId "$RELEASE_ID" --arg digest "$MANIFEST_DIGEST" \
+              --arg runId "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+              '.schemaVersion==1 and .status=="acknowledged" and .releaseId==$releaseId and .manifestDigest==$digest and .runId==$runId and .runAttempt==$attempt' \
+              "$RUNNER_TEMP/app-handoff.json" >/dev/null
+          fi
 
       - name: 持久化 API 与 Worker 操作回执
         id: receipt_app
@@ -629,9 +656,10 @@ jobs:
           set -euo pipefail
           for component in api runtimeWorker; do
             outcome=failed
-            [ "$STEP_OUTCOME" = success ] && outcome=succeeded
-            [ "$(jq -r ".components.$component.action" "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-            [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
+            if [ "$STEP_OUTCOME" = success ]; then
+              outcome=succeeded
+              [ "$(jq -r ".components.$component.action" "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+            fi
             [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
             receipt_json="$(node scripts/release/write-operation-receipt.mjs \
               --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component "$component" \
@@ -1158,6 +1186,14 @@ jobs:
             reason='component convergence lacks one or more durable operation receipts'
           fi
           if [ "$outcome" = completed ] && { \
+            [ "${{ steps.deploy_acs.outcome }}" != success ] || \
+            [ "${{ steps.deploy_app.outcome }}" != success ] || \
+            [ "${{ steps.deploy_web.outcome }}" != success ]; \
+          }; then
+            outcome=needs_human
+            reason='component identity convergence does not prove successful deployment and generation handoff'
+          fi
+          if [ "$outcome" = completed ] && { \
             [ "${{ steps.readback.outcome }}" != success ] || \
             [ "${{ steps.readback.outputs.target_match }}" != true ]; \
           }; then
@@ -1225,6 +1261,23 @@ jobs:
           fi
           test "$state" = success
 
+      - name: 保存可恢复的最近成功生产基线
+        if: success() && env.PROMOTION_OUTCOME == 'completed'
+        run: |
+          set -euo pipefail
+          checkpoint_remote="/tmp/release-checkpoint-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$checkpoint_remote'"
+          scp -i ~/.ssh/production_key scripts/release/read-production-state.mjs \
+            scripts/release/read-runtime-identity.mjs scripts/release/artifact-lib.mjs \
+            scripts/release/production-checkpoint.mjs scripts/release/save-production-checkpoint.sh \
+            "$RUNNER_TEMP/manifest.json" "$ECS_USER@$ECS_HOST:$checkpoint_remote/"
+          scp -i ~/.ssh/production_key "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" \
+            "$ECS_USER@$ECS_HOST:$checkpoint_remote/attestations.jsonl"
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$checkpoint_remote/save-production-checkpoint.sh' '$checkpoint_remote' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT'"
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo cat '$checkpoint_remote/checkpoint.json'" > "$RUNNER_TEMP/production-checkpoint.json"
+
       - name: 在生产变更前记录失败关闭结果
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (failure() && env.APPROVAL_RECORDED == 'true' && env.PROMOTION_STARTED != 'true')
         env:
@@ -1262,6 +1315,8 @@ jobs:
             ${{ runner.temp }}/production-after.json
             ${{ runner.temp }}/production-confirmed.json
             ${{ runner.temp }}/reconcile.json
+            ${{ runner.temp }}/app-handoff.json
+            ${{ runner.temp }}/app-retirement*.json
             ${{ runner.temp }}/migration-confirmation*.json
             ${{ runner.temp }}/production-live*.json
             ${{ runner.temp }}/production-api-ready*.json

@@ -1,7 +1,8 @@
 # 零停机部署（蓝绿）
 
-> 2026-07-15 上线。本文是生产蓝绿部署的机制说明与运维手册，一切细节以
-> `.github/workflows/ci.yml` deploy-ecs job、`server/src/index.ts`、
+> 本文保留 2026-07-15 上线的历史蓝绿机制和恢复背景。旧 deploy-ecs 已移除；
+> 历史脚本只在 `scripts/release/fixtures/legacy-ecs-workflow.yml` 供回归测试。当前发布以
+> `.github/workflows/promote-release.yml`、`scripts/release/deploy-production-release.sh`、`server/src/index.ts`、
 > `server/src/app/runtime.ts`、`server/src/runtime/cronLeadership.ts`、
 > `daemon-packaging/systemd/agent-saas-server@.service.template`、
 > `daemon-packaging/systemd/agent-saas-runtime-worker@.service.template` 为准。
@@ -114,7 +115,7 @@
 读取生产 ECS SHA，以该 SHA 到目标 SHA 的累计 diff 证明是否仅影响 Web。只有 Web、Mobile、
 文档或测试路径时才允许 `deploy-web-oss` 发布 OSS 与独立 recovery-web；只要存在 Server、
 Shared、技能源、依赖、部署配置或未知路径，或生产基线/分类不可用，都会在任何生产 mutation
-前 fail closed。该入口不再支持 `force_ecs`，`deploy-ecs` 不可达；API/Runtime Worker
+前 fail closed。该入口不再支持 `force_ecs`，`deploy-ecs` 已移除；API/Runtime Worker
 变更必须走 Staging RC 与 Production Promotion。Server release 始终不含前端文件。
 
 整条手动发布 workflow 使用固定 concurrency group，`cancel-in-progress=false`：同一时间
@@ -124,7 +125,7 @@ compatibility 在读取基线前创建远端锁租约，并持续持有到 ident
 权威证明结束；ECS 与 Promotion mutation 也必须取得同一把 `flock`。这覆盖手工 SSH 等绕过
 GitHub Actions 的入口，锁租约丢失时禁止继续 mutation 或无锁补偿。
 
-deploy-ecs 远端脚本（ci.yml「Deploy and restart」step 内嵌，编号与脚本注释一致）：
+历史 deploy-ecs 远端脚本（仅供恢复测试 fixture，编号与原脚本注释一致）：
 
 <!-- prettier-ignore -->
 | 步 | 动作 | 失败时 |
@@ -358,7 +359,7 @@ SIGTERM → `gracefulShutdown`（drain 中收到会跳过等待直接清理）�
 
 ### 9.4 零停机门禁在 CI 的位置
 
-`deploy-ecs` job 的 `Start zero-downtime probe` / `Assert zero downtime` 两个
+历史 `deploy-ecs` fixture 的 `Start zero-downtime probe` / `Assert zero downtime` 两个
 step 持续覆盖三条用户路径：轻量 `healthz`、经过 Express 路由与动态配置读取的
 注册状态业务 API、经过 nginx 和 Node upgrade handler 的 WebSocket 建连。HTTP 探针遇到
 curl 非零退出（DNS/TCP/TLS/timeout，且请求可能根本未到 nginx）会即时重试一次；HTTP

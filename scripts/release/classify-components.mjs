@@ -63,6 +63,9 @@ const NON_RUNTIME_FILES = new Set([
   'scripts/check-max-lines-ratchet.mjs',
   'scripts/ratchets.test.mjs',
   'scripts/ci-plan.mjs',
+  'scripts/ci-coverage-blobs.mjs',
+  'scripts/ci-source-guards.mjs',
+  'scripts/ci-test-selection.mjs',
   // 删除的旧脚本仍会出现在生产基线到目标版本的差异中。
   'scripts/coverage-workspace-plan.mjs',
   'scripts/format-new-staged-files.mjs',

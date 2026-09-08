@@ -22,11 +22,17 @@ const MAX_SSE_BUFFER_BYTES = 1024 * 1024;
  * RestartSec=5 拉起 + 启动耗时），累计 10s 退避基本覆盖。
  */
 const DEFAULT_CONNECT_RETRY_BACKOFF_MS = [1_000, 3_000, 6_000];
+const DEFAULT_DEPLOYMENT_DRAIN_WAIT_MS = 10 * 60_000;
 const DEFAULT_STREAM_CLEANUP_GRACE_MS = 30_000;
 const DEFAULT_INVOCATION_RESULT_POLL_TIMEOUT_MS = 5_000;
 const DEFAULT_INVOCATION_RESULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_INVOCATION_RESULT_REQUEST_TIMEOUT_MS = 1_000;
 const SHARED_READ_ONLY_CAPABILITY_TTL_MS = 5_000;
+
+function failedBeforeConnection(error: unknown): boolean {
+  const value = error as { code?: string; message?: string; cause?: { code?: string } } | undefined;
+  return ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT'].includes(value?.cause?.code ?? value?.code ?? value?.message ?? '');
+}
 
 /** 可被 AbortSignal 打断的 sleep；abort 时 reject AbortError（外层按既有 aborted 分支归一化）。 */
 function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
@@ -71,6 +77,8 @@ export interface HttpTransportOptions {
    * 默认 [1s, 3s, 6s]；传 [] 关闭重试。测试可传小值。
    */
   connectRetryBackoffMs?: number[];
+  /** Only explicit deployment responses proving execution has not started use this wait budget. */
+  deploymentDrainWaitMs?: number;
   /** 远端 Shell 超时后留给 hand/provider 收尾的传输宽限（毫秒）。 */
   streamCleanupGraceMs?: number;
   /** 连接被取消后查询 hand 最终 invocation 结果的最长等待时间（毫秒）。 */
@@ -119,6 +127,7 @@ export class HttpTransport implements ExecutionTransport {
   private readonly fetchImpl: typeof fetch;
   private readonly envResolver?: (workspace: WorkspaceRef) => Record<string, string | undefined>;
   private readonly connectRetryBackoffMs: number[];
+  private readonly deploymentDrainWaitMs: number;
   private readonly streamCleanupGraceMs: number;
   private readonly invocationResultPollTimeoutMs: number;
   private readonly invocationResultPollIntervalMs: number;
@@ -133,6 +142,7 @@ export class HttpTransport implements ExecutionTransport {
     this.fetchImpl = controlPlaneFetch(options.baseUrl, options.fetchImpl);
     this.envResolver = options.envResolver;
     this.connectRetryBackoffMs = options.connectRetryBackoffMs ?? DEFAULT_CONNECT_RETRY_BACKOFF_MS;
+    this.deploymentDrainWaitMs = Math.max(0, options.deploymentDrainWaitMs ?? DEFAULT_DEPLOYMENT_DRAIN_WAIT_MS);
     this.streamCleanupGraceMs = Math.max(0, options.streamCleanupGraceMs ?? DEFAULT_STREAM_CLEANUP_GRACE_MS);
     this.invocationResultPollTimeoutMs = Math.max(0, options.invocationResultPollTimeoutMs ?? DEFAULT_INVOCATION_RESULT_POLL_TIMEOUT_MS);
     this.invocationResultPollIntervalMs = Math.max(1, options.invocationResultPollIntervalMs ?? DEFAULT_INVOCATION_RESULT_POLL_INTERVAL_MS);
@@ -143,30 +153,33 @@ export class HttpTransport implements ExecutionTransport {
    * 连接类瞬时失败重试（2026-07-15 零停机部署批次）。
    * 只对两类失败重试，语义安全（请求未被对端执行）：
    * - fetch 建连抛错（ECONNREFUSED 等网络错误，请求未到达对端）
-   * - 无结构化错误码的 HTTP 503（orchestrator drain 期间拒新请求，handler 未执行）
+   * - 明确携带 ACS_DEPLOYMENT_DRAINING 与 execution-started=false 的 HTTP 503
    * 其余（超时 abort / 调用方 abort / 4xx / 其他 5xx / 流中途断开）一律不重试，
    * 避免重复副作用。等待期间 signal abort → 抛 AbortError，走外层既有 aborted 分支。
    */
-  private async fetchWithConnectRetry(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+  private async fetchWithConnectRetry(url: string, init: RequestInit, signal?: AbortSignal, deferTimeout?: (waiting: boolean) => void): Promise<Response> {
     const backoffs = this.connectRetryBackoffMs;
-    for (let attempt = 0; ; attempt++) {
+    let attempt = 0;
+    let drainDeadline: number | undefined;
+    for (;;) {
       let response: Response;
       try {
         response = await this.fetchImpl(url, init);
       } catch (err) {
-        if (signal?.aborted || attempt >= backoffs.length) throw err;
-        await sleepAbortable(backoffs[attempt]!, signal);
+        if (signal?.aborted || attempt >= backoffs.length || !failedBeforeConnection(err)) throw err;
+        await sleepAbortable(backoffs[attempt++]!, signal);
         continue;
       }
-      if (response.status === 503 && !response.headers.has('x-acs-error-code')
-        && attempt < backoffs.length && !signal?.aborted) {
-        // 释放未消费的连接，再按 retry-after（不超过本档退避）等待重试
-        void response.body?.cancel().catch(() => undefined);
-        const retryAfterSec = Number(response.headers.get('retry-after'));
-        const waitMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
-          ? Math.min(retryAfterSec * 1000, backoffs[attempt]!)
-          : backoffs[attempt]!;
-        await sleepAbortable(waitMs, signal);
+      if (response.status === 503 && response.headers.get('x-acs-error-code') === 'ACS_DEPLOYMENT_DRAINING'
+        && response.headers.get('x-acs-execution-started') === 'false' && !signal?.aborted) {
+        drainDeadline ??= Date.now() + this.deploymentDrainWaitMs;
+        const remaining = drainDeadline - Date.now();
+        if (remaining <= 0) return response;
+        await response.body?.cancel().catch(() => undefined);
+        const retryAfter = Number(response.headers.get('retry-after'));
+        const waitMs = Math.min(remaining, Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1_000, 5_000) : 2_000);
+        deferTimeout?.(true);
+        try { await sleepAbortable(waitMs, signal); } finally { deferTimeout?.(false); }
         continue;
       }
       return response;
@@ -219,7 +232,8 @@ export class HttpTransport implements ExecutionTransport {
   async provision(recipe: WorkspaceRecipe): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> {
     // The same key is carried in both the API header and canonical recipe for replay-safe providers.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.invokeTimeoutMs);
+    let timer = setTimeout(() => controller.abort(), this.invokeTimeoutMs);
+    const deferTimeout = (waiting: boolean) => { clearTimeout(timer); if (!waiting) { timer = setTimeout(() => controller.abort(), this.invokeTimeoutMs); timer.unref?.(); } };
     timer.unref?.();
     try {
       const response = await this.fetchWithConnectRetry(`${this.baseUrl}/provision`, {
@@ -231,7 +245,7 @@ export class HttpTransport implements ExecutionTransport {
         },
         body: JSON.stringify({ workspaceId: recipe.workspaceId, recipe }),
         signal: controller.signal,
-      }, controller.signal);
+      }, controller.signal, deferTimeout);
       const body = await response.json().catch(() => undefined) as Record<string, unknown> | undefined;
       if (!response.ok) {
         return {
@@ -298,10 +312,12 @@ export class HttpTransport implements ExecutionTransport {
     upstreamSignal?.addEventListener('abort', onUpstreamAbort, { once: true });
     const commandTimeoutMs = toolTimeoutMs(request);
     const streamTimeoutMs = Math.max(this.invokeTimeoutMs, commandTimeoutMs > 0 ? commandTimeoutMs + this.streamCleanupGraceMs : 0);
-    const timer = setTimeout(() => {
+    const expire = () => {
       controller.abort();
       void cancelOnce();
-    }, streamTimeoutMs);
+    };
+    let timer = setTimeout(expire, streamTimeoutMs);
+    const deferTimeout = (waiting: boolean) => { clearTimeout(timer); if (!waiting) { timer = setTimeout(expire, streamTimeoutMs); timer.unref?.(); } };
     timer.unref?.();
 
     try {
@@ -313,7 +329,7 @@ export class HttpTransport implements ExecutionTransport {
         },
         body: JSON.stringify(wireRequest),
         signal: controller.signal,
-      }, controller.signal);
+      }, controller.signal, deferTimeout);
 
       if (response.status === 401 || response.status === 403) {
         return {
@@ -413,10 +429,12 @@ export class HttpTransport implements ExecutionTransport {
     upstreamSignal?.addEventListener('abort', onUpstreamAbort, { once: true });
     const commandTimeoutMs = toolTimeoutMs(request);
     const streamTimeoutMs = Math.max(this.invokeTimeoutMs, commandTimeoutMs > 0 ? commandTimeoutMs + this.streamCleanupGraceMs : 0);
-    const timer = setTimeout(() => {
+    const expire = () => {
       controller.abort();
       void cancelOnce();
-    }, streamTimeoutMs);
+    };
+    let timer = setTimeout(expire, streamTimeoutMs);
+    const deferTimeout = (waiting: boolean) => { clearTimeout(timer); if (!waiting) { timer = setTimeout(expire, streamTimeoutMs); timer.unref?.(); } };
     timer.unref?.();
     let sawCompleted = false;
     try {
@@ -430,7 +448,7 @@ export class HttpTransport implements ExecutionTransport {
         },
         body: JSON.stringify(wireRequest),
         signal: controller.signal,
-      }, controller.signal);
+      }, controller.signal, deferTimeout);
       if (!response.ok || !response.body) {
         const text = await safeText(response);
         yield { type: 'completed', response: { status: 'error', error: `hand-server stream HTTP ${response.status}: ${text || 'no body'}` } };

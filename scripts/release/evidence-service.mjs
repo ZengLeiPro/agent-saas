@@ -73,7 +73,9 @@ async function latestJson(directory) {
   return JSON.parse(await readFile(join(directory, names.at(-1)), 'utf8'));
 }
 
-export function createEvidenceService({ root, readToken, writeToken, now = () => Date.now() }) {
+export function createEvidenceService({ root, readToken, writeToken, now = () => Date.now(),
+  implementationDigest = process.env.AGENT_SAAS_EVIDENCE_IMPLEMENTATION_DIGEST,
+}) {
   if (!readToken || readToken.length < 32 || !writeToken || writeToken.length < 32)
     throw new Error('Evidence service read/write tokens must each contain 32+ characters');
   if (safeEqual(readToken, writeToken))
@@ -99,6 +101,7 @@ export function createEvidenceService({ root, readToken, writeToken, now = () =>
           releaseEvidenceSchemaRevision: RELEASE_EVIDENCE_SCHEMA_REVISION,
           currentReleaseEvidenceSchemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION,
           supportedReleaseEvidenceSchemaVersions: [...SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS],
+          ...(implementationDigest ? { implementationDigest } : {}),
         });
         return;
       }

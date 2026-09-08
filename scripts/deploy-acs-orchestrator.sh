@@ -367,6 +367,10 @@ EOF
     fi
     [ -n "${SNAT_OPERATION_STATE_FILE:-}" ] && rm -f "$SNAT_OPERATION_STATE_FILE"
   fi
+  # Restore env/unit/current before resuming the exact old process on drain failure.
+  if declare -F cancel_acs_deployment_drain >/dev/null; then
+    cancel_acs_deployment_drain || rollback_status=1
+  fi
   cleanup_release_payload
   rm -f "$SMOKE_CLEANUP_ERROR" \
     /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
@@ -631,51 +635,18 @@ IMAGE_CACHE_NAME="agent-saas-acs-sandbox-$(printf '%s' "$IMAGE_TAG" | tr 'A-Z._'
 ) >"$IMAGE_CACHE_EARLY_LOG" 2>&1 &
 IMAGE_CACHE_EARLY_PID=$!
 
-# ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后 clean exit →
-#      当前事务显式 systemctl restart 拉起新代码、新 env 与 managed unit ──
-# 2026-07-15 修复：SIGUSR2 必须送达注册了 handler 的 node 本体。
-# ExecStart 是 pnpm wrapper 时 MainPID 是 wrapper 的 node 进程——它不
-# 转发 SIGUSR2 且收到即被默认动作终止（drain 静默失效、inflight 被
-# cgroup 清场硬杀）。优先读 orchestrator 自写 pidfile（ACS_ORCH_PIDFILE），
-# 并用 journal 断言 drain 真实生效；未确认一律 restart 兜底。
-ORCH_PIDFILE="/run/agent-saas-acs-orchestrator.pid"
-DRAIN_PID=""
-RESTART_FALLBACK=0
-if [ -f "$ORCH_PIDFILE" ] && kill -0 "$(cat "$ORCH_PIDFILE")" 2>/dev/null; then
-  DRAIN_PID=$(cat "$ORCH_PIDFILE")
-  echo "draining orchestrator pid=$DRAIN_PID (SIGUSR2 via pidfile)..."
-else
-  MAIN_PID=$("$SYSTEMCTL_BIN" show -p MainPID --value "$ACS_SERVICE_NAME" 2>/dev/null || echo 0)
-  if [ -n "$MAIN_PID" ] && [ "$MAIN_PID" != "0" ]; then
-    DRAIN_PID="$MAIN_PID"
-    echo "WARN: pidfile missing/stale; SIGUSR2 to MainPID=$MAIN_PID (wrapper may swallow it)"
-  else
-    RESTART_FALLBACK=1
-  fi
-fi
-if [ "$RESTART_FALLBACK" = "0" ]; then
-  kill -USR2 "$DRAIN_PID" 2>/dev/null || true
-  sleep 3
-  if journalctl -u "$ACS_SERVICE_NAME" --since "-45 seconds" --no-pager 2>/dev/null | grep -q "entering drain mode"; then
-    echo "drain confirmed via journal"
-    for _ in $(seq 1 135); do
-      kill -0 "$DRAIN_PID" 2>/dev/null || break
-      sleep 1
-    done
-    if kill -0 "$DRAIN_PID" 2>/dev/null; then
-      echo "drain deadline exceeded, falling back to systemctl restart"
-      RESTART_FALLBACK=1
-    fi
-  else
-    echo "WARN: drain not confirmed in journal (signal may have hit a wrapper); falling back to systemctl restart"
-    RESTART_FALLBACK=1
-  fi
-fi
-if [ "$RESTART_FALLBACK" = "1" ]; then
-  echo 'restarting orchestrator without a confirmed graceful drain'
-fi
-# Restart=on-failure 不会在 drain 的 clean exit(0) 后自动拉起；无论 drain 是否
-# 优雅完成，都必须由当前受锁事务显式 restart，确保 managed unit 与候选 symlink 生效。
+# ── 3. Drain 旧进程：同一已验证协议，不允许超时后强制 restart ──
+# Compatibility releases bind this local receipt to their sealed artifact digest.
+. "$APP_DIR/scripts/release/acs-deployment-drain.sh"
+MANIFEST_PATH="$RUNTIME_PREFLIGHT_ROOT/compatibility-drain.json"
+release_id="$COMPAT_RELEASE_ID"
+manifest_digest="$ORCHESTRATOR_ARTIFACT_DIGEST"
+echo 'draining orchestrator pid=verified-systemd-mainpid via shared protocol'
+drain_acs_before_cutover
+release_acs_drain_guard
+acs_mutation_started=true
+# Restart=on-failure 不会在 drain 的 clean exit(0) 后自动拉起；
+# 只有成功确认原进程退出后才由当前事务启动候选。
 PROCESS_REPLACED=true
 if ! "$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME"; then
   echo 'candidate restart failed; rolling back the managed unit and previous release' >&2

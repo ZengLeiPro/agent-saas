@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const workflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const workflow = readFileSync(new URL('./release/fixtures/legacy-ecs-workflow.yml', import.meta.url), 'utf8');
 const compatibilityAuthority = readFileSync(
   new URL('./release/compat-app-authority.sh', import.meta.url),
   'utf8',

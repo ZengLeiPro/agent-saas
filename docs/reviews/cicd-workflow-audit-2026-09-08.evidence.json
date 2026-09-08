@@ -1,0 +1,2349 @@
+{
+  "schemaVersion": 1,
+  "auditDate": "2026-09-08",
+  "timezone": "Asia/Shanghai",
+  "sourceSha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+  "repository": "ZengLeiPro/agent-saas",
+  "collectionMode": "read-only GitHub and public health plus isolated local probes",
+  "caveats": [
+    "Run created-to-updated duration can include queue or human retry gap.",
+    "Statistics are finite snapshots, not current outage probability.",
+    "All primary 45-run APP/ACS samples have run_attempt=1.",
+    "Performance experiments cover one migration baseline locally; they are not achieved CI speedups.",
+    "No production fault injection or user business acceptance was performed."
+  ],
+  "primarySample": {
+    "fromUTC": "2026-09-07T13:42:23Z",
+    "toUTC": "2026-09-07T23:14:24Z",
+    "statistics": {
+      "APP CI/pull_request": {
+        "n": 31,
+        "conclusions": {
+          "success": 16,
+          "failure": 6,
+          "cancelled": 9
+        },
+        "successAttempt1N": 16,
+        "successMedianSeconds": 609.0,
+        "successP95NearestRankSeconds": 718.0
+      },
+      "APP CI/push": {
+        "n": 14,
+        "conclusions": {
+          "success": 14,
+          "failure": 0,
+          "cancelled": 0
+        },
+        "successAttempt1N": 14,
+        "successMedianSeconds": 611.5,
+        "successP95NearestRankSeconds": 652.0
+      },
+      "ACS CI/pull_request": {
+        "n": 31,
+        "conclusions": {
+          "success": 28,
+          "failure": 3,
+          "cancelled": 0
+        },
+        "successAttempt1N": 28,
+        "successMedianSeconds": 120.0,
+        "successP95NearestRankSeconds": 140.0
+      },
+      "ACS CI/push": {
+        "n": 14,
+        "conclusions": {
+          "success": 14,
+          "failure": 0,
+          "cancelled": 0
+        },
+        "successAttempt1N": 14,
+        "successMedianSeconds": 120.5,
+        "successP95NearestRankSeconds": 144.0
+      }
+    }
+  },
+  "recentRuns": {
+    "APP CI": [
+      {
+        "id": 34169355270,
+        "event": "push",
+        "sha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T23:14:24Z",
+        "updatedAt": "2026-09-07T23:25:14Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270"
+      },
+      {
+        "id": 34168651839,
+        "event": "pull_request",
+        "sha": "45fc23e084e82f7f9ea7a7b594a60cd76b16ec6e",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T23:01:57Z",
+        "updatedAt": "2026-09-07T23:13:55Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34168651839"
+      },
+      {
+        "id": 34168346355,
+        "event": "pull_request",
+        "sha": "ab28a353226e56e158515df436debafc75c815e4",
+        "conclusion": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-07T22:56:16Z",
+        "updatedAt": "2026-09-07T23:03:09Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34168346355"
+      },
+      {
+        "id": 34168300126,
+        "event": "push",
+        "sha": "142622f5a3f031610f0782010f53cad0851e1e9b",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T22:55:25Z",
+        "updatedAt": "2026-09-07T23:06:17Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34168300126"
+      },
+      {
+        "id": 34151793014,
+        "event": "pull_request",
+        "sha": "88f02a6ffadc531de4875d8caade776f1615b3bb",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T18:28:50Z",
+        "updatedAt": "2026-09-07T18:39:13Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34151793014"
+      },
+      {
+        "id": 34151374626,
+        "event": "push",
+        "sha": "a891ba6d0dec1dd5c9bc1987e12e464dc719ca97",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T18:22:40Z",
+        "updatedAt": "2026-09-07T18:33:24Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34151374626"
+      },
+      {
+        "id": 34151205572,
+        "event": "pull_request",
+        "sha": "e809af582111810da2860078899fda4e9136fe2a",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T18:20:07Z",
+        "updatedAt": "2026-09-07T18:27:41Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34151205572"
+      },
+      {
+        "id": 34150631294,
+        "event": "pull_request",
+        "sha": "68cf7d99701e20d41f5dd63c5bf44f175d8e503d",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T18:11:35Z",
+        "updatedAt": "2026-09-07T18:21:50Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34150631294"
+      },
+      {
+        "id": 34149583642,
+        "event": "push",
+        "sha": "043e05f64ecd85c69acf5792d2240b8ad580f48e",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:55:41Z",
+        "updatedAt": "2026-09-07T18:06:18Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34149583642"
+      },
+      {
+        "id": 34148853590,
+        "event": "pull_request",
+        "sha": "330e6d62a9b9a1cc6297440672ddbebbe07cd27a",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:44:44Z",
+        "updatedAt": "2026-09-07T17:55:25Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34148853590"
+      },
+      {
+        "id": 34148595711,
+        "event": "pull_request",
+        "sha": "e0260d54741002aebfe74b569c9d7092fbf3b113",
+        "conclusion": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:40:49Z",
+        "updatedAt": "2026-09-07T17:45:13Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34148595711"
+      },
+      {
+        "id": 34147918741,
+        "event": "push",
+        "sha": "96c8a57c55cd19eac6a7c64d78173af351811674",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:30:54Z",
+        "updatedAt": "2026-09-07T17:41:13Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34147918741"
+      },
+      {
+        "id": 34147090774,
+        "event": "pull_request",
+        "sha": "bb3f0441f8fa6fe27234dec197364de9c9bb39c8",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:18:59Z",
+        "updatedAt": "2026-09-07T17:30:37Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34147090774"
+      },
+      {
+        "id": 34147042343,
+        "event": "push",
+        "sha": "9a85cf91bd54d3d46c1af4b140625304d6755199",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:18:17Z",
+        "updatedAt": "2026-09-07T17:28:56Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34147042343"
+      },
+      {
+        "id": 34146409488,
+        "event": "pull_request",
+        "sha": "2dc32047e4c327cda2d15e3e4db0dd3477c0f33b",
+        "conclusion": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:09:24Z",
+        "updatedAt": "2026-09-07T17:19:59Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34146409488"
+      },
+      {
+        "id": 34146119274,
+        "event": "pull_request",
+        "sha": "edebee077cd292c4a3961c8c97bf8d3eb451283f",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:05:21Z",
+        "updatedAt": "2026-09-07T17:16:30Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34146119274"
+      },
+      {
+        "id": 34146021902,
+        "event": "push",
+        "sha": "b00c6df8e4b4ffb226d302b4de928a4741681147",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:04:03Z",
+        "updatedAt": "2026-09-07T17:14:31Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34146021902"
+      },
+      {
+        "id": 34145918792,
+        "event": "pull_request",
+        "sha": "f6c03bf59458c1feae461c26fc364f56eac83f04",
+        "conclusion": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:02:35Z",
+        "updatedAt": "2026-09-07T17:06:07Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34145918792"
+      },
+      {
+        "id": 34145667108,
+        "event": "pull_request",
+        "sha": "e2257a7c5d544189f19f34996882e3cd6d292967",
+        "conclusion": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:59:05Z",
+        "updatedAt": "2026-09-07T17:03:40Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34145667108"
+      },
+      {
+        "id": 34145411061,
+        "event": "pull_request",
+        "sha": "9e3ed2e8b0bf423405e821250f7728b7ba99a618",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:55:15Z",
+        "updatedAt": "2026-09-07T17:03:13Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34145411061"
+      },
+      {
+        "id": 34145128453,
+        "event": "pull_request",
+        "sha": "8b8e1f48b69e759f323207186f4f50a1ab398d14",
+        "conclusion": "failure",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:51:16Z",
+        "updatedAt": "2026-09-07T16:54:04Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34145128453"
+      },
+      {
+        "id": 34144060988,
+        "event": "pull_request",
+        "sha": "94dc6d9afb4dfac124eb676b182c1ba828f3c745",
+        "conclusion": "failure",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:36:35Z",
+        "updatedAt": "2026-09-07T16:39:44Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34144060988"
+      },
+      {
+        "id": 34143970198,
+        "event": "pull_request",
+        "sha": "f373276f8cf7dd6f2c3b07d0d883936f2b7342e0",
+        "conclusion": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:35:26Z",
+        "updatedAt": "2026-09-07T16:37:03Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34143970198"
+      },
+      {
+        "id": 34143502239,
+        "event": "push",
+        "sha": "bfe59edb347fe6a7c4bcca0c3c69e4c4876ddac6",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:29:28Z",
+        "updatedAt": "2026-09-07T16:37:57Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34143502239"
+      },
+      {
+        "id": 34142572446,
+        "event": "pull_request",
+        "sha": "993bb8be5d94a13fee9a526aa9ee50e33cb10caf",
+        "conclusion": "failure",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:17:35Z",
+        "updatedAt": "2026-09-07T16:27:38Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34142572446"
+      },
+      {
+        "id": 34142473332,
+        "event": "pull_request",
+        "sha": "daac41762177c948a532d49cfb2928125e5a5434",
+        "conclusion": "failure",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:16:21Z",
+        "updatedAt": "2026-09-07T16:18:53Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34142473332"
+      },
+      {
+        "id": 34142309805,
+        "event": "pull_request",
+        "sha": "f4ad90271daf09f64ffafb235d8b8ec78d03e8cf",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:14:21Z",
+        "updatedAt": "2026-09-07T16:23:55Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34142309805"
+      },
+      {
+        "id": 34142269564,
+        "event": "push",
+        "sha": "aba1a3ce29874e3d8f6dc9d22d9fbb991372c535",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:13:52Z",
+        "updatedAt": "2026-09-07T16:23:49Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34142269564"
+      },
+      {
+        "id": 34141185181,
+        "event": "pull_request",
+        "sha": "edc31ef1e607582f29e2c7c8b61d76b169939b10",
+        "conclusion": "failure",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:00:53Z",
+        "updatedAt": "2026-09-07T16:05:28Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34141185181"
+      },
+      {
+        "id": 34141092492,
+        "event": "pull_request",
+        "sha": "ee382f86147daca2cb499830bd2ea93d726d65ca",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T15:59:50Z",
+        "updatedAt": "2026-09-07T16:09:00Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34141092492"
+      },
+      {
+        "id": 34139896586,
+        "event": "pull_request",
+        "sha": "68f55177120327e73e7f833a43e9afda30ebb793",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T15:45:13Z",
+        "updatedAt": "2026-09-07T15:55:16Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34139896586"
+      },
+      {
+        "id": 34137563387,
+        "event": "push",
+        "sha": "d94cc5970d84deacb21ba69d6da120d35fa7658e",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T15:17:44Z",
+        "updatedAt": "2026-09-07T15:25:39Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34137563387"
+      },
+      {
+        "id": 34136528878,
+        "event": "pull_request",
+        "sha": "3d5e4f00ff58256f045121ba5b11ce554d27748d",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T15:06:13Z",
+        "updatedAt": "2026-09-07T15:16:39Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34136528878"
+      },
+      {
+        "id": 34135467597,
+        "event": "pull_request",
+        "sha": "6dc70f062d5ecb3e196e4f7b176692454fcd4ed8",
+        "conclusion": "failure",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:54:11Z",
+        "updatedAt": "2026-09-07T15:06:03Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34135467597"
+      },
+      {
+        "id": 34135364445,
+        "event": "pull_request",
+        "sha": "b124bb5c0d8e845ee1aa0c202bc801c2cb6b6893",
+        "conclusion": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:53:00Z",
+        "updatedAt": "2026-09-07T14:55:52Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34135364445"
+      },
+      {
+        "id": 34135082530,
+        "event": "push",
+        "sha": "aa5319d4214b37c8bb1450f57bba95efba98f5d4",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:49:49Z",
+        "updatedAt": "2026-09-07T14:57:23Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34135082530"
+      },
+      {
+        "id": 34133804031,
+        "event": "pull_request",
+        "sha": "456741946defa2cf6a2e1afd787b1941c745b924",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:35:41Z",
+        "updatedAt": "2026-09-07T14:44:10Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34133804031"
+      },
+      {
+        "id": 34133435459,
+        "event": "push",
+        "sha": "6acfd79253c20db2b46f01ddd56570c51f25c8cc",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:31:40Z",
+        "updatedAt": "2026-09-07T14:39:46Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34133435459"
+      },
+      {
+        "id": 34132924806,
+        "event": "pull_request",
+        "sha": "67873257a680d7aa64cf7cb48b78264dc783ebef",
+        "conclusion": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:26:05Z",
+        "updatedAt": "2026-09-07T14:35:54Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34132924806"
+      },
+      {
+        "id": 34132561137,
+        "event": "pull_request",
+        "sha": "bb7dc2481aab0b145933ff221ba36de797831945",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:22:04Z",
+        "updatedAt": "2026-09-07T14:31:12Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34132561137"
+      },
+      {
+        "id": 34131798912,
+        "event": "push",
+        "sha": "91fa842e940984a550eef4ee77ded0a105b9484d",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:13:44Z",
+        "updatedAt": "2026-09-07T14:23:45Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34131798912"
+      },
+      {
+        "id": 34130772654,
+        "event": "pull_request",
+        "sha": "61eaf6e47bb88297f9adb83a4319955da4c12917",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:02:48Z",
+        "updatedAt": "2026-09-07T14:11:58Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34130772654"
+      },
+      {
+        "id": 34130337887,
+        "event": "push",
+        "sha": "beca983351ee254135d66155f8a8ae957f9f615c",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T13:58:06Z",
+        "updatedAt": "2026-09-07T14:08:10Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34130337887"
+      },
+      {
+        "id": 34129249709,
+        "event": "pull_request",
+        "sha": "f8691880bda22d3104b0403a5bec490b8af94070",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T13:46:15Z",
+        "updatedAt": "2026-09-07T13:57:23Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34129249709"
+      },
+      {
+        "id": 34128888038,
+        "event": "pull_request",
+        "sha": "e0562945021686e6d89ea3712f7644e3708e1872",
+        "conclusion": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-07T13:42:23Z",
+        "updatedAt": "2026-09-07T13:47:35Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34128888038"
+      }
+    ],
+    "ACS CI": [
+      {
+        "id": 34169355282,
+        "event": "push",
+        "sha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T23:14:24Z",
+        "updatedAt": "2026-09-07T23:16:24Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355282"
+      },
+      {
+        "id": 34168651853,
+        "event": "pull_request",
+        "sha": "45fc23e084e82f7f9ea7a7b594a60cd76b16ec6e",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T23:01:57Z",
+        "updatedAt": "2026-09-07T23:03:55Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34168651853"
+      },
+      {
+        "id": 34168346358,
+        "event": "pull_request",
+        "sha": "ab28a353226e56e158515df436debafc75c815e4",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T22:56:16Z",
+        "updatedAt": "2026-09-07T22:57:58Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34168346358"
+      },
+      {
+        "id": 34168300237,
+        "event": "push",
+        "sha": "142622f5a3f031610f0782010f53cad0851e1e9b",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T22:55:25Z",
+        "updatedAt": "2026-09-07T22:57:26Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34168300237"
+      },
+      {
+        "id": 34151793013,
+        "event": "pull_request",
+        "sha": "88f02a6ffadc531de4875d8caade776f1615b3bb",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T18:28:50Z",
+        "updatedAt": "2026-09-07T18:30:58Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34151793013"
+      },
+      {
+        "id": 34151374608,
+        "event": "push",
+        "sha": "a891ba6d0dec1dd5c9bc1987e12e464dc719ca97",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T18:22:40Z",
+        "updatedAt": "2026-09-07T18:24:29Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34151374608"
+      },
+      {
+        "id": 34151205568,
+        "event": "pull_request",
+        "sha": "e809af582111810da2860078899fda4e9136fe2a",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T18:20:07Z",
+        "updatedAt": "2026-09-07T18:22:27Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34151205568"
+      },
+      {
+        "id": 34150631293,
+        "event": "pull_request",
+        "sha": "68cf7d99701e20d41f5dd63c5bf44f175d8e503d",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T18:11:35Z",
+        "updatedAt": "2026-09-07T18:13:24Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34150631293"
+      },
+      {
+        "id": 34149583621,
+        "event": "push",
+        "sha": "043e05f64ecd85c69acf5792d2240b8ad580f48e",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:55:41Z",
+        "updatedAt": "2026-09-07T17:57:52Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34149583621"
+      },
+      {
+        "id": 34148853432,
+        "event": "pull_request",
+        "sha": "330e6d62a9b9a1cc6297440672ddbebbe07cd27a",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:44:44Z",
+        "updatedAt": "2026-09-07T17:46:45Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34148853432"
+      },
+      {
+        "id": 34148595661,
+        "event": "pull_request",
+        "sha": "e0260d54741002aebfe74b569c9d7092fbf3b113",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:40:49Z",
+        "updatedAt": "2026-09-07T17:42:55Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34148595661"
+      },
+      {
+        "id": 34147918738,
+        "event": "push",
+        "sha": "96c8a57c55cd19eac6a7c64d78173af351811674",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:30:54Z",
+        "updatedAt": "2026-09-07T17:33:05Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34147918738"
+      },
+      {
+        "id": 34147090750,
+        "event": "pull_request",
+        "sha": "bb3f0441f8fa6fe27234dec197364de9c9bb39c8",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:18:59Z",
+        "updatedAt": "2026-09-07T17:21:09Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34147090750"
+      },
+      {
+        "id": 34147042382,
+        "event": "push",
+        "sha": "9a85cf91bd54d3d46c1af4b140625304d6755199",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:18:17Z",
+        "updatedAt": "2026-09-07T17:20:31Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34147042382"
+      },
+      {
+        "id": 34146409198,
+        "event": "pull_request",
+        "sha": "2dc32047e4c327cda2d15e3e4db0dd3477c0f33b",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:09:24Z",
+        "updatedAt": "2026-09-07T17:11:35Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34146409198"
+      },
+      {
+        "id": 34146119318,
+        "event": "pull_request",
+        "sha": "edebee077cd292c4a3961c8c97bf8d3eb451283f",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:05:21Z",
+        "updatedAt": "2026-09-07T17:07:46Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34146119318"
+      },
+      {
+        "id": 34146021890,
+        "event": "push",
+        "sha": "b00c6df8e4b4ffb226d302b4de928a4741681147",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:04:03Z",
+        "updatedAt": "2026-09-07T17:06:21Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34146021890"
+      },
+      {
+        "id": 34145918732,
+        "event": "pull_request",
+        "sha": "f6c03bf59458c1feae461c26fc364f56eac83f04",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T17:02:35Z",
+        "updatedAt": "2026-09-07T17:04:40Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34145918732"
+      },
+      {
+        "id": 34145667035,
+        "event": "pull_request",
+        "sha": "e2257a7c5d544189f19f34996882e3cd6d292967",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:59:05Z",
+        "updatedAt": "2026-09-07T17:01:17Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34145667035"
+      },
+      {
+        "id": 34145411053,
+        "event": "pull_request",
+        "sha": "9e3ed2e8b0bf423405e821250f7728b7ba99a618",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:55:15Z",
+        "updatedAt": "2026-09-07T16:57:15Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34145411053"
+      },
+      {
+        "id": 34145128444,
+        "event": "pull_request",
+        "sha": "8b8e1f48b69e759f323207186f4f50a1ab398d14",
+        "conclusion": "failure",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:51:16Z",
+        "updatedAt": "2026-09-07T16:52:26Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34145128444"
+      },
+      {
+        "id": 34144061021,
+        "event": "pull_request",
+        "sha": "94dc6d9afb4dfac124eb676b182c1ba828f3c745",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:36:35Z",
+        "updatedAt": "2026-09-07T16:38:22Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34144061021"
+      },
+      {
+        "id": 34143970193,
+        "event": "pull_request",
+        "sha": "f373276f8cf7dd6f2c3b07d0d883936f2b7342e0",
+        "conclusion": "failure",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:35:26Z",
+        "updatedAt": "2026-09-07T16:36:38Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34143970193"
+      },
+      {
+        "id": 34143502251,
+        "event": "push",
+        "sha": "bfe59edb347fe6a7c4bcca0c3c69e4c4876ddac6",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:29:28Z",
+        "updatedAt": "2026-09-07T16:29:39Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34143502251"
+      },
+      {
+        "id": 34142572449,
+        "event": "pull_request",
+        "sha": "993bb8be5d94a13fee9a526aa9ee50e33cb10caf",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:17:35Z",
+        "updatedAt": "2026-09-07T16:19:30Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34142572449"
+      },
+      {
+        "id": 34142473399,
+        "event": "pull_request",
+        "sha": "daac41762177c948a532d49cfb2928125e5a5434",
+        "conclusion": "failure",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:16:21Z",
+        "updatedAt": "2026-09-07T16:17:19Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34142473399"
+      },
+      {
+        "id": 34142309820,
+        "event": "pull_request",
+        "sha": "f4ad90271daf09f64ffafb235d8b8ec78d03e8cf",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:14:21Z",
+        "updatedAt": "2026-09-07T16:14:35Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34142309820"
+      },
+      {
+        "id": 34142269596,
+        "event": "push",
+        "sha": "aba1a3ce29874e3d8f6dc9d22d9fbb991372c535",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:13:52Z",
+        "updatedAt": "2026-09-07T16:14:06Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34142269596"
+      },
+      {
+        "id": 34141185257,
+        "event": "pull_request",
+        "sha": "edc31ef1e607582f29e2c7c8b61d76b169939b10",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T16:00:53Z",
+        "updatedAt": "2026-09-07T16:03:03Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34141185257"
+      },
+      {
+        "id": 34141092488,
+        "event": "pull_request",
+        "sha": "ee382f86147daca2cb499830bd2ea93d726d65ca",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T15:59:50Z",
+        "updatedAt": "2026-09-07T16:00:01Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34141092488"
+      },
+      {
+        "id": 34139896533,
+        "event": "pull_request",
+        "sha": "68f55177120327e73e7f833a43e9afda30ebb793",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T15:45:13Z",
+        "updatedAt": "2026-09-07T15:45:24Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34139896533"
+      },
+      {
+        "id": 34137563460,
+        "event": "push",
+        "sha": "d94cc5970d84deacb21ba69d6da120d35fa7658e",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T15:17:45Z",
+        "updatedAt": "2026-09-07T15:20:04Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34137563460"
+      },
+      {
+        "id": 34136528989,
+        "event": "pull_request",
+        "sha": "3d5e4f00ff58256f045121ba5b11ce554d27748d",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T15:06:13Z",
+        "updatedAt": "2026-09-07T15:08:13Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34136528989"
+      },
+      {
+        "id": 34135467746,
+        "event": "pull_request",
+        "sha": "6dc70f062d5ecb3e196e4f7b176692454fcd4ed8",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:54:11Z",
+        "updatedAt": "2026-09-07T14:56:24Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34135467746"
+      },
+      {
+        "id": 34135364444,
+        "event": "pull_request",
+        "sha": "b124bb5c0d8e845ee1aa0c202bc801c2cb6b6893",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:53:00Z",
+        "updatedAt": "2026-09-07T14:54:57Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34135364444"
+      },
+      {
+        "id": 34135082480,
+        "event": "push",
+        "sha": "aa5319d4214b37c8bb1450f57bba95efba98f5d4",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:49:49Z",
+        "updatedAt": "2026-09-07T14:50:02Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34135082480"
+      },
+      {
+        "id": 34133804048,
+        "event": "pull_request",
+        "sha": "456741946defa2cf6a2e1afd787b1941c745b924",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:35:41Z",
+        "updatedAt": "2026-09-07T14:35:52Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34133804048"
+      },
+      {
+        "id": 34133435422,
+        "event": "push",
+        "sha": "6acfd79253c20db2b46f01ddd56570c51f25c8cc",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:31:40Z",
+        "updatedAt": "2026-09-07T14:31:52Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34133435422"
+      },
+      {
+        "id": 34132924817,
+        "event": "pull_request",
+        "sha": "67873257a680d7aa64cf7cb48b78264dc783ebef",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:26:05Z",
+        "updatedAt": "2026-09-07T14:26:19Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34132924817"
+      },
+      {
+        "id": 34132561155,
+        "event": "pull_request",
+        "sha": "bb7dc2481aab0b145933ff221ba36de797831945",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:22:04Z",
+        "updatedAt": "2026-09-07T14:22:16Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34132561155"
+      },
+      {
+        "id": 34131798907,
+        "event": "push",
+        "sha": "91fa842e940984a550eef4ee77ded0a105b9484d",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:13:44Z",
+        "updatedAt": "2026-09-07T14:13:56Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34131798907"
+      },
+      {
+        "id": 34130772621,
+        "event": "pull_request",
+        "sha": "61eaf6e47bb88297f9adb83a4319955da4c12917",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T14:02:48Z",
+        "updatedAt": "2026-09-07T14:03:09Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34130772621"
+      },
+      {
+        "id": 34130337863,
+        "event": "push",
+        "sha": "beca983351ee254135d66155f8a8ae957f9f615c",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T13:58:06Z",
+        "updatedAt": "2026-09-07T14:00:30Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34130337863"
+      },
+      {
+        "id": 34129249710,
+        "event": "pull_request",
+        "sha": "f8691880bda22d3104b0403a5bec490b8af94070",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T13:46:15Z",
+        "updatedAt": "2026-09-07T13:48:19Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34129249710"
+      },
+      {
+        "id": 34128888050,
+        "event": "pull_request",
+        "sha": "e0562945021686e6d89ea3712f7644e3708e1872",
+        "conclusion": "success",
+        "attempt": 1,
+        "createdAt": "2026-09-07T13:42:23Z",
+        "updatedAt": "2026-09-07T13:44:26Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34128888050"
+      }
+    ],
+    "staging": [
+      {
+        "id": 34169361409,
+        "event": "workflow_dispatch",
+        "sha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-07T23:14:31Z",
+        "updatedAt": "2026-09-07T23:43:55Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169361409"
+      },
+      {
+        "id": 34151383170,
+        "event": "workflow_dispatch",
+        "sha": "a891ba6d0dec1dd5c9bc1987e12e464dc719ca97",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-07T18:22:48Z",
+        "updatedAt": "2026-09-07T18:34:57Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34151383170"
+      },
+      {
+        "id": 34149599467,
+        "event": "workflow_dispatch",
+        "sha": "043e05f64ecd85c69acf5792d2240b8ad580f48e",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-07T17:55:57Z",
+        "updatedAt": "2026-09-07T18:07:44Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34149599467"
+      },
+      {
+        "id": 34144345245,
+        "event": "workflow_dispatch",
+        "sha": "bfe59edb347fe6a7c4bcca0c3c69e4c4876ddac6",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-07T16:40:25Z",
+        "updatedAt": "2026-09-07T16:44:20Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34144345245"
+      },
+      {
+        "id": 34138478796,
+        "event": "workflow_dispatch",
+        "sha": "d94cc5970d84deacb21ba69d6da120d35fa7658e",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-07T15:28:21Z",
+        "updatedAt": "2026-09-07T15:32:27Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34138478796"
+      },
+      {
+        "id": 34109963819,
+        "event": "workflow_dispatch",
+        "sha": "2b40aa5f6ea23979a235938253c577cd01f3305c",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-07T10:09:40Z",
+        "updatedAt": "2026-09-07T10:36:52Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34109963819"
+      },
+      {
+        "id": 34107726846,
+        "event": "workflow_dispatch",
+        "sha": "280b957e0c509ad9cc35eaf78f363fcf2315f6a1",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-07T09:44:36Z",
+        "updatedAt": "2026-09-07T09:57:30Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34107726846"
+      },
+      {
+        "id": 34105490240,
+        "event": "workflow_dispatch",
+        "sha": "39707f5b910e28be6617a812921c01941e699f6f",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-07T09:20:51Z",
+        "updatedAt": "2026-09-07T09:31:45Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34105490240"
+      },
+      {
+        "id": 34094203397,
+        "event": "workflow_dispatch",
+        "sha": "776aad62d38786630c254f2f64ea4ca1403dd8c2",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-07T07:10:49Z",
+        "updatedAt": "2026-09-07T07:36:03Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34094203397"
+      },
+      {
+        "id": 34058265040,
+        "event": "workflow_dispatch",
+        "sha": "03237fdcfbf9495c5fc091b583a0dab6a37b86e2",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-06T20:31:36Z",
+        "updatedAt": "2026-09-06T21:11:18Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34058265040"
+      },
+      {
+        "id": 34053155693,
+        "event": "workflow_dispatch",
+        "sha": "dc6ed2b43448a49251549bf5d0345aa4464d2672",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-06T18:53:47Z",
+        "updatedAt": "2026-09-06T18:54:48Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34053155693"
+      },
+      {
+        "id": 34043749963,
+        "event": "workflow_dispatch",
+        "sha": "e6f5d9aa02fc57673537a3b613e6c4cae26e2d90",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-06T15:54:05Z",
+        "updatedAt": "2026-09-06T16:16:05Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34043749963"
+      },
+      {
+        "id": 34041821224,
+        "event": "workflow_dispatch",
+        "sha": "31cb93e986e8d37dd1c66faf45b80544917904c1",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-06T15:17:11Z",
+        "updatedAt": "2026-09-06T15:19:18Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34041821224"
+      },
+      {
+        "id": 34036846549,
+        "event": "workflow_dispatch",
+        "sha": "f06c468e9ef80eaeae8757b0c89b548884c103c8",
+        "conclusion": "cancelled",
+        "attempt": null,
+        "createdAt": "2026-09-06T13:41:15Z",
+        "updatedAt": "2026-09-06T14:04:13Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34036846549"
+      },
+      {
+        "id": 34034314127,
+        "event": "workflow_dispatch",
+        "sha": "c0e90279d5db012f6dc13a3d95790321dde7ddc7",
+        "conclusion": "cancelled",
+        "attempt": null,
+        "createdAt": "2026-09-06T12:50:51Z",
+        "updatedAt": "2026-09-06T13:19:10Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34034314127"
+      },
+      {
+        "id": 34021668232,
+        "event": "workflow_dispatch",
+        "sha": "a0974846d62d4b7893cc93feae8d8ce73d227b05",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-06T08:22:28Z",
+        "updatedAt": "2026-09-06T08:46:02Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34021668232"
+      },
+      {
+        "id": 34019451577,
+        "event": "workflow_dispatch",
+        "sha": "9aaaaee1d2c1aeee2e2b8bf9cc0aecbdc2583d39",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-06T07:33:02Z",
+        "updatedAt": "2026-09-06T07:49:28Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34019451577"
+      },
+      {
+        "id": 34011605312,
+        "event": "workflow_dispatch",
+        "sha": "e15876744f281f50012148cc0d80a19dd2f22f71",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-06T04:28:56Z",
+        "updatedAt": "2026-09-06T04:49:45Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34011605312"
+      },
+      {
+        "id": 34007465830,
+        "event": "workflow_dispatch",
+        "sha": "9ac5a288675da688cae58531a7fc65e0e0c2ec91",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-06T02:49:36Z",
+        "updatedAt": "2026-09-06T02:57:23Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34007465830"
+      },
+      {
+        "id": 33992405163,
+        "event": "workflow_dispatch",
+        "sha": "fd0809dd40174c92f63ca703f65f2a49a61b601e",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-05T21:13:32Z",
+        "updatedAt": "2026-09-05T21:31:06Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33992405163"
+      },
+      {
+        "id": 33981982675,
+        "event": "workflow_dispatch",
+        "sha": "99b7496f75467595ac53da16cdf338770846f35b",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-05T17:46:11Z",
+        "updatedAt": "2026-09-05T18:02:36Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33981982675"
+      },
+      {
+        "id": 33978093067,
+        "event": "workflow_dispatch",
+        "sha": "bb035b45c02e649ecc2a3ef6bc9d6cb7029aac6e",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-05T16:30:39Z",
+        "updatedAt": "2026-09-05T17:08:36Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33978093067"
+      },
+      {
+        "id": 33976286719,
+        "event": "workflow_dispatch",
+        "sha": "8288fc2fc4af3fd096ecea6b7cd2e76ed363bac0",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T15:55:52Z",
+        "updatedAt": "2026-09-05T15:59:36Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33976286719"
+      },
+      {
+        "id": 33964919223,
+        "event": "workflow_dispatch",
+        "sha": "eecb62e30551a8e5e53ecfba8943d3b6e4db4735",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T12:02:22Z",
+        "updatedAt": "2026-09-05T12:03:21Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33964919223"
+      },
+      {
+        "id": 33961570612,
+        "event": "workflow_dispatch",
+        "sha": "de5fa851ce50f1d60e9fa143e88d7ebca11492d3",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-05T10:46:56Z",
+        "updatedAt": "2026-09-05T11:28:03Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33961570612"
+      },
+      {
+        "id": 33960026577,
+        "event": "workflow_dispatch",
+        "sha": "665d8207a7176e43cb40a6625b37c70a3c554777",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T10:12:32Z",
+        "updatedAt": "2026-09-05T10:30:32Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33960026577"
+      },
+      {
+        "id": 33957443636,
+        "event": "workflow_dispatch",
+        "sha": "77592b55171df5ee16516d3fdb5c590b0576c1ed",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T09:14:33Z",
+        "updatedAt": "2026-09-05T10:00:09Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33957443636"
+      },
+      {
+        "id": 33955269919,
+        "event": "workflow_dispatch",
+        "sha": "d9a00b4d64964bb5b7220f0ac0e604721bb74586",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T08:26:37Z",
+        "updatedAt": "2026-09-05T08:30:49Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33955269919"
+      },
+      {
+        "id": 33953873619,
+        "event": "workflow_dispatch",
+        "sha": "bd94f905b57ce95fd963c10398fcf248957f048c",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T07:55:40Z",
+        "updatedAt": "2026-09-05T08:01:51Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33953873619"
+      },
+      {
+        "id": 33948300841,
+        "event": "workflow_dispatch",
+        "sha": "d151e21e46e25fcb90856e821bddb77b1872eff1",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T05:51:46Z",
+        "updatedAt": "2026-09-05T05:55:58Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33948300841"
+      },
+      {
+        "id": 33944630537,
+        "event": "workflow_dispatch",
+        "sha": "d81a0f0b6656758ba6f2b58813f318f7d4769dae",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T04:28:09Z",
+        "updatedAt": "2026-09-05T04:31:21Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33944630537"
+      },
+      {
+        "id": 33857011602,
+        "event": "workflow_dispatch",
+        "sha": "9f8531e697e68f39d07e846872586dad841125ca",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-04T09:10:21Z",
+        "updatedAt": "2026-09-04T09:50:31Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33857011602"
+      },
+      {
+        "id": 33847342168,
+        "event": "workflow_dispatch",
+        "sha": "0c656a3b7310d013610c3432566c378f9f35d4ac",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-04T07:08:01Z",
+        "updatedAt": "2026-09-04T07:19:00Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33847342168"
+      },
+      {
+        "id": 33657076021,
+        "event": "workflow_dispatch",
+        "sha": "ccd6678305adc21dbafce4e0551a1afb161777e6",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-02T16:47:27Z",
+        "updatedAt": "2026-09-02T16:50:14Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33657076021"
+      },
+      {
+        "id": 33618102623,
+        "event": "workflow_dispatch",
+        "sha": "c340bc0e9ba2027b47ac00e01309a095f2f35155",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-02T10:10:46Z",
+        "updatedAt": "2026-09-02T10:28:42Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33618102623"
+      },
+      {
+        "id": 33616716987,
+        "event": "workflow_dispatch",
+        "sha": "4d7313844a3a23d35e07a9d8afe725cd480f940e",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-02T09:55:06Z",
+        "updatedAt": "2026-09-02T09:58:45Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33616716987"
+      },
+      {
+        "id": 33616216503,
+        "event": "workflow_dispatch",
+        "sha": "4d7313844a3a23d35e07a9d8afe725cd480f940e",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-02T09:49:31Z",
+        "updatedAt": "2026-09-02T09:52:18Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33616216503"
+      },
+      {
+        "id": 33610035451,
+        "event": "workflow_dispatch",
+        "sha": "4c7c20d603d7421aa698e850e29390f6e17c7ab2",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-02T08:41:13Z",
+        "updatedAt": "2026-09-02T08:54:16Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33610035451"
+      },
+      {
+        "id": 33493997659,
+        "event": "workflow_dispatch",
+        "sha": "88c2d8857159e2c14e5a0a40bceffe02603b4497",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-01T09:46:49Z",
+        "updatedAt": "2026-09-01T10:00:37Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33493997659"
+      },
+      {
+        "id": 33490894379,
+        "event": "workflow_dispatch",
+        "sha": "837aa982740a65f1f1da94cb3a6bebc98f82021a",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-01T09:11:19Z",
+        "updatedAt": "2026-09-01T09:24:50Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33490894379"
+      }
+    ],
+    "production": [
+      {
+        "id": 34171082432,
+        "event": "workflow_dispatch",
+        "sha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-07T23:45:14Z",
+        "updatedAt": "2026-09-08T00:00:51Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34171082432"
+      },
+      {
+        "id": 34060310070,
+        "event": "workflow_dispatch",
+        "sha": "03237fdcfbf9495c5fc091b583a0dab6a37b86e2",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-06T21:11:45Z",
+        "updatedAt": "2026-09-06T21:24:54Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34060310070"
+      },
+      {
+        "id": 34045458718,
+        "event": "workflow_dispatch",
+        "sha": "e6f5d9aa02fc57673537a3b613e6c4cae26e2d90",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-06T16:26:44Z",
+        "updatedAt": "2026-09-06T16:48:40Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34045458718"
+      },
+      {
+        "id": 34023027279,
+        "event": "workflow_dispatch",
+        "sha": "a0974846d62d4b7893cc93feae8d8ce73d227b05",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-06T08:51:34Z",
+        "updatedAt": "2026-09-06T09:13:30Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34023027279"
+      },
+      {
+        "id": 33983691089,
+        "event": "workflow_dispatch",
+        "sha": "99b7496f75467595ac53da16cdf338770846f35b",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-05T18:19:20Z",
+        "updatedAt": "2026-09-05T18:51:10Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33983691089"
+      },
+      {
+        "id": 33974112388,
+        "event": "workflow_dispatch",
+        "sha": "8288fc2fc4af3fd096ecea6b7cd2e76ed363bac0",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-09-05T15:13:00Z",
+        "updatedAt": "2026-09-05T15:32:59Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33974112388"
+      },
+      {
+        "id": 33971505407,
+        "event": "workflow_dispatch",
+        "sha": "c5625dc28d47b3d09bf389ab91ea8b01e9be0e7a",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T14:20:12Z",
+        "updatedAt": "2026-09-05T14:31:52Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33971505407"
+      },
+      {
+        "id": 33970706308,
+        "event": "workflow_dispatch",
+        "sha": "5df90fc1eeb27e2ffb865a054f05d0d003f5e82c",
+        "conclusion": "cancelled",
+        "attempt": null,
+        "createdAt": "2026-09-05T14:04:13Z",
+        "updatedAt": "2026-09-05T14:12:29Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33970706308"
+      },
+      {
+        "id": 33968359176,
+        "event": "workflow_dispatch",
+        "sha": "60627a00f35743cfedb0ac5575f51b1b971814b1",
+        "conclusion": "cancelled",
+        "attempt": null,
+        "createdAt": "2026-09-05T13:15:15Z",
+        "updatedAt": "2026-09-05T13:52:37Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33968359176"
+      },
+      {
+        "id": 33967379238,
+        "event": "workflow_dispatch",
+        "sha": "67e8dd90e52a2ac76a033e2f169127c43453ccd7",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T12:54:40Z",
+        "updatedAt": "2026-09-05T13:04:23Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33967379238"
+      },
+      {
+        "id": 33965643522,
+        "event": "workflow_dispatch",
+        "sha": "d524eab9123a334284047f3386d81549a5871e0c",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T12:18:00Z",
+        "updatedAt": "2026-09-05T12:26:29Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33965643522"
+      },
+      {
+        "id": 33964520268,
+        "event": "workflow_dispatch",
+        "sha": "eecb62e30551a8e5e53ecfba8943d3b6e4db4735",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T11:53:14Z",
+        "updatedAt": "2026-09-05T11:58:25Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33964520268"
+      },
+      {
+        "id": 33963568102,
+        "event": "workflow_dispatch",
+        "sha": "de5fa851ce50f1d60e9fa143e88d7ebca11492d3",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-05T11:31:43Z",
+        "updatedAt": "2026-09-05T11:36:02Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33963568102"
+      },
+      {
+        "id": 33317838540,
+        "event": "workflow_dispatch",
+        "sha": "241c568dfa10c2e88cc3b480b4d7ae44e17d22a8",
+        "conclusion": "success",
+        "attempt": null,
+        "createdAt": "2026-08-30T14:47:42Z",
+        "updatedAt": "2026-08-30T14:51:48Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33317838540"
+      },
+      {
+        "id": 33316841245,
+        "event": "workflow_dispatch",
+        "sha": "81cd5b31124372dbfbdaf0ed35a81d7e4c0336d6",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-08-30T14:25:51Z",
+        "updatedAt": "2026-08-30T14:29:58Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33316841245"
+      },
+      {
+        "id": 33315624750,
+        "event": "workflow_dispatch",
+        "sha": "83fa880efc6d55a125e0167920d7d79bfd6c7564",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-08-30T13:59:13Z",
+        "updatedAt": "2026-08-30T14:11:11Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33315624750"
+      },
+      {
+        "id": 33314447832,
+        "event": "workflow_dispatch",
+        "sha": "31199185648ed932d53310548dfffb368efb4b44",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-08-30T13:32:20Z",
+        "updatedAt": "2026-08-30T13:41:57Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33314447832"
+      },
+      {
+        "id": 33313582513,
+        "event": "workflow_dispatch",
+        "sha": "8eb9e54509a03fccf3864dbd31655ba430d5b229",
+        "conclusion": "cancelled",
+        "attempt": null,
+        "createdAt": "2026-08-30T13:13:19Z",
+        "updatedAt": "2026-08-30T13:19:05Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33313582513"
+      },
+      {
+        "id": 33312797286,
+        "event": "workflow_dispatch",
+        "sha": "c5a8d675344f85c54aefeb4685db92ac3166a20f",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-08-30T12:55:52Z",
+        "updatedAt": "2026-08-30T12:56:27Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33312797286"
+      },
+      {
+        "id": 33312072295,
+        "event": "workflow_dispatch",
+        "sha": "dbdeb8f6df30c8a35a2a7c3efd6e8cffe9406ef9",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-08-30T12:39:37Z",
+        "updatedAt": "2026-08-30T12:42:05Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33312072295"
+      }
+    ],
+    "acceptance": [
+      {
+        "id": 33467363955,
+        "event": "workflow_dispatch",
+        "sha": "43518c513a1da0ec3a6306af5b6d437997f143c0",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-09-01T03:45:30Z",
+        "updatedAt": "2026-09-01T03:47:20Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33467363955"
+      },
+      {
+        "id": 33320522892,
+        "event": "workflow_dispatch",
+        "sha": "241c568dfa10c2e88cc3b480b4d7ae44e17d22a8",
+        "conclusion": "failure",
+        "attempt": null,
+        "createdAt": "2026-08-30T15:45:12Z",
+        "updatedAt": "2026-08-30T15:45:22Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/33320522892"
+      }
+    ]
+  },
+  "representativeRunJobs": {
+    "34169355270": [
+      {
+        "name": "预检 / 静态检查",
+        "conclusion": "success",
+        "durationSeconds": 591.0,
+        "startedAt": "2026-09-07T23:14:28Z",
+        "completedAt": "2026-09-07T23:24:19Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 12.0
+          },
+          {
+            "name": "运行静态检查",
+            "conclusion": "success",
+            "durationSeconds": 133.0
+          },
+          {
+            "name": "校验已审核的生产迁移基线",
+            "conclusion": "success",
+            "durationSeconds": 432.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 规划",
+        "conclusion": "success",
+        "durationSeconds": 7.0,
+        "startedAt": "2026-09-07T23:14:27Z",
+        "completedAt": "2026-09-07T23:14:34Z",
+        "stepsAtLeast10SecondsOrFailed": []
+      },
+      {
+        "name": "预检 / PostgreSQL 契约",
+        "conclusion": "success",
+        "durationSeconds": 61.0,
+        "startedAt": "2026-09-07T23:14:36Z",
+        "completedAt": "2026-09-07T23:15:37Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "Initialize containers",
+            "conclusion": "success",
+            "durationSeconds": 11.0
+          },
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 10.0
+          },
+          {
+            "name": "运行 PostgreSQL 契约检查",
+            "conclusion": "success",
+            "durationSeconds": 22.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / Web 生产构建",
+        "conclusion": "success",
+        "durationSeconds": 81.0,
+        "startedAt": "2026-09-07T23:14:36Z",
+        "completedAt": "2026-09-07T23:15:57Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 11.0
+          },
+          {
+            "name": "运行 Web 生产检查",
+            "conclusion": "success",
+            "durationSeconds": 57.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 移动端与原生发布契约",
+        "conclusion": "success",
+        "durationSeconds": 90.0,
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:16:07Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js 22.23.1 与工作区缓存",
+            "conclusion": "success",
+            "durationSeconds": 15.0
+          },
+          {
+            "name": "检查共享模块与移动端类型",
+            "conclusion": "success",
+            "durationSeconds": 25.0
+          },
+          {
+            "name": "运行 M60-03 清洁预构建策略门禁",
+            "conclusion": "success",
+            "durationSeconds": 13.0
+          },
+          {
+            "name": "运行确定性移动端测试套件",
+            "conclusion": "success",
+            "durationSeconds": 21.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 移动端路由导出",
+        "conclusion": "success",
+        "durationSeconds": 119.0,
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:16:36Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 11.0
+          },
+          {
+            "name": "导出真实 iOS 与 Android 路由包",
+            "conclusion": "success",
+            "durationSeconds": 95.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 测试（server 1/4）",
+        "conclusion": "success",
+        "durationSeconds": 185.0,
+        "startedAt": "2026-09-07T23:14:38Z",
+        "completedAt": "2026-09-07T23:17:43Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "Initialize containers",
+            "conclusion": "success",
+            "durationSeconds": 13.0
+          },
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 14.0
+          },
+          {
+            "name": "运行 server 测试（full，分片 1/4）",
+            "conclusion": "success",
+            "durationSeconds": 136.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 测试（server 3/4）",
+        "conclusion": "success",
+        "durationSeconds": 150.0,
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:07Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "Initialize containers",
+            "conclusion": "success",
+            "durationSeconds": 12.0
+          },
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 11.0
+          },
+          {
+            "name": "运行 server 测试（full，分片 3/4）",
+            "conclusion": "success",
+            "durationSeconds": 112.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 测试（server 2/4）",
+        "conclusion": "success",
+        "durationSeconds": 154.0,
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:11Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "Initialize containers",
+            "conclusion": "success",
+            "durationSeconds": 13.0
+          },
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 11.0
+          },
+          {
+            "name": "运行 server 测试（full，分片 2/4）",
+            "conclusion": "success",
+            "durationSeconds": 113.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 测试（shared 1/1）",
+        "conclusion": "success",
+        "durationSeconds": 41.0,
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:15:18Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 11.0
+          },
+          {
+            "name": "运行 shared 测试（full，分片 1/1）",
+            "conclusion": "success",
+            "durationSeconds": 15.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 测试（web 1/2）",
+        "conclusion": "success",
+        "durationSeconds": 182.0,
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:39Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 12.0
+          },
+          {
+            "name": "运行 web 测试（full，分片 1/2）",
+            "conclusion": "success",
+            "durationSeconds": 153.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 测试（web 2/2）",
+        "conclusion": "success",
+        "durationSeconds": 190.0,
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:47Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 13.0
+          },
+          {
+            "name": "运行 web 测试（full，分片 2/2）",
+            "conclusion": "success",
+            "durationSeconds": 156.0
+          }
+        ]
+      },
+      {
+        "name": "预检 / 测试（server 4/4）",
+        "conclusion": "success",
+        "durationSeconds": 148.0,
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:05Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "Initialize containers",
+            "conclusion": "success",
+            "durationSeconds": 19.0
+          },
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 12.0
+          },
+          {
+            "name": "运行 server 测试（full，分片 4/4）",
+            "conclusion": "success",
+            "durationSeconds": 97.0
+          }
+        ]
+      },
+      {
+        "name": "Build & Check",
+        "conclusion": "success",
+        "durationSeconds": 51.0,
+        "startedAt": "2026-09-07T23:24:22Z",
+        "completedAt": "2026-09-07T23:25:13Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 12.0
+          },
+          {
+            "name": "合并分片覆盖率",
+            "conclusion": "success",
+            "durationSeconds": 20.0
+          }
+        ]
+      },
+      {
+        "name": "部署到 ECS",
+        "conclusion": "skipped",
+        "durationSeconds": 0.0,
+        "startedAt": "2026-09-07T23:25:14Z",
+        "completedAt": "2026-09-07T23:25:14Z",
+        "stepsAtLeast10SecondsOrFailed": []
+      },
+      {
+        "name": "规划生产部署",
+        "conclusion": "skipped",
+        "durationSeconds": 0.0,
+        "startedAt": "2026-09-07T23:25:14Z",
+        "completedAt": "2026-09-07T23:25:14Z",
+        "stepsAtLeast10SecondsOrFailed": []
+      },
+      {
+        "name": "将 Web 部署到 OSS",
+        "conclusion": "skipped",
+        "durationSeconds": 0.0,
+        "startedAt": "2026-09-07T23:25:14Z",
+        "completedAt": "2026-09-07T23:25:14Z",
+        "stepsAtLeast10SecondsOrFailed": []
+      }
+    ],
+    "34169361409": [
+      {
+        "name": "按需升级发布证据 Writer",
+        "conclusion": "success",
+        "durationSeconds": 702.0,
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:26:19Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "升级前确认可信 main 与 APP CI",
+            "conclusion": "success",
+            "durationSeconds": 636.0
+          },
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 14.0
+          },
+          {
+            "name": "原子升级并验证 Writer",
+            "conclusion": "success",
+            "durationSeconds": 17.0
+          }
+        ]
+      },
+      {
+        "name": "准备发布证据",
+        "conclusion": "success",
+        "durationSeconds": 212.0,
+        "startedAt": "2026-09-07T23:26:23Z",
+        "completedAt": "2026-09-07T23:29:55Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 10.0
+          },
+          {
+            "name": "只读获取在线生产状态",
+            "conclusion": "success",
+            "durationSeconds": 19.0
+          },
+          {
+            "name": "将不可变 OSS 产物绑定到在线生产环境",
+            "conclusion": "success",
+            "durationSeconds": 149.0
+          },
+          {
+            "name": "生成、发布并回读不可变发布证据",
+            "conclusion": "success",
+            "durationSeconds": 10.0
+          }
+        ]
+      },
+      {
+        "name": "构建并校验精确的测试环境 RC",
+        "conclusion": "success",
+        "durationSeconds": 834.0,
+        "startedAt": "2026-09-07T23:30:00Z",
+        "completedAt": "2026-09-07T23:43:54Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "durationSeconds": 14.0
+          },
+          {
+            "name": "读取权威候选与生产证据",
+            "conclusion": "success",
+            "durationSeconds": 11.0
+          },
+          {
+            "name": "按需解析精确 ACS 镜像",
+            "conclusion": "success",
+            "durationSeconds": 27.0
+          },
+          {
+            "name": "一次性构建不可变产物",
+            "conclusion": "success",
+            "durationSeconds": 90.0
+          },
+          {
+            "name": "持久化内容寻址产物",
+            "conclusion": "success",
+            "durationSeconds": 77.0
+          },
+          {
+            "name": "实例化并校验清单选定产物",
+            "conclusion": "success",
+            "durationSeconds": 48.0
+          },
+          {
+            "name": "创建不可变 RC 标签、Release 与构建证明",
+            "conclusion": "success",
+            "durationSeconds": 65.0
+          },
+          {
+            "name": "记录部署前测试环境组件状态",
+            "conclusion": "success",
+            "durationSeconds": 10.0
+          },
+          {
+            "name": "部署精确的测试环境 API、Worker 与 ACS 产物",
+            "conclusion": "success",
+            "durationSeconds": 294.0
+          },
+          {
+            "name": "最后发布精确的测试环境 Web 产物",
+            "conclusion": "success",
+            "durationSeconds": 99.0
+          },
+          {
+            "name": "逐项核验本次迁移的数据库后置条件",
+            "conclusion": "success",
+            "durationSeconds": 14.0
+          },
+          {
+            "name": "校验在线反向隔离证据",
+            "conclusion": "success",
+            "durationSeconds": 25.0
+          }
+        ]
+      }
+    ],
+    "34171082432": [
+      {
+        "name": "晋级已批准的不可变产物",
+        "conclusion": "success",
+        "durationSeconds": 930.0,
+        "startedAt": "2026-09-07T23:45:20Z",
+        "completedAt": "2026-09-08T00:00:50Z",
+        "stepsAtLeast10SecondsOrFailed": [
+          {
+            "name": "写入前读取权威在线生产前缀",
+            "conclusion": "success",
+            "durationSeconds": 21.0
+          },
+          {
+            "name": "预取、校验并安全解压清单选定产物与 ACS 身份",
+            "conclusion": "success",
+            "durationSeconds": 82.0
+          },
+          {
+            "name": "上传不可变部署载荷与 RC 绑定的托管单元",
+            "conclusion": "success",
+            "durationSeconds": 47.0
+          },
+          {
+            "name": "优先部署精确的 ACS 编排器与沙箱摘要",
+            "conclusion": "success",
+            "durationSeconds": 172.0
+          },
+          {
+            "name": "持久化 API 与 Worker 操作开始回执",
+            "conclusion": "success",
+            "durationSeconds": 15.0
+          },
+          {
+            "name": "蓝绿部署 API 并交接运行时 Worker",
+            "conclusion": "success",
+            "durationSeconds": 118.0
+          },
+          {
+            "name": "持久化 API 与 Worker 操作回执",
+            "conclusion": "success",
+            "durationSeconds": 15.0
+          },
+          {
+            "name": "最后发布 Web 入口并保留旧版哈希资源",
+            "conclusion": "success",
+            "durationSeconds": 109.0
+          },
+          {
+            "name": "读取全部在线组件并仅在完全收敛后提交可信身份",
+            "conclusion": "success",
+            "durationSeconds": 51.0
+          },
+          {
+            "name": "核对组件结果",
+            "conclusion": "success",
+            "durationSeconds": 10.0
+          },
+          {
+            "name": "自动核验扩展迁移并完成发布",
+            "conclusion": "success",
+            "durationSeconds": 200.0
+          }
+        ]
+      }
+    ]
+  },
+  "rules": {
+    "main": {
+      "id": 21647708,
+      "name": "main-release-admission",
+      "target": "branch",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": ["refs/heads/main"]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": true,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": ["merge", "squash", "rebase"]
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": true,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "Build & Check"
+              },
+              {
+                "context": "ACS Impact Gate"
+              }
+            ]
+          }
+        }
+      ],
+      "bypass_actors": []
+    },
+    "rcTags": {
+      "id": 21647710,
+      "name": "immutable-rc-tags",
+      "target": "tag",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": ["refs/tags/rc-*"]
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "update"
+        }
+      ],
+      "bypass_actors": []
+    },
+    "environmentBranchPolicies": {
+      "production": [
+        {
+          "id": 58391105,
+          "node_id": "MDE2OkdhdGVCcmFuY2hQb2xpY3k1ODM5MTEwNQ==",
+          "name": "main",
+          "type": "branch"
+        }
+      ],
+      "staging": [
+        {
+          "id": 58391101,
+          "node_id": "MDE2OkdhdGVCcmFuY2hQb2xpY3k1ODM5MTEwMQ==",
+          "name": "main",
+          "type": "branch"
+        }
+      ]
+    }
+  },
+  "publicHealth": [
+    {
+      "url": "https://api.agent.kaiyan.net/api/healthz/live",
+      "observedAt": "2026-09-08T00:19:12.321707+00:00",
+      "httpStatus": 200,
+      "result": "ok"
+    },
+    {
+      "url": "https://api.agent.kaiyan.net/api/healthz/ready",
+      "observedAt": "2026-09-08T00:19:12.408475+00:00",
+      "httpStatus": 200,
+      "release": {
+        "environment": "production",
+        "releaseId": "rc-20260907-84",
+        "releaseSha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+        "serverDigest": "sha256:82e9850da980411b42d0fae1876f3863d027a0231d9a171d624365a7cd81cada",
+        "webDigest": "sha256:8ed6043c421afbfe72cb0acb0cf7624ca436bfc804851a565b913e39bf8b9355",
+        "acsOrchestratorDigest": "sha256:e021964ca8f61287fccf9944b651ce95ea069cad16473b8a5327272977202cf2",
+        "acsSandboxImageDigest": "sha256:e1dbc57ab42e693587d8c1bf6c3e6b24393069ba65de266e92bed81b2ba02480",
+        "safetyAttested": true
+      }
+    },
+    {
+      "url": "https://agent.kaiyan.net/release-identity.json",
+      "observedAt": "2026-09-08T00:19:12.589181+00:00",
+      "httpStatus": 200,
+      "release": {
+        "schemaVersion": 1,
+        "environment": "production",
+        "releaseId": "rc-20260907-84",
+        "releaseSha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+        "webDigest": "sha256:8ed6043c421afbfe72cb0acb0cf7624ca436bfc804851a565b913e39bf8b9355",
+        "configFingerprint": "sha256:095d6cadabd9e0e44062b3477567e7c0a80978d532d307d7683b75824aeeb8af"
+      }
+    },
+    {
+      "url": "https://staging-agent-api.kaiyan.net/api/healthz/ready",
+      "observedAt": "2026-09-08T00:19:33.184345+00:00",
+      "httpStatus": 200,
+      "release": {
+        "environment": "staging",
+        "releaseId": "rc-20260907-84",
+        "releaseSha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+        "serverDigest": "sha256:82e9850da980411b42d0fae1876f3863d027a0231d9a171d624365a7cd81cada",
+        "webDigest": "sha256:8ed6043c421afbfe72cb0acb0cf7624ca436bfc804851a565b913e39bf8b9355",
+        "acsOrchestratorDigest": "sha256:e021964ca8f61287fccf9944b651ce95ea069cad16473b8a5327272977202cf2",
+        "acsSandboxImageDigest": "sha256:e1dbc57ab42e693587d8c1bf6c3e6b24393069ba65de266e92bed81b2ba02480",
+        "safetyAttested": true
+      }
+    }
+  ],
+  "localReproductions": {
+    "migrationOriginalProfile": {
+      "elapsedMs": 15764.0165,
+      "stats": {
+        "diff": {
+          "count": 6,
+          "ms": 76.60350099999755
+        },
+        "ls-tree": {
+          "count": 2,
+          "ms": 28.53133399999996
+        },
+        "cat-file": {
+          "count": 2,
+          "ms": 545.6078749999999
+        },
+        "show": {
+          "count": 1921,
+          "ms": 10874.621370000028
+        }
+      },
+      "ok": false,
+      "blockingReasons": ["Missing database postconditions for server/src/apns/store.ts"]
+    },
+    "migrationFullPlanAB": {
+      "baseline": "9f8531e697e68f39d07e846872586dad841125ca",
+      "target": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+      "originalMs": 12784.978334,
+      "prefilteredMs": 3856.243708,
+      "deepStrictEqual": true,
+      "originalDigest": "sha256:61e699ee40d437cbc8f0f9ace5ca9140cbf372ee1ed80b501f56cea950f710a7",
+      "prefilteredDigest": "sha256:61e699ee40d437cbc8f0f9ace5ca9140cbf372ee1ed80b501f56cea950f710a7",
+      "before": {
+        "ok": false,
+        "migrationPlan": {
+          "phase": "expand",
+          "planDigest": "sha256:4316341f38a86b94c5dea17dfab2f66f246fa83df9a5caa0e463d11780a3b63e",
+          "confirmation": "required_after_observation",
+          "contract": "separate_release"
+        },
+        "blockingReasons": ["Missing database postconditions for server/src/apns/store.ts"],
+        "postconditionBlockingReasons": [
+          "Missing database postconditions for server/src/apns/store.ts"
+        ]
+      },
+      "after": {
+        "ok": false,
+        "migrationPlan": {
+          "phase": "expand",
+          "planDigest": "sha256:4316341f38a86b94c5dea17dfab2f66f246fa83df9a5caa0e463d11780a3b63e",
+          "confirmation": "required_after_observation",
+          "contract": "separate_release"
+        },
+        "blockingReasons": ["Missing database postconditions for server/src/apns/store.ts"],
+        "postconditionBlockingReasons": [
+          "Missing database postconditions for server/src/apns/store.ts"
+        ]
+      }
+    },
+    "affectedGuardSelection": {
+      "changedSource": ["web/src/hooks/useChatAppState.ts"],
+      "matchingTests": [
+        "web/src/hooks/useChatAppState.approvalTier.guard.test.ts",
+        "web/src/hooks/useChatAppState.resumeCursor.guard.test.ts",
+        "web/src/hooks/useChatAppState.swGuard.test.ts"
+      ],
+      "selectedTests": []
+    },
+    "writerArchiveRetry": {
+      "source": "scripts/release/deploy-evidence-writer.sh:62-71",
+      "identicalFileBytes": true,
+      "archiveDigests": [
+        "sha256:a8858afadf1542cb527a7310c470250f85b5c0a953c8ce390b162e8cab9aee5d",
+        "sha256:2e0998892c6bf49a65f80dde9c86cd25fc14fbaa84fc0b6a523ae6a5e38c5cd8"
+      ],
+      "sameShaTargetReuseExitCode": 1,
+      "interpretation": "Timestamp-only archive change makes an existing immutable same-SHA writer release fail the retry digest check. No live host was accessed."
+    },
+    "handoffFinalization": "ACTUAL_OPERATION_RECEIPT failed writer exit = success\nINPUT_CONTEXT {\"deploy_app\":\"failure after authority commit, drain ACK failed\",\"webAction\":\"keep\",\"retiredGenerationStillActive\":true,\"rollbackStarted\":false}\nACTUAL_RECONCILER {\"outcome\":\"completed\",\"reason\":\"all components match the Manifest target with confirmed ConfigIdentity\"}\nACTUAL_FINAL_OUTCOME=completed",
+    "migrationPostcondition": "CURRENT_POSTCONDITION_RESULT {\"schemaVersion\":1,\"releaseId\":\"rc-20260908-01\",\"manifestDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"planDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"postconditionsDigest\":\"sha256:deb438bac0b5a63a8231b4f9270b95be751ed10099d1a93efe5e77e67f280d21\",\"environment\":\"production\",\"observedAt\":\"2026-09-08T00:22:15.923Z\",\"status\":\"passed\",\"checks\":[{\"id\":\"provider-plan-expiry-schema\",\"status\":\"passed\",\"database\":\"postgres\",\"targetDigest\":\"sha256:6c7b5b522d3e155faefa37228d2c53ca37d92bcb29d54c1bf26dacb3fc1b7159\"}]}\nBUSINESS_INSERT_FAILED_AS_EXPECTED 23502 null value in column \"id\" of relation \"audit_provider_plan_expiry_edits\" violates not-null constraint"
+  },
+  "localValidation": {
+    "stagingWorkflowAndBindingContracts": {
+      "passed": 39,
+      "failed": 0
+    },
+    "productionPortableRegression": {
+      "passed": 23,
+      "failed": 0
+    },
+    "additionalLinuxSpecificTestsOnMac": {
+      "passed": 22,
+      "failed": 5,
+      "cancelled": 1,
+      "limitation": "Missing Linux executables and paths; not evidence of production defects."
+    }
+  },
+  "rawEvidenceDirectory": "/tmp/agent-saas-cicd-audit-20260908"
+}

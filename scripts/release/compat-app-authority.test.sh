@@ -4,7 +4,7 @@ set -Eeuo pipefail
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 helper="$script_dir/compat-app-authority.sh"
-workflow="$repo_root/.github/workflows/ci.yml"
+workflow="$script_dir/fixtures/legacy-ecs-workflow.yml"
 bash -n "$helper"
 fail() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
 grep -Fq 'LOCK_FILE="/run/lock/agent-saas/promotion.lock"' "$helper" \

@@ -43,8 +43,7 @@
 目标 SHA 的累计变更；仅当差异可证明只涉及 Web、Mobile、文档、测试等非 Server 路径时，
 才允许 `deploy-web-oss` 发布 OSS 与 ECS 冷灾备。只要包含 Server、Shared、技能源、依赖、
 部署配置或未知路径，或生产基线不可读、不是目标祖先、分类命令失败，工作流都会在任何生产
-mutation 前 **fail closed**。该入口不再接受 `force_ecs`，`deploy-ecs` 在 compatibility
-手动入口不可达；Server/API/Runtime Worker 变更必须走 Staging RC 与 Production
+mutation 前 **fail closed**。该入口不再接受 `force_ecs`，`deploy-ecs` 已从工作流移除；Server/API/Runtime Worker 变更必须走 Staging RC 与 Production
 Promotion 正式链路。
 
 Web-only compatibility 将 OSS 入口、ECS recovery Web 与 trusted Production identity
@@ -54,7 +53,7 @@ identity commit 完成，或失败补偿与权威读回证明结束；锁租约�
 和原 trusted identity，并在权威读回证明三者一致后以失败结束。若补偿或证明失败，必须人工
 处置，不能把该次运行视为发布成功。
 
-`deploy-ecs` 蓝绿流程概要（远端脚本 13 步详解见[零停机部署](zero-downtime-deployment.md)）：
+以下是历史 `deploy-ecs` 蓝绿恢复机制，脚本仅保留在 `scripts/release/fixtures/legacy-ecs-workflow.yml` 供回归测试，不是可调用的发布入口。当前生产发布以 `promote-release.yml` 和 `scripts/release/deploy-production-release.sh` 为准（背景见[零停机部署](zero-downtime-deployment.md)）：
 
 1. 打包不含 `web/` 的 Server release，scp 上传 ECS。
 2. 读 `/etc/agent-saas/active-color` 定位 idle 色；校验 active 实例在服务。

@@ -1,11 +1,65 @@
 import { createHash } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFileSync as defaultExecFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { posix } from 'node:path';
+import { posix, resolve } from 'node:path';
 import ts from 'typescript';
 import { canonicalJson, SHA_PATTERN } from './artifact-lib.mjs';
 import { loadMigrationReviews } from './migration-reviews.mjs';
 import { attachPostconditions } from './migration-postconditions.mjs';
+
+// These caches contain only immutable Git input and parsed syntax, never a release decision.
+// Bound them to one repository/reader and keep memory bounded across historical baselines.
+const analysisStates = new WeakMap();
+const currentAnalysis = new AsyncLocalStorage();
+const MAX_SNAPSHOTS = 2;
+const MAX_SOURCE_FILES = 512;
+
+export function createMigrationAnalysisContext() {
+  const state = {
+    binding: null,
+    snapshots: new Map(),
+    sourceFiles: new Map(),
+    counters: { snapshotsCreated: 0, snapshotHits: 0, sourceFilesParsed: 0, sourceFileHits: 0 },
+  };
+  const context = Object.freeze({ statistics: () => ({ ...state.counters }) });
+  analysisStates.set(context, state);
+  return context;
+}
+
+function cachedValue(cache, key, limit, create, onHit) {
+  if (cache.has(key)) {
+    const value = cache.get(key);
+    cache.delete(key);
+    cache.set(key, value);
+    onHit();
+    return value;
+  }
+  const value = create();
+  cache.set(key, value);
+  if (cache.size > limit) cache.delete(cache.keys().next().value);
+  return value;
+}
+
+function parseSourceFile(path, content, languageVersion, setParentNodes, scriptKind) {
+  const state = currentAnalysis.getStore();
+  if (!state)
+    return ts.createSourceFile(path, content, languageVersion, setParentNodes, scriptKind);
+  // Path and parser options are part of syntax identity; equal contents alone are insufficient.
+  const key = JSON.stringify([path, digest(content), languageVersion, setParentNodes, scriptKind]);
+  return cachedValue(
+    state.sourceFiles,
+    key,
+    MAX_SOURCE_FILES,
+    () => {
+      state.counters.sourceFilesParsed += 1;
+      return ts.createSourceFile(path, content, languageVersion, setParentNodes, scriptKind);
+    },
+    () => {
+      state.counters.sourceFileHits += 1;
+    },
+  );
+}
 
 const MIGRATION_PATHS = [
   /^server\/src\/data\/(?:.+\/)?migrations?\.ts$/u,
@@ -811,13 +865,7 @@ function analyzeScriptMigration(content, diff, path) {
   const addedLines = addedTargetLines(diff);
   if (addedLines.size === 0) return analysis;
 
-  const sourceFile = ts.createSourceFile(
-    path,
-    content,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const sourceFile = parseSourceFile(path, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if ((sourceFile.parseDiagnostics ?? []).length > 0) {
     analysis.unsafe = true;
     return analysis;
@@ -857,13 +905,7 @@ function hasSqlShape(value) {
 // 返回 null 表示无法判定（非脚本文件或解析失败），调用方必须回退到严格逻辑。
 function staticSqlLiteralSignature(content, path) {
   if (content === null || !SCRIPT_MIGRATION_PATTERN.test(path)) return null;
-  const sourceFile = ts.createSourceFile(
-    path,
-    content,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const sourceFile = parseSourceFile(path, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if ((sourceFile.parseDiagnostics ?? []).length > 0) return null;
   const literals = [];
   const collect = (node) => {
@@ -883,13 +925,7 @@ function staticSqlLiteralSignature(content, path) {
 // 变更行是否碰到任何「import 时会执行代码」的顶层语句。解析不了一律当作碰到了。
 function changeTouchesTopLevelExecutableStatement(content, path, lines) {
   if (lines.size === 0) return false;
-  const sourceFile = ts.createSourceFile(
-    path,
-    content,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const sourceFile = parseSourceFile(path, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if ((sourceFile.parseDiagnostics ?? []).length > 0) return true;
   return sourceFile.statements.some(
     (statement) =>
@@ -935,13 +971,7 @@ function isSqlNeutralDependencyChange({
 }
 
 function relativeModuleDependencies(content, path, requestedBindings, requestedCallableBindings) {
-  const sourceFile = ts.createSourceFile(
-    path,
-    content,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const sourceFile = parseSourceFile(path, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if ((sourceFile.parseDiagnostics ?? []).length > 0)
     throw new Error(`Migration dependency ${path} is not valid TypeScript`);
 
@@ -3427,13 +3457,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
 
 function hasUnprovenRuntimeModuleLoad(content, path, repositoryPaths) {
   if (!SCRIPT_MIGRATION_PATTERN.test(path)) return false;
-  const sourceFile = ts.createSourceFile(
-    path,
-    content,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const sourceFile = parseSourceFile(path, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if ((sourceFile.parseDiagnostics ?? []).length > 0)
     throw new Error(`Migration dependency ${path} is not valid TypeScript`);
 
@@ -3685,13 +3709,7 @@ function isDeferredFunctionExpression(expression) {
 
 function hasTopLevelExecutableCode(path, content) {
   if (!SCRIPT_MIGRATION_PATTERN.test(path)) return false;
-  const sourceFile = ts.createSourceFile(
-    path,
-    content,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const sourceFile = parseSourceFile(path, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if ((sourceFile.parseDiagnostics ?? []).length > 0)
     throw new Error(`Migration dependency ${path} is not valid TypeScript`);
 
@@ -3783,13 +3801,7 @@ function isMigrationExecutionModule(path, content) {
 
 function hasRequestedCallableExport(path, content, requestedCallableBindings) {
   if (requestedCallableBindings.size === 0 || !SCRIPT_MIGRATION_PATTERN.test(path)) return false;
-  const sourceFile = ts.createSourceFile(
-    path,
-    content,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const sourceFile = parseSourceFile(path, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if ((sourceFile.parseDiagnostics ?? []).length > 0)
     throw new Error(`Migration dependency ${path} is not valid TypeScript`);
 
@@ -3907,13 +3919,7 @@ function hasRequestedCallableExport(path, content, requestedCallableBindings) {
 
 function isDeclarativeSqlProvider(path, content, requestedBindings) {
   if (!SCRIPT_MIGRATION_PATTERN.test(path)) return false;
-  const sourceFile = ts.createSourceFile(
-    path,
-    content,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const sourceFile = parseSourceFile(path, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if ((sourceFile.parseDiagnostics ?? []).length > 0)
     throw new Error(`Migration dependency ${path} is not valid TypeScript`);
 
@@ -4036,7 +4042,7 @@ function authorityRootsIntersectingDiff(snapshot, candidatePaths) {
       return [];
     }
     const content = snapshot.read(path);
-    const sourceFile = ts.createSourceFile(
+    const sourceFile = parseSourceFile(
       path,
       content,
       ts.ScriptTarget.Latest,
@@ -4299,7 +4305,19 @@ function pathsFromTree(value) {
   return value.split(value.includes('\0') ? '\0' : /\r?\n/u).filter(Boolean);
 }
 
-export function createMigrationPlan({
+export function createMigrationPlan(options) {
+  const context = options.analysisContext ?? createMigrationAnalysisContext();
+  const state = analysisStates.get(context);
+  if (!state) throw new Error('Invalid migration analysis context');
+  const cwd = resolve(options.cwd ?? process.cwd());
+  const reader = options.execFileSync ?? defaultExecFileSync;
+  if (state.binding && (state.binding.cwd !== cwd || state.binding.reader !== reader))
+    throw new Error('Migration analysis context cannot cross repositories or Git readers');
+  state.binding ??= { cwd, reader };
+  return currentAnalysis.run(state, () => createMigrationPlanFromInput(options));
+}
+
+function createMigrationPlanFromInput({
   changedPaths,
   baseline,
   target,
@@ -4316,7 +4334,22 @@ export function createMigrationPlan({
   let targetClosure = new Set();
   const snapshots = new Map();
   const snapshotFor = (sha) => {
-    if (!snapshots.has(sha)) snapshots.set(sha, createRepositorySnapshot(execFileSync, cwd, sha));
+    if (!snapshots.has(sha)) {
+      const state = currentAnalysis.getStore();
+      const snapshot = cachedValue(
+        state.snapshots,
+        sha,
+        MAX_SNAPSHOTS,
+        () => {
+          state.counters.snapshotsCreated += 1;
+          return createRepositorySnapshot(execFileSync, cwd, sha);
+        },
+        () => {
+          state.counters.snapshotHits += 1;
+        },
+      );
+      snapshots.set(sha, snapshot);
+    }
     return snapshots.get(sha);
   };
   try {
@@ -4346,6 +4379,10 @@ export function createMigrationPlan({
       }
       const roots = authorityRootsIntersectingDiff(snapshot, candidatePaths);
       for (const path of candidatePaths) {
+        // The detector below cannot accept other paths. Avoid spawning git show for
+        // docs/assets and for paths absent on this side of additions/deletions/renames.
+        if (!PRODUCTION_SCHEMA_MODULE_PATH.test(path) || !snapshot.repositoryPaths.has(path))
+          continue;
         try {
           const content = snapshot.read(path);
           if (isProductionStartupSchemaRootSource(path, content)) roots.add(path);
@@ -4524,7 +4561,8 @@ export function createMigrationPlan({
     }
     inventory.push({
       path,
-      baselineBlobDigest: readBaselineContent(path) === null ? null : digest(readBaselineContent(path) ?? ''),
+      baselineBlobDigest:
+        readBaselineContent(path) === null ? null : digest(readBaselineContent(path) ?? ''),
       targetBlobDigest: digest(content),
       addedLinesDigest: digest(additions),
       deletedLinesDigest: digest(deletions),
@@ -4539,9 +4577,20 @@ export function createMigrationPlan({
   )
     ? 'expand'
     : 'none';
-  const planBody = { schemaVersion: 2, baselineSha: baseline, releaseSha: target, phase, files: inventory };
+  const planBody = {
+    schemaVersion: 2,
+    baselineSha: baseline,
+    releaseSha: target,
+    phase,
+    files: inventory,
+  };
   const sourceFailureCount = blockingReasons.length;
-  const postconditions = attachPostconditions(planBody, snapshotFor(target), inventory, blockingReasons);
+  const postconditions = attachPostconditions(
+    planBody,
+    snapshotFor(target),
+    inventory,
+    blockingReasons,
+  );
   Object.assign(planBody, postconditions);
   return {
     ok: blockingReasons.length === 0,

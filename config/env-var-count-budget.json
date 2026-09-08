@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "WP5 ky-app-cli 平台交付命令：KY_PLATFORM_URL 明确选择目标平台，KY_PLATFORM_TOKEN 仅通过进程环境传入管理员凭据，禁止出现在命令行、文件与日志",
-  "updatedAt": "2026-09-06",
+  "reason": "CI/CD hardening: ACS_ORCH_DRAIN_STATE_FILE binds durable drain acknowledgment; AGENT_SAAS_EVIDENCE_IMPLEMENTATION_DIGEST identifies Writer implementation; CI_TEST_MATRIX validates coverage completeness; GITHUB_ENV and GITHUB_RUN_ID/GITHUB_RUN_ATTEMPT bind evidence; MP_TEST_DATABASE_URL is restricted to an isolated loopback PostgreSQL; STAGING_API_URL selects the fixed smoke target; PATH is preserved explicitly for the isolated ACS package child without inheriting deployment secrets.",
+  "updatedAt": "2026-09-08",
   "domains": {
     "server": {
       "budget": 64,
@@ -73,7 +73,7 @@
       ]
     },
     "acs-orchestrator": {
-      "budget": 43,
+      "budget": 44,
       "names": [
         "ACS_ALERT_WEBHOOK_BEARER_TOKEN",
         "ACS_ALERT_WEBHOOK_URL",
@@ -82,6 +82,7 @@
         "ACS_KUBECTL_PATH",
         "ACS_MAX_VENV_ARCHIVES",
         "ACS_NAMESPACE",
+        "ACS_ORCH_DRAIN_STATE_FILE",
         "ACS_ORCH_HOST",
         "ACS_ORCH_LOG_LEVEL",
         "ACS_ORCH_PIDFILE",
@@ -151,15 +152,17 @@
       "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
     },
     "deployment/scripts": {
-      "budget": 40,
+      "budget": 48,
       "names": [
         "ACS_ORCH_AUTH_TOKEN",
         "AGENT_SAAS_ADMIN_LAUNCH_NONCE",
         "AGENT_SAAS_ADMIN_RECEIPT_DIR",
         "AGENT_SAAS_EMBEDDED",
+        "AGENT_SAAS_EVIDENCE_IMPLEMENTATION_DIGEST",
         "AGENT_SAAS_RELEASE_ATTESTATION_DIR",
         "AGENT_SAAS_RELEASE_MANIFEST_DIR",
         "AGENT_TRANSCRIPTS_ROOT",
+        "CI_TEST_MATRIX",
         "CLIENT_DAEMON_AUTH_TOKEN",
         "CLIENT_DAEMON_HAND_ID",
         "CLIENT_DAEMON_HEARTBEAT_INTERVAL_MS",
@@ -175,11 +178,16 @@
         "COVERAGE_BASE_REF",
         "COVERAGE_INCLUDE_EXT",
         "DATABASE_URL",
+        "GITHUB_ENV",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_RUN_ID",
         "GITHUB_STEP_SUMMARY",
         "HOME",
         "HTTPS_PROXY",
         "MODEL",
+        "MP_TEST_DATABASE_URL",
         "MP_WORKER_PROCESS_ROLE",
+        "PATH",
         "RELEASE_EVIDENCE_HOST",
         "RELEASE_EVIDENCE_PORT",
         "RELEASE_EVIDENCE_READ_TOKEN",
@@ -187,6 +195,7 @@
         "RELEASE_EVIDENCE_ROOT",
         "RELEASE_EVIDENCE_WRITE_TOKEN",
         "RELEASE_EVIDENCE_WRITE_TOKEN_FILE",
+        "STAGING_API_URL",
         "STAGING_E2E_PASSWORD",
         "STAGING_E2E_USERNAME",
         "STAGING_VAULT_KEY",

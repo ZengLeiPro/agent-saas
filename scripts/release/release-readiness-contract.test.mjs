@@ -612,17 +612,13 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
     'DEPLOY_APP_ROLLBACK_COMMITTED=true',
     forwardAppMarker,
   );
-  const forwardHandoffWorker = production.indexOf(
-    'hand_off_retired_authority "agent-saas-runtime-worker@$worker_active"',
-    committedBeforeHandoff,
-  );
-  const forwardHandoffApi = production.indexOf(
-    'hand_off_retired_authority "agent-saas-server@$api_active"',
-    forwardHandoffWorker,
-  );
+  const forwardHandoff = production.indexOf('complete_app_handoff', committedBeforeHandoff);
+  const handoffBody = production.slice(production.indexOf('complete_app_handoff() {'), deployAppStart);
+  const forwardHandoffWorker = handoffBody.indexOf('hand_off_retired_authority "agent-saas-runtime-worker@$retired_worker"');
+  const forwardHandoffApi = handoffBody.indexOf('hand_off_retired_authority "agent-saas-server@$retired_api"');
   const committedApiFinalCheck = production.indexOf(
     "'Committed candidate App final API ConfigIdentity'",
-    forwardHandoffApi,
+    forwardHandoff,
   );
   const committedWorkerFinalCheck = production.indexOf(
     "'Committed candidate App final Worker ConfigIdentity'",
@@ -634,9 +630,10 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   );
   assert.doesNotMatch(candidateCommitFailure, /release_config_governance_fence/u);
   assert.ok(committedBeforeHandoff > forwardAppMarker);
-  assert.ok(forwardHandoffWorker > committedBeforeHandoff);
+  assert.ok(forwardHandoff > committedBeforeHandoff);
+  assert.ok(forwardHandoffWorker >= 0);
   assert.ok(forwardHandoffApi > forwardHandoffWorker);
-  assert.ok(committedApiFinalCheck > forwardHandoffApi);
+  assert.ok(committedApiFinalCheck > forwardHandoff);
   assert.ok(committedWorkerFinalCheck > committedApiFinalCheck);
   const deployAppBody = production.slice(deployAppStart, production.indexOf('case "$PHASE" in', deployAppStart));
   assert.doesNotMatch(deployAppBody, /retire_systemd_authority|systemctl disable --now "agent-saas-(?:server|runtime-worker)@\$(?:api|worker)_active"/u);

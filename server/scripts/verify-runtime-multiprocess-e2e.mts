@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { createServer, type ServerResponse } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { execFile as execFileCb, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFile as execFileCb, spawn, type ChildProcess } from 'node:child_process';
+import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -23,7 +23,7 @@ const POSTGRES_IMAGE = 'postgres:16-alpine';
 type Scenario = 'minimal' | 'e2e' | 'notify-drop' | 'db-unavailable' | 'scheduler-restart' | 'worker-handoff' | 'hand-kill';
 
 interface SpawnedProcess {
-  child: ChildProcessWithoutNullStreams;
+  child: ChildProcess;
   stdout: () => string;
   stderr: () => string;
 }
@@ -39,10 +39,10 @@ async function main(): Promise<void> {
   if (raw !== 'minimal' && raw !== 'e2e' && raw !== 'notify-drop' && raw !== 'db-unavailable' && raw !== 'scheduler-restart' && raw !== 'worker-handoff' && raw !== 'hand-kill') {
     throw new Error(`Unknown scenario "${raw}". Expected one of: minimal, e2e, notify-drop, db-unavailable, scheduler-restart, worker-handoff, hand-kill`);
   }
-  await runScenario(raw);
+  await runScenario(raw, { bundleDirectory: argValue('--server-bundle'), sharedDirectory: argValue('--shared-assets') });
 }
 
-export async function runScenario(scenario: Scenario): Promise<void> {
+export async function runScenario(scenario: Scenario, options: { bundleDirectory?: string; sharedDirectory?: string } = {}): Promise<void> {
   const workerProcessRole = scenario === 'worker-handoff' || process.env.MP_WORKER_PROCESS_ROLE === 'runtime-worker'
     ? 'runtime-worker'
     : 'scheduler-only';
@@ -56,7 +56,8 @@ export async function runScenario(scenario: Scenario): Promise<void> {
   const handPort = await freePort();
   const fakeModelPort = await freePort();
   const tablePrefix = `mp_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
-  let pg: SpawnedProcess | undefined;
+  let containerStarted = false;
+  let externalDatabase: { connectionString: string; cleanup: () => Promise<void> } | undefined;
   let fakeModel: ReturnType<typeof createFakeOpenAI> | undefined;
   let hand: SpawnedProcess | undefined;
   let wsServer: SpawnedProcess | undefined;
@@ -67,8 +68,28 @@ export async function runScenario(scenario: Scenario): Promise<void> {
 
   try {
     await mkdir(processCwd, { recursive: true });
-    const connectionString = await startPostgres(pgName, pgPassword);
-    pg = { child: { kill: () => true } as ChildProcessWithoutNullStreams, stdout: () => '', stderr: () => '' };
+    if (options.bundleDirectory) {
+      await cp(options.bundleDirectory, processCwd, { recursive: true });
+      // Match systemd's color symlink + relative dist/index.js resolution.
+      await mkdir(join(rootDir, 'color'), { recursive: true });
+      await symlink(rootDir, join(rootDir, 'color', 'blue'));
+    }
+    if (process.env.MP_TEST_DATABASE_URL) {
+      assert.ok(scenario !== 'notify-drop' && scenario !== 'db-unavailable', 'External PG is only supported for scenarios without cluster-wide chaos');
+      externalDatabase = await createOwnedTestDatabase(process.env.MP_TEST_DATABASE_URL);
+    }
+    if (!externalDatabase) {
+      containerStarted = true;
+      externalDatabase = await createOwnedTestDatabase(await startPostgres(pgName, pgPassword));
+    }
+    const connectionString = externalDatabase.connectionString;
+    let configEnvironment: Record<string, string> = {};
+    const spawnServer = (opts: { cwd: string; env: Record<string, string>; label: string }) => spawnNodeTs(
+      options.bundleDirectory ? 'dist/index.js' : SERVER_ENTRY,
+      { ...opts, cwd: options.bundleDirectory ? join(rootDir, 'color', 'blue', 'server') : opts.cwd,
+        env: { ...opts.env, ...configEnvironment, NODE_ENV: 'production', AGENT_SAAS_ENVIRONMENT: 'production', AGENT_SAAS_RELEASE_ID: 'rc-20260908-00', AGENT_SAAS_CONFIG_PATH: join(rootDir, 'config.json') } },
+      !options.bundleDirectory,
+    );
     fakeModel = createFakeOpenAI();
     await fakeModel.listen(fakeModelPort);
 
@@ -82,9 +103,24 @@ export async function runScenario(scenario: Scenario): Promise<void> {
       jwtSecret,
       connectionString,
       tablePrefix,
+      sharedDirectory: options.sharedDirectory,
       // scheduler-restart 用短 lease 加速 lease 过期 → 第二个 worker 接管
       ...(scenario === 'scheduler-restart' ? { leaseMs: 3_000, renewIntervalMs: 1_000 } : {}),
     });
+
+    const cli = options.bundleDirectory
+      ? [join(processCwd, 'dist', 'config-identity-cli.js')]
+      : ['--import', TSX_IMPORT, new URL('../src/release/configIdentityCli.ts', import.meta.url).pathname];
+    const identityResult = await execFile(process.execPath, [...cli,
+      '--config', join(rootDir, 'config.json'), '--environment', 'production',
+      '--process-cwd', processCwd, '--runtime-data-dir', join(processCwd, 'data'),
+    ], { cwd: processCwd });
+    const configIdentity = JSON.parse(identityResult.stdout) as { schemaVersion: number; digest: string; credentialVersionDigest: string | null };
+    configEnvironment = {
+      AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: String(configIdentity.schemaVersion),
+      AGENT_SAAS_CONFIG_IDENTITY_DIGEST: configIdentity.digest,
+      ...(configIdentity.credentialVersionDigest ? { AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST: configIdentity.credentialVersionDigest } : {}),
+    };
 
     hand = spawnNodeTs(HAND_ENTRY, {
       cwd: REPO_ROOT,
@@ -93,12 +129,13 @@ export async function runScenario(scenario: Scenario): Promise<void> {
         HAND_SERVER_AUTH_TOKEN: handToken,
         HAND_SERVER_BACKEND: 'local',
         HAND_SERVER_SANDBOX_ROOT: join(rootDir, 'hand-sandbox'),
+        HAND_INVOCATION_STORE_DIR: join(rootDir, 'hand-invocations'),
       },
       label: 'hand',
     });
     await waitForHttp(`http://127.0.0.1:${handPort}/health`, 'hand-server');
 
-    wsServer = spawnNodeTs(SERVER_ENTRY, {
+    wsServer = spawnServer({
       cwd: processCwd,
       env: {
         AGENT_SAAS_PROCESS_ROLE: 'ws-only',
@@ -111,7 +148,7 @@ export async function runScenario(scenario: Scenario): Promise<void> {
     });
     await waitForHttp(`http://127.0.0.1:${serverPort}/api/health`, 'ws-only server');
 
-    scheduler = spawnNodeTs(SERVER_ENTRY, {
+    scheduler = spawnServer({
       cwd: processCwd,
       env: {
         AGENT_SAAS_PROCESS_ROLE: workerProcessRole,
@@ -210,7 +247,7 @@ export async function runScenario(scenario: Scenario): Promise<void> {
       });
       assert.ok(chaosTriggered, `expected chaos to have been triggered by tool_input; saw=${JSON.stringify(events.map((e) => e.data?.type))}`);
       assert.ok(events.some((e) => e.data?.type === 'tool_result' && String(e.data?.content ?? '').includes('MP_E2E_')), `expected tool_result to survive ${scenario}`);
-      assert.ok(events.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('MULTIPROCESS_DONE')), `expected final assistant text to survive ${scenario}`);
+      assert.ok(events.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('DONE')), `expected final assistant text to survive ${scenario}`);
       const doneEvents = events.filter((e) => e.data?.type === 'done');
       assert.equal(doneEvents.length, 1, `expected exactly one terminal done event (no duplicate wake), got ${doneEvents.length}`);
     } else if (scenario === 'worker-handoff') {
@@ -221,7 +258,7 @@ export async function runScenario(scenario: Scenario): Promise<void> {
       let handoffTriggered = false;
       let handoffPromise: Promise<void> | undefined;
       const triggerHandoff = async (): Promise<void> => {
-        handoffScheduler = spawnNodeTs(SERVER_ENTRY, {
+        handoffScheduler = spawnServer({
           cwd: processCwd,
           env: {
             AGENT_SAAS_PROCESS_ROLE: 'runtime-worker',
@@ -263,7 +300,7 @@ export async function runScenario(scenario: Scenario): Promise<void> {
       });
       assert.equal(handoffTriggered, true, 'expected handoff to trigger during tool_input');
       assert.ok(events.some((e) => e.data?.type === 'tool_result' && String(e.data?.content ?? '').includes('MP_E2E_')), 'expected complete tool result across worker handoff');
-      assert.ok(events.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('MULTIPROCESS_DONE')), 'expected continuation final text from worker B');
+      assert.ok(events.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('DONE')), 'expected continuation final text from worker B');
       assert.equal(events.filter((e) => e.data?.type === 'done').length, 1, 'expected exactly one terminal done across worker handoff');
       assert.equal(events.some((e) => e.data?.type === 'error'), false, 'worker handoff must not emit a user-visible error');
       await waitForLog(scheduler, /Runtime drain handoff released run=/, 'runtime-worker A lease release');
@@ -285,7 +322,7 @@ export async function runScenario(scenario: Scenario): Promise<void> {
           // 等 lease (3s) 过期 + 缓冲
           await sleep(4_500);
           console.log('[chaos] scheduler-restart: spawning scheduler-only B');
-          scheduler = spawnNodeTs(SERVER_ENTRY, {
+          scheduler = spawnServer({
             cwd: processCwd,
             env: {
               AGENT_SAAS_PROCESS_ROLE: workerProcessRole,
@@ -340,7 +377,7 @@ export async function runScenario(scenario: Scenario): Promise<void> {
     } else {
       const done = await collectUntil(ws, (events) => events.some((e) => e.data?.type === 'done'), 30_000);
       assert.ok(done.some((e) => e.data?.type === 'tool_result' && String(e.data?.content ?? '').includes('MP_E2E_')), 'expected live tool output from remote hand');
-      assert.ok(done.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('MULTIPROCESS_DONE')), 'expected final assistant text');
+      assert.ok(done.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('DONE')), 'expected final assistant text');
     }
 
     // hand-kill / scheduler-restart 不强制要求 fake model 调 2 轮（tool error 仍走第二轮，
@@ -354,7 +391,8 @@ export async function runScenario(scenario: Scenario): Promise<void> {
     replayWs?.close();
     for (const proc of [handoffScheduler, scheduler, wsServer, hand]) await stopProcess(proc);
     await fakeModel?.close();
-    await execFile('docker', ['rm', '-f', pgName]).catch(() => undefined);
+    if (externalDatabase) await externalDatabase.cleanup();
+    if (containerStarted) await execFile('docker', ['rm', '-f', pgName]).catch(() => undefined);
     await rm(rootDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
@@ -369,6 +407,7 @@ async function writeFixtureConfig(input: {
   jwtSecret: string;
   connectionString: string;
   tablePrefix: string;
+  sharedDirectory?: string;
   leaseMs?: number;
   renewIntervalMs?: number;
 }): Promise<void> {
@@ -388,12 +427,17 @@ async function writeFixtureConfig(input: {
       updatedAt: new Date().toISOString(),
     }],
   }, null, 2));
+  const { EncryptedFileSecretVault } = await import('../src/security/secretVault.js');
+  const vault = new EncryptedFileSecretVault(join(input.processCwd, 'data', 'secrets.enc'), `agent-saas/secret-vault/v1:${input.jwtSecret}`);
+  const handRef = await vault.putSecret('global', 'server_remote', input.handToken, {
+    actor: 'connector_proxy', userId: 'mp-admin-id', scopes: ['secret:server_remote:write', 'secret:server_remote:read'],
+  });
   await writeFile(join(input.rootDir, 'config.json'), JSON.stringify({
     agent: {
       cwd: './workspace',
       // 指向 repo 真实 workspace-shared/，避免每个 tmp cwd 都要拷模板
       // （与 runtimeStage2.test.ts 同样做法）
-      sharedDir: join(REPO_ROOT, 'workspace-shared'),
+      sharedDir: input.sharedDirectory ?? join(REPO_ROOT, 'workspace-shared'),
       permissionMode: 'dontAsk',
       maxTurns: 4,
     },
@@ -411,12 +455,13 @@ async function writeFixtureConfig(input: {
       backend: 'pg',
       connectionString: input.connectionString,
       tablePrefix: input.tablePrefix,
+      writerCapability: { capability: 'tenant-native-v1' },
     },
     runtimeScheduler: { autoWake: true, pollIntervalMs: 200, leaseMs: input.leaseMs ?? 8_000, renewIntervalMs: input.renewIntervalMs ?? 1_000 },
     runtimeHandHealthScanner: { enabled: false },
     serverRemote: {
       baseUrl: `http://127.0.0.1:${input.handPort}`,
-      authToken: input.handToken,
+      authTokenRef: handRef.id,
       invokeTimeoutMs: 20_000,
     },
   }, null, 2));
@@ -467,7 +512,7 @@ function sendSse(res: ServerResponse, data: unknown): void {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-async function login(port: number): Promise<string> {
+async function login(port: number): Promise<{ token: string; authEpoch: number; generation: number }> {
   const res = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -479,18 +524,24 @@ async function login(port: number): Promise<string> {
   }
   const body = await res.json() as { token?: string };
   assert.ok(body.token, 'login response should include token');
-  return body.token;
+  const meResponse = await fetch(`http://127.0.0.1:${port}/api/auth/me`, { headers: { authorization: `Bearer ${body.token}` } });
+  assert.equal(meResponse.status, 200);
+  const me = await meResponse.json() as { authEpoch: number; generation: number };
+  assert.ok(Number.isSafeInteger(me.authEpoch) && Number.isSafeInteger(me.generation), 'login needs a durable auth binding');
+  return { token: body.token, authEpoch: me.authEpoch, generation: me.generation };
 }
 
-async function openWs(port: number, token: string): Promise<WebSocket> {
+async function openWs(port: number, binding: { token: string; authEpoch: number; generation: number }): Promise<WebSocket> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  const send = ws.send.bind(ws);
+  ws.send = ((data: string) => send(JSON.stringify({ ...JSON.parse(data), authEpoch: binding.authEpoch, generation: binding.generation }))) as typeof ws.send;
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('ws auth timeout')), 5_000);
     const fail = (error: Error) => {
       clearTimeout(timer);
       reject(error);
     };
-    ws.once('open', () => ws.send(JSON.stringify({ action: 'auth', token })));
+    ws.once('open', () => ws.send(JSON.stringify({ action: 'auth', token: binding.token })));
     ws.once('error', fail);
     ws.on('message', function onAuth(raw) {
       const envelope = JSON.parse(raw.toString()) as WsEnvelope;
@@ -526,8 +577,8 @@ async function collectUntil(ws: WebSocket, predicate: (events: WsEnvelope[]) => 
   });
 }
 
-function spawnNodeTs(entry: string, opts: { cwd: string; env: Record<string, string>; label: string }): SpawnedProcess {
-  const child = spawn(process.execPath, ['--import', TSX_IMPORT, entry], {
+function spawnNodeTs(entry: string, opts: { cwd: string; env: Record<string, string>; label: string }, typescript = true): SpawnedProcess {
+  const child = spawn(process.execPath, typescript ? ['--import', TSX_IMPORT, entry] : ['--enable-source-maps', entry], {
     cwd: opts.cwd,
     env: { ...process.env, ...opts.env },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -540,10 +591,14 @@ function spawnNodeTs(entry: string, opts: { cwd: string; env: Record<string, str
 }
 
 async function stopProcess(proc?: SpawnedProcess): Promise<void> {
-  if (!proc || proc.child.killed) return;
+  if (!proc || proc.child.exitCode !== null || proc.child.signalCode !== null) return;
   proc.child.kill('SIGTERM');
-  await sleep(500);
-  if (!proc.child.killed) proc.child.kill('SIGKILL');
+  for (let attempt = 0; attempt < 40; attempt++) {
+    if (proc.child.exitCode !== null || proc.child.signalCode !== null) return;
+    await sleep(100);
+  }
+  proc.child.kill('SIGKILL');
+  await new Promise<void>((resolve) => proc.child.once('exit', () => resolve()));
 }
 
 /**
@@ -565,6 +620,38 @@ async function terminateListenBackends(connectionString: string): Promise<number
   } finally {
     await client.end().catch(() => undefined);
   }
+}
+
+// Each scenario owns a database; cleanup never touches an existing application's tables.
+async function createOwnedTestDatabase(adminUrl: string): Promise<{ connectionString: string; cleanup: () => Promise<void> }> {
+  const url = new URL(adminUrl);
+  assert.ok(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Test database must be on loopback');
+  const pg = await import('pg');
+  const admin = new pg.Client({ connectionString: adminUrl });
+  await admin.connect();
+  const database = `mp_test_${randomBytes(10).toString('hex')}`;
+  const writer = `${database}_writer`;
+  const password = randomBytes(24).toString('hex');
+  try {
+    await admin.query(`CREATE ROLE "${writer}" LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '${password}'`);
+    await admin.query(`CREATE DATABASE "${database}" OWNER "${writer}"`);
+  } catch (error) {
+    await admin.query(`DROP ROLE IF EXISTS "${writer}"`).catch(() => undefined);
+    await admin.end(); throw error;
+  }
+  url.pathname = `/${database}`;
+  url.username = writer;
+  url.password = password;
+  return {
+    connectionString: url.toString(),
+    cleanup: async () => {
+      try {
+        await admin.query(`DROP DATABASE "${database}" WITH (FORCE)`);
+        await admin.query(`DROP ROLE "${writer}"`);
+      }
+      finally { await admin.end(); }
+    },
+  };
 }
 
 async function startPostgres(name: string, password: string): Promise<string> {
@@ -618,7 +705,10 @@ async function freePort(): Promise<number> {
 
 function argValue(name: string): string | undefined {
   const prefix = `${name}=`;
-  return process.argv.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
+  const inline = process.argv.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
+  if (inline !== undefined) return inline;
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
 function sleep(ms: number): Promise<void> {

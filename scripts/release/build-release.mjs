@@ -28,6 +28,7 @@ import {
   runtimeDependencyContractDigest,
   verifyRuntimeEnvironment,
 } from './runtime-dependency.mjs';
+import { writePreparedRelease } from './prepared-release.mjs';
 
 function options(argv) {
   const values = Object.fromEntries(
@@ -38,6 +39,8 @@ function options(argv) {
   );
   if (!SHA_PATTERN.test(String(values.sha ?? ''))) throw new Error('--sha must be a complete SHA');
   if (!values.out) throw new Error('--out is required');
+  if (values['prepare-acs'] && (values['include-acs'] || values['acs-image']))
+    throw new Error('--prepare-acs cannot bind a release image; seal it after CI');
   if (values['include-acs'] && !values['acs-image'])
     throw new Error('--include-acs requires an immutable --acs-image=repository@sha256:...');
   if (values['acs-image'] && !OCI_IMAGE_REFERENCE_PATTERN.test(String(values['acs-image'])))
@@ -273,6 +276,7 @@ export async function buildRelease(argv = process.argv) {
   }).trim();
   if (actualSha !== opts.sha) throw new Error(`Checked out SHA ${actualSha} does not match --sha`);
   const output = resolve(String(opts.out));
+  await mkdir(output, { recursive: true });
   const runtimeContract = await loadRuntimeDependencyContract(
     join(root, 'config', 'runtime-dependency-contract.json'),
   );
@@ -330,7 +334,8 @@ export async function buildRelease(argv = process.argv) {
       join(output, 'staging-runtime-assets.tgz'),
     ),
   };
-  if (opts['include-acs']) {
+  let preparedAcs;
+  if (opts['include-acs'] || opts['prepare-acs']) {
     run('pnpm', ['-F', 'acs-orchestrator', 'build'], root);
     run('pnpm', productionDeployArgs('acs-orchestrator', join(stage, 'acs-orchestrator')), root);
     await rm(join(stage, 'acs-orchestrator/dist'), { recursive: true, force: true });
@@ -358,11 +363,13 @@ export async function buildRelease(argv = process.argv) {
         'acs-orchestrator/daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
       ),
     ]);
-    artifacts.acsOrchestrator = await packRooted(
+    const acsArtifact = await packRooted(
       stage,
       'acs-orchestrator',
       join(output, 'acs-orchestrator.tgz'),
     );
+    if (opts['prepare-acs']) preparedAcs = acsArtifact;
+    else artifacts.acsOrchestrator = acsArtifact;
   }
 
   const sbomBody = {
@@ -411,6 +418,14 @@ export async function buildRelease(argv = process.argv) {
   const aggregateDigest = digestBuffer(Buffer.from(canonicalJson(indexBody)));
   const index = { ...indexBody, aggregateDigest };
   await writeFile(join(output, 'artifact-index.json'), `${canonicalJson(index)}\n`, { flag: 'wx' });
+  if (opts['prepare-acs']) {
+    await writePreparedRelease({
+      directory: output,
+      sourceSha: opts.sha,
+      acsOrchestrator: preparedAcs,
+      root,
+    });
+  }
   await rm(stage, { recursive: true, force: true });
   return index;
 }

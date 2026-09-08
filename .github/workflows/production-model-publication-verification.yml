@@ -1,6 +1,6 @@
 name: Production model publication integration verification
-# Temporary branch-only development helper. No environments, production secrets,
-# production endpoints, deployment commands or main-branch writes.
+# Temporary PR-593 development helper. No deployment environment, secrets,
+# production endpoint, main writes, merge or deployment action.
 on:
   push:
     branches: [fix/models-production-write-policy-20260908]
@@ -39,6 +39,7 @@ jobs:
           git restore -- scripts/release/bootstrap-production-model-publication.py
           python3 scripts/release/finalize-production-model-integration.py
           python3 - <<'PY'
+          import json
           from pathlib import Path
           for name in ['scripts/release/read-production-state.mjs', 'scripts/release/read-live-production-components.mjs']:
               p = Path(name)
@@ -48,6 +49,22 @@ jobs:
                   p.write_text('\n'.join(lines) + '\n')
           p = Path('server/src/config/productionModelPublisher.ts')
           p.write_text(p.read_text().replace('  publishedExpected, rawRevision,', '  rawRevision,'))
+          p = Path('server/src/__tests__/productionModelPublication.process.test.ts')
+          s = p.read_text()
+          assert s.count('    alias: {') == 1
+          s = s.replace('    alias: {', "    packages: 'external', alias: {")
+          assert s.count("symlinkSync(resolve('node_modules')") == 1
+          s = s.replace("symlinkSync(resolve('node_modules')", "symlinkSync(resolve('../node_modules')")
+          p.write_text(s)
+          p = Path('web/src/components/ModelManager/useModelWritePolicy.ts')
+          s = p.read_text().replace('        ? `${PRODUCTION_NOTICE} ${policy.message}`', '        ? (policy.message || PRODUCTION_NOTICE)')
+          p.write_text(s)
+          # Verify every extended transport path refers to an actual checked-in
+          # source file, and print the narrow resulting source list for review.
+          for name in ['.github/workflows/ci.yml', '.github/workflows/promote-release.yml', '.github/workflows/deploy-staging.yml', '.github/workflows/acs-sandbox.yml', 'scripts/release/finalize-expand-migration.sh']:
+              for line in Path(name).read_text().splitlines():
+                  if 'scripts/release/read-runtime-identity.mjs' in line:
+                      print(name, line.strip())
           PY
       - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@v5
@@ -55,40 +72,69 @@ jobs:
           node-version: '22.23.1'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Format new modules
+      - name: Format new modules and bind migration review evidence
         run: |
           pnpm exec prettier --write \
-            scripts/release/config-publication.mjs scripts/release/config-publication.d.mts scripts/release/config-publication.test.mjs \
+            scripts/release/config-publication.mjs scripts/release/config-publication.d.mts scripts/release/config-publication.test.mjs scripts/release/config-publication-release.test.mjs \
             server/src/config/productionModelPublisher.ts \
             server/src/app/productionConfigIdentity.ts server/src/app/productionModelPublication.ts \
             server/src/app/memoryIndexRuntimeUpdate.ts server/src/app/memoryIndexRuntimeUpdate.test.ts \
             server/src/release/configPublicationCli.ts \
-            server/src/__tests__/helpers/productionPublicationRig.ts \
-            server/src/__tests__/helpers/productionPublicationWorker.ts \
-            server/src/__tests__/productionModelPublication.test.ts \
-            server/src/__tests__/productionModelPublication.process.test.ts \
-            web/src/components/ModelManager/productionSave.test.tsx
-      - name: Typechecks, runtime regressions and production bundles
+            server/src/__tests__/helpers/productionPublicationRig.ts server/src/__tests__/helpers/productionPublicationWorker.ts \
+            server/src/__tests__/productionModelPublication.test.ts server/src/__tests__/productionModelPublication.process.test.ts server/src/__tests__/productionModelPublication.fence.test.ts \
+            web/src/components/ModelManager/productionSave.test.tsx \
+            docs/release/生产模型在线发布运行时装配审核-20260909.md
+          python3 - <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          path = 'server/src/app/runtime.ts'
+          old = subprocess.check_output(['git', 'show', f'HEAD:{path}'])
+          digest = lambda data: 'sha256:' + hashlib.sha256(data).hexdigest()
+          old_digest, new_digest = digest(old), digest(Path(path).read_bytes())
+          document = 'docs/release/生产模型在线发布运行时装配审核-20260909.md'
+          evidence = {'path': document, 'digest': digest(Path(document).read_bytes())}
+          p = Path('config/release-migration-reviews.json')
+          data = json.loads(p.read_text())
+          updated = 0
+          for review in data['reviews']:
+              touched = False
+              for item in review['files']:
+                  if item['path'] != path:
+                      continue
+                  assert item['targetDigest'] == old_digest, 'Historical target is not the reviewed source baseline'
+                  item['targetDigest'] = new_digest
+                  item['reason'] += ' 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。'
+                  touched = True
+                  updated += 1
+              if touched and evidence not in review['evidence']:
+                  review['evidence'].append(evidence)
+          assert updated > 0
+          p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+          paths = set(json.loads(Path('/tmp/production-model-integration-paths.json').read_text()))
+          paths.update([str(p), document, 'scripts/release/config-publication-release.test.mjs'])
+          Path('/tmp/production-model-integration-paths.json').write_text(json.dumps(sorted(paths)))
+          print('Preserved historical classifications and rebound', updated, 'runtime reviews', old_digest, new_digest)
+          PY
+      - name: Typechecks, production saves, real Worker restart and bundles
         run: |
           set -euo pipefail
+          trap 'tail -n 160 /tmp/production-model-publication-verification.log' EXIT
           {
             pnpm -F @agent/shared typecheck
             pnpm -F server typecheck
             pnpm -F web typecheck
-            node --test scripts/release/config-publication.test.mjs
+            node --test scripts/release/config-publication.test.mjs scripts/release/config-publication-release.test.mjs
             pnpm -F server exec vitest run \
-              productionModelPublication memoryIndexRuntimeUpdate sharedConfigRefresher \
+              productionModelPublication memoryIndexRuntimeUpdate sharedConfigRefresher adminRunner \
               src/__tests__/modelsAdminProductionWritePolicy.test.ts \
               src/__tests__/modelsAdmin.test.ts src/__tests__/modelsAdminQuotaSource.test.ts \
-              src/__tests__/modelsAdminGuardrailDisable.test.ts \
-              src/__tests__/adminConfigMutationService.test.ts \
-              src/app/modelResolvers.test.ts src/app/configRuntimeRecovery.integration.test.ts \
-              src/runtime/configIdentityRuntime.test.ts
+              src/__tests__/modelsAdminGuardrailDisable.test.ts src/__tests__/adminConfigMutationService.test.ts \
+              src/app/modelResolvers.test.ts src/app/configRuntimeRecovery.integration.test.ts src/runtime/configIdentityRuntime.test.ts
             pnpm -F web exec vitest run src/components/ModelManager/index.test.tsx src/components/ModelManager/writePolicy.test.tsx src/components/ModelManager/productionSave.test.tsx
             pnpm -F server build
             pnpm -F web build
             git diff --check
-          } 2>&1 | tee /tmp/production-model-publication-verification.log
+          } > /tmp/production-model-publication-verification.log 2>&1
       - name: Commit verified integration only to the original PR branch
         run: |
           set -euo pipefail

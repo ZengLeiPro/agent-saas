@@ -1,7 +1,8 @@
-import type { MessageItem } from '@agent/shared';
+import type { MessageItem, WsEvent, WsProcessingContext } from '@agent/shared';
 
 export interface MobileChatDelivery {
   clientMsgId: string;
+  sessionId?: string;
   state: 'sending' | 'verifying' | 'acked';
 }
 interface BubbleTarget {
@@ -54,4 +55,61 @@ export function armMobileChatAckDeadline<T extends MobileChatDelivery>(clientMsg
     onExpired(entry);
   }, timeoutMs);
   timers.set(clientMsgId, timer);
+}
+
+type ReceiptHandlers = Required<Pick<WsProcessingContext, 'onChatAck' | 'onChatRejected' | 'onChatDone'>>;
+
+/**
+ * The hook supplies view/session effects; this module owns delivery settlement. All callbacks retain
+ * the shared WsEvent contract and narrow the discriminant before reading ACK-only fields.
+ */
+export function createMobileChatReceiptHandlers<T extends MobileChatDelivery>(options: {
+  target: BubbleTarget;
+  outbox: { current: T[] };
+  timers: Map<string, ReturnType<typeof setTimeout>>;
+  sourceEvent: WsEvent;
+  getSelectedSessionId: () => string | null;
+  confirmSession: (sessionId: string) => void;
+  onAllRejected: () => void;
+  observeAck?: (clientMsgId: string, event?: WsEvent) => void;
+}): ReceiptHandlers {
+  const { target, outbox, timers } = options;
+  const clearTimer = (clientMsgId: string) => {
+    const timer = timers.get(clientMsgId);
+    if (timer !== undefined) clearTimeout(timer);
+    timers.delete(clientMsgId);
+  };
+  const removeEntry = (clientMsgId: string) => {
+    clearTimer(clientMsgId);
+    outbox.current = outbox.current.filter((entry) => entry.clientMsgId !== clientMsgId);
+  };
+  return {
+    onChatAck(clientMsgId, event) {
+      clearTimer(clientMsgId);
+      const entry = outbox.current.find((item) => item.clientMsgId === clientMsgId);
+      if (entry) entry.state = 'acked';
+      const receipt = event ?? options.sourceEvent;
+      const ack = receipt.type === 'chat_ack' ? receipt : undefined;
+      const queued = receipt.type === 'stream_id' ? receipt.queued === true
+        : receipt.type === 'message_queued' || receipt.type === 'steering_queued'
+          || Boolean(ack && (!ack.status || ack.status === 'accepted' || ack.status === 'queued'));
+      acknowledgeMobileChatBubble(target, clientMsgId, queued);
+      // Only the exact visible intent may bind a new draft to a server-created session.
+      if (entry && ack?.sessionId && hasMobileChatBubble(target.messagesRef.current, clientMsgId)) {
+        if (!entry.sessionId && !options.getSelectedSessionId()) options.confirmSession(ack.sessionId);
+        entry.sessionId = ack.sessionId;
+      }
+      try { options.observeAck?.(clientMsgId, event); }
+      catch { /* Telemetry failure must never undo or prevent authoritative delivery settlement. */ }
+    },
+    onChatRejected(clientMsgId) {
+      removeEntry(clientMsgId);
+      if (outbox.current.every((entry) => entry.state !== 'acked' && entry.state !== 'sending')) {
+        options.onAllRejected();
+      }
+    },
+    onChatDone(clientMsgId) {
+      if (clientMsgId) removeEntry(clientMsgId);
+    },
+  };
 }

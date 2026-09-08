@@ -57,7 +57,7 @@ import { markChatAck, markChatSubmit, observeChatEvent } from '../telemetry/chat
 import { telemetryClient } from '../telemetry/runtime';
 import { shouldProjectInteractionEvent } from '../lib/interactionProjectionFence';
 import { replaceRetryBubble } from '../lib/retryBubbleTransition';
-import { acknowledgeMobileChatBubble, armMobileChatAckDeadline, hasMobileChatBubble } from '../lib/chatDeliveryReceipt';
+import { createMobileChatReceiptHandlers, armMobileChatAckDeadline, hasMobileChatBubble } from '../lib/chatDeliveryReceipt';
 import { useAgentTargetCatalog } from "./useAgentTargetCatalog";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { useInteractionResponses } from "./useInteractionResponses";
@@ -1268,64 +1268,25 @@ export function useChatAppStateCore(): ChatAppState {
           setLoading(true);
           dispatchConnection("connect");
         },
-        onChatAck: (clientMsgId, event) => {
-          const t = ackTimersRef.current.get(clientMsgId);
-          if (t) {
-            clearTimeout(t);
-            ackTimersRef.current.delete(clientMsgId);
-          }
-          const entry = outboxRef.current.find(
-            (e) => e.clientMsgId === clientMsgId,
-          );
-          if (entry) entry.state = "acked";
-          const queued = data.type === 'stream_id' ? data.queued === true
-            : data.type === 'message_queued' || data.type === 'steering_queued'
-              || Boolean(event && (!event.status || event.status === 'accepted' || event.status === 'queued'));
-          acknowledgeMobileChatBubble(msgRef.current, clientMsgId, queued);
-          // Recover the canonical session binding when the original new-session frame was lost.
-          // Exact visible intent correlation prevents a late ACK from navigating a different draft.
-          if (entry && event?.sessionId && hasMobileChatBubble(msgRef.current.messagesRef.current, clientMsgId)) {
-            if (!entry.sessionId && !(immediateSessionIdRef.current ?? sessionIdRef.current)) {
-              immediateSessionIdRef.current = event.sessionId;
-              wsLatestSessionIdRef.current = { value: event.sessionId };
-              sessionRef.current.setIsNewSession(false);
-              sessionRef.current.setSessionId(event.sessionId);
-              void sessionRef.current.loadSessions();
-            }
-            entry.sessionId = event.sessionId;
-          }
-          try { markChatAck(clientMsgId, event); }
-          catch { /* Receipt state is authoritative even when telemetry is unavailable. */ }
-        },
-        onChatRejected: (clientMsgId) => {
-          const t = ackTimersRef.current.get(clientMsgId);
-          if (t) {
-            clearTimeout(t);
-            ackTimersRef.current.delete(clientMsgId);
-          }
-          outboxRef.current = outboxRef.current.filter(
-            (e) => e.clientMsgId !== clientMsgId,
-          );
-          if (
-            outboxRef.current.every(
-              (e) => e.state !== "acked" && e.state !== "sending",
-            )
-          ) {
+        ...createMobileChatReceiptHandlers({
+          target: msgRef.current,
+          outbox: outboxRef,
+          timers: ackTimersRef.current,
+          sourceEvent: data,
+          getSelectedSessionId: () => immediateSessionIdRef.current ?? sessionIdRef.current,
+          confirmSession: (sid) => {
+            immediateSessionIdRef.current = sid;
+            wsLatestSessionIdRef.current = { value: sid };
+            sessionRef.current.setIsNewSession(false);
+            sessionRef.current.setSessionId(sid);
+            void sessionRef.current.loadSessions();
+          },
+          onAllRejected: () => {
             wsAttachedRef.current = false;
             setLoading(false);
-          }
-        },
-        onChatDone: (clientMsgId) => {
-          if (!clientMsgId) return;
-          const t = ackTimersRef.current.get(clientMsgId);
-          if (t) {
-            clearTimeout(t);
-            ackTimersRef.current.delete(clientMsgId);
-          }
-          outboxRef.current = outboxRef.current.filter(
-            (e) => e.clientMsgId !== clientMsgId,
-          );
-        },
+          },
+          observeAck: markChatAck,
+        }),
       };
 
       if (

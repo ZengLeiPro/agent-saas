@@ -57,6 +57,9 @@ export async function assembleReleaseEvidence(options) {
     sourcePullRequests: authoritative.sourcePullRequests,
     checks: authoritative.checks,
     productionBaseline: authoritative.productionBaseline,
+    ...(authoritative.baselineObservation
+      ? { baselineObservation: authoritative.baselineObservation }
+      : {}),
     ...(authoritative.configIdentity !== undefined
       ? { configIdentity: authoritative.configIdentity }
       : {}),

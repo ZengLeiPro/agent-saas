@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-lib.mjs';
 import {
   configIdentitySummarySchema,
+  baselineObservationSchema,
   RELEASE_EVIDENCE_SCHEMA_VERSION,
   releaseMigrationPlanSchema,
   validateReleaseEvidenceDocument,
@@ -85,6 +86,7 @@ const productionStateSchema = z
     environment: z.literal('production'),
     digest,
     configIdentity: configIdentitySummarySchema.optional(),
+    baselineObservation: baselineObservationSchema.optional(),
     components: z
       .object({
         web: z.object({ gitSha: sha, artifactDigest: digest }).passthrough(),
@@ -100,7 +102,11 @@ const productionStateSchema = z
       })
       .strict(),
   })
-  .passthrough();
+  .passthrough()
+  .refine((state) => !state.baselineObservation || state.configIdentity === undefined, {
+    message: 'Historical baseline must not assert current ConfigIdentity',
+    path: ['configIdentity'],
+  });
 
 const artifactSchema = z
   .object({
@@ -293,6 +299,9 @@ export async function produceReleaseEvidence(options) {
       },
     },
     productionBaseline,
+    ...(production.baselineObservation
+      ? { baselineObservation: production.baselineObservation }
+      : {}),
     // TASK-318：Release Evidence 仅透传脱敏摘要，不包含配置值或 secret ref。
     ...(production.configIdentity !== undefined
       ? { configIdentity: production.configIdentity }

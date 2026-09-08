@@ -31,6 +31,7 @@ describe('ACS health and drain contract', () => {
     );
     expect(source).toContain('inflightRequests: effectiveInflightRequests');
     expect(source).toContain('inflight: effectiveInflightRequests()');
-    expect(source).toContain('if (effectiveInflightRequests() === 0)');
+    expect(source).toContain('inflight: effectiveInflightRequests, deadlineMs:');
+    expect(source).toContain('deploymentDrain: deploymentDrain.snapshot()');
   });
 });

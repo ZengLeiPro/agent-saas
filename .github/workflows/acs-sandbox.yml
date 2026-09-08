@@ -13,6 +13,11 @@ on:
         type: boolean
         default: false
 
+# PR 检查淘汰旧 head；main 检查各自完成。生产 mutation 仍使用 job 级不可取消锁。
+concurrency:
+  group: acs-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   NODE_VERSION: '22.23.1'
   ACR_REGISTRY: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com
@@ -25,7 +30,7 @@ env:
 jobs:
   acs-impact-gate:
     name: ACS Impact Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     if: github.event_name == 'pull_request'
     permissions:
@@ -146,7 +151,7 @@ jobs:
 
   changes:
     name: 判定 ACS 影响范围
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: github.event_name != 'pull_request'
 
@@ -223,7 +228,7 @@ jobs:
 
   contract-check:
     name: ACS 契约检查
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.contract_check == 'true'
@@ -303,7 +308,7 @@ jobs:
   #   linux/amd64, push webhook 自动构建、海外源智能加速开启、缓存开启)。
   gate:
     name: 门禁（类型检查 + 测试）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: changes
     if: needs.changes.outputs.publish == 'true'
@@ -371,7 +376,7 @@ jobs:
 
   build-deploy:
     name: ACR 云构建与部署
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     timeout-minutes: 75
     needs: [changes, gate]
@@ -527,12 +532,7 @@ jobs:
       - name: 安装阿里云 CLI
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
-          # 下载/解包放 RUNNER_TEMP: 本 step 已在 checkout 之后, 落在工作目录
-          # 会被 Pack 打进 release 包
-          curl -fsSL "https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz" -o "$RUNNER_TEMP/aliyun.tgz"
-          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
-          sudo mv "$RUNNER_TEMP/aliyun" /usr/local/bin/
-          aliyun version
+          bash scripts/release/install-aliyun-cli.sh
 
       # 不主动触发构建: build rule 的 tag 变量 ${GIT_PUSH_DATE}/${GIT_COMMIT_ID}
       # 只在 push 事件自动构建时有值, API 手动触发会解析为空 tag "-"（2026-07-04

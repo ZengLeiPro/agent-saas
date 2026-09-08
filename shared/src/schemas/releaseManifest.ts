@@ -178,6 +178,15 @@ const manifestCommonShape = {
   integrationCandidates: z.array(integrationCandidateSchema).max(1_000),
   sourcePullRequests: z.array(z.number().int().positive()).min(1).max(1_000),
   productionBaseline: releaseComponentMatrixSchema,
+  baselineObservation: z
+    .object({
+      kind: z.literal('last_committed'),
+      releaseId: releaseIdSchema,
+      observedAt: utcTimestampSchema,
+      checkpointDigest: sha256DigestSchema,
+    })
+    .strict()
+    .optional(),
   components: releaseComponentsPlanSchema,
   checks: z
     .object({

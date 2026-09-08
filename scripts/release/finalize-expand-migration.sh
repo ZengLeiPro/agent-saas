@@ -118,6 +118,7 @@ scp -i ~/.ssh/production_key \
   scripts/release/read-production-state.mjs \
   scripts/release/read-runtime-identity.mjs \
   scripts/release/verify-installed-release.mjs \
+  scripts/release/verify-app-retirement.sh \
   "$ECS_USER@$ECS_HOST:$remote/"
 
 # 租约长于外层 30 分钟自动收尾上限，上传及提交期间持续验证持有者。
@@ -149,6 +150,10 @@ fi
 lock_ready_confirmed=true
 
 run_locked_ssh \
+  "sudo bash '$remote/verify-app-retirement.sh' '$remote/manifest.json' > '$remote/app-retirement-initial.json'"
+run_guarded scp -i ~/.ssh/production_key \
+  "$ECS_USER@$ECS_HOST:$remote/app-retirement-initial.json" "$RUNNER_TEMP/app-retirement-initial.json"
+run_locked_ssh \
   "sudo node '$remote/read-live-production-components.mjs' --output '$remote/live-initial.json' >/dev/null"
 run_guarded scp -i ~/.ssh/production_key \
   "$ECS_USER@$ECS_HOST:$remote/live-initial.json" \
@@ -169,6 +174,10 @@ run_guarded node scripts/release/confirm-expand-migration.mjs \
   --output "$RUNNER_TEMP/migration-confirmation-initial.json"
 
 # completed 提交前在同一锁租约内重新读取；任一组件/API 漂移均 fail closed。
+run_locked_ssh \
+  "sudo bash '$remote/verify-app-retirement.sh' '$remote/manifest.json' > '$remote/app-retirement-final.json'"
+run_guarded scp -i ~/.ssh/production_key \
+  "$ECS_USER@$ECS_HOST:$remote/app-retirement-final.json" "$RUNNER_TEMP/app-retirement-final.json"
 run_locked_ssh \
   "sudo node '$remote/read-live-production-components.mjs' --output '$remote/live-final.json' >/dev/null"
 run_guarded scp -i ~/.ssh/production_key \

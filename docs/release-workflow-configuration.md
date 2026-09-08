@@ -51,7 +51,7 @@ ACS workflow 会遍历 ACR build-record API 的全部分页，用短 tag 筛选�
 
 管理员还必须审计 ACR repository 的写入主体；全量分页不能证明 record 与 digest 的服务端归属，任何可直接覆盖候选 tag 的非构建身份仍会越过仓库内可证明边界。
 
-App compatibility 的 `deploy_plan`、`deploy-ecs`、`deploy-web-oss` 与 ACS compatibility 的
+App compatibility 的 `deploy_plan`、`deploy-web-oss` 与 ACS compatibility 的
 `build-deploy` job 均显式绑定 `production` Environment。生产凭据的权威配置位置是该 Environment；
 必须删除同名 repository/organization Secret，不能以高层级 Secret 作为兜底；现场作用域仍需由
 GitHub 管理员审计。
@@ -203,7 +203,7 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
 - `ci.yml` 与 `acs-sandbox.yml` 保留 `workflow_dispatch` 人工兼容入口且只接受
   `refs/heads/main`。App 入口已收窄为显式确认的 Web-only publish：计划必须证明生产 active ECS SHA
   到目标 SHA 不含 Server/API/Runtime Worker 影响；只要需要 ECS 变更或分类无法证明，就会在任何
-  生产 mutation 前 fail closed，并要求走 RC + `promote-release.yml`。旧 `deploy-ecs` job 不再可达，
+  生产 mutation 前 fail closed，并要求走 RC + `promote-release.yml`。旧 `deploy-ecs` job 已从工作流移除，历史回滚脚本仅保留在 `scripts/release/fixtures/legacy-ecs-workflow.yml` 供恢复回归测试；
   因为 ECS + Web 跨 job 失败没有同一事务式补偿。Web-only job 会在读取生产基线前取得共享
   `/run/lock/agent-saas/promotion.lock` 远端租约，并持有到 identity commit，或失败补偿与权威证明
   结束；租约丢失时禁止继续 mutation 或无锁补偿。随后在 OSS mutation 前枚举四个入口、

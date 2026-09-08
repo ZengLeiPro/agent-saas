@@ -20,7 +20,8 @@ case "$task" in
     bash scripts/release/production-deploy-rollback.test.sh
     bash scripts/release/compat-app-authority.test.sh
     bash scripts/release/staging-deploy-cleanup.test.sh
-    pnpm check:runtime-dependencies
+    # test:release-contracts already includes all 14 runtime-dependency/rollback
+    # Node test files. Keep the standalone package command for focused local use.
     pnpm -F server typecheck
     pnpm -F server context:relation-eval:baseline
     pnpm -F server build
@@ -41,7 +42,7 @@ case "$task" in
 
   test)
     # 分片测试：test <shared|server|web> <shard> <total> <full|affected> <base-sha|-> <coverage true|false>
-    # affected 用 vitest --changed=<base> 沿静态 import 图选择相关测试（含被改的测试文件本身）；
+    # affected 将 Vitest changed/import 图与源码资源 guard 的并集合并后再分片，避免重复执行；
     # 覆盖率只在 full 模式收集，写成 blob 供 coverage-merge 跨 Runner 合并。
     # blob 目录不用点开头：actions/upload-artifact 默认不打包隐藏目录。
     workspace="${2:-}" shard="${3:-}" total="${4:-}" mode="${5:-full}" base="${6:--}" coverage="${7:-false}"
@@ -60,7 +61,22 @@ case "$task" in
       case "$base" in
         -|'') echo "affected mode requires a base SHA" >&2; exit 2 ;;
       esac
-      args+=("--changed=$base")
+      selection_file="$(mktemp)"
+      if ! node scripts/ci-test-selection.mjs "$workspace" "$base" "$selection_file"; then
+        rm -f "$selection_file"
+        echo "affected selection could not prove its test set" >&2
+        exit 1
+      fi
+      selected_tests=()
+      while IFS= read -r selected; do
+        [ -z "$selected" ] || selected_tests+=("$selected")
+      done < "$selection_file"
+      rm -f "$selection_file"
+      if [ "${#selected_tests[@]}" -eq 0 ]; then
+        echo "CI plan selected no tests for $workspace (source/resource guards included)"
+        exit 0
+      fi
+      args+=("${selected_tests[@]}")
     fi
     if [ "$coverage" = true ]; then
       args+=(--coverage --reporter=blob "--outputFile=coverage-blobs/blob-$shard-$total.json")
@@ -81,6 +97,7 @@ case "$task" in
         NODE_ENV=test pnpm -F web exec vitest "${args[@]}" --testTimeout=15000
         ;;
     esac
+
     ;;
 
   coverage-merge)

@@ -174,8 +174,10 @@ test(
     assert.equal(result.status, 0, result.stderr);
     assert.equal(state(root), 'completed');
     assert.deepEqual(events(root), [
+      'retirement-initial',
       'read-initial',
       'database-initial',
+      'retirement-final',
       'read-final',
       'database-final',
       'evidence-upload',
@@ -192,6 +194,8 @@ test(
 
 for (const scenario of [
   'drift',
+  'retirement-fail',
+  'retirement-drift',
   'ready-fail',
   'database-fail',
   'database-drift',

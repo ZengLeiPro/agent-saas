@@ -61,6 +61,13 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(workflow, /workflow_dispatch:[\s\S]*reason:/u);
   assert.doesNotMatch(workflow, /release_sha:/u);
   assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
+  const preparation = workflow.slice(0, workflow.indexOf('  build-deploy-verify:'));
+  const mutation = workflow.slice(workflow.indexOf('  build-deploy-verify:'));
+  assert.doesNotMatch(preparation, /^\s*concurrency:/mu);
+  assert.match(mutation, /concurrency:\s+group: staging-runtime\s+cancel-in-progress: false/u);
+  assert.doesNotMatch(preparation, /bash '\$remote\/deploy-staging-release\.sh'/u);
+  assert.match(mutation, /bash '\$remote\/deploy-staging-release\.sh'/u);
+  assert.match(mutation, /node scripts\/staging\/core-business-smoke\.mjs/u);
   assert.match(
     workflow,
     /prepare-evidence:[\s\S]*environment: production[\s\S]*build-deploy-verify:[\s\S]*needs: prepare-evidence[\s\S]*environment: staging/u,
@@ -74,7 +81,7 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(workflow, /environment: staging/u);
   const acrResolveStep = workflow.slice(
     workflow.indexOf('- name: 按需解析精确 ACS 镜像'),
-    workflow.indexOf('- name: 一次性构建不可变产物'),
+    workflow.indexOf('- name: 消费同一 main CI 已验证的不可变产物'),
   );
   assert.match(acrResolveStep, /secrets\.ACR_READ_ACCESS_KEY_ID/u);
   assert.match(acrResolveStep, /secrets\.ACR_READ_ACCESS_KEY_SECRET/u);
@@ -90,11 +97,15 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(acrWait, /confirmed_digest#sha256:/u);
   assert.match(workflow, /STAGING_WEB_URL: https:\/\/staging-agent\.kaiyan\.net/u);
   assert.match(workflow, /STAGING_API_URL: https:\/\/staging-agent-api\.kaiyan\.net/u);
-  assert.match(workflow, /VITE_API_BASE: https:\/\/api\.agent\.kaiyan\.net/u);
-  assert.match(workflow, /VITE_WEB_ORIGIN: https:\/\/agent\.kaiyan\.net/u);
+  assert.match(workflow, /consume-prepared-release\.mjs/u);
+  assert.match(workflow, /select-prepared-release-artifact\.mjs/u);
+  assert.match(workflow, /--run-attempt="\$PREPARED_RUN_ATTEMPT"/u);
+  assert.match(workflow, /--name "\$PREPARED_ARTIFACT_NAME"/u);
+  assert.doesNotMatch(workflow, /node scripts\/release\/build-release\.mjs/u);
   assert.doesNotMatch(workflow, /VITE_API_BASE: \$\{\{ env\.STAGING_API_URL \}\}/u);
   assert.doesNotMatch(workflow, /vars\.STAGING_E2E_INTEGRATION_TASK_ID/u);
-  assert.doesNotMatch(workflow, /STAGING_E2E_PASSWORD|playwright test|playwright-report/u);
+  assert.doesNotMatch(workflow, /playwright test|playwright-report/u);
+  assert.match(workflow, /core-business-smoke\.mjs/u);
   assert.match(workflow, /ensure-integration-fixture\.mjs/u);
   assert.match(workflow, /infra\/staging\/resource-plan\.json/u);
   assert.match(workflow, /plan\.firstDeploymentReadiness !== 'ready'/u);
@@ -102,7 +113,7 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(workflow, /REUSE_RC=true/u);
   assert.match(workflow, /state staging_deployed/u);
   assert.match(workflow, /state verified/u);
-  assert.match(workflow, /deterministic-deployment-gates-v1/u);
+  assert.match(workflow, /deterministic-deployment-gates-v2/u);
   assert.match(workflow, /--arg stagingRunId "\$GITHUB_RUN_ID"/u);
   assert.match(workflow, /web-oss-readback/u);
   assert.match(
@@ -267,12 +278,8 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
   assert.match(workflow, /staging-web-identity-critical\.json/u);
   assert.match(workflow, /staging-api-ready-critical\.json/u);
   assert.match(workflow, /staging-acs-health-critical\.json/u);
-  const criticalRecheck = workflow.indexOf(
-    '      - name: 验收执行前立即复核精确 RC',
-  );
-  const acceptanceExecution = workflow.indexOf(
-    '      - name: 运行浏览器与 Agent 验收套件',
-  );
+  const criticalRecheck = workflow.indexOf('      - name: 验收执行前立即复核精确 RC');
+  const acceptanceExecution = workflow.indexOf('      - name: 运行浏览器与 Agent 验收套件');
   assert.ok(criticalRecheck > 0 && acceptanceExecution > criticalRecheck);
   assert.match(
     workflow.slice(criticalRecheck, acceptanceExecution),
@@ -425,7 +432,7 @@ test('target deployment consumes bundles without source install/build and uses o
     workflow,
     /read-production-state\.mjs scripts\/release\/read-runtime-identity\.mjs/u,
   );
-  assert.match(deploy, /kill -USR2/u);
+  assert.match(deploy, /drain_acs_before_cutover/u);
   assert.match(deploy, /orchestratorArtifactDigest/u);
   assert.match(deploy, /sandboxImageDigest/u);
   assert.match(deploy, /rollback_root/u);
@@ -596,7 +603,7 @@ test('Staging deploy cleanup is best-effort and every temporary path is run-atte
   );
   assert.match(
     deploy,
-    /if \[ "\$deployment_committed" = false \]; then\s+rollback \|\| \{ \[ "\$status" -ne 0 \] \|\| status=1; \}\s+fi\s+return "\$status"/u,
+    /if \[ "\$deployment_committed" = false \]; then\s+rollback \|\| \{ \[ "\$status" -ne 0 \] \|\| status=1; \}\s+fi\s+if \[ -n "\$\{ACS_DRAIN_DROPIN:-\}" \]; then\s+release_acs_drain_guard \|\| \{ \[ "\$status" -ne 0 \] \|\| status=1; \}\s+fi\s+return "\$status"/u,
   );
 });
 
@@ -615,7 +622,7 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
   );
   assert.match(
     deploy,
-    /if \[ "\$deployment_committed" = false \]; then\s+rollback \|\| \{ \[ "\$status" -ne 0 \] \|\| status=1; \}\s+fi\s+return "\$status"/u,
+    /if \[ "\$deployment_committed" = false \]; then\s+rollback \|\| \{ \[ "\$status" -ne 0 \] \|\| status=1; \}\s+fi\s+if \[ -n "\$\{ACS_DRAIN_DROPIN:-\}" \]; then\s+release_acs_drain_guard \|\| \{ \[ "\$status" -ne 0 \] \|\| status=1; \}\s+fi\s+return "\$status"/u,
   );
 
   const root = await mkdtemp(join(tmpdir(), 'staging-health-'));

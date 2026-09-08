@@ -3,7 +3,7 @@ import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-
 
 export const SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS = Object.freeze([1, 2]);
 export const RELEASE_EVIDENCE_SCHEMA_VERSION = SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS.at(-1);
-export const RELEASE_EVIDENCE_SCHEMA_REVISION = 2;
+export const RELEASE_EVIDENCE_SCHEMA_REVISION = 3;
 
 const releaseEvidenceSchemaVersion = z
   .number()
@@ -301,6 +301,15 @@ const productionBaselineSchema = z
   })
   .strict();
 
+export const baselineObservationSchema = z
+  .object({
+    kind: z.literal('last_committed'),
+    releaseId: z.string().regex(/^rc-\d{8}-\d{2,}$/u),
+    observedAt: z.iso.datetime({ offset: false, precision: 3 }),
+    checkpointDigest: sha256DigestSchema,
+  })
+  .strict();
+
 const fileArtifactSchema = z
   .object({
     uri: artifactUriSchema,
@@ -397,6 +406,7 @@ export const releaseEvidenceSchema = z
       })
       .strict(),
     productionBaseline: productionBaselineSchema,
+    baselineObservation: baselineObservationSchema.optional(),
     // TASK-318：旧版 baseline 可整体缺失；一旦存在，schema 强制 release-bound expected。
     configIdentity: configIdentitySummarySchema.optional(),
     baselineArtifacts: baselineArtifactsSchema,
@@ -405,6 +415,13 @@ export const releaseEvidenceSchema = z
   })
   .strict()
   .superRefine((evidence, ctx) => {
+    if (evidence.baselineObservation && evidence.configIdentity !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['configIdentity'],
+        message: 'Historical baseline must not assert current ConfigIdentity',
+      });
+    }
     const hasRuntimeIdentities = 'runtimeDependencies' in evidence.baselineArtifacts;
     if ((evidence.schemaVersion === 2) !== hasRuntimeIdentities) {
       ctx.addIssue({

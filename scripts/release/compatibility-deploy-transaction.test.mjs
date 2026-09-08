@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const SCRIPT = resolve('scripts/release/compatibility-deploy-transaction.sh');
-const WORKFLOW = resolve('.github/workflows/ci.yml');
+const WORKFLOW = resolve('scripts/release/fixtures/legacy-ecs-workflow.yml');
 
 async function workflowFragment(startMarker, endMarker) {
   const workflow = await readFile(WORKFLOW, 'utf8');

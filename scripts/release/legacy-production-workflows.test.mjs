@@ -99,7 +99,7 @@ test('all legacy jobs reading production Secrets bind exactly one production Env
   ];
 
   for (const [name, workflow, expectedReaders] of [
-    ['ci.yml', app, ['deploy_plan', 'deploy-ecs', 'deploy-web-oss']],
+    ['ci.yml', app, ['deploy_plan', 'deploy-web-oss']],
     ['acs-sandbox.yml', acs, ['build-deploy']],
   ]) {
     const readers = jobNames(workflow).filter((job) =>
@@ -134,7 +134,7 @@ test('all legacy jobs reading production Secrets bind exactly one production Env
     assert.match(docs, /`OSS_WEB_DEPLOY_AK_SECRET`/u);
     assert.match(docs, /`ACS_WEBHOOK_REDELIVERY_TOKEN`/u);
   }
-  assert.match(releaseDocs, /`deploy_plan`、`deploy-ecs`、`deploy-web-oss`/u);
+  assert.match(releaseDocs, /`deploy_plan`、`deploy-web-oss`/u);
   assert.match(releaseDocs, /可选恢复 Secret：`ACS_WEBHOOK_REDELIVERY_TOKEN`/u);
   assert.match(releaseDocs, /静态代码只能证明 job 的\s+Environment 绑定和引用名称/u);
   assert.match(acsDocs, /`ACS_WEBHOOK_REDELIVERY_TOKEN` 是可选恢复凭据/u);
@@ -149,7 +149,7 @@ test('the immutable RC promotion workflow remains the release-bound production e
 });
 
 test('ECS pack declaration produces an archive containing the compatibility authority helper', async () => {
-  const workflow = await readFile(new URL('ci.yml', root), 'utf8');
+  const workflow = await readFile(new URL('fixtures/legacy-ecs-workflow.yml', releaseRoot), 'utf8');
   const packStart = workflow.indexOf('      - name: 打包并标识 ECS 版本\n');
   const packEnd = workflow.indexOf('\n      - name:', packStart + 1);
   assert.ok(packStart >= 0 && packEnd > packStart);
@@ -182,7 +182,7 @@ test('ECS pack declaration produces an archive containing the compatibility auth
 });
 
 test('legacy manual App deploy publishes immutable rollback before mutation and minimizes authority/nginx windows', async () => {
-  const workflow = await readFile(new URL('ci.yml', root), 'utf8');
+  const workflow = await readFile(new URL('fixtures/legacy-ecs-workflow.yml', releaseRoot), 'utf8');
   const authority = await readFile(new URL('compat-app-authority.sh', releaseRoot), 'utf8');
   assert.match(workflow, /source "\$RELEASE_DIR\/scripts\/release\/compat-app-authority\.sh"/u);
   assert.match(workflow, /publish_compat_deploy_rollback/u);
@@ -265,4 +265,11 @@ test('promotion extracts rooted compatibility bundles at the release root', asyn
     deploy,
     /tar -xzf "\$candidate\/\.release\/acs-orchestrator\.tgz" -C "\$candidate"/u,
   );
+});
+
+
+test('retired ECS code cannot be selected or referenced by the live workflow', async () => {
+  const workflow = await readFile(new URL('ci.yml', root), 'utf8');
+  assert.doesNotMatch(workflow, /deploy-ecs|legacy-ecs-workflow/u);
+  assert.match(jobBlock(workflow, 'deploy-web-oss'), /needs\.deploy_plan\.outputs\.ecs_required == 'false'/u);
 });

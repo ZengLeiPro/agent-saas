@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -42,6 +42,7 @@ import {
 import { AlertDispatcher, type AcsAlert } from './alerts.js';
 import { SandboxLifecycleController } from './lifecycleController.js';
 import { handleSandboxLifecycleRoute, matchSandboxLifecycleRoute } from './sandboxLifecycleRoutes.js';
+import { DeploymentDrain } from './deploymentDrain.js';
 const config = loadConfigFromEnv();
 
 const logger = {
@@ -107,6 +108,14 @@ lifecycleController = new SandboxLifecycleController(
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     void handleHealth(res);
+    return;
+  }
+  // This response is issued before parsing/dispatching any mutation. Clients may
+  // safely wait and resend this request; accepted streams and cancellation continue.
+  if (draining && req.method !== 'GET' && !/^\/invocations\/[^/?#]+$/u.test(req.url ?? '')) {
+    res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '2',
+      'x-acs-error-code': 'ACS_DEPLOYMENT_DRAINING', 'x-acs-execution-started': 'false' });
+    res.end(JSON.stringify({ status: 'error', error: 'orchestrator draining, retry shortly', executionStarted: false }));
     return;
   }
   if (snatOperations.blocks(req)) {
@@ -353,6 +362,7 @@ async function handleHealth(res: ServerResponse): Promise<void> {
     // drain 期间 CI 脚本轮询 inflight,为 0 时才 SIGTERM
     draining,
     inflight: effectiveInflightRequests(),
+    deploymentDrain: deploymentDrain.snapshot(),
     ...snatOperations.healthState(),
     backend: 'acs-agent-sandbox',
     ...releaseIdentityHealth(config.releaseIdentity),
@@ -941,33 +951,18 @@ const shutdown = (sig: NodeJS.Signals) => {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// SIGUSR2: 优雅 drain。deploy 时 CI 先 `kill -USR2` -> 轮询 /health.inflight=0
-// -> `systemctl restart` (SIGTERM)。已在跑的 /execute-stream SSE 不会被打断。
-process.on('SIGUSR2', () => {
-  if (draining) return;
-  draining = true;
-  logger.info(`SIGUSR2 received — entering drain mode (inflight=${effectiveInflightRequests()})`);
-  lifecycleController.stop();
-  // 停接新连接; 已建立连接 keep-alive 上的新请求会拿到 draining=true 状态或
-  // 长运行路径的 503。已在跑的 handler 通过 withInflight 计数,进度不受影响。
-  server.close(() => {
-    logger.info('server.close callback fired (all connections closed)');
-  });
-  const startedAt = Date.now();
-  const poll = setInterval(() => {
-    if (effectiveInflightRequests() === 0) {
-      clearInterval(poll);
-      logger.info('drain complete, exiting cleanly');
-      process.exit(0);
-    }
-    if (Date.now() - startedAt >= config.drainDeadlineMs) {
-      clearInterval(poll);
-      logger.warn(
-        `drain deadline reached (${config.drainDeadlineMs}ms), forcing exit (inflight=${effectiveInflightRequests()})`,
-      );
-      process.exit(1);
-    }
-    logger.info(`draining... inflight=${effectiveInflightRequests()}`);
-  }, 2_000);
-  poll.unref();
+const deploymentDrain = new DeploymentDrain({
+  pid: process.pid, inflight: effectiveInflightRequests, deadlineMs: () => config.drainDeadlineMs,
+  setAdmission: (paused) => { draining = paused; if (paused) lifecycleController.stop(); else lifecycleController.start(); },
+  publish: (snapshot) => {
+    const path = process.env.ACS_ORCH_DRAIN_STATE_FILE ?? '/run/agent-saas-acs-drain.json';
+    const candidate = `${path}.${process.pid}.candidate`;
+    writeFileSync(candidate, JSON.stringify(snapshot) + '\n', { mode: 0o600 });
+    renameSync(candidate, path);
+    logger.info(`deployment drain ${snapshot.state} (inflight=${snapshot.inflight})`);
+  },
+  onError: (error) => logger.error(`deployment drain proof failed: ${String(error)}`),
+  exit: () => { server.close(); process.exit(0); },
 });
+process.on('SIGUSR2', () => deploymentDrain.begin());
+process.on('SIGUSR1', () => deploymentDrain.cancel());

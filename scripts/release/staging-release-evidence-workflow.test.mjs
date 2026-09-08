@@ -83,8 +83,8 @@ test('Staging conditionally upgrades a trusted outdated Writer before preparing 
   const workflow = await readFile(stagingWorkflowPath, 'utf8');
   assert.match(workflow, /ensure-evidence-writer:/u);
   assert.match(workflow, /needs: ensure-evidence-writer/u);
-  assert.match(workflow, /needs_upgrade=false/u);
-  assert.match(workflow, /needs_upgrade=true/u);
+  assert.match(workflow, /evidence-writer-capability\.mjs/u);
+  assert.match(workflow, /EVIDENCE_WRITER_IMPLEMENTATION_DIGEST/u);
   assert.match(workflow, /steps\.capability\.outputs\.needs_upgrade == 'true'/u);
   assert.match(workflow, /actions\/workflows\/ci\.yml/u);
   assert.match(workflow, /Expected exactly one merged PR/u);
@@ -92,9 +92,8 @@ test('Staging conditionally upgrades a trusted outdated Writer before preparing 
   assert.match(workflow, /RevokeSecurityGroup/u);
   assert.match(workflow, /if: always\(\) && env\.STAGING_SSH_SOURCE_CIDR != ''/u);
   assert.match(workflow, /deploy-evidence-writer\.sh/u);
-  assert.match(workflow, /--define:process\.env\.AGENT_SAAS_EMBEDDED='"true"'/u);
-  assert.match(workflow, /evidence-writer-current/u);
-  assert.match(workflow, /release evidence service listening on 127\.0\.0\.1:4420/u);
+  assert.match(workflow, /build-evidence-writer\.mjs/u);
+  assert.match(workflow, /verify-evidence-writer-bundle\.mjs/u);
   assert.ok(workflow.indexOf('ensure-evidence-writer:') < workflow.indexOf('prepare-evidence:'));
 });
 
@@ -140,10 +139,10 @@ test('Staging evidence stage safely reuses or creates one immutable same-SHA rec
   assert.match(workflow, /只读获取在线生产状态/u);
   assert.match(workflow, /RELEASE_RECORD_OSS_URI/u);
   assert.match(workflow, /RELEASE_RECORD_OSS_REGION/u);
-  assert.match(workflow, /aliyun --secure oss ls[\s\S]*--region "\$RELEASE_RECORD_OSS_REGION"/u);
+  assert.match(workflow, /fetch-baseline-artifacts\.mjs[\s\S]*"\$RELEASE_RECORD_OSS_REGION"/u);
   assert.match(workflow, /aliyun --secure oss cp[\s\S]*--region "\$RELEASE_RECORD_OSS_REGION"/u);
   assert.doesNotMatch(workflow, /aliyun --region "\$RELEASE_RECORD_OSS_REGION" --secure/u);
-  assert.match(workflow, /resolve-baseline-artifacts\.mjs/u);
+  assert.match(workflow, /fetch-baseline-artifacts\.mjs/u);
   assert.match(workflow, /baseline-artifacts\.json/u);
   assert.match(workflow, /produce-release-evidence\.mjs/u);
   assert.match(workflow, /cat "\$RUNNER_TEMP\/classification\.json" >&2/u);
@@ -172,8 +171,18 @@ test('Staging and Promotion verify component-scoped selected runtime identities'
     readFile(promotionWorkflowPath, 'utf8'),
   ]);
   for (const workflow of [staging, promotion]) {
-    assert.match(workflow, /runtimeDependencies\.server\.uri/u);
-    assert.match(workflow, /runtimeDependencies\.acs\.uri/u);
+    if (workflow === staging) {
+      assert.match(workflow, /runtimeDependencies\.server\.uri/u);
+      assert.match(workflow, /runtimeDependencies\.acs\.uri/u);
+    } else {
+      assert.match(workflow, /prefetch-promotion-artifacts\.mjs/u);
+      const prefetch = await readFile(
+        new URL('./prefetch-promotion-artifacts.mjs', import.meta.url),
+        'utf8',
+      );
+      assert.match(prefetch, /\['server', 'acs'\]/u);
+      assert.match(prefetch, /runtimeDependencies\?\.\[component\]/u);
+    }
     assert.match(workflow, /verify-selected-release-artifacts\.mjs/u);
   }
   assert.doesNotMatch(

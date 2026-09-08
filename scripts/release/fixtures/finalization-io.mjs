@@ -22,6 +22,12 @@ if (command === 'ssh') {
   } else if (remote.includes(' -- release ')) {
     writeFileSync(join(root, 'released'), 'released');
     quit();
+  } else if (remote.includes('verify-app-retirement.sh')) {
+    const final = remote.includes('app-retirement-final.json');
+    log(final ? 'retirement-final' : 'retirement-initial');
+    if (scenario === 'retirement-fail' || (final && scenario === 'retirement-drift')) quit(1);
+    writeFileSync(join(root, final ? 'app-retirement-final.json' : 'app-retirement-initial.json'), JSON.stringify({ schemaVersion: 1, status: 'acknowledged' }));
+    quit();
   } else if (remote.includes('read-live-production-components.mjs')) {
     const final = remote.includes('live-final.json');
     log(final ? 'read-final' : 'read-initial');

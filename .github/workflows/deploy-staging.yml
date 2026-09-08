@@ -716,6 +716,8 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # This dependency-free job runs only Node/Python CLI scripts.
+          package-manager-cache: false
       - name: 安装阿里云 CLI
         run: |
           set -euo pipefail

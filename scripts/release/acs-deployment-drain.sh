@@ -37,7 +37,7 @@ cancel_acs_deployment_drain() {
 }
 
 drain_acs_before_cutover() {
-  local health state status code result deadline proof current_pid terminal_pid
+  local health state status code result deadline proof current_pid terminal_pid next_progress
   systemctl is-active --quiet "$ACS_SERVICE_NAME" || {
     echo 'ACS must be healthy before starting its generation handoff' >&2; return 1;
   }
@@ -47,14 +47,22 @@ drain_acs_before_cutover() {
   ACS_DRAIN_PROTOCOL="$(printf '%s' "$health" | jq -r '.deploymentDrain.protocolVersion // 0')"
   if [ "$ACS_DRAIN_PROTOCOL" = 1 ]; then
     printf '%s' "$health" | jq -e --argjson pid "$ACS_DRAIN_PID" '.deploymentDrain.pid==$pid and .draining==false' >/dev/null || return 1
-  else
-    # The first upgrade cannot change the old binary's unsafe timeout behavior.
-    # Require a quiet old generation and still prove its clean exit below.
-    printf '%s' "$health" | jq -e '.inflight==0 and .draining==false' >/dev/null || {
+  elif [ "$ACS_DRAIN_PROTOCOL" = 0 ]; then
+    # Compatibility handoff: stop admission first, then wait for accepted work.
+    # The old binary still owns its timeout; an abnormal exit must never count
+    # as a successful drain or trigger a forced candidate restart.
+    printf '%s' "$health" | jq -e '.draining==false and (.inflight | type=="number" and .>=0 and floor==.)' >/dev/null || {
       ACS_DRAIN_PID=''
-      echo 'Legacy ACS upgrade requires zero inflight work; retry after it drains naturally' >&2
+      echo 'Legacy ACS must report valid inflight work and must not already be draining' >&2
       return 75
     }
+    printf 'Legacy ACS: stopping admission and waiting for accepted work: %s\n' \
+      "$(printf '%s' "$health" | jq -c '{inflight,draining,drainDeadlineMs:.lifecycle.drainDeadlineMs}')" >&2
+    echo 'WARNING: legacy runtime may exit on its own drain timeout; abnormal exit will fail this promotion, not force a candidate restart' >&2
+  else
+    ACS_DRAIN_PID=''
+    echo 'Unsupported ACS deployment drain protocol; refusing to signal the process' >&2
+    return 1
   fi
   local unit="${ACS_SERVICE_NAME%.service}.service"
   local dropin_root="${ACS_SYSTEMD_RUNTIME_ROOT:-/run/systemd/system}/$unit.d"
@@ -65,8 +73,14 @@ drain_acs_before_cutover() {
   systemctl daemon-reload || return 1
   kill -USR2 "$ACS_DRAIN_PID" || return 1
   deadline=$((SECONDS + 660))
+  next_progress=$SECONDS
   while [ "$SECONDS" -lt "$deadline" ]; do
     state="$(systemctl show "$ACS_SERVICE_NAME" --property=ActiveState --value)" || return 1
+    if [ "$SECONDS" -ge "$next_progress" ]; then
+      printf 'Waiting for ACS drain: pid=%s protocol=%s state=%s remainingSeconds=%s\n' \
+        "$ACS_DRAIN_PID" "$ACS_DRAIN_PROTOCOL" "$state" "$((deadline - SECONDS))" >&2
+      next_progress=$((SECONDS + 15))
+    fi
     if [ "$state" = inactive ] || [ "$state" = failed ]; then
       terminal_pid="$(systemctl show "$ACS_SERVICE_NAME" --property=ExecMainPID --value)" || return 1
       status="$(systemctl show "$ACS_SERVICE_NAME" --property=ExecMainStatus --value)" || return 1

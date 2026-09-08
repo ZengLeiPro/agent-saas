@@ -49,7 +49,7 @@ import { configuredMobileTelemetryRouter } from '../telemetry/mobileTelemetry.js
 import { requireAdmin } from '../auth/middleware.js';
 import { createAgentsRouter } from '../routes/agents.js';
 import { createTenantExpertTemplatesRouter } from '../routes/orgAgents.js';
-import { registerOrgAgentRoutes } from './orgAgentRoutes.js'; import { registerKyAppRoutes, registerUnavailableMineRoute } from './kyAppRoutes.js';
+import { registerOrgAgentRoutes } from './orgAgentRoutes.js'; import { registerKyAppRoutes, registerKyAppAvailabilityRoute, registerUnavailableMineRoute } from './kyAppRoutes.js';
 import { createKbFilesRouter } from '../routes/kbFiles.js';
 import { createOrgQaRouter } from '../routes/orgQa.js';
 import { registerAgentDwsRoutes } from './routesAgentDws.js';
@@ -1107,6 +1107,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     // WP2a 定制项目对接：只有完整鉴权与依赖装配后才暴露真实能力路由。
     kyAppRoutesRegistered = registerKyAppRoutes(app, runtime) !== null;
   }
-  // 壳总会读取 mine；可选子系统关闭时保持 200 空 read model，避免用 404 探测能力。
   if (!kyAppRoutesRegistered) registerUnavailableMineRoute(app);
+  registerKyAppAvailabilityRoute(app, kyAppRoutesRegistered);
 }

@@ -35,9 +35,18 @@ import type { KyAppToolRegistrationDryRun } from '../kyapp/systems/publishGate.j
 import { createKyAppToolRegistrationDryRun } from '../kyapp/gateway/registrationDryRun.js';
 import { serverLogger } from '../utils/logger.js';
 import type { AppRuntime } from './runtime.js';
+import { requirePlatformAdmin } from '../auth/middleware.js';
 
 /** §3.2：平台管理端点统一前缀。 */
 export const KY_APP_CONTRACT_BASE_PATH = '/api/app-contract/v1';
+
+/** 管理页通过稳定端点判断能力是否装配，不能用业务接口的 404 探测。 */
+export function registerKyAppAvailabilityRoute(app: Express, enabled: boolean): void {
+  app.get(`${KY_APP_CONTRACT_BASE_PATH}/availability`, requirePlatformAdmin, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ enabled });
+  });
+}
 
 export interface RegisterKyAppRoutesOptions {
   /** 测试注入：跳过磁盘 config.json，直接给配置对象。 */

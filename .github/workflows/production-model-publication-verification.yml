@@ -1,12 +1,11 @@
-name: Production model publication integration verification
-# Temporary PR-593 helper; no deployment, environments or production credentials.
+name: Production model publication final verification
+# Temporary PR-593 helper. No production environments, credentials or deployment.
 on:
   push:
     branches: [fix/models-production-write-policy-20260908]
     paths:
       - .github/workflows/production-model-publication-verification.yml
-      - scripts/release/bootstrap-production-model-publication.py
-      - scripts/release/finalize-production-model-integration.py
+      - scripts/release/finish-production-publication.py
 permissions:
   contents: write
 concurrency:
@@ -22,137 +21,86 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - name: Apply checked integration patch
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('scripts/release/bootstrap-production-model-publication.py')
-          s = p.read_text()
-          old = "    count = text.count(old)\n    if count != 1:"
-          new = "    count = text.count(old)\n    if count != 1 and old.startswith(' '):\n        old, new = '\\n' + old, '\\n' + new\n        count = text.count(old)\n    if count != 1:"
-          assert s.count(old) == 1
-          p.write_text(s.replace(old, new))
-          PY
-          python3 scripts/release/bootstrap-production-model-publication.py
-          git restore -- scripts/release/bootstrap-production-model-publication.py
-          python3 scripts/release/finalize-production-model-integration.py
-          python3 - <<'PY'
-          from pathlib import Path
-          for name in ['scripts/release/read-production-state.mjs', 'scripts/release/read-live-production-components.mjs']:
-              p = Path(name)
-              lines = p.read_text().splitlines()
-              if lines[1].startswith('#!'):
-                  lines[0], lines[1] = lines[1], lines[0]
-                  p.write_text('\n'.join(lines) + '\n')
-          p = Path('server/src/config/productionModelPublisher.ts')
-          p.write_text(p.read_text().replace('  publishedExpected, rawRevision,', '  rawRevision,'))
-          p = Path('server/src/__tests__/productionModelPublication.process.test.ts')
-          s = p.read_text()
-          assert s.count('    alias: {') == 1
-          s = s.replace('    alias: {', "    packages: 'external', alias: {")
-          assert s.count("symlinkSync(resolve('node_modules')") == 1
-          p.write_text(s.replace("symlinkSync(resolve('node_modules')", "symlinkSync(resolve('../node_modules')"))
-          p = Path('web/src/components/ModelManager/useModelWritePolicy.ts')
-          p.write_text(p.read_text().replace('        ? `${PRODUCTION_NOTICE} ${policy.message}`', '        ? (policy.message || PRODUCTION_NOTICE)'))
-          PY
+      - name: Apply final reviewed boundary changes
+        run: python3 scripts/release/finish-production-publication.py
       - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.1'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Format new modules and bind migration review evidence
+      - name: Format new test and updated documentation
+        run: pnpm exec prettier --write scripts/release/config-publication-boundary.test.mjs docs/plans/production-model-config-online-save.md docs/config-identity.md
+      - name: Verify without hiding independent failures
         run: |
-          pnpm exec prettier --write \
-            scripts/release/config-publication.mjs scripts/release/config-publication.d.mts scripts/release/config-publication.test.mjs scripts/release/config-publication-release.test.mjs \
-            server/src/config/productionModelPublisher.ts \
-            server/src/app/productionConfigIdentity.ts server/src/app/productionModelPublication.ts \
-            server/src/app/memoryIndexRuntimeUpdate.ts server/src/app/memoryIndexRuntimeUpdate.test.ts \
-            server/src/release/configPublicationCli.ts \
-            server/src/__tests__/helpers/productionPublicationRig.ts server/src/__tests__/helpers/productionPublicationWorker.ts \
-            server/src/__tests__/productionModelPublication.test.ts server/src/__tests__/productionModelPublication.process.test.ts server/src/__tests__/productionModelPublication.fence.test.ts \
-            web/src/components/ModelManager/productionSave.test.tsx \
-            docs/release/生产模型在线发布运行时装配审核-20260909.md
           python3 - <<'PY'
-          import hashlib, json, subprocess
+          import glob, json, re, subprocess
           from pathlib import Path
-          path = 'server/src/app/runtime.ts'
-          digest = lambda data: 'sha256:' + hashlib.sha256(data).hexdigest()
-          old_digest = digest(subprocess.check_output(['git', 'show', f'HEAD:{path}']))
-          new_digest = digest(Path(path).read_bytes())
-          document = 'docs/release/生产模型在线发布运行时装配审核-20260909.md'
-          evidence = {'path': document, 'digest': digest(Path(document).read_bytes())}
-          p = Path('config/release-migration-reviews.json')
-          data = json.loads(p.read_text())
-          updated = 0
-          for review in data['reviews']:
-              touched = False
-              for item in review['files']:
-                  if item['path'] != path: continue
-                  assert item['targetDigest'] == old_digest
-                  item['targetDigest'] = new_digest
-                  item['reason'] += ' 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。'
-                  touched = True
-                  updated += 1
-              if touched and evidence not in review['evidence']: review['evidence'].append(evidence)
-          assert updated > 0
-          p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
-          paths = set(json.loads(Path('/tmp/production-model-integration-paths.json').read_text()))
-          paths.update([str(p), document, 'scripts/release/config-publication-release.test.mjs'])
-          Path('/tmp/production-model-integration-paths.json').write_text(json.dumps(sorted(paths)))
-          print('Preserved historical classifications and rebound', updated, 'runtime reviews')
+          root = Path('/tmp/production-model-final')
+          root.mkdir()
+          base = '9bfd1a56ec561f63570a8e58f7cd4f0e13f5c262'
+          paths = set(subprocess.check_output(['git', 'diff', '--name-only', base], text=True).splitlines())
+          lint = sorted(p for p in paths if Path(p).is_file() and re.search(r'\.(?:mjs|cjs|js|jsx|ts|tsx|mts|cts)$', p))
+          checks = [
+            ('lint', ['pnpm', 'exec', 'eslint', *lint]),
+            ('engineering', ['pnpm', 'check:ratchets']),
+            ('migration-reviews', ['node', 'scripts/release/check-reviewed-migrations.mjs']),
+            ('release-contracts', ['pnpm', 'test:release-contracts']),
+            ('shared-types', ['pnpm', '-F', '@agent/shared', 'typecheck']),
+            ('server-types', ['pnpm', '-F', 'server', 'typecheck']),
+            ('web-types', ['pnpm', '-F', 'web', 'typecheck']),
+            ('production-runtime', ['pnpm', '-F', 'server', 'exec', 'vitest', 'run', 'productionModelPublication', 'memoryIndexRuntimeUpdate', 'sharedConfigRefresher', 'adminRunner', 'src/__tests__/modelsAdminProductionWritePolicy.test.ts', 'src/__tests__/modelsAdmin.test.ts', 'src/__tests__/modelsAdminQuotaSource.test.ts', 'src/__tests__/modelsAdminGuardrailDisable.test.ts', 'src/__tests__/adminConfigMutationService.test.ts', 'src/app/modelResolvers.test.ts', 'src/app/configRuntimeRecovery.integration.test.ts', 'src/runtime/configIdentityRuntime.test.ts']),
+            ('production-ui', ['pnpm', '-F', 'web', 'exec', 'vitest', 'run', 'src/components/ModelManager/index.test.tsx', 'src/components/ModelManager/writePolicy.test.tsx', 'src/components/ModelManager/productionSave.test.tsx']),
+            ('server-build', ['pnpm', '-F', 'server', 'build']),
+            ('web-build', ['pnpm', '-F', 'web', 'build']),
+            ('web-budget', ['pnpm', 'check:web-startup-budget']),
+            ('whitespace', ['git', 'diff', '--check']),
+          ]
+          results = []
+          for name, command in checks:
+              log = root / f'{name}.log'
+              with log.open('w') as out:
+                  try:
+                      code = subprocess.run(command, stdout=out, stderr=subprocess.STDOUT, timeout=900).returncode
+                  except subprocess.TimeoutExpired:
+                      code = 124
+              text = re.sub(r'\x1b\[[0-9;]*m', '', log.read_text(errors='replace'))
+              print(f'CHECK {name}: exit={code}', flush=True)
+              if code:
+                  print('\n'.join(text.splitlines()[-100:]), flush=True)
+              else:
+                  print('\n'.join(line for line in text.splitlines() if re.search(r'Test Files|Tests\s|^# (tests|pass|fail)|warnings?|built in', line))[-6000:], flush=True)
+              results.append({'check': name, 'exitCode': code})
+              (root / 'results.json').write_text(json.dumps(results, indent=2))
+          raise SystemExit(1 if any(item['exitCode'] for item in results) else 0)
           PY
-      - name: Typechecks, production saves, real Worker restart and bundles
+      - name: Smoke test sealed publication CLI with an isolated credential-free configuration
         run: |
           set -euo pipefail
-          exec 3>&1
-          trap 'grep -E "Test Files|Tests |tests [0-9]|pass [0-9]|fail [0-9]|built in|error TS|ERROR|FAIL" /tmp/production-model-publication-verification.log >&3 || true; tail -n 100 /tmp/production-model-publication-verification.log >&3' EXIT
-          {
-            node --test scripts/release/config-publication.test.mjs scripts/release/config-publication-release.test.mjs
-            pnpm -F @agent/shared typecheck
-            pnpm -F server typecheck
-            pnpm -F web typecheck
-            pnpm -F server exec vitest run \
-              productionModelPublication memoryIndexRuntimeUpdate sharedConfigRefresher adminRunner \
-              src/__tests__/modelsAdminProductionWritePolicy.test.ts \
-              src/__tests__/modelsAdmin.test.ts src/__tests__/modelsAdminQuotaSource.test.ts \
-              src/__tests__/modelsAdminGuardrailDisable.test.ts src/__tests__/adminConfigMutationService.test.ts \
-              src/app/modelResolvers.test.ts src/app/configRuntimeRecovery.integration.test.ts src/runtime/configIdentityRuntime.test.ts
-            pnpm -F web exec vitest run src/components/ModelManager/index.test.tsx src/components/ModelManager/writePolicy.test.tsx src/components/ModelManager/productionSave.test.tsx
-            pnpm -F server build
-            pnpm -F web build
-            git diff --check
-          } > /tmp/production-model-publication-verification.log 2>&1
-      - name: Commit verified integration only to the original PR branch
+          temporary="$(mktemp -d)"
+          trap 'rm -rf "$temporary"' EXIT
+          printf '{}\n' > "$temporary/config.json"
+          expected='{"schemaVersion":1,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","credentialVersionDigest":null}'
+          node server/dist/config-publication-cli.js prepare "$temporary/config.json" synthetic-ci-release "$expected"
+          node server/dist/config-publication-cli.js verify "$temporary/config.json"
+          test "$(cat "$temporary/config.json")" = '{}'
+      - name: Commit verified final source changes to the original PR branch
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/fix/models-production-write-policy-20260908
           test "$(git ls-remote origin "$GITHUB_REF" | cut -f1)" = "$GITHUB_SHA"
-          python3 - <<'PY'
-          import json, subprocess
-          paths = json.load(open('/tmp/production-model-integration-paths.json'))
-          paths += [
-            'scripts/release/config-publication.mjs', 'scripts/release/config-publication.d.mts', 'scripts/release/config-publication.test.mjs',
-            'server/src/config/productionModelPublisher.ts', 'server/src/app/productionConfigIdentity.ts',
-            'server/src/app/productionModelPublication.ts', 'server/src/app/memoryIndexRuntimeUpdate.ts',
-            'server/src/release/configPublicationCli.ts', 'server/src/app/memoryIndexRuntimeUpdate.test.ts',
-            'server/src/__tests__/helpers/productionPublicationRig.ts', 'server/src/__tests__/helpers/productionPublicationWorker.ts',
-            'server/src/__tests__/productionModelPublication.test.ts', 'server/src/__tests__/productionModelPublication.process.test.ts',
-            'web/src/components/ModelManager/productionSave.test.tsx',
-          ]
-          subprocess.run(['git', 'add', '--', *sorted(set(paths))], check=True)
-          PY
+          git add -- scripts/release/read-production-state.mjs scripts/release/deploy-production-release.sh \
+            scripts/release/config-publication-boundary.test.mjs docs/config-identity.md docs/plans/production-model-config-online-save.md
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git -c core.hooksPath=/dev/null commit -m 'feat(models): wire verified signed production save and dual-process application'
+          git -c core.hooksPath=/dev/null commit -m 'fix(release): validate signed online versions at API and Worker rollback boundaries'
           git push origin HEAD:refs/heads/fix/models-production-write-policy-20260908
           git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
-      - name: Retain test output
+      - name: Retain verification evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: production-model-publication-verification-${{ github.run_id }}
-          path: /tmp/production-model-publication-verification.log
+          name: production-model-final-${{ github.run_id }}
+          path: /tmp/production-model-final/
           if-no-files-found: ignore
           retention-days: 1

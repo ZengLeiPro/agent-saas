@@ -9,6 +9,8 @@ import { credentialClaimUrl } from '../KyAppCredentialClaim/claimRoute';
 import { CreateDeliveryForm } from './CreateDeliveryForm';
 const routeId = 'platform.runtime.system-deliveries';
 const stepNames: Record<string, string> = {
+  existing_organization: '组织与技术联系人',
+  assignments: '成员与 Agent 授权',
   tenant_admin: '组织与管理员',
   credit_grant: '初始积分',
   system_version: '系统版本',
@@ -23,10 +25,12 @@ export function SystemDeliveryPage({
   executionId,
   systemId,
   embedded = false,
+  connectionRevision = 0,
 }: {
   executionId?: string | null;
   systemId?: string;
   embedded?: boolean;
+  connectionRevision?: number;
 }) {
   const [selectedExecution, setSelectedExecution] = useState(() =>
     embedded
@@ -68,7 +72,12 @@ export function SystemDeliveryPage({
     </div>
   ) : (
     <div className="space-y-6 p-4">
-      <CreateDeliveryForm defaultSystemId={systemId} onStarted={started} />
+      <CreateDeliveryForm
+        key={connectionRevision}
+        defaultSystemId={systemId}
+        onStarted={started}
+        onOpenExecution={open}
+      />
       <DeliveryList systemId={systemId} onOpen={open} />
     </div>
   );
@@ -127,7 +136,14 @@ function DeliveryExecution({
     setBusy(true);
     setError('');
     try {
-      onResumed(await kyAppPost<OnboardResponse>('/onboard', execution.request));
+      onResumed(
+        await kyAppPost<OnboardResponse>(
+          execution.request?.mode === 'existing'
+            ? `/onboard-existing/${encodeURIComponent(execution.executionId)}/resume`
+            : '/onboard',
+          execution.request?.mode === 'existing' ? {} : execution.request,
+        ),
+      );
       resource.reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '继续交付失败');
@@ -168,11 +184,7 @@ function DeliveryExecution({
             ))}
           </ol>
           {execution.status === 'waiting_external' && (
-            <p>
-              等待技术联系人完成凭据装配、域名验证或部署。阻断码：
-              {execution.lastErrorCode ?? execution.currentStep}
-              。完成外部处理后继续；请求内容保持首次交付时的版本。
-            </p>
+            <p>{connectionWaitingMessage(execution.lastErrorCode)}</p>
           )}
           {claim && ticket && (
             <div className="rounded border p-3">
@@ -190,6 +202,38 @@ function DeliveryExecution({
             <Button disabled={busy} onClick={() => void resume()}>
               {busy ? '继续交付中…' : '继续交付'}
             </Button>
+          )}
+          {execution.request?.mode === 'existing' && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() =>
+                  navigateGovernance(
+                    governanceRoute('organization.agents.business-systems', {
+                      orgId: execution.tenantId,
+                      entityId: execution.installationId,
+                    }),
+                  )
+                }
+              >
+                打开实例与授权
+              </Button>
+              {execution.lastErrorCode === 'diagnostic_configuration_required' && (
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    navigateGovernance(
+                      governanceRoute('platform.resource-center.business-systems', {
+                        entityId: execution.systemId,
+                        search: '?tab=connection-settings',
+                      }),
+                    )
+                  }
+                >
+                  配置接入诊断
+                </Button>
+              )}
+            </div>
           )}
           {execution.status === 'completed' && (
             <div className="space-y-3">
@@ -215,6 +259,21 @@ function DeliveryExecution({
       )}
     </section>
   );
+}
+
+function connectionWaitingMessage(code: string | null) {
+  const messages: Record<string, string> = {
+    credential_claim_required: '待领取凭据：请技术联系人登录领取并装配凭据。',
+    credential_ack_required: '待服务确认：请技术联系人装配凭据，启动业务服务并完成确认。',
+    domain_verification_required: '待域名验证：请技术联系人按处理信息配置 DNS TXT，完成后继续。',
+    ready_required: '待服务就绪：请技术联系人部署本次接入版本，服务就绪后继续。',
+    assignment_required: '待授权成员：请打开实例与授权，选择可使用的成员及 Agent，完成后继续。',
+    diagnostic_configuration_required:
+      '待配置接入诊断：请在系统接入配置中选择只读能力和参数，保存后继续。',
+    organization_admin_required: '所选组织暂无有效管理员，请先完善组织成员管理。',
+    diagnostic_failed: '接入诊断未通过，请查看处理信息，修复后继续。',
+  };
+  return messages[code ?? ''] ?? '等待完成外部处理。完成后可继续原接入请求。';
 }
 
 /** 旧交付链接继续可用，统一进入所属业务系统的组织接入页。 */

@@ -23,6 +23,7 @@ export interface SystemDetail {
   allowedActions?: string[];
 }
 export interface OnboardRequest {
+  mode?: 'existing';
   tenantId: string;
   tenantName: string;
   adminName: string;

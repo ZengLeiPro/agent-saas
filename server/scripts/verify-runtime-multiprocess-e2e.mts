@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import assert from 'node:assert/strict';
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile as execFileCb, spawn, type ChildProcess } from 'node:child_process';
 import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import bcrypt from 'bcrypt';
 import WebSocket from 'ws';
+import { collectStreamingReplay, createFakeOpenAI } from './runtime-multiprocess-stream-fixture.mjs';
 
 const execFile = promisify(execFileCb);
 const require = createRequire(import.meta.url);
@@ -90,7 +91,7 @@ export async function runScenario(scenario: Scenario, options: { bundleDirectory
         env: { ...opts.env, ...configEnvironment, NODE_ENV: 'production', AGENT_SAAS_ENVIRONMENT: 'production', AGENT_SAAS_RELEASE_ID: 'rc-20260908-00', AGENT_SAAS_CONFIG_PATH: join(rootDir, 'config.json') } },
       !options.bundleDirectory,
     );
-    fakeModel = createFakeOpenAI();
+    fakeModel = createFakeOpenAI({ gateFinalText: scenario === 'e2e' });
     await fakeModel.listen(fakeModelPort);
 
     await writeFixtureConfig({
@@ -182,18 +183,12 @@ export async function runScenario(scenario: Scenario, options: { bundleDirectory
       ws.close();
       ws = undefined;
       replayWs = await openWs(serverPort, token);
-      replayWs.send(JSON.stringify({ action: 'resume', sessionId, lastEventId: 0, lastEventCursor: '', skipReplay: false }));
-      const replayActive = await collectUntil(replayWs, (events) => events.some((e) => e.data?.type === 'active_stream' && e.data?.active === true), 10_000);
-      assert.ok(replayActive.some((e) => e.data?.type === 'active_stream' && e.data?.runId === runId), 'expected reconnect replay to bind active durable run');
-      const replayDone = await collectUntil(replayWs, (events) => events.some((e) => e.data?.type === 'done'), 30_000);
+      // Keep one listener across replay/live delivery. The model cannot finish until
+      // this WS client has received the prefix, independent of the relay flush timer.
+      const replayDone: WsEnvelope[] = await collectStreamingReplay(replayWs, {
+        sessionId, runId, acknowledgeFirstText: () => fakeModel!.acknowledgeFirstText(),
+      });
       assert.ok(replayDone.some((e) => e.data?.type === 'tool_result' && String(e.data?.content ?? '').includes('MP_E2E_')), 'expected replay/live tool output from remote hand');
-      const textEvents = replayDone.filter((e) => e.data?.type === 'text');
-      assert.deepEqual(
-        textEvents.map((e) => String(e.data?.content ?? '')),
-        ['MULTIPROCESS_', 'DONE'],
-        'expected multiple assistant text deltas before done instead of one terminal aggregate',
-      );
-      assert.ok(replayDone.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('DONE')), 'expected final assistant text replayed through PG bridge');
     } else if (scenario === 'notify-drop' || scenario === 'db-unavailable') {
       // Chaos 场景：用一条 long-lived listener 累积事件，避免 collectUntil 切换间隙
       // 丢失（EventEmitter 同步派发，gap 期间 message 被丢弃）。第一次看到 tool_input
@@ -465,51 +460,6 @@ async function writeFixtureConfig(input: {
       invokeTimeoutMs: 20_000,
     },
   }, null, 2));
-}
-
-function createFakeOpenAI() {
-  let count = 0;
-  const server = createServer(async (req, res) => {
-    if (req.method !== 'POST' || !req.url?.endsWith('/chat/completions')) {
-      res.writeHead(404).end('not found');
-      return;
-    }
-    count += 1;
-    let raw = '';
-    for await (const chunk of req) raw += chunk;
-    const body = JSON.parse(raw || '{}') as { messages?: Array<{ role?: string }> };
-    const hasToolOutput = body.messages?.some((m) => m.role === 'tool') ?? false;
-    writeSseHeaders(res);
-    if (!hasToolOutput) {
-      sendSse(res, {
-        choices: [{ delta: { tool_calls: [{ index: 0, id: `call-${randomUUID()}`, type: 'function', function: { name: 'Shell', arguments: JSON.stringify({ command: 'for i in 1 2 3; do echo MP_E2E_$i; sleep 1; done', timeoutMs: 15_000 }) } }] } }],
-      });
-      sendSse(res, { choices: [{ delta: {}, finish_reason: 'tool_calls' }] });
-      res.write('data: [DONE]\n\n');
-      res.end();
-      return;
-    }
-    for (const token of ['MULTIPROCESS_', 'DONE']) {
-      await sleep(150);
-      sendSse(res, { choices: [{ delta: { content: token } }] });
-    }
-    sendSse(res, { choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } });
-    res.write('data: [DONE]\n\n');
-    res.end();
-  });
-  return {
-    listen: (port: number) => new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve)),
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-    requestCount: () => count,
-  };
-}
-
-function writeSseHeaders(res: ServerResponse): void {
-  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-}
-
-function sendSse(res: ServerResponse, data: unknown): void {
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 async function login(port: number): Promise<{ token: string; authEpoch: number; generation: number }> {

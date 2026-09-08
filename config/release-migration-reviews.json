@@ -1067,20 +1067,6 @@
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
         {
-          "path": "server/src/data/governance-schema/latestMigrations.ts",
-          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
-        },
-        {
-          "path": "server/src/data/governance-schema/migrations.ts",
-          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
-        },
-        {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
@@ -1521,20 +1507,6 @@
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
         {
-          "path": "server/src/data/governance-schema/latestMigrations.ts",
-          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
-        },
-        {
-          "path": "server/src/data/governance-schema/migrations.ts",
-          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
-        },
-        {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
@@ -1959,20 +1931,6 @@
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
         {
-          "path": "server/src/data/governance-schema/latestMigrations.ts",
-          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
-        },
-        {
-          "path": "server/src/data/governance-schema/migrations.ts",
-          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
-        },
-        {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
@@ -2381,20 +2339,6 @@
           "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
-        },
-        {
-          "path": "server/src/data/governance-schema/latestMigrations.ts",
-          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
-        },
-        {
-          "path": "server/src/data/governance-schema/migrations.ts",
-          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         },
         {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
@@ -9804,6 +9748,20 @@
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
           "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         }
       ],
       "evidence": [
@@ -9848,6 +9806,20 @@
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
           "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         }
       ],
       "evidence": [
@@ -9902,6 +9874,20 @@
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
           "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         }
       ],
       "evidence": [
@@ -9939,6 +9925,20 @@
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
           "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         }
       ],
       "evidence": [

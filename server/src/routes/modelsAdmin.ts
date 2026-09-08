@@ -16,6 +16,7 @@ import type {
 } from '../app/config.js';
 import {
   AdminConfigMutationService,
+  ProductionConfigPublishRequiredError,
   ConfigConflictError,
   ConfigMutationCommittedError,
   RuntimeRestoreFailedError,
@@ -382,6 +383,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
     res.setHeader('ETag', `"${revision}"`);
     res.json({
       revision,
+      writePolicy: configMutationService.getWritePolicy(),
       models: redactModels(diskConfig.models),
       memoryIndex: redactMemoryIndex(diskConfig.memory?.index ?? null),
       titleGenerator: titleGeneratorView(diskConfig),
@@ -514,6 +516,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       res.setHeader('ETag', `"${result.revision}"`);
       res.json({
         revision: result.revision,
+        writePolicy: configMutationService.getWritePolicy(),
         models: redactModels(result.config.models!),
         memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
         titleGenerator: titleGeneratorView(options.config),
@@ -548,6 +551,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       }
       if (
         error instanceof Error
+        && !(error instanceof ProductionConfigPublishRequiredError)
         && !(error instanceof ConfigConflictError)
         && !(error instanceof ConfigMutationCommittedError)
         && !(error instanceof RuntimeRestoreFailedError)

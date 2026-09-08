@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authFetch } from "@/lib/authFetch";
 import { ModelManager } from "./index";
+import { getConfigWritePolicy } from "@agent/shared/configWritePolicy";
 
 // 平台管理员分层治理（2026-07-18）：组件依赖 useAuth().platformReadOnly，测试无 AuthProvider，mock 为可写态
 vi.mock("@/contexts/AuthContext", () => ({
@@ -44,7 +45,9 @@ const initialModels = {
 };
 
 function jsonResponse(body: unknown): Response {
-  return new Response(JSON.stringify(body), {
+  const responseBody = body && typeof body === "object" && "models" in body
+    ? { writePolicy: getConfigWritePolicy("test"), ...body } : body;
+  return new Response(JSON.stringify(responseBody), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });

@@ -39,7 +39,7 @@ export function sendCapabilityEnableError(res: Response, error: unknown): void {
 
 export function sendConfigMutationError(res: Response, error: unknown): void {
   if (error instanceof ProductionConfigPublishRequiredError) {
-    res.status(409).json({ error: error.message, code: error.code });
+    res.status(409).json({ error: error.message, code: error.code, writePolicy: error.writePolicy });
     return;
   }
   if (error instanceof ConfigConflictError) {

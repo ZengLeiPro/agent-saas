@@ -1,3 +1,4 @@
+import { getConfigWritePolicy, PRODUCTION_CONFIG_PUBLISH_MESSAGE, PRODUCTION_CONFIG_PUBLISH_REQUIRED, type ConfigWritePolicy } from '@agent/shared/configWritePolicy';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -119,10 +120,11 @@ export class ConfigConflictError extends Error {
 
 /** Production 的 expected ConfigIdentity 绑定 release；在线改盘必须改走受控配置发布。 */
 export class ProductionConfigPublishRequiredError extends Error {
-  readonly code = 'PRODUCTION_CONFIG_PUBLISH_REQUIRED';
+  readonly code = PRODUCTION_CONFIG_PUBLISH_REQUIRED;
+  readonly writePolicy = getConfigWritePolicy('production');
 
   constructor() {
-    super('生产配置不能直接在线保存，请通过受控配置发布流程变更');
+    super(PRODUCTION_CONFIG_PUBLISH_MESSAGE);
     this.name = 'ProductionConfigPublishRequiredError';
   }
 }
@@ -284,8 +286,13 @@ export class AdminConfigMutationService {
     return configFingerprint(parseRaw(await readFile(this.options.configPath, 'utf8')));
   }
 
+  /** Authoritative capability for the configured service, not client-supplied environment. */
+  getWritePolicy(): ConfigWritePolicy {
+    return getConfigWritePolicy(this.options.environment, this.options.allowProductionMutation === true);
+  }
+
   async mutate(input: MutationInput): Promise<AdminConfigMutationResult> {
-    if (this.options.environment === 'production' && this.options.allowProductionMutation !== true) {
+    if (!this.getWritePolicy().canSave) {
       throw new ProductionConfigPublishRequiredError();
     }
     const releaseLock = await this.acquireLock();

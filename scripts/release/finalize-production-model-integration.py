@@ -34,9 +34,6 @@ patch('server/src/config/productionModelPublisher.ts',
     '        throw new ConfigMutationCommittedError(error);',
     "        throw new ConfigMutationCommittedError(new Error('配置已提交，但最终生效确认未完成，请刷新确认后再操作', { cause: error }));")
 
-# Every remote transport that copies the identity readers must carry their new
-# dependency. Only explicit source-path list entries are extended, never a node
-# invocation or an opaque remote command. These are normal release inputs.
 module = 'scripts/release/config-publication.mjs'
 anchor = 'scripts/release/read-runtime-identity.mjs'
 for name in [
@@ -67,12 +64,10 @@ patch('.github/acs-runtime-inputs.txt',
     '0444 scripts/release/read-runtime-identity.mjs\n',
     '0444 scripts/release/read-runtime-identity.mjs\n0444 scripts/release/config-publication.mjs\n')
 
-# Offline recovery compares the signed online authority as well as the immutable
-# release binding; it must not misclassify an authorized online revision as drift.
 p = 'scripts/release/read-production-recovery-state.mjs'
 patch(p, "import assert from 'node:assert/strict';", "import assert from 'node:assert/strict';\nimport { publishedExpected } from './config-publication.mjs';")
 patch(p, '  const verified = validateRecoveryObservations({\n',
-    "  const trusted = JSON.parse(readFileSync('/etc/agent-saas/runtime-identity.json', 'utf8'));\n  const selectedExpected = publishedExpected('/etc/agent-saas/config.json', apiUnit.env.AGENT_SAAS_RELEASE_ID, apiBinding);\n  const selectedTrusted = publishedExpected('/etc/agent-saas/config.json', apiUnit.env.AGENT_SAAS_RELEASE_ID, trusted.configIdentity);\n  const verified = validateRecoveryObservations({\n")
+    "  const trusted = JSON.parse(readFileSync('/etc/agent-saas/runtime-identity.json', 'utf8'));\n  const selectedExpected = publishedExpected('/etc/agent-saas/config.json', apiUnit.env.AGENT_SAAS_RELEASE_ID, apiBinding.expectedConfigIdentity);\n  const selectedTrusted = publishedExpected('/etc/agent-saas/config.json', apiUnit.env.AGENT_SAAS_RELEASE_ID, trusted.configIdentity);\n  const verified = validateRecoveryObservations({\n")
 patch(p, "    trusted: JSON.parse(readFileSync('/etc/agent-saas/runtime-identity.json', 'utf8')),", '    trusted: { ...trusted, configIdentity: selectedTrusted },')
-patch(p, '    expectedConfig: apiBinding,', '    expectedConfig: selectedExpected,')
+patch(p, '    expectedConfig: apiBinding.expectedConfigIdentity,', '    expectedConfig: selectedExpected,')
 Path('/tmp/production-model-integration-paths.json').write_text(json.dumps(sorted(paths)))

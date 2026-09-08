@@ -49,6 +49,23 @@ export interface AccountStatus {
   label: string;
 }
 
+function isMainCodexWindow(window: ProviderQuotaWindow): boolean {
+  return window.id === 'primary' || window.id === 'secondary';
+}
+
+function isMainClaudeWindow(window: ProviderQuotaWindow): boolean {
+  return window.id === 'seven_day';
+}
+
+function isMainSubscriptionWindow(
+  sourceKind: ProviderQuotaSnapshot['sourceKind'] | undefined,
+  window: ProviderQuotaWindow,
+): boolean {
+  if (sourceKind === 'codex_subscription') return isMainCodexWindow(window);
+  if (sourceKind === 'claude_subscription') return isMainClaudeWindow(window);
+  return true;
+}
+
 /**
  * 卡级总状态：先看能不能采到、凭据能不能用，再看额度。
  * 「冷却中」= 我们自己的调度器此刻在绕开这个账号，与供应商侧撞限分开显示。
@@ -61,7 +78,7 @@ export function accountStatus(
     return { tone: 'critical', label: '凭据不可用' };
   }
   const tones = snapshot.windows
-    .filter((window) => snapshot.sourceKind !== 'codex_subscription' || isMainCodexWindow(window))
+    .filter((window) => isMainSubscriptionWindow(snapshot.sourceKind, window))
     .map(windowTone);
   if (snapshot.limitReached || tones.includes('critical')) return { tone: 'critical', label: '已耗尽' };
   if (snapshot.credential?.availability === 'quota_cooldown') return { tone: 'warning', label: '冷却中' };
@@ -76,10 +93,10 @@ export function formatResetIn(resetAt: string | undefined, now = Date.now()): st
   if (!Number.isFinite(target)) return null;
   const diffMin = Math.round((target - now) / 60_000);
   if (diffMin <= 0) return '即将重置';
-  if (diffMin < 60) return `${diffMin} 分钟后重置`;
+  if (diffMin < 60) return `${diffMin} 分钟`;
   const hours = Math.floor(diffMin / 60);
-  if (hours < 48) return `${hours} 小时${diffMin % 60 ? ` ${diffMin % 60} 分` : ''}后重置`;
-  return `${Math.round(hours / 24)} 天后重置`;
+  if (hours < 48) return `${hours} 小时${diffMin % 60 ? ` ${diffMin % 60} 分` : ''}`;
+  return `${Math.round(hours / 24)} 天`;
 }
 
 /** 中文量级：37.7万 / 40.2万，比 378,006 更易读（与火山控制台口径一致）。 */
@@ -105,10 +122,6 @@ export function baselineUsedPercent(
   return null;
 }
 
-function isMainCodexWindow(window: ProviderQuotaWindow): boolean {
-  return window.id === 'primary' || window.id === 'secondary';
-}
-
 const TONE_BADGE: Record<Tone, 'success' | 'warning' | 'danger'> = {
   ok: 'success',
   warning: 'warning',
@@ -119,11 +132,6 @@ const TONE_BAR: Record<Tone, string> = {
   warning: 'bg-warning',
   critical: 'bg-danger',
 };
-const TONE_EDGE: Record<Tone, string> = {
-  ok: 'border-l-success',
-  warning: 'border-l-warning',
-  critical: 'border-l-danger',
-};
 
 export function formatResetTime(value?: string): string {
   if (!value) return '—';
@@ -133,26 +141,19 @@ export function formatResetTime(value?: string): string {
   return formatTime(value).replace(/(\d{2}\/\d{2})\s+/, `$1 ${weekday} `);
 }
 
-function WindowTile({ window, baseline }: { window: ProviderQuotaWindow; baseline: number | null }) {
+function WindowTile({ window }: { window: ProviderQuotaWindow }) {
   const tone = windowTone(window);
   const label = window.label.replace(/每周/g, '周用量');
   const fill = Math.min(100, Math.max(0, window.usedPercent));
   const hasAmount = window.used !== undefined && window.unit !== undefined && window.unit !== '%';
   const resetIn = formatResetIn(window.resetAt);
-  const delta = baseline === null ? null : window.usedPercent - baseline;
   return (
     <div
       className="space-y-2 rounded-md border bg-muted/10 p-3"
       data-testid={`quota-window-${window.id}`}
     >
-      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+      <div className="text-xs text-muted-foreground">
         <span className="truncate">{label}</span>
-        {tone !== 'ok' && (
-          <Badge variant={TONE_BADGE[tone]} className="gap-1 px-1.5 py-0 text-[11px]">
-            <TriangleAlert className="size-3" />
-            {tone === 'critical' ? '已撞限' : '接近上限'}
-          </Badge>
-        )}
       </div>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="text-2xl font-semibold tabular-nums leading-none text-foreground">
@@ -170,30 +171,22 @@ function WindowTile({ window, baseline }: { window: ProviderQuotaWindow; baselin
       >
         <div className={cn('h-full rounded-full', TONE_BAR[tone])} style={{ width: `${fill}%` }} />
       </div>
-      <div className="space-y-0.5 text-xs text-muted-foreground">
-        <div className="flex flex-wrap items-center justify-between gap-x-3">
-          {hasAmount && <span>已用 {formatWan(window.used!)}{window.quota !== undefined ? ` / ${formatWan(window.quota)}` : ''} {window.unit}</span>}
-          {delta !== null && Math.abs(delta) >= 0.05 && (
-            <span>
-              24h {delta > 0 ? '+' : ''}
-              {delta.toFixed(1)}%
-            </span>
-          )}
+      {hasAmount && (
+        <div className="text-xs text-muted-foreground">
+          已用 {formatWan(window.used!)}{window.quota !== undefined ? ` / ${formatWan(window.quota)}` : ''} {window.unit}
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
 function AccountCard({
   snapshot,
-  history,
   refreshing,
   onRefresh,
   onExpirySaved,
 }: {
   snapshot: ProviderQuotaSnapshot;
-  history: ProviderQuotaHistoryPoint[];
   refreshing: boolean;
   onRefresh: (accountKey: string) => void;
   onExpirySaved: (overview: ProviderQuotaOverviewResponse) => void;
@@ -201,12 +194,13 @@ function AccountCard({
   const status = accountStatus(snapshot);
   const credential = snapshot.credential;
   const isCodex = snapshot.sourceKind === 'codex_subscription';
+  const isClaude = snapshot.sourceKind === 'claude_subscription';
   const isPushOnly = PUSH_ONLY_SOURCES.has(snapshot.sourceKind);
   const mainWindows = snapshot.windows
-    .filter((window) => !isCodex || isMainCodexWindow(window))
+    .filter((window) => isMainSubscriptionWindow(snapshot.sourceKind, window))
     .sort((a, b) => Number(b.windowSeconds === 604_800) - Number(a.windowSeconds === 604_800));
-  const additionalWindows = isCodex
-    ? snapshot.windows.filter((window) => !isMainCodexWindow(window))
+  const additionalWindows = isCodex || isClaude
+    ? snapshot.windows.filter((window) => !isMainSubscriptionWindow(snapshot.sourceKind, window))
     : [];
   const additionalLimited = additionalWindows.filter((window) => windowTone(window) === 'critical').length;
   const lastSuccessAt =
@@ -224,47 +218,55 @@ function AccountCard({
   const minuteTime = (value: string) => formatTime(value).replace(/:\d{2}$/, '');
   return (
     <Card
-      className={cn('h-full border-l-[3px]', TONE_EDGE[status.tone])}
+      className={cn(
+        'h-full border-brand-100 bg-gradient-to-b from-brand-50/80 via-white via-55% to-white ring-1 ring-brand-100',
+        'shadow-[inset_0_1px_0_#fff,0_1px_2px_rgba(0,0,0,0.03)]',
+        'dark:border-brand-800 dark:from-brand-900/30 dark:via-card dark:to-card dark:ring-brand-800 dark:shadow-none',
+      )}
       data-testid={`quota-account-${snapshot.accountKey}`}
     >
       <CardHeader className="pb-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <CardTitle className="break-all text-base">{snapshot.accountLabel}</CardTitle>
-              <Badge variant={TONE_BADGE[status.tone]} className="gap-1 px-1.5 py-0 text-[11px]">
-                {status.tone !== 'ok' && <TriangleAlert className="size-3" />}
-                {status.label}
-              </Badge>
-              {credential?.availability === 'quota_cooldown' && status.label !== '冷却中' && (
-                <Badge variant="warning" className="px-1.5 py-0 text-2xs" title={credential.cooldownUntil ? `冷却至 ${formatTime(credential.cooldownUntil)}` : undefined}>冷却中</Badge>
-              )}
-              {credential?.availability === 'auth_unavailable' && status.label !== '凭据不可用' && (
-                <Badge variant="danger" className="px-1.5 py-0 text-2xs" title={credential.lastFailureCode}>凭据不可用</Badge>
-              )}
+            <Badge variant={TONE_BADGE[status.tone]} className="gap-1 px-1.5 py-0 text-[11px]">
+              {status.tone !== 'ok' && <TriangleAlert className="size-3" />}
+              {status.label}
+            </Badge>
+            {credential?.availability === 'quota_cooldown' && status.label !== '冷却中' && (
+              <Badge variant="warning" className="px-1.5 py-0 text-2xs" title={credential.cooldownUntil ? `冷却至 ${formatTime(credential.cooldownUntil)}` : undefined}>冷却中</Badge>
+            )}
+            {credential?.availability === 'auth_unavailable' && status.label !== '凭据不可用' && (
+              <Badge variant="danger" className="px-1.5 py-0 text-2xs" title={credential.lastFailureCode}>凭据不可用</Badge>
+            )}
             {!isCodex && snapshot.plan?.status && snapshot.plan.status !== 'Running' && (
               <Badge variant="warning" className="px-1.5 py-0 text-2xs">{snapshot.plan.status}</Badge>
             )}
           </div>
-          <span className={cn('col-start-1 row-start-3 text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-1 sm:text-right', !snapshot.ok && 'text-danger-ink')}>
-            {snapshot.ok ? '采集于' : '采集失败于'} {minuteTime(snapshot.collectedAt)}
-          </span>
-          {!isPushOnly && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="col-start-2 row-start-1 size-7 justify-self-end p-0 text-xs sm:col-start-3"
-              aria-label={`刷新 ${snapshot.accountLabel}`}
-              disabled={refreshing}
-              onClick={() => onRefresh(snapshot.accountKey)}
-            >
-              <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
-            </Button>
-          )}
-          <div className="col-span-2 col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:col-span-1" title={isCodex && credential?.expiresAt ? `凭据到期 ${minuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
+          <div className="col-start-2 row-start-1 flex items-center justify-end gap-3">
+            <span className={cn('whitespace-nowrap text-xs font-normal tabular-nums text-muted-foreground', !snapshot.ok && 'text-danger-ink')}>
+              采集 {minuteTime(snapshot.collectedAt)}
+            </span>
+            {!isPushOnly ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="size-7 shrink-0 p-0 text-xs"
+                aria-label={`刷新 ${snapshot.accountLabel}`}
+                disabled={refreshing}
+                onClick={() => onRefresh(snapshot.accountKey)}
+              >
+                <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
+              </Button>
+            ) : (
+              <span className="size-7 shrink-0" aria-hidden="true" />
+            )}
+          </div>
+          <div className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" title={isCodex && credential?.expiresAt ? `凭据到期 ${minuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
             <ProviderQuotaPlanBadge sourceKind={snapshot.sourceKind} planType={snapshot.plan?.type}>{subtitle}</ProviderQuotaPlanBadge>
             {showCredits && <span className="whitespace-nowrap tabular-nums text-muted-foreground">Credits {credits!.balance}</span>}
           </div>
-          <div className="col-span-2 col-start-1 row-start-4 justify-self-end text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-2 sm:text-right">
+          <div className="col-start-2 row-start-2 justify-self-end text-right">
             <ProviderPlanExpiryEditor snapshot={snapshot} onSaved={onExpirySaved} />
           </div>
         </div>
@@ -284,28 +286,23 @@ function AccountCard({
         {mainWindows.length > 0 && (
           <div className={cn('grid gap-3', mainWindows.length > 1 && 'sm:grid-cols-2')}>
             {mainWindows.map((window) => (
-              <WindowTile
-                key={window.id}
-                window={window}
-                baseline={baselineUsedPercent(history, snapshot.accountKey, window.id)}
-              />
+              <WindowTile key={window.id} window={window} />
             ))}
           </div>
         )}
         {additionalWindows.length > 0 && (
           <details className="rounded-md border p-3">
             <summary className="cursor-pointer text-xs text-muted-foreground">
-              其他模型额度（{additionalWindows.length} 个窗口）
+              {isClaude ? '其他额度' : '其他模型额度'}（{additionalWindows.length} 个窗口）
               {additionalLimited > 0 && <span className="ml-2 text-warning-ink">{additionalLimited} 个窗口已耗尽</span>}
             </summary>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {additionalWindows.map((window) => (
-                <WindowTile key={window.id} window={window} baseline={baselineUsedPercent(history, snapshot.accountKey, window.id)} />
+                <WindowTile key={window.id} window={window} />
               ))}
             </div>
           </details>
         )}
-
       </CardContent>
     </Card>
   );
@@ -313,7 +310,7 @@ function AccountCard({
 
 export function ProviderQuotaPage() {
   const [overview, setOverview] = useState<ProviderQuotaOverviewResponse | null>(null);
-  const [history, setHistory] = useState<ProviderQuotaHistoryResponse | null>(null);
+  const [, setHistory] = useState<ProviderQuotaHistoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingKey, setRefreshingKey] = useState<string | null>(null);
@@ -354,7 +351,6 @@ export function ProviderQuotaPage() {
     void load('initial');
   }, [load]);
 
-  const points = useMemo(() => history?.points ?? [], [history?.points]);
   const collector = overview?.collector;
   const statusCounts = useMemo(() => {
     const counts = { collectionFailed: 0, exhausted: 0, credentialUnavailable: 0, warning: 0 };
@@ -417,7 +413,6 @@ export function ProviderQuotaPage() {
             <AccountCard
               key={snapshot.accountKey}
               snapshot={snapshot}
-              history={points}
               refreshing={refreshing && (refreshingKey === null || refreshingKey === snapshot.accountKey)}
               onExpirySaved={setOverview}
               onRefresh={(accountKey) => void load('collect', accountKey)}

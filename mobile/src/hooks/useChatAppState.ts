@@ -57,6 +57,7 @@ import { markChatAck, markChatSubmit, observeChatEvent } from '../telemetry/chat
 import { telemetryClient } from '../telemetry/runtime';
 import { shouldProjectInteractionEvent } from '../lib/interactionProjectionFence';
 import { replaceRetryBubble } from '../lib/retryBubbleTransition';
+import { acknowledgeMobileChatBubble, armMobileChatAckDeadline, hasMobileChatBubble } from '../lib/chatDeliveryReceipt';
 import { useAgentTargetCatalog } from "./useAgentTargetCatalog";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { useInteractionResponses } from "./useInteractionResponses";
@@ -751,24 +752,24 @@ export function useChatAppStateCore(): ChatAppState {
   /** ACK 超时只代表结果未知：保留原 intent/clientMsgId，人工 retry 必须复用。 */
   const armAckTimeout = useCallback(
     (clientMsgId: string) => {
-      const existing = ackTimersRef.current.get(clientMsgId);
-      if (existing) clearTimeout(existing);
-      const timer = setTimeout(() => {
-        ackTimersRef.current.delete(clientMsgId);
-        const entry = outboxRef.current.find((item) => item.clientMsgId === clientMsgId);
-        if (entry) entry.state = "verifying";
-        console.warn(`[chat] ACK timeout for ${clientMsgId}`);
-        markBubbleFailed(clientMsgId, -1, "发送超时，请重试");
-        if (
-          loadingRef.current &&
-          outboxRef.current.every((e) => e.state !== "acked")
-        ) {
-          wsAttachedRef.current = false;
-          clearRuntimeForSession();
-          setLoading(false);
-        }
-      }, ACK_TIMEOUT_MS);
-      ackTimersRef.current.set(clientMsgId, timer);
+      armMobileChatAckDeadline(clientMsgId, {
+        timers: ackTimersRef.current,
+        getEntry: (id) => hasMobileChatBubble(msgRef.current.messagesRef.current, id)
+          ? outboxRef.current.find((item) => item.clientMsgId === id) : undefined,
+        timeoutMs: ACK_TIMEOUT_MS,
+        onExpired: () => {
+          console.warn(`[chat] ACK timeout for ${clientMsgId}`);
+          markBubbleFailed(clientMsgId, -1, "尚未收到发送确认，可重试");
+          if (
+            loadingRef.current &&
+            outboxRef.current.every((e) => e.state !== "acked")
+          ) {
+            wsAttachedRef.current = false;
+            clearRuntimeForSession();
+            setLoading(false);
+          }
+        },
+      });
     },
     [markBubbleFailed, clearRuntimeForSession],
   );
@@ -814,7 +815,8 @@ export function useChatAppStateCore(): ChatAppState {
         return false;
       }
       const submission = normalized.value;
-      markChatSubmit(clientMsgId, activeSessionId ?? undefined);
+      try { markChatSubmit(clientMsgId, activeSessionId ?? undefined); }
+      catch { /* Observability must never prevent the user's submission. */ }
 
       wsLatestSessionIdRef.current = { value: activeSessionId };
       wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
@@ -899,13 +901,16 @@ export function useChatAppStateCore(): ChatAppState {
         ...toMobileChatWireMessage(submission),
       });
 
+      // A late native completion must not fail another conversation's bubble or re-arm an acknowledged intent.
+      if (nextOutboxEntry.state === 'acked') return true;
+      if (!hasMobileChatBubble(msgRef.current.messagesRef.current, clientMsgId)) return ok;
       if (!ok) {
         outboxRef.current = outboxRef.current.filter(
           (e) => e.clientMsgId !== clientMsgId,
         );
         markBubbleFailed(
           clientMsgId,
-          wsUserMsgIndexRef.current,
+          -1,
           "网络连接失败，请重试",
         );
         wsAttachedRef.current = false;
@@ -1000,8 +1005,9 @@ export function useChatAppStateCore(): ChatAppState {
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
       const selectedSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
-      observeChatEvent(data, selectedSessionId ?? undefined);
       if (!data || !data.type) return;
+      try { observeChatEvent(data, selectedSessionId ?? undefined); }
+      catch { /* A telemetry failure must not swallow an authoritative receipt. */ }
       if (data.type !== 'interaction_resolved') projectSessionListInteraction(data);
       if (data.type === 'queue_snapshot' || data.type === 'queue_item_updated' || data.type === 'message_queued'
         || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
@@ -1170,7 +1176,12 @@ export function useChatAppStateCore(): ChatAppState {
           data.type === "pending_interactions" ||
           data.type === "voice_transcribed" ||
           data.type === "stream_id";
-        if (!isMetadata) return;
+        // Delivery receipts are not stream content. A timeout must not hide a later ACK/rejection,
+        // but a receipt for a different conversation must not affect the current screen.
+        const isDeliveryReceipt =
+          (data.type === 'chat_ack' || data.type === 'chat_rejected')
+          && hasMobileChatBubble(msgRef.current.messagesRef.current, data.client_msg_id);
+        if (!isMetadata && !isDeliveryReceipt) return;
       }
 
       // 流式事件到达 → 重置 loading watchdog
@@ -1252,11 +1263,12 @@ export function useChatAppStateCore(): ChatAppState {
           wsUserMsgIndexRef.current = index;
         },
         onStreamAttached: () => {
-          // 接管场景：目标 run 的 done 已清掉 attached，这里恢复，后续流式内容才能过守卫
+          // 接管场景或迟到的首次接收：仅由服务端确认重新进入运行态。
           wsAttachedRef.current = true;
+          setLoading(true);
+          dispatchConnection("connect");
         },
         onChatAck: (clientMsgId, event) => {
-          markChatAck(clientMsgId, event);
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) {
             clearTimeout(t);
@@ -1266,6 +1278,24 @@ export function useChatAppStateCore(): ChatAppState {
             (e) => e.clientMsgId === clientMsgId,
           );
           if (entry) entry.state = "acked";
+          const queued = data.type === 'stream_id' ? data.queued === true
+            : data.type === 'message_queued' || data.type === 'steering_queued'
+              || Boolean(event && (!event.status || event.status === 'accepted' || event.status === 'queued'));
+          acknowledgeMobileChatBubble(msgRef.current, clientMsgId, queued);
+          // Recover the canonical session binding when the original new-session frame was lost.
+          // Exact visible intent correlation prevents a late ACK from navigating a different draft.
+          if (entry && event?.sessionId && hasMobileChatBubble(msgRef.current.messagesRef.current, clientMsgId)) {
+            if (!entry.sessionId && !(immediateSessionIdRef.current ?? sessionIdRef.current)) {
+              immediateSessionIdRef.current = event.sessionId;
+              wsLatestSessionIdRef.current = { value: event.sessionId };
+              sessionRef.current.setIsNewSession(false);
+              sessionRef.current.setSessionId(event.sessionId);
+              void sessionRef.current.loadSessions();
+            }
+            entry.sessionId = event.sessionId;
+          }
+          try { markChatAck(clientMsgId, event); }
+          catch { /* Receipt state is authoritative even when telemetry is unavailable. */ }
         },
         onChatRejected: (clientMsgId) => {
           const t = ackTimersRef.current.get(clientMsgId);

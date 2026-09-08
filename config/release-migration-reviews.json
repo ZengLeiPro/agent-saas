@@ -105,9 +105,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -119,9 +119,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -792,9 +792,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -806,9 +806,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1054,6 +1054,20 @@
           "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         }
       ],
       "evidence": [
@@ -1242,9 +1256,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -1256,9 +1270,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1483,6 +1497,20 @@
           "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         }
       ],
       "evidence": [
@@ -1655,9 +1683,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -1669,9 +1697,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1896,6 +1924,20 @@
           "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         }
       ],
       "evidence": [
@@ -2061,9 +2103,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -2075,9 +2117,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2295,6 +2337,20 @@
           "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         }
       ],
       "evidence": [
@@ -2452,9 +2508,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -2466,9 +2522,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2843,9 +2899,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -2857,9 +2913,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3311,9 +3367,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -3325,9 +3381,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -3990,9 +4046,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -4004,9 +4060,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4415,9 +4471,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -4429,9 +4485,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4849,9 +4905,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -4863,9 +4919,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5248,9 +5304,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -5262,9 +5318,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5600,9 +5656,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -5614,9 +5670,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5952,9 +6008,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -5966,9 +6022,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -6304,9 +6360,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6318,9 +6374,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -6649,9 +6705,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6663,9 +6719,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -6983,9 +7039,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6997,9 +7053,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -7303,9 +7359,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7317,9 +7373,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -7561,9 +7617,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7575,9 +7631,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -7808,9 +7864,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7822,9 +7878,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -8047,9 +8103,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -8061,9 +8117,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -8286,9 +8342,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -8300,9 +8356,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -8525,9 +8581,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -8539,9 +8595,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -8728,9 +8784,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -8742,9 +8798,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -8925,9 +8981,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -8939,9 +8995,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
@@ -9078,9 +9134,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -9092,9 +9148,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
@@ -9231,16 +9287,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP5：在 v43 后严格追加 v44 交付迁移，v1～v43 的版本号、顺序和语句保持不变。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+          "reason": "WP5：在 v43 后严格追加 v44 交付迁移，v1～v43 的版本号、顺序和语句保持不变。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP5：GOVERNANCE_SCHEMA_VERSION 43→44，仅扩展版本清单并导出既有迁移 runner；没有删除、替换或重排旧迁移。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+          "reason": "WP5：GOVERNANCE_SCHEMA_VERSION 43→44，仅扩展版本清单并导出既有迁移 runner；没有删除、替换或重排旧迁移。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
@@ -9322,16 +9378,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
-          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
           "classification": "expand",
-          "reason": "WP5：在最新 main 的 v43 后严格追加 v44 交付迁移；v1～v43 的版本号、顺序和语句保持不变。"
+          "reason": "WP5：在最新 main 的 v43 后严格追加 v44 交付迁移；v1～v43 的版本号、顺序和语句保持不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
-          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
           "classification": "expand",
-          "reason": "WP5：GOVERNANCE_SCHEMA_VERSION 43→44，仅扩展版本清单并导出既有迁移 runner；没有删除、替换或重排旧迁移。"
+          "reason": "WP5：GOVERNANCE_SCHEMA_VERSION 43→44，仅扩展版本清单并导出既有迁移 runner；没有删除、替换或重排旧迁移。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。"
         },
         {
           "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
@@ -9553,12 +9609,58 @@
           "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
           "classification": "expand",
           "reason": "本批仅新增只读方法 pushedAccounts：单条 SELECT DISTINCT ON 用于发现推送型来源（Claude 订阅）的账号，参数化 source_kind 与保留天数。建表语句、索引与 advisory lock 初始化一字未改，无新表、无列变更、无回填、无删除。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。"
         }
       ],
       "evidence": [
         {
           "path": "server/src/quota/providerQuotaPushedAccounts.pg.test.ts",
           "digest": "sha256:196cbbaa82971c533ce3f40eefc78943fbd005e353d6f643efe40f4d1065d41c"
+        }
+      ]
+    },
+    {
+      "baselineSha": "892ab5ef212ac3ce51f62dc4d73475bfaeac683a",
+      "files": [
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
+          "classification": "expand",
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
+          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
         }
       ]
     }

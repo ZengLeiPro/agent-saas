@@ -8,7 +8,6 @@ import { governanceV42KyAppDirectoryStatements } from './v42KyAppDirectoryMigrat
 import { governanceV43KyAppSessionToolSnapshotStatements } from './v43KyAppSessionToolSnapshotMigration.js';
 import { governanceV44KyAppDeliveryStatements } from './v44KyAppDeliveryMigration.js';
 import { governanceV45KyAppConnectionSettingsStatements } from './v45KyAppConnectionSettingsMigration.js';
-import { governanceV46KyAppCapabilityObservationStatements } from './v46KyAppCapabilityObservationMigration.js';
 
 export function governanceLatestMigrations(prefix: string) {
   return [
@@ -22,6 +21,5 @@ export function governanceLatestMigrations(prefix: string) {
     { version: 43, statements: governanceV43KyAppSessionToolSnapshotStatements(prefix) },
     { version: 44, statements: governanceV44KyAppDeliveryStatements(prefix) },
     { version: 45, statements: governanceV45KyAppConnectionSettingsStatements(prefix) },
-    { version: 46, statements: governanceV46KyAppCapabilityObservationStatements(prefix) },
   ];
 }

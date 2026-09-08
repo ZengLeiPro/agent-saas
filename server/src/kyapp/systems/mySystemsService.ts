@@ -255,8 +255,9 @@ export class MySystemsService {
       installation.tenantId,
       installation.installationId,
       userId,
+      installation.registeredDigest,
     );
-    if (!observation || observation.registeredDigest !== installation.registeredDigest) {
+    if (!observation) {
       return {
         agentStatus: 'waiting_personal_authorization',
         personalAuthorizationStatus: 'pending',
@@ -274,22 +275,13 @@ export class MySystemsService {
         message: '页面已经开通，但暂时无法确认当前账号的业务能力',
       };
     }
-    if (observation.status === 'capacity_limited') {
-      return {
-        agentStatus: 'degraded',
-        personalAuthorizationStatus: 'connected',
-        reasonCode: 'tool_projection_limit',
-        nextAction: 'retry',
-        message: '当前账号已获授权，但会话工具数量达到上限，暂未注入该业务系统能力',
-      };
-    }
-    if (observation.status === 'insufficient_scope' || observation.enabledCapabilityCount === 0) {
+    if (observation.status === 'not_projected' || observation.enabledCapabilityCount === 0) {
       return {
         agentStatus: 'waiting_personal_authorization',
-        personalAuthorizationStatus: 'insufficient_scope',
-        reasonCode: 'me_no_enabled_capabilities',
-        nextAction: 'authorize',
-        message: '页面已经开通，当前账号尚未获得可用的业务能力',
+        personalAuthorizationStatus: 'pending',
+        reasonCode: 'me_no_projected_capabilities',
+        nextAction: 'retry',
+        message: '页面已经开通，但最近一次对话未注入该业务系统能力',
       };
     }
     return {

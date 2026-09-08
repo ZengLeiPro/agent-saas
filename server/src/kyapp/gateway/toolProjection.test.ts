@@ -73,12 +73,6 @@ interface Harness {
   service: AppToolSnapshotService;
   provider: AppCapabilityToolProvider;
   counts: { list: number; manifest: number; me: number };
-  observations: Array<{
-    installationId: string;
-    registeredDigest: string;
-    status: 'ready' | 'insufficient_scope' | 'capacity_limited' | 'unavailable';
-    enabledCapabilityCount: number;
-  }>;
   state: {
     installations: AppVisibleInstallation[];
     enabled: string[] | null;
@@ -88,7 +82,6 @@ interface Harness {
 
 function makeHarness(): Harness {
   const counts = { list: 0, manifest: 0, me: 0 };
-  const observations: Harness['observations'] = [];
   const state = {
     installations: [
       {
@@ -116,15 +109,9 @@ function makeHarness(): Harness {
       return state.enabled === null ? null : new Set(state.enabled);
     },
   };
-  const service = new AppToolSnapshotService({
-    source,
-    config: GATEWAY_CONFIG,
-    recordCapabilityObservation: async (observation) => {
-      observations.push(observation);
-    },
-  });
+  const service = new AppToolSnapshotService({ source, config: GATEWAY_CONFIG });
   const provider = new AppCapabilityToolProvider({ snapshots: service });
-  return { source, service, provider, counts, observations, state };
+  return { source, service, provider, counts, state };
 }
 
 /** 复刻 `chatCompletionsAdapter.ts:76-80` 的工具签名，用来验指纹稳定。 */
@@ -158,14 +145,6 @@ describe('AppToolSnapshotService', () => {
       'app__demo_erp__order_search',
     ]);
     expect(snapshot.degraded).toBe(false);
-    expect(harness.observations).toEqual([
-      expect.objectContaining({
-        installationId: 'iid-1',
-        registeredDigest: 'a'.repeat(64),
-        status: 'ready',
-        enabledCapabilityCount: 1,
-      }),
-    ]);
   });
 
   it('后续 run 只读快照：不重复拉 /me，条目对象逐一相同', async () => {
@@ -229,20 +208,14 @@ describe('AppToolSnapshotService', () => {
     const snapshot = await harness.service.get(SESSION);
     expect(snapshot.entries).toEqual([]);
     expect(snapshot.degraded).toBe(true);
-    expect(harness.observations).toEqual([
-      expect.objectContaining({ status: 'unavailable', enabledCapabilityCount: 0 }),
-    ]);
   });
 
-  it('/me 成功但没有授权能力时不注入 app__ 工具并记录权限不足', async () => {
+  it('/me 成功但没有授权能力时不注入 app__ 工具', async () => {
     const harness = makeHarness();
     harness.state.enabled = [];
     const snapshot = await harness.service.get(SESSION);
     expect(snapshot.entries).toEqual([]);
     expect(snapshot.degraded).toBe(false);
-    expect(harness.observations).toEqual([
-      expect.objectContaining({ status: 'insufficient_scope', enabledCapabilityCount: 0 }),
-    ]);
   });
 
   it('安装目录读取失败：首个 run 降级，后续 run 沿用既有快照', async () => {
@@ -266,29 +239,6 @@ describe('AppToolSnapshotService', () => {
     const snapshot = await capped.get(SESSION);
     expect(snapshot.entries.map((entry) => entry.toolName)).toEqual([
       'app__demo_erp__order_create',
-    ]);
-  });
-
-  it('实例能力全部被会话工具上限截断时不记录为可用', async () => {
-    const harness = makeHarness();
-    harness.state.installations.push({
-      installationId: 'iid-2',
-      systemId: 'later-erp',
-      baseUrl: 'https://later.example.com',
-      registeredDigest: 'b'.repeat(64),
-    });
-    const capped = new AppToolSnapshotService({
-      source: harness.source,
-      config: { enabled: true, maxToolsPerSession: 1 },
-      recordCapabilityObservation: async (observation) => {
-        harness.observations.push(observation);
-      },
-    });
-    const snapshot = await capped.get(SESSION);
-    expect(snapshot.entries).toHaveLength(1);
-    expect(harness.observations).toEqual([
-      expect.objectContaining({ installationId: 'iid-1', status: 'ready' }),
-      expect.objectContaining({ installationId: 'iid-2', status: 'capacity_limited' }),
     ]);
   });
 

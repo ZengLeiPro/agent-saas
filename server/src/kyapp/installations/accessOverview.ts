@@ -62,8 +62,13 @@ export class InstallationAccessOverviewService {
         userIds: users.map((item) => item.id),
         agentIds: agents.map((item) => item.id),
       }),
-      this.options.observations?.listForInstallation(input.tenantId, input.installationId) ??
-        Promise.resolve([]),
+      input.registeredDigest
+        ? (this.options.observations?.listForInstallation(
+            input.tenantId,
+            input.installationId,
+            input.registeredDigest,
+          ) ?? Promise.resolve([]))
+        : Promise.resolve([]),
     ]);
     const effectiveBySubject = new Map(
       effectiveSubjects.map((item) => [`${item.subjectType}:${item.subjectId}`, item] as const),
@@ -83,9 +88,9 @@ export class InstallationAccessOverviewService {
         const capabilityStatus: CapabilityStatus =
           observed?.status === 'ready' && observed.enabledCapabilityCount > 0
             ? 'ready'
-            : observed?.status === 'unavailable' || observed?.status === 'capacity_limited'
+            : observed?.status === 'unavailable'
               ? 'degraded'
-              : observed?.status === 'insufficient_scope'
+              : observed?.status === 'not_projected'
                 ? 'waiting_personal_authorization'
                 : 'unverified';
         const sources = [
@@ -116,10 +121,10 @@ export class InstallationAccessOverviewService {
           departmentNames,
           accessSources: sources,
           personalAuthorizationStatus:
-            capabilityStatus === 'ready' || observed?.status === 'capacity_limited'
+            capabilityStatus === 'ready'
               ? 'connected'
               : capabilityStatus === 'waiting_personal_authorization'
-                ? 'insufficient_scope'
+                ? 'pending'
                 : 'pending',
           agentCapabilityStatus: capabilityStatus,
           capabilityCheckedAt: observed?.checkedAt ?? null,

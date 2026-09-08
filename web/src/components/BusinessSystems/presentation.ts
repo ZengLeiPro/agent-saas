@@ -21,7 +21,7 @@ const STATUS_LABELS: Readonly<Record<string, string>> = {
   me_not_verified: '尚未在对话中验证',
   me_unavailable: '暂时无法确认当前账号能力',
   me_no_enabled_capabilities: '当前账号没有可用能力',
-  tool_projection_limit: '会话工具数量已达上限',
+  me_no_projected_capabilities: '最近一次对话未注入该系统能力',
   available: '可访问',
   unavailable: '暂不可用',
   not_configured: '未配置',

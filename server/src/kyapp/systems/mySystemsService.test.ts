@@ -182,21 +182,21 @@ describe('MySystemsService', () => {
       },
     ]);
 
-    const insufficient = await service({
+    const notProjected = await service({
       registeredDigest: digest,
       runtime,
       observation: {
         registeredDigest: digest,
-        status: 'insufficient_scope',
+        status: 'not_projected',
         enabledCapabilityCount: 0,
       },
     }).listForUser('tenant-1', 'user-1');
-    expect(insufficient).toMatchObject([
+    expect(notProjected).toMatchObject([
       {
         agentStatus: 'waiting_personal_authorization',
-        personalAuthorizationStatus: 'insufficient_scope',
+        personalAuthorizationStatus: 'pending',
         canUseAgent: false,
-        reasonCode: 'me_no_enabled_capabilities',
+        reasonCode: 'me_no_projected_capabilities',
       },
     ]);
   });

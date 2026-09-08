@@ -40,7 +40,7 @@ import { createKyAppOutbound, type KyAppOutbound } from './outbound.js';
 import { AppToolSnapshotService } from './gateway/snapshot.js';
 import { createKyAppSnapshotSource } from './gateway/snapshotSource.js';
 import { PgAppToolSnapshotStore } from './gateway/snapshotStore.js';
-import { PgKyAppUserCapabilityObservationStore } from './gateway/capabilityObservationStore.js';
+import { PgKyAppCapabilityObservationReader } from './gateway/capabilityObservationStore.js';
 import { AppApprovalRegistry } from './gateway/approval.js';
 import { GatewayPolicy } from './gateway/policy.js';
 import { AppLogicalCallRunner } from './gateway/lcid.js';
@@ -89,7 +89,7 @@ export interface KyAppAssembly {
   worker: KyAppWorker;
   /** WP3 Capability Gateway：会话工具快照 + `app__` 工具 provider（规范 §6.1）。 */
   gateway: AppCapabilityGatewayBinding;
-  capabilityObservations: PgKyAppUserCapabilityObservationStore;
+  capabilityObservations: PgKyAppCapabilityObservationReader;
   /** 页面、管理 API 与 Agent 目录工具共用的成员业务系统事实源。 */
   mySystems: MySystemsService;
   /** 建表（幂等，跑 governance 迁移 runner）后再启动后台循环。 */
@@ -337,7 +337,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
       return { authEpoch: binding.authEpoch, generation: binding.generation };
     },
   });
-  const capabilityObservations = new PgKyAppUserCapabilityObservationStore(pool, tablePrefix);
+  const capabilityObservations = new PgKyAppCapabilityObservationReader(pool, tablePrefix);
   // 跨进程快照落库（v43 表）：Web/API 与 runtime worker 必须看到同一份工具面。
   const snapshotStore = new PgAppToolSnapshotStore(base);
   const snapshots = new AppToolSnapshotService({
@@ -346,8 +346,6 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     store: snapshotStore,
     now,
     logger: { warn: (message) => serverLogger.warn(message) },
-    recordCapabilityObservation: (observation) =>
-      capabilityObservations.record(observation),
   });
   const mySystems = new MySystemsService({
     systems,

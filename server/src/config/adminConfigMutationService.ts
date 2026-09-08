@@ -1,3 +1,4 @@
+import type { ProductionPublisher } from './productionModelPublisher.js';
 import { getConfigWritePolicy, PRODUCTION_CONFIG_PUBLISH_MESSAGE, PRODUCTION_CONFIG_PUBLISH_REQUIRED, type ConfigWritePolicy } from '@agent/shared/configWritePolicy';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -67,7 +68,7 @@ function isProcessAlive(pid: number | undefined): boolean {
 
 class ConfigLockGuardBusyError extends Error {}
 
-async function acquireFileGuard(path: string): Promise<() => Promise<void>> {
+export async function acquireFileGuard(path: string): Promise<() => Promise<void>> {
   const child = spawn(
     'flock',
     ['--nonblock', path, 'sh', '-c', 'printf "acquired\\n"; cat >/dev/null'],
@@ -192,7 +193,8 @@ export interface AdminConfigMutationResult {
   appliedAt: string;
 }
 
-interface MutationInput {
+export interface MutationInput {
+  productionConfirmation?: string;
   actor: string;
   changedPaths: string[];
   expectedFingerprint?: string;
@@ -272,6 +274,7 @@ export class AdminConfigMutationService {
       auditAppender?: (path: string, line: string) => Promise<void>;
       /** 仅供受控运维发布器注入；普通 Runtime 管理接口不得开启。 */
       allowProductionMutation?: boolean;
+      productionPublisher?: ProductionPublisher;
     },
   ) {
     this.stateDir = join(options.processCwd, 'data', 'config-governance');
@@ -288,10 +291,29 @@ export class AdminConfigMutationService {
 
   /** Authoritative capability for the configured service, not client-supplied environment. */
   getWritePolicy(): ConfigWritePolicy {
+    if (this.options.environment === 'production' && this.options.productionPublisher) {
+      return this.options.productionPublisher.getWritePolicy();
+    }
     return getConfigWritePolicy(this.options.environment, this.options.allowProductionMutation === true);
   }
 
+  isControlledProductionPublisher(): boolean {
+    return this.options.environment === 'production' && Boolean(this.options.productionPublisher);
+  }
+
+  async recoverProductionPublication(): Promise<void> {
+    if (!this.isControlledProductionPublisher()) return;
+    const release = await this.acquireLock();
+    try { await this.options.productionPublisher!.recover(); }
+    finally { await release(); }
+  }
+
   async mutate(input: MutationInput): Promise<AdminConfigMutationResult> {
+    if (this.isControlledProductionPublisher()) {
+      const release = await this.acquireLock();
+      try { return await this.options.productionPublisher!.mutate(input); }
+      finally { await release(); }
+    }
     if (!this.getWritePolicy().canSave) {
       throw new ProductionConfigPublishRequiredError();
     }

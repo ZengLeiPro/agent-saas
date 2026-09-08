@@ -24,13 +24,21 @@ export function createMemoryIndexRuntimeUpdatePreparer(options: {
       options.publish(service);
     };
     const retire = (service: MemoryIndexService | null) => {
-      try { service?.retireAll(); }
-      catch { options.warn('Memory index watcher retirement failed; service retained until shutdown'); }
+      try {
+        service?.retireAll();
+      } catch {
+        options.warn('Memory index watcher retirement failed; service retained until shutdown');
+      }
     };
     return {
-      commit: () => { if (next) options.retained.add(next); set(next); },
+      commit: () => {
+        if (next) options.retained.add(next);
+        set(next);
+      },
       rollback: () => set(previous),
-      complete: () => { if (previous !== next) retire(previous); },
+      complete: () => {
+        if (previous !== next) retire(previous);
+      },
       dispose: () => {
         if (next && next !== options.current.current) {
           retire(next);

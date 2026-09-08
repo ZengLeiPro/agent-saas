@@ -28,7 +28,7 @@ export function useModelWritePolicy(accountReadOnly: boolean) {
     : !policy
       ? UNKNOWN_POLICY
       : !policy.canSave
-        ? PRODUCTION_NOTICE
+        ? (policy.message || PRODUCTION_NOTICE)
         : policy.environment === 'production'
           ? '当前为生产环境；保存仅修改当前环境。'
           : policy.environment === 'staging'
@@ -37,5 +37,9 @@ export function useModelWritePolicy(accountReadOnly: boolean) {
   const assertWritable = useCallback(() => {
     if (readOnly) throw new Error(notice ?? UNKNOWN_POLICY);
   }, [notice, readOnly]);
-  return { readOnly, acceptPolicy, acceptFailure, assertWritable, notice };
+  const confirmationFor = useCallback((revision: string): string | undefined | null => {
+    if (policy?.environment !== 'production') return undefined;
+    return window.confirm('当前为生产环境。保存将修改当前环境的模型配置，并等待 API 与 Worker 同时生效。确认继续？') ? revision : null;
+  }, [policy]);
+  return { readOnly, acceptPolicy, acceptFailure, assertWritable, notice, confirmationFor };
 }

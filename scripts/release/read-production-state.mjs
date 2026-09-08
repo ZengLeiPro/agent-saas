@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { publishedExpected } from './config-publication.mjs';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { canonicalJson, DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
@@ -556,7 +557,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     ...(selectedConfigIdentity ? { configIdentity: selectedConfigIdentity } : {}),
   };
   const state = validateProductionObservations(
-    { runtime: runtime.identity, api, web, acs },
+    { runtime: { ...runtime.identity, configIdentity: publishedExpected('/etc/agent-saas/config.json', api.release.releaseId, runtime.identity.configIdentity) }, api, web, acs },
     { configIdentityStage },
   );
   if (options.output)

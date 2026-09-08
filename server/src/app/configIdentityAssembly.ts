@@ -87,7 +87,8 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
   });
   await runtime.initialize();
   const getSummary = () => view.mapSummary(runtime.getSummary());
-  const isExecutionAllowed = () => !recoveryGate.isDirty() && view.isExecutionAllowed();
+  const isExecutionAllowed = () => !recoveryGate.isDirty() && view.isExecutionAllowed()
+    && (runtimeIdentity.environment !== 'production' || !runtimeIdentity.expectedConfigIdentity || getSummary().status === 'consistent');
   return {
     recoveryGate,
     isExecutionAllowed,

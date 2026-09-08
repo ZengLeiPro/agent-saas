@@ -11,7 +11,13 @@ function fixture() {
   const publish = vi.fn();
   const create = vi.fn(async () => next as MemoryIndexService | null);
   const warn = vi.fn();
-  const prepare = createMemoryIndexRuntimeUpdatePreparer({ current, retained, publish, create, warn });
+  const prepare = createMemoryIndexRuntimeUpdatePreparer({
+    current,
+    retained,
+    publish,
+    create,
+    warn,
+  });
   return { previous, next, current, retained, publish, create, prepare };
 }
 

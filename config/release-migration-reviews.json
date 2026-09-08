@@ -14,9 +14,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
+          "targetDigest": "sha256:8c0a007a764b9fa33d92995fc431a8be6b95fd688f178c05ad6661496c3b67e3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -52,6 +52,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:a267c1fa359171fe592447db8a473165ad2a7177fc465437b077fd120826989f"
         }
       ]
     },
@@ -3421,9 +3425,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
+          "targetDigest": "sha256:8c0a007a764b9fa33d92995fc431a8be6b95fd688f178c05ad6661496c3b67e3",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。"
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -4123,6 +4127,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:a267c1fa359171fe592447db8a473165ad2a7177fc465437b077fd120826989f"
         }
       ]
     },
@@ -4596,9 +4604,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
+          "targetDigest": "sha256:8c0a007a764b9fa33d92995fc431a8be6b95fd688f178c05ad6661496c3b67e3",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -5011,6 +5019,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:a267c1fa359171fe592447db8a473165ad2a7177fc465437b077fd120826989f"
         }
       ]
     },
@@ -5048,9 +5060,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
+          "targetDigest": "sha256:8c0a007a764b9fa33d92995fc431a8be6b95fd688f178c05ad6661496c3b67e3",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -5463,6 +5475,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:a267c1fa359171fe592447db8a473165ad2a7177fc465437b077fd120826989f"
         }
       ]
     },
@@ -9753,9 +9769,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
+          "targetDigest": "sha256:8c0a007a764b9fa33d92995fc431a8be6b95fd688f178c05ad6661496c3b67e3",
           "classification": "expand",
-          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。"
+          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -9853,6 +9869,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:a267c1fa359171fe592447db8a473165ad2a7177fc465437b077fd120826989f"
         }
       ]
     },
@@ -10325,9 +10345,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
+          "targetDigest": "sha256:8c0a007a764b9fa33d92995fc431a8be6b95fd688f178c05ad6661496c3b67e3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -10363,6 +10383,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:a267c1fa359171fe592447db8a473165ad2a7177fc465437b077fd120826989f"
         }
       ]
     }

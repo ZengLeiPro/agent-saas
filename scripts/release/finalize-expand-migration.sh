@@ -116,7 +116,7 @@ scp -i ~/.ssh/production_key \
   scripts/release/artifact-lib.mjs \
   scripts/release/read-live-production-components.mjs \
   scripts/release/read-production-state.mjs \
-  scripts/release/read-runtime-identity.mjs \
+  scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \
   scripts/release/verify-installed-release.mjs \
   scripts/release/verify-app-retirement.sh \
   "$ECS_USER@$ECS_HOST:$remote/"

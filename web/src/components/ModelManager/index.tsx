@@ -155,7 +155,7 @@ function formatEffectiveValue(value: string | undefined): string {
 export function ModelManager() {
   // 只读平台 admin：保存并生效与分组/模型的增删等 draft 写操作全部 disabled
   const { platformReadOnly: accountReadOnly } = useAuth();
-  const { readOnly: platformReadOnly, acceptPolicy, acceptFailure, assertWritable, notice } = useModelWritePolicy(accountReadOnly);
+  const { readOnly: platformReadOnly, acceptPolicy, acceptFailure, assertWritable, notice, confirmationFor } = useModelWritePolicy(accountReadOnly);
   const [models, setModels] = useState<EditableModelsConfig | null>(null);
   const [revision, setRevision] = useState(""); const [memoryIndex, setMemoryIndex] = useState<EditableMemoryIndexConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -561,17 +561,17 @@ export function ModelManager() {
       : null;
     return { models: nextModels, memoryIndex: nextMemoryIndex, ...titleSettings.buildPayload() };
   }, [advancedText, memoryIndex, models, titleSettings.buildPayload]);
-
   const save = useCallback(async () => {
     setSaving(true);
     setSavedAt(null);
     try {
       assertWritable();
       const payload = buildPayload(); if (!revision) throw new Error("配置版本尚未加载，请先刷新");
+      const productionConfirmation = confirmationFor(revision); if (productionConfirmation === null) return;
       const res = await authFetch("/api/admin/models", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, expectedRevision: revision }),
+        body: JSON.stringify({ ...payload, expectedRevision: revision, ...(productionConfirmation ? { productionConfirmation } : {}) }),
       });
       const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string; code?: string };
       if (!res.ok) acceptFailure(data);
@@ -589,7 +589,7 @@ export function ModelManager() {
     } finally {
       setSaving(false);
     }
-  }, [acceptFailure, acceptPolicy, assertWritable, buildPayload, hydrateAdvancedText, revision, titleSettings.applyResponse]);
+  }, [confirmationFor, acceptFailure, acceptPolicy, assertWritable, buildPayload, hydrateAdvancedText, revision, titleSettings.applyResponse]);
 
   if (loading && !models) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;

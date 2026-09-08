@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 
 import {
   ConfigConflictError,
+  ConfigMutationCommittedError,
+  RuntimeRestoreFailedError,
   ProductionConfigPublishRequiredError,
 } from './adminConfigMutationService.js';
 import {
@@ -38,6 +40,14 @@ export function sendCapabilityEnableError(res: Response, error: unknown): void {
 }
 
 export function sendConfigMutationError(res: Response, error: unknown): void {
+  if (error instanceof ConfigMutationCommittedError) {
+    res.status(500).json({ code: error.code, error: error.message });
+    return;
+  }
+  if (error instanceof RuntimeRestoreFailedError) {
+    res.status(500).json({ code: error.code, error: error.message });
+    return;
+  }
   if (error instanceof ProductionConfigPublishRequiredError) {
     res.status(409).json({ error: error.message, code: error.code, writePolicy: error.writePolicy });
     return;

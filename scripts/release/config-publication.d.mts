@@ -37,7 +37,21 @@ export function signingAvailable(configPath: string): boolean;
 export function writePublication(configPath: string, input: ConfigPublication): ConfigPublication;
 export function saveSnapshot(configPath: string, text: string): string;
 export function readSnapshot(configPath: string, digest: string): string;
-export function assertPublishedDisk(configPath: string, record?: ConfigPublication): ConfigPublication | undefined;
-export function publishedExpected<T extends { schemaVersion: number; digest: string; credentialVersionDigest?: string } | undefined>(configPath: string, releaseId: string | undefined, fallback: T, requireCommitted?: boolean): T | PublishedIdentity;
-export function preparePublicationAuthority(configPath: string, releaseId: string, expected: PublishedIdentity): ConfigPublication;
+export function assertPublishedDisk(
+  configPath: string,
+  record?: ConfigPublication,
+): ConfigPublication | undefined;
+export function publishedExpected<
+  T extends { schemaVersion: number; digest: string; credentialVersionDigest?: string } | undefined,
+>(
+  configPath: string,
+  releaseId: string | undefined,
+  fallback: T,
+  requireCommitted?: boolean,
+): T | PublishedIdentity;
+export function preparePublicationAuthority(
+  configPath: string,
+  releaseId: string,
+  expected: PublishedIdentity,
+): ConfigPublication;
 export function publicationEventCount(configPath: string): number;

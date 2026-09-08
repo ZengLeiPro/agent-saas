@@ -593,7 +593,7 @@ jobs:
           trap cleanup EXIT
           ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/production_evidence_key scripts/release/read-production-state.mjs \
-            scripts/release/read-runtime-identity.mjs scripts/release/artifact-lib.mjs \
+            scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/artifact-lib.mjs \
             scripts/release/production-checkpoint.mjs "$ECS_USER@$ECS_HOST:$remote/"
           if ! ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" \
             "node '$remote/read-production-state.mjs' --config-identity-stage '$PRODUCTION_CONFIG_IDENTITY_STAGE' --output '$remote/production.json' >/dev/null" \
@@ -1206,7 +1206,7 @@ jobs:
           scp -i ~/.ssh/staging_key "$RUNNER_TEMP/selected/"*.tgz "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-staging-release.sh scripts/release/acs-deployment-drain.sh \
             scripts/release/verify-installed-release.mjs \
-            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
+            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \
             scripts/release/artifact-lib.mjs \
             daemon-packaging/systemd/agent-saas-server-staging.service.template \
             daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template \

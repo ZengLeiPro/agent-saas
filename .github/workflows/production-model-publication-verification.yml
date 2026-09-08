@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/production-model-publication-verification.yml
       - scripts/release/bootstrap-production-model-publication.py
+      - scripts/release/finalize-production-model-integration.py
 permissions:
   contents: write
 concurrency:
@@ -36,6 +37,7 @@ jobs:
           PY
           python3 scripts/release/bootstrap-production-model-publication.py
           git restore -- scripts/release/bootstrap-production-model-publication.py
+          python3 scripts/release/finalize-production-model-integration.py
           python3 - <<'PY'
           from pathlib import Path
           for name in ['scripts/release/read-production-state.mjs', 'scripts/release/read-live-production-components.mjs']:
@@ -59,7 +61,13 @@ jobs:
             scripts/release/config-publication.mjs scripts/release/config-publication.d.mts scripts/release/config-publication.test.mjs \
             server/src/config/productionModelPublisher.ts \
             server/src/app/productionConfigIdentity.ts server/src/app/productionModelPublication.ts \
-            server/src/app/memoryIndexRuntimeUpdate.ts server/src/release/configPublicationCli.ts
+            server/src/app/memoryIndexRuntimeUpdate.ts server/src/app/memoryIndexRuntimeUpdate.test.ts \
+            server/src/release/configPublicationCli.ts \
+            server/src/__tests__/helpers/productionPublicationRig.ts \
+            server/src/__tests__/helpers/productionPublicationWorker.ts \
+            server/src/__tests__/productionModelPublication.test.ts \
+            server/src/__tests__/productionModelPublication.process.test.ts \
+            web/src/components/ModelManager/productionSave.test.tsx
       - name: Typechecks, runtime regressions and production bundles
         run: |
           set -euo pipefail
@@ -69,13 +77,14 @@ jobs:
             pnpm -F web typecheck
             node --test scripts/release/config-publication.test.mjs
             pnpm -F server exec vitest run \
+              productionModelPublication memoryIndexRuntimeUpdate sharedConfigRefresher \
               src/__tests__/modelsAdminProductionWritePolicy.test.ts \
               src/__tests__/modelsAdmin.test.ts src/__tests__/modelsAdminQuotaSource.test.ts \
               src/__tests__/modelsAdminGuardrailDisable.test.ts \
               src/__tests__/adminConfigMutationService.test.ts \
               src/app/modelResolvers.test.ts src/app/configRuntimeRecovery.integration.test.ts \
-              src/app/sharedConfigRefresher.test.ts src/runtime/configIdentityRuntime.test.ts
-            pnpm -F web exec vitest run src/components/ModelManager/index.test.tsx src/components/ModelManager/writePolicy.test.tsx
+              src/runtime/configIdentityRuntime.test.ts
+            pnpm -F web exec vitest run src/components/ModelManager/index.test.tsx src/components/ModelManager/writePolicy.test.tsx src/components/ModelManager/productionSave.test.tsx
             pnpm -F server build
             pnpm -F web build
             git diff --check
@@ -92,7 +101,10 @@ jobs:
             'scripts/release/config-publication.mjs', 'scripts/release/config-publication.d.mts', 'scripts/release/config-publication.test.mjs',
             'server/src/config/productionModelPublisher.ts', 'server/src/app/productionConfigIdentity.ts',
             'server/src/app/productionModelPublication.ts', 'server/src/app/memoryIndexRuntimeUpdate.ts',
-            'server/src/release/configPublicationCli.ts',
+            'server/src/release/configPublicationCli.ts', 'server/src/app/memoryIndexRuntimeUpdate.test.ts',
+            'server/src/__tests__/helpers/productionPublicationRig.ts', 'server/src/__tests__/helpers/productionPublicationWorker.ts',
+            'server/src/__tests__/productionModelPublication.test.ts', 'server/src/__tests__/productionModelPublication.process.test.ts',
+            'web/src/components/ModelManager/productionSave.test.tsx',
           ]
           subprocess.run(['git', 'add', '--', *sorted(set(paths))], check=True)
           PY

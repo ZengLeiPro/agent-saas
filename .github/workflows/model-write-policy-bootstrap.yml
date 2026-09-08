@@ -1,0 +1,112 @@
+name: Model write-policy isolated verification
+
+# Temporary branch-only development helper. Removed before opening the PR.
+# No deployment environments, production credentials, or production endpoints.
+on:
+  push:
+    branches: [fix/models-production-write-policy-20260908]
+    paths: [scripts/bootstrap-model-write-policy.py]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: model-write-policy-bootstrap
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22.23.1'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  verify:
+    if: github.repository == 'ZengLeiPro/agent-saas' && github.ref == 'refs/heads/fix/models-production-write-policy-20260908'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Apply exact, checked source edits
+        run: python3 scripts/bootstrap-model-write-policy.py
+      - uses: ./.github/actions/setup-pnpm
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Format new source files
+        run: |
+          pnpm exec prettier --write \
+            shared/src/configWritePolicy.ts shared/src/configWritePolicy.test.ts \
+            server/src/__tests__/modelsAdminProductionWritePolicy.test.ts \
+            web/src/components/ModelManager/modelConfigTypes.ts \
+            web/src/components/ModelManager/useModelWritePolicy.ts \
+            web/src/components/ModelManager/writePolicy.test.tsx \
+            docs/plans/production-model-config-online-save.md
+      - name: Typecheck, focused regressions, and engineering ratchets
+        run: |
+          set -euo pipefail
+          {
+            pnpm -F @agent/shared typecheck
+            pnpm -F server typecheck
+            pnpm -F web typecheck
+            pnpm -F @agent/shared exec vitest run src/configWritePolicy.test.ts
+            pnpm -F server exec vitest run \
+              src/__tests__/modelsAdminProductionWritePolicy.test.ts \
+              src/__tests__/modelsAdmin.test.ts \
+              src/__tests__/modelsAdminGuardrailDisable.test.ts \
+              src/__tests__/modelsAdminQuotaSource.test.ts \
+              src/__tests__/adminConfigMutationService.test.ts \
+              src/__tests__/toolDescriptionOnline.test.ts
+            pnpm -F web exec vitest run \
+              src/components/ModelManager/index.test.tsx \
+              src/components/ModelManager/writePolicy.test.tsx
+            pnpm exec eslint \
+              shared/src/configWritePolicy.ts shared/src/configWritePolicy.test.ts \
+              server/src/config/adminConfigMutationService.ts \
+              server/src/config/adminConfigMutationHttp.ts \
+              server/src/routes/modelsAdmin.ts \
+              server/src/__tests__/modelsAdminProductionWritePolicy.test.ts \
+              web/src/components/ModelManager/index.tsx \
+              web/src/components/ModelManager/index.test.tsx \
+              web/src/components/ModelManager/modelConfigTypes.ts \
+              web/src/components/ModelManager/useModelWritePolicy.ts \
+              web/src/components/ModelManager/writePolicy.test.tsx
+            pnpm check:ratchets
+            git diff --check
+          } 2>&1 | tee /tmp/model-write-policy-verification.log
+      - name: Publish verified source edits to this feature branch only
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/fix/models-production-write-policy-20260908
+          remote_sha="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
+          test "$remote_sha" = "$GITHUB_SHA"
+          git add -- \
+            shared/src/configWritePolicy.ts shared/src/configWritePolicy.test.ts \
+            server/src/config/adminConfigMutationService.ts \
+            server/src/config/adminConfigMutationHttp.ts \
+            server/src/routes/modelsAdmin.ts \
+            server/src/__tests__/modelsAdminProductionWritePolicy.test.ts \
+            web/src/components/ModelManager/index.tsx \
+            web/src/components/ModelManager/index.test.tsx \
+            web/src/components/ModelManager/modelConfigTypes.ts \
+            web/src/components/ModelManager/useModelWritePolicy.ts \
+            web/src/components/ModelManager/writePolicy.test.tsx \
+            docs/plans/production-model-config-online-save.md \
+            config/max-lines-baseline.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -c core.hooksPath=/dev/null commit -m 'fix(models): expose write policy and preserve production mutation errors'
+          git push origin HEAD:refs/heads/fix/models-production-write-policy-20260908
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain verification output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: model-write-policy-verification-${{ github.run_id }}
+          path: /tmp/model-write-policy-verification.log
+          if-no-files-found: ignore
+          retention-days: 1

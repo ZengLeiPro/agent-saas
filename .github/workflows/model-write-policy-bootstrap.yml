@@ -38,7 +38,10 @@ jobs:
           source = p.read_text()
           old = "text.index('type SelectedPanel = ')"
           assert source.count(old) == 1
-          p.write_text(source.replace(old, "text.index('type SelectedPanel =')"))
+          source = source.replace(old, "text.index('type SelectedPanel =')")
+          old = "getByRole('button', { name: '主分组' })"
+          assert source.count(old) == 1
+          p.write_text(source.replace(old, "getByRole('button', { name: '主分组 main · 2 个模型' })"))
           PY
           python3 scripts/release/bootstrap-model-write-policy.py
           git restore -- scripts/release/bootstrap-model-write-policy.py
@@ -126,11 +129,19 @@ jobs:
           git -c core.hooksPath=/dev/null commit -m 'fix(models): expose write policy and preserve production mutation errors'
           git push origin HEAD:refs/heads/fix/models-production-write-policy-20260908
           git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
-      - name: Retain verification output
+      - name: Snapshot source for review without git credentials or dependencies
+        if: always()
+        run: |
+          git ls-files -z --cached --others --exclude-standard | tar --null -T - -czf /tmp/model-write-source.tar.gz
+          git rev-parse HEAD > /tmp/model-write-source-head.txt
+      - name: Retain verification output and source
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: model-write-policy-verification-${{ github.run_id }}
-          path: /tmp/model-write-policy-verification.log
+          path: |
+            /tmp/model-write-policy-verification.log
+            /tmp/model-write-source.tar.gz
+            /tmp/model-write-source-head.txt
           if-no-files-found: ignore
           retention-days: 1

@@ -44,6 +44,7 @@ test('image recovery is single-flight per SHA and outside the Staging mutation s
     /group: staging-runtime|environment: production|deploy-staging-release.sh/u,
   );
   assert.match(prepare, /ACS_WEBHOOK_REDELIVERY_TOKEN/u);
+  assert.match(prepare, /package-manager-cache: false/u);
   assert.match(prepare, /if: always\(\)/u);
   assert.match(deploy, /needs: \[prepare-evidence, prepare-acs\]/u);
   assert.doesNotMatch(deploy, /WEBHOOK_REDELIVERY_TOKEN/u);

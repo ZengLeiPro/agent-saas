@@ -96,7 +96,8 @@ export class KyAppHealthProber {
       digestMismatches: 0,
       domainDrifts: 0,
     };
-    const installations = await this.options.directory.listEnabled();
+    const installations = await (this.options.directory.listProbeable?.()
+      ?? this.options.directory.listEnabled());
     for (const installation of installations) {
       if (
         this.isDue(

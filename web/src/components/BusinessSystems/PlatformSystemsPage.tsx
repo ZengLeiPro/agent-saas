@@ -3,12 +3,15 @@ import { Button } from '@/components/ui/button';
 import { EntityIcons } from '@/lib/icons';
 import { governanceRoute } from '@/lib/governanceNavigation';
 import { navigateGovernance } from '@/lib/urlSync';
-import { kyAppPost, KyAppManagementError, type SystemDefinition } from '@/lib/kyAppManagementApi';
+import { type SystemDefinition } from '@/lib/kyAppManagementApi';
 import type { SystemDetail } from '@/lib/kyAppManagementTypes';
 import { useManagementResource, ResourceState } from './ManagementResource';
 import { ManifestUpload } from './ManifestUpload';
 import { SystemDeliveryPage } from '../SystemDelivery/SystemDeliveryPage';
 import { SystemVersions } from './SystemVersions';
+import { SystemConnectionSettings } from './SystemConnectionSettings';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { SystemActions } from './SystemActions';
 const routeId = 'platform.resource-center.business-systems';
 export function PlatformSystemsPage({ systemId }: { systemId?: string | null }) {
   return systemId ? <SystemDetailPage key={systemId} systemId={systemId} /> : <SystemCatalog />;
@@ -78,96 +81,87 @@ function SystemCatalog() {
 function SystemDetailPage({ systemId }: { systemId: string }) {
   const resource = useManagementResource<SystemDetail>(`/systems/${encodeURIComponent(systemId)}`);
   const [tab, setTab] = useState(() =>
-    new URLSearchParams(window.location.search).get('tab') === 'installations'
-      ? 'installations'
+    ['installations', 'connection-settings'].includes(
+      new URLSearchParams(window.location.search).get('tab') ?? '',
+    )
+      ? new URLSearchParams(window.location.search).get('tab')!
       : 'versions',
   );
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function status(next: 'disabled' | 'retired') {
-    if (
-      !resource.data ||
-      busy ||
-      !window.confirm(
-        next === 'retired'
-          ? '确认退役该系统？退役后不能恢复或发布新版本。'
-          : '确认停用该业务系统？',
-      )
-    )
-      return;
-    setBusy(true);
-    setError('');
-    try {
-      await kyAppPost(`/systems/${encodeURIComponent(systemId)}/status`, {
-        status: next,
-        expectedVersion: resource.data.definition.version,
-      });
-      resource.reload();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '操作失败');
-      if (reason instanceof KyAppManagementError && reason.status === 409) resource.reload();
-    } finally {
-      setBusy(false);
-    }
-  }
+  const [connectionRevision, setConnectionRevision] = useState(0);
+  const [settingsNotice, setSettingsNotice] = useState('');
   return (
     <section className="space-y-5 p-4">
       <Button variant="outline" onClick={() => navigateGovernance(governanceRoute(routeId))}>
         返回目录
       </Button>
-      {error && <p role="alert">{error}</p>}
       {!resource.data ? (
         <ResourceState error={resource.error} retry={resource.reload} />
       ) : (
         <>
-          <h2 className="text-lg font-semibold">{resource.data.definition.name}</h2>
-          <div className="flex gap-2">
-            {resource.data.allowedActions?.includes('disable_system') && (
-              <Button variant="outline" disabled={busy} onClick={() => void status('disabled')}>
-                停用系统
-              </Button>
-            )}
-            {resource.data.allowedActions?.includes('retire_system') && (
-              <Button variant="outline" disabled={busy} onClick={() => void status('retired')}>
-                退役系统
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2" role="tablist" aria-label="业务系统管理">
-            {[
-              ['versions', '版本管理'],
-              ['installations', '组织接入'],
-            ].map(([value, label]) => (
-              <Button
-                key={value}
-                role="tab"
-                aria-selected={tab === value}
-                variant={tab === value ? 'default' : 'outline'}
-                onClick={() => {
-                  setTab(value!);
-                  const url = new URL(window.location.href);
-                  url.searchParams.set('tab', value!);
-                  window.history.replaceState(window.history.state, '', url);
-                }}
-              >
-                {label}
-              </Button>
-            ))}
-          </div>
-          <div
-            hidden={tab !== 'versions'}
-            role="tabpanel"
-            aria-label="版本管理"
-            className="space-y-4"
+          <header className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold">{resource.data.definition.name}</h2>
+              <p className="text-sm text-muted-foreground">
+                管理发布版本、接入配置和组织使用情况。
+              </p>
+              {resource.data.definition.status === 'disabled' && (
+                <p className="text-sm">系统已停用，可在版本管理中重新发布恢复。</p>
+              )}
+              {resource.data.definition.status === 'retired' && (
+                <p className="text-sm">系统已退役，历史记录保留。</p>
+              )}
+            </div>
+            <SystemActions detail={resource.data} reload={resource.reload} />
+          </header>
+          <Tabs
+            value={tab}
+            onValueChange={(value) => {
+              setTab(value);
+              const url = new URL(window.location.href);
+              url.searchParams.set('tab', value);
+              window.history.replaceState(window.history.state, '', url);
+            }}
           >
-            {resource.data.allowedActions?.includes('register_version') && (
-              <ManifestUpload systemId={systemId} onRegistered={resource.reload} />
-            )}
-            <SystemVersions detail={resource.data} reload={resource.reload} />
-          </div>
-          <div hidden={tab !== 'installations'} role="tabpanel" aria-label="组织接入">
-            <SystemDeliveryPage systemId={systemId} embedded />
-          </div>
+            <TabsList className="mb-4 w-fit" aria-label="业务系统管理">
+              {[
+                ['versions', '版本管理'],
+                ['connection-settings', '接入配置'],
+                ['installations', '组织接入'],
+              ].map(([value, label]) => (
+                <TabsTrigger key={value} value={value!}>
+                  {label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            <TabsContent
+              value="versions"
+              forceMount
+              hidden={tab !== 'versions'}
+              className="space-y-4"
+            >
+              {resource.data.allowedActions?.includes('register_version') && (
+                <ManifestUpload systemId={systemId} onRegistered={resource.reload} />
+              )}
+              <SystemVersions detail={resource.data} reload={resource.reload} />
+            </TabsContent>
+            <TabsContent value="connection-settings">
+              {settingsNotice && <p role="status">{settingsNotice}</p>}
+              <SystemConnectionSettings
+                detail={resource.data}
+                onSaved={() => {
+                  setConnectionRevision((value) => value + 1);
+                  setSettingsNotice('接入配置已保存');
+                }}
+              />
+            </TabsContent>
+            <TabsContent value="installations" forceMount hidden={tab !== 'installations'}>
+              <SystemDeliveryPage
+                systemId={systemId}
+                embedded
+                connectionRevision={connectionRevision}
+              />
+            </TabsContent>
+          </Tabs>
         </>
       )}
     </section>

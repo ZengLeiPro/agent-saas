@@ -56,6 +56,20 @@
           "params": ["$tablePrefix"]
         }
       ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
+      "checks": [
+        {
+          "id": "ky-app-connection-settings-v45",
+          "configPath": "runtimeEventStore",
+          "description": "系统默认接入配置表及五个必填字段、主键和外键已创建",
+          "sql": "SELECT to_regclass($1 || '_ky_app_connection_settings') IS NOT NULL AND (SELECT count(*) = 5 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 || '_ky_app_connection_settings' AND is_nullable='NO' AND ((column_name IN ('system_id','updated_by') AND data_type='text') OR (column_name='settings_json' AND data_type='jsonb') OR (column_name='version' AND data_type='integer' AND column_default='1') OR (column_name='updated_at' AND data_type='timestamp with time zone'))) AND (SELECT count(*) = 2 FROM pg_constraint WHERE conrelid=to_regclass($1 || '_ky_app_connection_settings') AND contype IN ('p','f')) AS ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
     }
   ]
 }

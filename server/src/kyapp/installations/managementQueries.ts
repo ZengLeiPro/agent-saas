@@ -63,6 +63,21 @@ export class KyAppManagementQueries {
             ],
     }));
   }
+  async connectionsForSystem(systemId: string) {
+    const result = await this.pool.query(
+      `SELECT i.tenant_id,i.installation_id,i.status,e.execution_id
+      FROM ${this.systems.installationsTable} i
+      LEFT JOIN ${this.prefix}_ky_app_onboard_executions e USING (tenant_id,system_id,installation_id)
+      WHERE i.system_id=$1`,
+      [systemId],
+    );
+    return result.rows.map((row) => ({
+      tenantId: String(row.tenant_id),
+      installationId: String(row.installation_id),
+      status: String(row.status),
+      executionId: row.execution_id ? String(row.execution_id) : null,
+    }));
+  }
   async systemDetail(systemId: string, _actor: string) {
     const [list, definition, versions] = await Promise.all([
       this.systemsList(),
@@ -79,14 +94,26 @@ export class KyAppManagementQueries {
             allowedActions:
               definition.status === 'retired'
                 ? []
-                : version.status === 'retired' ? [] : ['publish_version'],
+                : version.status === 'retired'
+                  ? []
+                  : ['publish_version'],
           })),
         }
       : null;
   }
   async executions() {
-    const result = await this.pool.query(`SELECT execution_id,tenant_id,system_id,installation_id,status,current_step,updated_at FROM ${this.prefix}_ky_app_onboard_executions ORDER BY updated_at DESC,execution_id`);
-    return result.rows.map(row => ({ executionId: row.execution_id, tenantId: row.tenant_id, systemId: row.system_id, installationId: row.installation_id, status: row.status, currentStep: row.current_step, updatedAt: date(row.updated_at) }));
+    const result = await this.pool.query(
+      `SELECT execution_id,tenant_id,system_id,installation_id,status,current_step,updated_at FROM ${this.prefix}_ky_app_onboard_executions ORDER BY updated_at DESC,execution_id`,
+    );
+    return result.rows.map((row) => ({
+      executionId: row.execution_id,
+      tenantId: row.tenant_id,
+      systemId: row.system_id,
+      installationId: row.installation_id,
+      status: row.status,
+      currentStep: row.current_step,
+      updatedAt: date(row.updated_at),
+    }));
   }
   async installationSummary(installationId: string) {
     const [delivery, assignments, credentials, runtime] = await Promise.all([
@@ -139,7 +166,11 @@ export class KyAppManagementQueries {
     }
     if (filter.signal) {
       if (this.eventsTable) params.push(filter.signal);
-      where.push(this.eventsTable ? `EXISTS (SELECT 1 FROM ${this.eventsTable} signal WHERE signal.tenant_id=i.tenant_id AND signal.event_type='tool_audit' AND signal.event_json->>'installationId'=i.installation_id AND signal.event_json->>'errorCode'=$${params.length} AND signal.timestamp >= NOW()-INTERVAL '24 hours')` : 'FALSE');
+      where.push(
+        this.eventsTable
+          ? `EXISTS (SELECT 1 FROM ${this.eventsTable} signal WHERE signal.tenant_id=i.tenant_id AND signal.event_type='tool_audit' AND signal.event_json->>'installationId'=i.installation_id AND signal.event_json->>'errorCode'=$${params.length} AND signal.timestamp >= NOW()-INTERVAL '24 hours')`
+          : 'FALSE',
+      );
     }
     if (filter.cursor) {
       const cursor = JSON.parse(Buffer.from(filter.cursor, 'base64url').toString()) as {

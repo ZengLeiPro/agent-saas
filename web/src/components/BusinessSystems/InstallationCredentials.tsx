@@ -23,10 +23,7 @@ export function InstallationCredentials({
     return () => window.clearTimeout(timer);
   }, [resource.data, resource.reload]);
   async function issue() {
-    if (
-      busy ||
-      !window.confirm('确认签发新凭据？技术联系人完成领取、装配与确认后，旧服务凭据将被吊销。')
-    )
+    if (busy || !window.confirm('确认签发新凭据？完成领取、装配与确认后，旧服务凭据将被吊销。'))
       return;
     setBusy(true);
     setError('');
@@ -48,7 +45,7 @@ export function InstallationCredentials({
   return (
     <section className="space-y-3">
       <h3 className="font-medium">凭据与轮换</h3>
-      <p className="text-sm">管理员只能查看生命周期信息。凭据明文由登记的技术联系人一次性领取。</p>
+      <p className="text-sm">平台管理员或登记的技术联系人均可一次性领取凭据并完成系统接入。</p>
       {!resource.data ? (
         <ResourceState error={resource.error} retry={resource.reload} />
       ) : (
@@ -78,13 +75,22 @@ export function InstallationCredentials({
       {error && <p role="alert">{error}</p>}
       {ticket && (
         <div>
-          <p>技术联系人领取链接（{ticket.ticketExpiresAt} 前有效）</p>
+          <p>凭据领取链接（{ticket.ticketExpiresAt} 前有效）</p>
           <input
             className="w-full rounded border bg-background p-2 text-xs"
-            aria-label="技术联系人领取链接"
+            aria-label="凭据领取链接"
             readOnly
             value={credentialClaimUrl(installationId, ticket.ticket)}
           />
+          <Button asChild variant="outline">
+            <a
+              href={credentialClaimUrl(installationId, ticket.ticket)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              领取凭据
+            </a>
+          </Button>
         </div>
       )}
     </section>

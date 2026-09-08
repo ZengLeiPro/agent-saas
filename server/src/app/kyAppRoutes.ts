@@ -22,6 +22,8 @@ import { createKyAppDirectoryRouter } from '../kyapp/routes/directory.js';
 import { KyAppMemberImporter } from '../kyapp/delivery/memberImport.js';
 import { KyAppOnboardService } from '../kyapp/delivery/onboard.js';
 import { createKyAppDeliveryRouter } from '../kyapp/routes/delivery.js';
+import { createKyAppExistingOnboardRouter } from '../kyapp/routes/existingOnboard.js';
+import { PgKyAppConnectionSettingsStore } from '../kyapp/delivery/connectionSettings.js';
 import {
   createKyAppHandshakeRouter,
   createTenantAdminResolver,
@@ -104,8 +106,14 @@ export function registerKyAppRoutes(
     return null;
   }
 
-  const management = new KyAppManagementQueries(runtime.runtimePgEventStore!.pool, assembly.systems,
-    runtime.config.runtimeEventStore?.backend === 'pg' ? runtime.config.runtimeEventStore.tablePrefix : undefined, runtime.runtimePgEventStore!.eventsTable);
+  const management = new KyAppManagementQueries(
+    runtime.runtimePgEventStore!.pool,
+    assembly.systems,
+    runtime.config.runtimeEventStore?.backend === 'pg'
+      ? runtime.config.runtimeEventStore.tablePrefix
+      : undefined,
+    runtime.runtimePgEventStore!.eventsTable,
+  );
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppSystemsRouter({
@@ -155,8 +163,12 @@ export function registerKyAppRoutes(
           billing: runtime.billingService,
           sharedDir: runtime.sharedDir,
           getAssignmentConfigured: async (tenantId, installationId) => {
-            const set = await runtime.assignmentStore?.getAssignmentSet(tenantId, 'system_installation', installationId);
-            return Boolean(set?.assignments.some(rule => rule.effect === 'allow'));
+            const set = await runtime.assignmentStore?.getAssignmentSet(
+              tenantId,
+              'system_installation',
+              installationId,
+            );
+            return Boolean(set?.assignments.some((rule) => rule.effect === 'allow'));
           },
           ...(runtime.entitlementStore ? { entitlementStore: runtime.entitlementStore } : {}),
           ...(runtime.orgAgentStore ? { orgAgentStore: runtime.orgAgentStore } : {}),
@@ -184,9 +196,45 @@ export function registerKyAppRoutes(
           },
         })
       : undefined;
+  const connectionSettings = new PgKyAppConnectionSettingsStore(
+    runtime.runtimePgEventStore!.pool,
+    runtime.config.runtimeEventStore?.backend === 'pg'
+      ? runtime.config.runtimeEventStore.tablePrefix
+      : undefined,
+  );
+  if (runtime.tenantStore && runtime.userStore && runtime.membershipStore) {
+    app.use(
+      KY_APP_CONTRACT_BASE_PATH,
+      createKyAppExistingOnboardRouter({
+        config,
+        management,
+        settings: connectionSettings,
+        store: assembly.deliveryStore,
+        systems: assembly.systems,
+        installations: assembly.installations,
+        credentials: assembly.credentials,
+        runtimeStore: assembly.runtimeStore,
+        tenants: runtime.tenantStore,
+        users: runtime.userStore,
+        memberships: runtime.membershipStore,
+        ...(runtime.entitlementStore ? { entitlementStore: runtime.entitlementStore } : {}),
+        ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
+        getAssignmentConfigured: async (tenantId, installationId) => {
+          const set = await runtime.assignmentStore?.getAssignmentSet(
+            tenantId,
+            'system_installation',
+            installationId,
+          );
+          return Boolean(set?.assignments.some((rule) => rule.effect === 'allow'));
+        },
+        runSmoke: (installationId, fixture) => assembly.diagnostics.run(installationId, fixture),
+      }),
+    );
+  }
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppDeliveryRouter({
+      connectionSettings,
       management,
       store: assembly.deliveryStore,
       systems: assembly.systems,

@@ -1,4 +1,5 @@
 import type { KyAppManagementQueries } from '../installations/managementQueries.js';
+import type { PgKyAppConnectionSettingsStore } from '../delivery/connectionSettings.js';
 import { randomUUID } from 'node:crypto';
 
 import { Router } from 'express';
@@ -67,6 +68,7 @@ const executeOffboardingSchema = z.object({
 });
 
 export function createKyAppDeliveryRouter(options: {
+  connectionSettings?: PgKyAppConnectionSettingsStore;
   store: PgKyAppDeliveryStore;
   management?: KyAppManagementQueries;
   systems: PgKyAppSystemStore;
@@ -199,7 +201,11 @@ export function createKyAppDeliveryRouter(options: {
         installation.systemId,
         installation.installationId,
       );
-      const diagnostic = execution?.request.diagnostic as
+      const diagnostic = (
+        execution?.request.mode === 'existing'
+          ? (await options.connectionSettings?.get(installation.systemId))?.settings.diagnostic
+          : execution?.request.diagnostic
+      ) as
         | {
             readOnlyCapabilityId?: unknown;
             readOnlyInput?: unknown;
@@ -268,7 +274,11 @@ export function createKyAppDeliveryRouter(options: {
 
   router.get('/deliveries', requirePlatformAdmin, async (req, res) => {
     try {
-      res.json({ deliveries: await options.store.listDeliveries(), executions: await options.management?.executions() ?? [], allowedActions: ['start_delivery'] });
+      res.json({
+        deliveries: await options.store.listDeliveries(),
+        executions: (await options.management?.executions()) ?? [],
+        allowedActions: ['start_delivery'],
+      });
     } catch (error) {
       sendKyAppFailure(req, res, error);
     }

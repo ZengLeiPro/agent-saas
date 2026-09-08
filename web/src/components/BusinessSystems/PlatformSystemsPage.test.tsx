@@ -45,14 +45,23 @@ describe('业务系统统一入口', () => {
     expect(screen.getByRole('tab', { name: '版本管理' }).getAttribute('aria-selected')).toBe(
       'true',
     );
-    fireEvent.click(screen.getByRole('tab', { name: '组织接入' }));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '组织接入' }), {
+      button: 0,
+      ctrlKey: false,
+    });
     await screen.findByText('demo · tenant-a · running');
     expect(screen.queryByText('other · other-tenant · running')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '查看进度' }));
     await screen.findByRole('button', { name: '刷新进度' });
     expect(new URLSearchParams(location.search).get('execution')).toBe('run-demo');
-    fireEvent.click(screen.getByRole('tab', { name: '版本管理' }));
-    fireEvent.click(screen.getByRole('tab', { name: '组织接入' }));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '版本管理' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '组织接入' }), {
+      button: 0,
+      ctrlKey: false,
+    });
     expect(screen.getByRole('button', { name: '返回组织接入' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '返回组织接入' }));
     await screen.findByText('demo · tenant-a · running');

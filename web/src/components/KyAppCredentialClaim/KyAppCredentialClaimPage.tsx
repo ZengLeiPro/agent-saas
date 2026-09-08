@@ -10,7 +10,13 @@ interface ClaimedCredential {
   keyVersion: string;
   ackDeadlineAt: string;
 }
-export function KyAppCredentialClaimPage({ installationId, initialTicket = '' }: { installationId: string; initialTicket?: string }) {
+export function KyAppCredentialClaimPage({
+  installationId,
+  initialTicket = '',
+}: {
+  installationId: string;
+  initialTicket?: string;
+}) {
   const { isAuthenticated, isLoading } = useAuth();
   const ticket = useRef(initialTicket);
   const generation = useRef(0);
@@ -87,7 +93,7 @@ export function KyAppCredentialClaimPage({ installationId, initialTicket = '' }:
       setPhase('gone');
       setError(
         reason instanceof KyAppManagementError && reason.status === 403
-          ? '当前账号不是登记的技术联系人'
+          ? '请使用平台管理员或登记的技术联系人账号领取'
           : reason instanceof KyAppManagementError && [404, 409].includes(reason.status)
             ? '票据不存在、已使用或已过期，请联系管理员重新签发。'
             : '领取未完成，票据可能已使用，请联系管理员核对后重新签发。',
@@ -120,7 +126,7 @@ export function KyAppCredentialClaimPage({ installationId, initialTicket = '' }:
   if (!isAuthenticated)
     return (
       <AuthShell>
-        <p className="mb-4 text-sm">请使用登记的技术联系人账号登录，随后继续领取。</p>
+        <p className="mb-4 text-sm">请使用平台管理员或登记的技术联系人账号登录，随后继续领取。</p>
         <LoginPage signupEnabled={false} />
       </AuthShell>
     );

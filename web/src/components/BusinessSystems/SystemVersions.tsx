@@ -7,7 +7,11 @@ export function SystemVersions({ detail, reload }: { detail: SystemDetail; reloa
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   async function publish(digest: string) {
-    if (busy || !window.confirm('确认发布此版本？现有实例需部署并验证后才能切换。')) return;
+    const message =
+      detail.definition.status === 'disabled'
+        ? '确认重新发布并恢复系统？所有已接入组织的工作区入口将按各自实例状态恢复可用；切换版本仍需部署并验证。'
+        : '确认发布此版本？现有实例需部署并验证后才能切换。';
+    if (busy || !window.confirm(message)) return;
     setBusy(true);
     setError('');
     try {
@@ -70,9 +74,10 @@ export function SystemVersions({ detail, reload }: { detail: SystemDetail; reloa
           </details>
           <div className="flex gap-2">
             {version.allowedActions?.includes('publish_version') &&
-              detail.definition.publishedDigest !== version.digest && (
+              (detail.definition.publishedDigest !== version.digest ||
+                detail.definition.status === 'disabled') && (
                 <Button disabled={busy} onClick={() => void publish(version.digest)}>
-                  发布版本
+                  {detail.definition.status === 'disabled' ? '重新发布并恢复系统' : '发布版本'}
                 </Button>
               )}
           </div>

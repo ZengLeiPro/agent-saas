@@ -10279,6 +10279,38 @@
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
         }
       ]
+    },
+    {
+      "baselineSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
+      "files": [
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
+          "classification": "expand",
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
+          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        }
+      ]
     }
   ]
 }

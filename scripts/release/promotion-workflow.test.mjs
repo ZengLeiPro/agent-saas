@@ -8,6 +8,7 @@ import { reconcilePromotion } from './reconcile-promotion.mjs';
 import { verifyPromotionAcsSelection } from './verify-promotion-acs-selection.mjs';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
+const promotionGatePath = new URL('../../server/src/release/promotionGateCli.ts', import.meta.url);
 const confirmationWorkflowPath = new URL('./finalize-expand-migration.sh', import.meta.url);
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
 const attestationCliPath = new URL(
@@ -155,6 +156,23 @@ test('promotion accepts only an approved release id and shares the production ru
   assert.match(workflow, /releaseSha:\$releaseSha/u);
   assert.match(workflow, /--arg migrationPhase "\$MIGRATION_PHASE"/u);
   assert.match(workflow, /migrationPhase:\$migrationPhase/u);
+});
+
+test('promotion workflow and CLI require the same deterministic Staging contract', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const promotionGate = await readFile(promotionGatePath, 'utf8');
+  const workflowMode = workflow.match(/verification_summary" \| jq -r \.mode\)" = ([a-z0-9-]+)/u);
+  const gateMode = promotionGate.match(/verification\.mode !== '([^']+)'/u);
+  assert.ok(workflowMode);
+  assert.ok(gateMode);
+  assert.equal(gateMode[1], workflowMode[1]);
+
+  const workflowChecks = workflow.match(/expected_checks='(\[[^']+\])'/u);
+  const gateChecksBlock = promotionGate.match(/const expectedChecks = \[([\s\S]*?)\];/u);
+  assert.ok(workflowChecks);
+  assert.ok(gateChecksBlock);
+  const gateChecks = [...gateChecksBlock[1].matchAll(/'([^']+)'/gu)].map((match) => match[1]);
+  assert.deepEqual(gateChecks, JSON.parse(workflowChecks[1]));
 });
 
 test('Web rollback marker is written only by the armed restore path', async () => {

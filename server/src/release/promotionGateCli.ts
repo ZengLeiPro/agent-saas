@@ -143,6 +143,7 @@ export function validateApprovalReason(
   const expectedChecks = [
     'acs-health',
     'api-readiness',
+    'core-business-smoke',
     'immutable-artifacts',
     'migration-readback',
     'reverse-isolation',
@@ -151,7 +152,7 @@ export function validateApprovalReason(
   ];
   if (
     verification?.schemaVersion !== 1 ||
-    verification.mode !== 'deterministic-deployment-gates-v1' ||
+    verification.mode !== 'deterministic-deployment-gates-v2' ||
     verification.status !== 'passed' ||
     !Array.isArray(verification.checks) ||
     canonicalJson([...verification.checks].sort()) !== canonicalJson(expectedChecks)

@@ -12,6 +12,28 @@ export function BusinessSystemOperationsPage({
 }: {
   installationId?: string | null;
 }) {
+  const availability = useManagementResource<{ enabled: boolean }>('/availability');
+  if (availability.data?.enabled)
+    return <BusinessSystemOperationsContent installationId={installationId} />;
+  return (
+    <section className="space-y-5 p-4">
+      <h2 className="text-lg font-semibold">业务系统运营</h2>
+      {!availability.data ? (
+        <ResourceState error={availability.error} retry={availability.reload} />
+      ) : (
+        <div role="status" className="space-y-3 text-sm text-muted-foreground">
+          <p>业务系统服务未启用或尚未就绪，暂时无法查看运营数据。</p>
+          <p>服务启用后，可在此查看安装实例和交付健康概览。</p>
+          <Button variant="outline" onClick={availability.reload}>
+            刷新状态
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BusinessSystemOperationsContent({ installationId }: { installationId?: string | null }) {
   const [filters, setFilters] = useState({ tenantId: '', systemId: '', status: '', signal: '' });
   const [cursor, setCursor] = useState('');
   const open = (id?: string) =>

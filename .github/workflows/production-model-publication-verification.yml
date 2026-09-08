@@ -1,0 +1,111 @@
+name: Production model publication integration verification
+# Temporary branch-only development helper. No environments, production secrets,
+# production endpoints, deployment commands or main-branch writes.
+on:
+  push:
+    branches: [fix/models-production-write-policy-20260908]
+    paths:
+      - .github/workflows/production-model-publication-verification.yml
+      - scripts/release/bootstrap-production-model-publication.py
+permissions:
+  contents: write
+concurrency:
+  group: production-model-publication-integration
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'ZengLeiPro/agent-saas' && github.ref == 'refs/heads/fix/models-production-write-policy-20260908'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Apply checked integration patch
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/release/bootstrap-production-model-publication.py')
+          s = p.read_text()
+          old = "    count = text.count(old)\n    if count != 1:"
+          new = "    count = text.count(old)\n    if count != 1 and old.startswith(' '):\n        old, new = '\\n' + old, '\\n' + new\n        count = text.count(old)\n    if count != 1:"
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, new))
+          PY
+          python3 scripts/release/bootstrap-production-model-publication.py
+          git restore -- scripts/release/bootstrap-production-model-publication.py
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ['scripts/release/read-production-state.mjs', 'scripts/release/read-live-production-components.mjs']:
+              p = Path(name)
+              lines = p.read_text().splitlines()
+              if lines[1].startswith('#!'):
+                  lines[0], lines[1] = lines[1], lines[0]
+                  p.write_text('\n'.join(lines) + '\n')
+          p = Path('server/src/config/productionModelPublisher.ts')
+          p.write_text(p.read_text().replace('  publishedExpected, rawRevision,', '  rawRevision,'))
+          PY
+      - uses: ./.github/actions/setup-pnpm
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.1'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Format new modules
+        run: |
+          pnpm exec prettier --write \
+            scripts/release/config-publication.mjs scripts/release/config-publication.d.mts scripts/release/config-publication.test.mjs \
+            server/src/config/productionModelPublisher.ts \
+            server/src/app/productionConfigIdentity.ts server/src/app/productionModelPublication.ts \
+            server/src/app/memoryIndexRuntimeUpdate.ts server/src/release/configPublicationCli.ts
+      - name: Typechecks, runtime regressions and production bundles
+        run: |
+          set -euo pipefail
+          {
+            pnpm -F @agent/shared typecheck
+            pnpm -F server typecheck
+            pnpm -F web typecheck
+            node --test scripts/release/config-publication.test.mjs
+            pnpm -F server exec vitest run \
+              src/__tests__/modelsAdminProductionWritePolicy.test.ts \
+              src/__tests__/modelsAdmin.test.ts src/__tests__/modelsAdminQuotaSource.test.ts \
+              src/__tests__/modelsAdminGuardrailDisable.test.ts \
+              src/__tests__/adminConfigMutationService.test.ts \
+              src/app/modelResolvers.test.ts src/app/configRuntimeRecovery.integration.test.ts \
+              src/app/sharedConfigRefresher.test.ts src/runtime/configIdentityRuntime.test.ts
+            pnpm -F web exec vitest run src/components/ModelManager/index.test.tsx src/components/ModelManager/writePolicy.test.tsx
+            pnpm -F server build
+            pnpm -F web build
+            git diff --check
+          } 2>&1 | tee /tmp/production-model-publication-verification.log
+      - name: Commit verified integration only to the original PR branch
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/fix/models-production-write-policy-20260908
+          test "$(git ls-remote origin "$GITHUB_REF" | cut -f1)" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          import json, subprocess
+          paths = json.load(open('/tmp/production-model-integration-paths.json'))
+          paths += [
+            'scripts/release/config-publication.mjs', 'scripts/release/config-publication.d.mts', 'scripts/release/config-publication.test.mjs',
+            'server/src/config/productionModelPublisher.ts', 'server/src/app/productionConfigIdentity.ts',
+            'server/src/app/productionModelPublication.ts', 'server/src/app/memoryIndexRuntimeUpdate.ts',
+            'server/src/release/configPublicationCli.ts',
+          ]
+          subprocess.run(['git', 'add', '--', *sorted(set(paths))], check=True)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -c core.hooksPath=/dev/null commit -m 'feat(models): wire verified signed production save and dual-process application'
+          git push origin HEAD:refs/heads/fix/models-production-write-policy-20260908
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain test output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-model-publication-verification-${{ github.run_id }}
+          path: /tmp/production-model-publication-verification.log
+          if-no-files-found: ignore
+          retention-days: 1

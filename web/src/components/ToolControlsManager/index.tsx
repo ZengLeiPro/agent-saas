@@ -244,6 +244,7 @@ export function ToolControlsManager(): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [revision, setRevision] = useState("");
+  const [descriptionRevision, setDescriptionRevision] = useState<string | undefined>();
   const [dirty, setDirty] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -257,6 +258,7 @@ export function ToolControlsManager(): JSX.Element {
 
   const hydrate = useCallback((response: ToolControlsAdminResponse) => {
     if (response.revision) setRevision(response.revision);
+    setDescriptionRevision(response.descriptionRevision);
     const nextToolControls = normalizeToolControls(response.toolControls);
     // 把 catalog 里带回来的 descriptionOverride 合并回 draft，保证详情页看到最新 override
     for (const tool of response.tools) {
@@ -370,8 +372,9 @@ export function ToolControlsManager(): JSX.Element {
     if (!revision) throw new Error("配置版本尚未加载，请先刷新");
     setSaving(true);
     try {
-      const response = await updateSingleTool(toolId, { ...payload, expectedRevision: revision });
+      const response = await updateSingleTool(toolId, { ...payload, expectedRevision: revision, expectedDescriptionRevision: descriptionRevision });
       if (response.revision) setRevision(response.revision);
+      setDescriptionRevision(response.descriptionRevision);
       setTools(response.tools);
       const savedTool = response.tools.find((tool) => tool.id === toolId);
       // 描述单独保存不能覆盖尚未提交的搜索源、密钥与开关草稿。
@@ -382,7 +385,7 @@ export function ToolControlsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [revision]);
+  }, [revision, descriptionRevision]);
 
   const draftVisibleTools = useMemo(
     () => listDraftVisibleTools(tools, toolControlsDraft, webToolsDraft),

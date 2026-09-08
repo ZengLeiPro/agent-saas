@@ -39,7 +39,6 @@ jobs:
           git restore -- scripts/release/bootstrap-production-model-publication.py
           python3 scripts/release/finalize-production-model-integration.py
           python3 - <<'PY'
-          import json
           from pathlib import Path
           for name in ['scripts/release/read-production-state.mjs', 'scripts/release/read-live-production-components.mjs']:
               p = Path(name)
@@ -59,12 +58,6 @@ jobs:
           p = Path('web/src/components/ModelManager/useModelWritePolicy.ts')
           s = p.read_text().replace('        ? `${PRODUCTION_NOTICE} ${policy.message}`', '        ? (policy.message || PRODUCTION_NOTICE)')
           p.write_text(s)
-          # Verify every extended transport path refers to an actual checked-in
-          # source file, and print the narrow resulting source list for review.
-          for name in ['.github/workflows/ci.yml', '.github/workflows/promote-release.yml', '.github/workflows/deploy-staging.yml', '.github/workflows/acs-sandbox.yml', 'scripts/release/finalize-expand-migration.sh']:
-              for line in Path(name).read_text().splitlines():
-                  if 'scripts/release/read-runtime-identity.mjs' in line:
-                      print(name, line.strip())
           PY
       - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@v5
@@ -118,12 +111,13 @@ jobs:
       - name: Typechecks, production saves, real Worker restart and bundles
         run: |
           set -euo pipefail
-          trap 'tail -n 160 /tmp/production-model-publication-verification.log' EXIT
+          exec 3>&1
+          trap 'tail -n 160 /tmp/production-model-publication-verification.log >&3' EXIT
           {
+            node --test scripts/release/config-publication.test.mjs scripts/release/config-publication-release.test.mjs
             pnpm -F @agent/shared typecheck
             pnpm -F server typecheck
             pnpm -F web typecheck
-            node --test scripts/release/config-publication.test.mjs scripts/release/config-publication-release.test.mjs
             pnpm -F server exec vitest run \
               productionModelPublication memoryIndexRuntimeUpdate sharedConfigRefresher adminRunner \
               src/__tests__/modelsAdminProductionWritePolicy.test.ts \

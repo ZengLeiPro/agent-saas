@@ -417,7 +417,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       configMutationService,
       requireRevision: true, ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
       secretVault: runtime.secretVault, // 配置版本 CAS 防止旧页面恢复已禁用工具
-      validateToolSettingsConfig: runtime.validateToolSettingsConfig, onToolSettingsUpdated: runtime.updateToolSettingsConfig,
+      validateToolSettingsConfig: runtime.validateToolSettingsConfig, onToolSettingsUpdated: runtime.updateToolSettingsConfig, toolDescriptionStore: runtime.toolDescriptionStore,
       onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText).then(() => undefined),
     }),
   );

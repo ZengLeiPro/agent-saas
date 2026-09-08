@@ -92,6 +92,7 @@ export interface ToolCatalogItem {
 
 export interface ToolControlsAdminResponse {
   revision?: string;
+  descriptionRevision?: string;
   toolControls: ToolControlsConfig | null;
   tools: ToolCatalogItem[];
   webTools: WebToolsConfig | null;
@@ -112,6 +113,7 @@ export interface UpdateToolControlsRequest {
  */
 export interface UpdateSingleToolRequest {
   expectedRevision?: string;
+  expectedDescriptionRevision?: string;
   enabled?: boolean;
   descriptionOverride?: ToolDescriptionOverride | null;
 }

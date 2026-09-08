@@ -130,7 +130,7 @@ describe('promotion gate evidence', () => {
   it('requires structured approval bound to the exact release and Manifest', () => {
     const verificationSummary = {
       schemaVersion: 1,
-      mode: 'deterministic-deployment-gates-v1',
+      mode: 'deterministic-deployment-gates-v2',
       status: 'passed',
       checks: [
         'immutable-artifacts',
@@ -140,6 +140,7 @@ describe('promotion gate evidence', () => {
         'web-readback',
         'migration-readback',
         'reverse-isolation',
+        'core-business-smoke',
       ],
     };
     const valid = JSON.stringify({
@@ -168,5 +169,22 @@ describe('promotion gate evidence', () => {
         { releaseId: 'rc-20260826-01', digest: DIGEST },
       ),
     ).toThrow(/deterministic Staging verification/u);
+    for (const invalidVerificationSummary of [
+      { ...verificationSummary, mode: 'deterministic-deployment-gates-v1' },
+      {
+        ...verificationSummary,
+        checks: verificationSummary.checks.filter((check) => check !== 'core-business-smoke'),
+      },
+    ]) {
+      expect(() =>
+        validateApprovalReason(
+          JSON.stringify({
+            ...JSON.parse(valid),
+            verificationSummary: invalidVerificationSummary,
+          }),
+          { releaseId: 'rc-20260826-01', digest: DIGEST },
+        ),
+      ).toThrow(/deterministic Staging verification/u);
+    }
   });
 });

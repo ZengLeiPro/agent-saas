@@ -29,7 +29,7 @@ function withPublished(fn) {
 }
 function summary(identity, releaseId = 'release-a') {
   return { schemaVersion: 1, status: 'consistent', releaseId, expected: identity,
-    observed: { ...identity, versionResolution: 'resolved', secretRefCount: 0 } };
+    observed: { ...identity, credentialVersionDigest: null, versionResolution: 'resolved', secretRefCount: 0 } };
 }
 
 test('steady-state release evidence accepts signed online changes without changing code release identity', () => withPublished(({ configPath }) => {

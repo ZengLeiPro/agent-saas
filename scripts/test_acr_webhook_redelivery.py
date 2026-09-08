@@ -23,6 +23,8 @@ class FakeClient:
         self.posts = []
 
     def get_json(self, path):
+        if '/deliveries' not in path:
+            return {'id': int(path.rsplit('/', 1)[1]), 'active': True, 'events': ['push']}
         if '?per_page=100' in path:
             return self.deliveries
         return self.details[int(path.rsplit('/', 1)[1])]
@@ -93,6 +95,40 @@ class AcrWebhookRedeliveryTest(unittest.TestCase):
         )
 
         self.assertIsNone(delivery_id)
+        self.assertEqual(client.posts, [])
+
+    def test_success_on_later_page_prevents_redelivery(self):
+        class PagedClient(FakeClient):
+            def get_json(self, path):
+                if '&page=1' in path:
+                    return ([{'id': 20, 'guid': 'target', 'event': 'push', 'status_code': 500}]
+                            + [{'event': 'issues'}] * 99)
+                if '&page=2' in path:
+                    return [{'guid': 'target', 'status_code': 200}]
+                return super().get_json(path)
+        client = PagedClient([], {})
+        self.assertIsNone(self.module.redeliver_exact_push(client, 'owner/repo', 1, self.sha))
+        self.assertEqual(client.posts, [])
+
+    def test_previous_failed_recovery_does_not_start_retry_storm(self):
+        client = FakeClient([
+            {'id': 21, 'guid': 'target', 'event': 'push', 'status_code': 500, 'redelivery': True},
+            {'id': 20, 'guid': 'target', 'event': 'push', 'status_code': 500},
+        ], {})
+        self.assertIsNone(self.module.redeliver_exact_push(client, 'owner/repo', 1, self.sha))
+        self.assertEqual(client.posts, [])
+
+    def test_scan_overflow_fails_before_any_write(self):
+        client = FakeClient([{'event': 'issues'}] * 100, {})
+        with self.assertRaisesRegex(RuntimeError, '安全扫描上限'):
+            self.module.redeliver_exact_push(client, 'owner/repo', 1, self.sha)
+        self.assertEqual(client.posts, [])
+
+    def test_disabled_hook_is_not_replayed(self):
+        client = FakeClient([], {})
+        client.get_json = lambda path: {'id': 1, 'active': False, 'events': ['push']}
+        with self.assertRaisesRegex(RuntimeError, '已停用'):
+            self.module.redeliver_exact_push(client, 'owner/repo', 1, self.sha)
         self.assertEqual(client.posts, [])
 
 

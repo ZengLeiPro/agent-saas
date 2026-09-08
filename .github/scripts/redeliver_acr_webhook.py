@@ -41,8 +41,8 @@ class GitHubApi:
             with urllib.request.urlopen(request, timeout=15) as response:
                 return response.status, response.read()
         except urllib.error.HTTPError as error:
-            body = error.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"GitHub API HTTP {error.code}: {body[:500]}") from error
+            # API response bodies can echo webhook headers/payloads. Never log them.
+            raise RuntimeError(f"GitHub webhook API HTTP {error.code}; check hook permission and binding") from error
         except urllib.error.URLError as error:
             raise RuntimeError(f"GitHub API 请求失败: {error.reason}") from error
 
@@ -68,9 +68,16 @@ def find_failed_delivery(
     commit_sha: str,
 ) -> dict[str, Any] | None:
     prefix = f"/repos/{repository}/hooks/{hook_id}/deliveries"
-    deliveries = client.get_json(f"{prefix}?per_page=100")
-    if not isinstance(deliveries, list):
-        raise RuntimeError("GitHub webhook delivery 列表格式异常")
+    deliveries = []
+    for page in range(1, 11):
+        batch = client.get_json(f"{prefix}?per_page=100&page={page}")
+        if not isinstance(batch, list):
+            raise RuntimeError("GitHub webhook delivery 列表格式异常")
+        deliveries.extend(batch)
+        if len(batch) < 100:
+            break
+    else:
+        raise RuntimeError("GitHub webhook delivery 超过安全扫描上限；未执行补投")
 
     successful_guids = {
         item.get("guid")
@@ -83,6 +90,13 @@ def find_failed_delivery(
         if item.get("event") != "push" or _is_success(item.get("status_code")):
             continue
         if item.get("guid") in successful_guids:
+            continue
+        if not isinstance(item.get("guid"), str) or not item["guid"]:
+            continue
+        # A previous recovery attempt already exists: do not create a retry storm
+        # across workflow reruns or concurrent Staging preparation jobs.
+        if any(entry.get("guid") == item["guid"] and entry.get("redelivery") is True
+               for entry in deliveries if isinstance(entry, dict)):
             continue
         delivery_id = item.get("id")
         if not isinstance(delivery_id, int):
@@ -100,6 +114,11 @@ def redeliver_exact_push(
     hook_id: int,
     commit_sha: str,
 ) -> int | None:
+    hook = client.get_json(f"/repos/{repository}/hooks/{hook_id}")
+    if (not isinstance(hook, dict) or hook.get("id") != hook_id
+            or hook.get("active") is not True
+            or not any(event in hook.get("events", []) for event in ("push", "*"))):
+        raise RuntimeError("配置的 webhook 不存在、已停用或未订阅 push；未执行补投")
     delivery = find_failed_delivery(client, repository, hook_id, commit_sha)
     if delivery is None:
         return None

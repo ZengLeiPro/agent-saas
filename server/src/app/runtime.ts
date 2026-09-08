@@ -189,6 +189,7 @@ import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
+import { initializeToolDescriptionStore } from '../data/toolDescriptionStore.js'; import { createToolDescriptionRuntimeRefresh } from './toolDescriptionRuntimeRefresh.js';
 import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js'; import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js'; import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js'; import { createVoiceTranscriptionConfigRefresher } from './voiceConfigRefresh.js';
 import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
@@ -1617,15 +1618,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimeStateStore: await createCodexCredentialRuntimeStateStore(pgEventStore?.pool, config.runtimeEventStore),
     fetchImpl: egressFetch,
   });
-  const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
-  const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch);
+  const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch); const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch);
   const memoryContextTools = createRuntimeMemoryContextTools({
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
     additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, membershipStore, orgAgentStore, orgGroupAgentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
       isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, ...(pgRunStore ? { runStore: pgRunStore } : {}), resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
   });
-  const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
+  const toolDescriptionStore = await initializeToolDescriptionStore(pgEventStore?.pool, config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined); const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd, uploadManager,
     sharedDir,
     modelAdapterFactory: (connection, providerOptions) => createModelAdapterForProtocol(
@@ -1633,7 +1633,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       providerOptions,
       { codexCredentialManager, codexFetch: egressFetch, codexWebSocketPool },
     ),
-    getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(true),
+    getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: () => refreshToolDescriptions(),
     agentRuntimeProfileResolver,
     ...(userActivityService.available ? { userActivityService } : {}),
     memory: {
@@ -1781,7 +1781,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     },
     logger: serverLogger.child('RawRuntime'),
   };
-  const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => { await resolveWebToolsConfig(settings.webTools, secretVault); };
+  const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => { await resolveWebToolsConfig(settings.webTools, secretVault); }; const refreshToolDescriptions = createToolDescriptionRuntimeRefresh({ store: toolDescriptionStore, config, target: rawRuntimeConfig, refreshConfig: () => sharedConfigRefresher.refreshIfChanged(true) });
   prepareToolControlsRuntimeUpdate = createToolControlsRuntimeUpdatePreparer(rawRuntimeConfig);
   prepareWebToolsRuntimeUpdate = createWebToolsRuntimeUpdatePreparer({
     target: rawRuntimeConfig,
@@ -2954,7 +2954,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     updateMemoryPollingConfig,
     systemPromptRegistry,
     agentRuntimeProfileStore,
-    connectorDictionaryStore,
+    connectorDictionaryStore, toolDescriptionStore,
     artifactService,
     artifactShareService,
     artifactShareStore,

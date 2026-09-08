@@ -135,7 +135,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
     return `${tool.descriptionOverride.mode}::${tool.descriptionOverride.text}`;
   }, [tool.descriptionOverride]);
 
-  const currentOverrideKey = `${overrideMode}::${overrideText}`;
+  const currentOverrideKey = overrideText.trim() ? `${overrideMode}::${overrideText.trim()}` : "";
   const overrideDirty = currentOverrideKey !== originalOverrideKey;
   const canClearOverride = !!tool.descriptionOverride;
 
@@ -147,6 +147,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
       await props.saveSingleTool(tool.id, {
         descriptionOverride: trimmed ? { mode: overrideMode, text: trimmed } : null,
       });
+      setOverrideText(trimmed);
       setOverrideSavedAt(Date.now());
       setConfirmOpen(false);
     } catch (err) {
@@ -163,6 +164,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
       await props.saveSingleTool(tool.id, { descriptionOverride: null });
       setOverrideText("");
       setOverrideMode("append");
+      setConfirmOpen(false);
       setOverrideSavedAt(Date.now());
     } catch (err) {
       setOverrideError(err instanceof Error ? err.message : String(err));
@@ -291,7 +293,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
             <div className="grid gap-3 md:grid-cols-4">
               <div className="md:col-span-1">
                 <Label className="text-xs">模式</Label>
-                <Select value={overrideMode} onValueChange={(v) => setOverrideMode(v as ToolDescriptionOverrideMode)}>
+                <Select disabled={platformReadOnly || overrideSaving} value={overrideMode} onValueChange={(v) => { setOverrideMode(v as ToolDescriptionOverrideMode); setOverrideSavedAt(null); setOverrideError(null); }}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -306,11 +308,11 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
                 <Textarea
                   className="min-h-24 text-xs"
                   value={overrideText}
-                  onChange={(e) => setOverrideText(e.target.value)}
+                  onChange={(e) => { setOverrideText(e.target.value); setOverrideSavedAt(null); setOverrideError(null); }}
                   placeholder={overrideMode === "append"
                     ? "追加内容，比如：在本平台请优先把产物放在 assets/YYYYMMDD/ 目录下。"
                     : "完全替换 md 原描述——务必包含工具的核心用途与参数说明。"}
-                  disabled={platformReadOnly}
+                  disabled={platformReadOnly || overrideSaving}
                 />
               </div>
             </div>
@@ -325,7 +327,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
                 {overrideSavedAt ? (
                   <span className="inline-flex items-center gap-1">
                     <CircleCheck className="size-3" />
-                    已保存并热生效
+                    已保存，下次执行时生效
                   </span>
                 ) : overrideDirty ? (
                   <span>有未保存更改</span>
@@ -348,9 +350,9 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
                 )}
                 <Button
                   size="sm"
-                  disabled={platformReadOnly || props.settingsSaving || overrideSaving || !overrideDirty || !overrideText.trim()}
+                  disabled={platformReadOnly || props.settingsSaving || overrideSaving || !overrideDirty}
                   onClick={() => {
-                    if (overrideMode === "replace") {
+                    if (overrideMode === "replace" && overrideText.trim()) {
                       setConfirmOpen(true);
                     } else {
                       void doSaveOverride();
@@ -368,7 +370,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
                   确认使用 replace 模式完全替换 description？
                 </div>
                 <div className="mb-3 text-muted-foreground">
-                  该操作会立即影响所有租户的下一次会话——若替换文本没有覆盖到工具核心用途，模型可能停止调用该工具。
+                  该操作会影响所有租户的下一次执行——若替换文本没有覆盖到工具核心用途，模型可能停止调用该工具。
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)} disabled={props.settingsSaving || overrideSaving}>

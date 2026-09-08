@@ -2,6 +2,20 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "path": "server/src/data/toolDescriptionStore.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",
+      "checks": [
+        {
+          "id": "tool-description-runtime-schema",
+          "configPath": "runtimeEventStore",
+          "description": "工具提示语快照表和审计表已创建",
+          "sql": "SELECT to_regclass($1 || '_tool_descriptions') IS NOT NULL AND to_regclass($1 || '_tool_description_audit') IS NOT NULL AND (SELECT count(*) = 3 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 || '_tool_descriptions' AND column_name IN ('id', 'revision', 'overrides')) AND (SELECT count(*) = 6 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 || '_tool_description_audit' AND column_name IN ('revision', 'tool_id', 'previous_override', 'next_override', 'actor', 'created_at')) AS ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
       "path": "server/src/quota/providerQuotaSnapshotStore.ts",
       "baselineDigest": null,
       "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",

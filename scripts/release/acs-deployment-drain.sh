@@ -37,7 +37,7 @@ cancel_acs_deployment_drain() {
 }
 
 drain_acs_before_cutover() {
-  local health state status code result deadline proof
+  local health state status code result deadline proof current_pid terminal_pid
   systemctl is-active --quiet "$ACS_SERVICE_NAME" || {
     echo 'ACS must be healthy before starting its generation handoff' >&2; return 1;
   }
@@ -68,11 +68,12 @@ drain_acs_before_cutover() {
   while [ "$SECONDS" -lt "$deadline" ]; do
     state="$(systemctl show "$ACS_SERVICE_NAME" --property=ActiveState --value)" || return 1
     if [ "$state" = inactive ] || [ "$state" = failed ]; then
+      terminal_pid="$(systemctl show "$ACS_SERVICE_NAME" --property=ExecMainPID --value)" || return 1
       status="$(systemctl show "$ACS_SERVICE_NAME" --property=ExecMainStatus --value)" || return 1
       code="$(systemctl show "$ACS_SERVICE_NAME" --property=ExecMainCode --value)" || return 1
       result="$(systemctl show "$ACS_SERVICE_NAME" --property=Result --value)" || return 1
-      [ "$state:$status:$code:$result" = inactive:0:1:success ] || {
-        echo "ACS did not exit cleanly (pid=$ACS_DRAIN_PID state=$state status=$status code=$code result=$result)" >&2; return 1;
+      [ "$state:$status:$code:$result:$terminal_pid" = "inactive:0:1:success:$ACS_DRAIN_PID" ] || {
+        echo "ACS did not exit cleanly (expectedPid=$ACS_DRAIN_PID terminalPid=$terminal_pid state=$state status=$status code=$code result=$result)" >&2; return 1;
       }
       proof="$(dirname "$MANIFEST_PATH")/acs-drain-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
       if [ "$ACS_DRAIN_PROTOCOL" = 1 ]; then
@@ -85,10 +86,14 @@ drain_acs_before_cutover() {
       chmod 0444 "$proof"
       return 0
     fi
-    [ "$state" = active ] || return 1
-    [ "$(systemctl show "$ACS_SERVICE_NAME" --property=MainPID --value)" = "$ACS_DRAIN_PID" ] || {
-      echo 'ACS PID changed before its drain outcome was verified' >&2; return 1;
+    case "$state" in active|deactivating) ;; *) echo "Unexpected ACS drain state: $state" >&2; return 1 ;; esac
+    current_pid="$(systemctl show "$ACS_SERVICE_NAME" --property=MainPID --value)" || return 1
+    # The process can exit between these separate systemd reads. MainPID=0 is
+    # absence, not replacement; await the terminal state and exact ExecMainPID proof.
+    [ "$current_pid" = 0 ] || [ "$current_pid" = "$ACS_DRAIN_PID" ] || {
+      echo "ACS PID changed before its drain outcome was verified (expected=$ACS_DRAIN_PID observed=$current_pid state=$state)" >&2; return 1;
     }
+    if [ "$current_pid" = 0 ] || [ "$state" = deactivating ]; then sleep 1; continue; fi
     if [ "$ACS_DRAIN_PROTOCOL" = 1 ]; then
       health="$(curl -fsS --max-time 5 "${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}")" || { sleep 1; continue; }
       if printf '%s' "$health" | jq -e '.deploymentDrain.state=="timed_out" or .deploymentDrain.state=="cancelled"' >/dev/null; then

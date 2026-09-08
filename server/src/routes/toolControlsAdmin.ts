@@ -33,6 +33,7 @@ import { mutationRequestContext, sendConfigMutationError } from '../config/admin
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import type { Request } from 'express';
 import { RouteSecretRefMutation } from './secretRefMutation.js';
+import { mergeToolDescriptionOverrides, ToolDescriptionConflictError, type ToolDescriptionSnapshot, type ToolDescriptionStore } from '../data/toolDescriptionStore.js';
 
 const SEARCH_SECRET_WRITER: VaultCaller = {
   actor: 'system',
@@ -75,6 +76,7 @@ export interface CreateToolControlsAdminRouterOptions {
   /** durable commit 后用精确落盘文本推进共享 ConfigIdentity。 */
   onConfigReloaded?: (expectedConfigText: string) => Promise<void> | void;
   requireRevision?: boolean;
+  toolDescriptionStore?: ToolDescriptionStore;
 }
 
 type RawObject = Record<string, unknown>;
@@ -468,11 +470,13 @@ async function persistUpdatedSettings(
   };
 }
 
-function catalogResponse(settings: Pick<AppConfig, 'toolControls' | 'webTools'>, revision: string) {
+function catalogResponse(settings: Pick<AppConfig, 'toolControls' | 'webTools'>, revision: string, descriptions?: ToolDescriptionSnapshot) {
+  const controls = descriptions ? mergeToolDescriptionOverrides(settings.toolControls, descriptions.overrides) : settings.toolControls;
   return {
     revision,
-    toolControls: sanitizeToolControlsConfig(settings.toolControls),
-    tools: toolCatalogWithState(settings.toolControls),
+    ...(descriptions ? { descriptionRevision: descriptions.revision } : {}),
+    toolControls: sanitizeToolControlsConfig(controls),
+    tools: toolCatalogWithState(controls),
     webTools: sanitizeWebToolsConfig(settings.webTools),
     effectiveWebTools: listConfiguredWebToolNames(settings.webTools, settings.toolControls),
   };
@@ -489,12 +493,17 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
 
   router.use(requirePlatformAdmin);
 
-  router.get('/', (_req, res) => {
-    const configText = readFileSync(getAppConfigPath(options.processCwd), 'utf-8');
-    const diskConfig = parseAppConfig(parseJsonc(configText));
-    const revision = configRevision(configText);
-    res.setHeader('ETag', `"${revision}"`);
-    res.json(catalogResponse({ toolControls: diskConfig.toolControls, webTools: diskConfig.webTools }, revision));
+  router.get('/', async (_req, res) => {
+    try {
+      const configText = readFileSync(getAppConfigPath(options.processCwd), 'utf-8');
+      const diskConfig = parseAppConfig(parseJsonc(configText));
+      const revision = configRevision(configText);
+      res.setHeader('ETag', `"${revision}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(catalogResponse(diskConfig, revision, await options.toolDescriptionStore?.get()));
+    } catch (error) {
+      sendConfigMutationError(res, error);
+    }
   });
 
   router.put('/', async (req, res) => {
@@ -511,7 +520,20 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       if (latestText !== configText) throw revisionConflict(latestText);
       const rawConfig = parseJsonc(configText);
       secretMutation.trackPrevious(webSearchSecretRefs(parseAppConfig(rawConfig)));
-      nextSettings = validateToolSettingsUpdate(rawConfig, req.body?.toolControls, req.body?.webTools);
+      // The whole-config form carries effective descriptions. Keep the release baseline
+      // intact; only the dedicated single-tool save writes dynamic descriptions.
+      let requestedControls = req.body?.toolControls;
+      if (options.toolDescriptionStore && isObject(requestedControls) && isObject(requestedControls.tools)) {
+        requestedControls = structuredClone(requestedControls);
+        const baseline = parseAppConfig(rawConfig).toolControls;
+        for (const [id, entry] of Object.entries(requestedControls.tools)) {
+          if (!isObject(entry)) continue;
+          const original = baseline?.tools?.[id]?.descriptionOverride;
+          if (original) entry.descriptionOverride = original;
+          else delete entry.descriptionOverride;
+        }
+      }
+      nextSettings = validateToolSettingsUpdate(rawConfig, requestedControls, req.body?.webTools);
       nextSettings = await persistSearchCredential(nextSettings, secretMutation);
       // 与运行时相同，验证 hook 只接收已去明文且可实际解析的 SecretVault ref 配置。
       await options.validateToolSettingsConfig?.(nextSettings);
@@ -537,7 +559,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       );
       auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.settings.toolControls));
       res.setHeader('ETag', `"${persisted.revision}"`);
-      res.json(catalogResponse(persisted.settings, persisted.revision));
+      res.json(catalogResponse(persisted.settings, persisted.revision, await options.toolDescriptionStore?.get()));
     } catch (error) {
       const message = secretMutation.redactError(error, [
         ...submittedWebSearchSecrets(req.body),
@@ -556,6 +578,38 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
     const { toolId } = req.params;
     if (!PLATFORM_TOOL_CATALOG_BY_ID.has(toolId)) {
       res.status(404).json({ error: `未知工具 ${toolId}` });
+      return;
+    }
+
+    if (options.toolDescriptionStore && Object.prototype.hasOwnProperty.call(req.body ?? {}, 'descriptionOverride')) {
+      try {
+        if (Object.keys(req.body).some((key) => !['descriptionOverride', 'expectedRevision', 'expectedDescriptionRevision'].includes(key))) {
+          res.status(400).json({ error: '提示语必须单独保存，不能同时修改工具开关或运行参数' });
+          return;
+        }
+        const configText = readFileSync(getAppConfigPath(options.processCwd), 'utf-8');
+        const revision = configRevision(configText);
+        const expectedRevisions = configRequestRevisions(req);
+        if ((options.requireRevision && !expectedRevisions.length) || expectedRevisions.some((expected) => expected !== revision)) throw revisionConflict(configText);
+        const snapshot = await options.toolDescriptionStore.get();
+        if (req.body.expectedDescriptionRevision !== snapshot.revision) throw new ToolDescriptionConflictError();
+        const rawConfig = parseJsonc(configText);
+        const diskConfig = parseAppConfig(rawConfig);
+        const controls = mergeToolDescriptionOverrides(diskConfig.toolControls, snapshot.overrides);
+        const next = validateToolSettingsUpdate(rawConfig, mergeSingleToolPatch(controls, toolId, req.body), diskConfig.webTools);
+        const override = next.toolControls?.tools?.[toolId]?.descriptionOverride ?? null;
+        const saved = await options.toolDescriptionStore.update(toolId, override, snapshot.revision, mutationRequestContext(req).actor);
+        auditLog(req, 'tool_controls_updated', `${toolId}：${override ? `描述覆盖(${override.mode})` : '清除描述覆盖'}`);
+        res.json(catalogResponse(diskConfig, revision, saved));
+      } catch (error) {
+        if (error instanceof ToolDescriptionConflictError) {
+          res.status(409).json({ error: error.message, code: error.code });
+        } else if (error instanceof ConfigConflictError) {
+          sendRevisionMutationError(res, error);
+        } else {
+          res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+        }
+      }
       return;
     }
 
@@ -601,7 +655,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       );
       auditLog(req, 'tool_controls_updated', `${toolId}：${describeToolEntry(persisted.settings.toolControls, toolId)}`);
       res.setHeader('ETag', `"${persisted.revision}"`);
-      res.json(catalogResponse(persisted.settings, persisted.revision));
+      res.json(catalogResponse(persisted.settings, persisted.revision, await options.toolDescriptionStore?.get()));
     } catch (error) {
       sendRevisionMutationError(res, error);
     }

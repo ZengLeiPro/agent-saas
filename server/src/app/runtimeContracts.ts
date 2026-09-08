@@ -124,7 +124,6 @@ import type { BillingService } from '../data/billing/service.js';
 import type { WebPushService } from '../webPush/service.js';
 import type { ApnsService } from '../apns/service.js';
 import type { createAuthMiddleware } from '../auth/middleware.js';
-
 /**
  * AppRuntime 的公开契约类型。
  *
@@ -456,6 +455,7 @@ export interface AppRuntime {
   agentRuntimeProfileStore: AgentRuntimeProfileStore;
   /** 连接器映射词典：平台管理可改，保存即热更新工具行摘要的业务语言。 */
   connectorDictionaryStore: ConnectorDictionaryStore;
+  toolDescriptionStore?: import('../data/toolDescriptionStore.js').ToolDescriptionStore;
   /** Artifact metadata/blob service for runtime-produced artifacts. */
   artifactService?: ArtifactService;
   /** Owner-managed public Artifact sharing; absent when no persistent signing secret exists. */

@@ -111,7 +111,7 @@ describe('WebSearch 管理详情', () => {
     await user.type(key, 'pending-plan-key');
     await user.type(screen.getByPlaceholderText(/追加内容，比如/), '补充描述');
     await user.click(screen.getByRole('button', { name: '保存覆盖' }));
-    await screen.findByText('已保存并热生效');
+    await screen.findByText('已保存，下次执行时生效');
     expect((key as HTMLInputElement).value).toBe('pending-plan-key');
     expect(screen.getByText('有未保存更改')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '保存并生效' }));
@@ -203,5 +203,61 @@ describe('WebSearch 管理详情', () => {
     expect(() =>
       buildWebToolsPayload({ search: { global: { maxWaitTimeMs: 10001 } } }, {}, '', '', '', ''),
     ).toThrow('排队等待');
+  });
+});
+
+describe('工具提示语独立保存', () => {
+  it('未覆盖时没有虚假脏状态，保存使用独立版本，继续编辑后清除成功提示', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchToolControlsConfig).mockResolvedValue({ ...initial, descriptionRevision: 'description-1' });
+    vi.mocked(updateSingleTool).mockResolvedValue({
+      ...initial, descriptionRevision: 'description-2',
+      tools: initial.tools.map((tool) => ({ ...tool, descriptionOverride: { mode: 'append', text: '新的提示语' } })),
+    });
+    render(<ToolControlsManager />);
+    await user.click(await screen.findByRole('button', { name: /WebSearch 开启/ }));
+    expect(screen.queryByText('有未保存更改')).toBeNull();
+    const input = screen.getByPlaceholderText(/追加内容，比如/);
+    await user.type(input, '新的提示语');
+    await user.click(screen.getByRole('button', { name: '保存覆盖' }));
+    await screen.findByText('已保存，下次执行时生效');
+    expect(updateSingleTool).toHaveBeenCalledWith('WebSearch', {
+      expectedRevision: 'revision-1', expectedDescriptionRevision: 'description-1',
+      descriptionOverride: { mode: 'append', text: '新的提示语' },
+    });
+    await user.type(input, '继续修改');
+    expect(screen.queryByText('已保存，下次执行时生效')).toBeNull();
+    expect(screen.getByText('有未保存更改')).toBeTruthy();
+  });
+
+  it.each(['清除覆盖', '清空文本'])('%s 发送 null，成功后不再显示覆盖', async (action) => {
+    const user = userEvent.setup();
+    vi.mocked(fetchToolControlsConfig).mockResolvedValue({
+      ...initial, descriptionRevision: 'description-1',
+      tools: initial.tools.map((tool) => ({ ...tool, descriptionOverride: { mode: 'append', text: '旧的提示语' } })),
+    });
+    vi.mocked(updateSingleTool).mockResolvedValue({ ...initial, descriptionRevision: 'description-2' });
+    render(<ToolControlsManager />);
+    await user.click(await screen.findByRole('button', { name: /WebSearch 开启/ }));
+    if (action === '清空文本') await user.clear(screen.getByPlaceholderText(/追加内容，比如/));
+    await user.click(screen.getByRole('button', { name: action === '清除覆盖' ? action : '保存覆盖' }));
+    await screen.findByText('已保存，下次执行时生效');
+    expect(updateSingleTool).toHaveBeenCalledWith('WebSearch', {
+      expectedRevision: 'revision-1', expectedDescriptionRevision: 'description-1', descriptionOverride: null,
+    });
+    expect(screen.queryByRole('button', { name: '清除覆盖' })).toBeNull();
+    expect((screen.getByPlaceholderText(/追加内容，比如/) as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('保存冲突显示原因并保留待提交文本', async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateSingleTool).mockRejectedValue(new Error('工具提示语已被其他管理员更新，请刷新后重试'));
+    render(<ToolControlsManager />);
+    await user.click(await screen.findByRole('button', { name: /WebSearch 开启/ }));
+    await user.type(screen.getByPlaceholderText(/追加内容，比如/), '保留草稿');
+    await user.click(screen.getByRole('button', { name: '保存覆盖' }));
+    expect(await screen.findByText('工具提示语已被其他管理员更新，请刷新后重试')).toBeTruthy();
+    expect((screen.getByPlaceholderText(/追加内容，比如/) as HTMLTextAreaElement).value).toBe('保留草稿');
+    expect(screen.queryByText('已保存，下次执行时生效')).toBeNull();
   });
 });

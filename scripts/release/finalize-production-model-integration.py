@@ -15,3 +15,17 @@ for old, new in replacements.items():
         raise RuntimeError('Expected exactly one matching HTTP error branch')
     s = s.replace(old, new)
 p.write_text(s)
+
+p = Path('server/src/__tests__/helpers/productionPublicationRig.ts')
+s = p.read_text()
+old = 'resolveRuntimeModels: (models) => resolveModelsConfig(models, vault),'
+new = "resolveRuntimeModels: async (models) => { const resolved = await resolveModelsConfig(models, vault); if (!resolved) throw new Error('models missing'); return resolved; },"
+assert s.count(old) == 1
+s = s.replace(old, new).replace('parseAppConfig, type AppConfig', 'parseAppConfig')
+s = s.replace('timeoutMs: 150, pollMs: 5', 'timeoutMs: 500, pollMs: 5')
+p.write_text(s)
+p = Path('server/src/__tests__/productionModelPublication.test.ts')
+s = p.read_text()
+old = "modelResolver?.('main/model')?.apiKey"
+assert s.count(old) == 1
+p.write_text(s.replace(old, "modelResolver?.('main/model')?.connection?.apiKey"))

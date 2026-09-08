@@ -2,6 +2,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { classifyChangedPaths } from './classify-components.mjs';
+
+test('ACR recovery tests are explicitly non-runtime release paths', () => {
+  const result = classifyChangedPaths([
+    'scripts/test_acr_image_supervisor.py',
+    'scripts/test_acr_webhook_redelivery.py',
+  ]);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.components, []);
+});
 
 test('ACR recovery state machine and exact webhook replay regressions', () => {
   const result = spawnSync(

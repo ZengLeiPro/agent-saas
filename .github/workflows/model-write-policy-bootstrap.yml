@@ -42,6 +42,16 @@ jobs:
           PY
           python3 scripts/bootstrap-model-write-policy.py
           git restore -- scripts/bootstrap-model-write-policy.py
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ('server/vitest.config.ts', 'web/vite.config.ts', 'web/vitest.config.ts'):
+              p = Path(name)
+              source = p.read_text()
+              marker = '    alias: {\n'
+              assert source.count(marker) == 1
+              entry = '      "@agent/shared/configWritePolicy": fileURLToPath(new URL("../shared/src/configWritePolicy.ts", import.meta.url)),\n'
+              p.write_text(source.replace(marker, marker + entry))
+          PY
       - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@v5
         with:
@@ -86,7 +96,8 @@ jobs:
               web/src/components/ModelManager/index.test.tsx \
               web/src/components/ModelManager/modelConfigTypes.ts \
               web/src/components/ModelManager/useModelWritePolicy.ts \
-              web/src/components/ModelManager/writePolicy.test.tsx
+              web/src/components/ModelManager/writePolicy.test.tsx \
+              server/vitest.config.ts web/vite.config.ts web/vitest.config.ts
             pnpm check:ratchets
             git diff --check
           } 2>&1 | tee /tmp/model-write-policy-verification.log
@@ -108,7 +119,8 @@ jobs:
             web/src/components/ModelManager/useModelWritePolicy.ts \
             web/src/components/ModelManager/writePolicy.test.tsx \
             docs/plans/production-model-config-online-save.md \
-            config/max-lines-baseline.txt
+            config/max-lines-baseline.txt \
+            server/vitest.config.ts web/vite.config.ts web/vitest.config.ts
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -c core.hooksPath=/dev/null commit -m 'fix(models): expose write policy and preserve production mutation errors'

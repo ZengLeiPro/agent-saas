@@ -160,25 +160,25 @@ pnpm --version
 
 记录更新日期：2026-09-08（实施已开始）。
 
-| 工作包                        | 实现               | 本地验证                                                  | 环境联调/发布验收        | 分支/提交/PR/证据                           |
-| ----------------------------- | ------------------ | --------------------------------------------------------- | ------------------------ | ------------------------------------------- |
-| A1 Context 主体修复           | 已完成本地实现     | 可信 lineage、越权阴性与任务 workspace 回归通过           | 真实 DWS/NAS 联调未开始  | `9be675d89`，草稿 PR #587                   |
-| A2 Worker DWS broker          | 已完成本地实现     | 合法 Worker 调用与陈旧 attempt/未证明 Worker 拒绝回归通过 | 真实 DWS 业务读取未开始  | `9be675d89`；未复制人类凭据                 |
-| B 消息恢复与终态              | 已完成本地实现     | 单元/组合回归及本地 PostgreSQL 4/4 通过                   | 真实 DWS 外发未开始      | `9be675d89`；unknown 诊断已提供             |
-| C 配置编译与快照              | 已完成本地核心契约 | 快照/恢复、技能知识隔离、启动及工具期 live authority 通过 | 真实群任务联调未开始     | F03/F04/F05/F10；待第二批提交               |
-| D 账号与主体统一              | 已完成本地核心契约 | 换绑 CAS、身份分代、cleanup saga、历史隔离 PG 回归通过    | 真实 OAuth/换绑未开始    | V46 expand migration；待第二批提交          |
-| E 持续前台与控制路由          | E1 已完成本地实现  | 同群连续/W-short/不同 generation/private completion 通过  | 真实群连续对话未开始     | 稳定 `serviceSessionId`；E2/E3 待实施       |
-| F 后台会话与配置              | F1 已完成本地实现  | typed readiness 单因子、组合、旧身份/租户隔离回归通过     | 管理端真实数据验收未开始 | F2 生效预览、F3 稀疏继承、F4 私聊统一待实施 |
-| G 普通群事件与补偿            | 未开始             | 未开始                                                    | 未开始                   | —                                           |
-| H 主动参与                    | 未开始             | 未开始                                                    | 未开始                   | —                                           |
-| I 员工记忆                    | 未开始             | 未开始                                                    | 未开始                   | —                                           |
-| J 长期职责                    | 未开始             | 未开始                                                    | 未开始                   | —                                           |
-| K1/K2/K3 反馈、确认与任务控制 | 未开始             | 未开始                                                    | 未开始                   | —                                           |
-| K4 Worker 压缩与恢复          | 未开始             | 未开始                                                    | 未开始                   | —                                           |
-| K5 文件与存储生命周期         | 未开始             | 未开始                                                    | 未开始                   | —                                           |
-| K6 诊断与运营                 | 部分完成           | unknown 脱敏列表与账号/群就绪诊断回归通过                 | 未开始                   | 已有 Web 就绪摘要；任务/工具诊断仍待扩展    |
-| 11.4 DWS/连接器功能对等各批次 | 未开始，需拆项     | 未开始                                                    | 未开始                   | —                                           |
-| L 飞书/企微                   | 后续范围           | 未开始                                                    | 未开始                   | —                                           |
+| 工作包                        | 实现               | 本地验证                                                  | 环境联调/发布验收        | 分支/提交/PR/证据                        |
+| ----------------------------- | ------------------ | --------------------------------------------------------- | ------------------------ | ---------------------------------------- |
+| A1 Context 主体修复           | 已完成本地实现     | 可信 lineage、越权阴性与任务 workspace 回归通过           | 真实 DWS/NAS 联调未开始  | `9be675d89`，草稿 PR #587                |
+| A2 Worker DWS broker          | 已完成本地实现     | 合法 Worker 调用与陈旧 attempt/未证明 Worker 拒绝回归通过 | 真实 DWS 业务读取未开始  | `9be675d89`；未复制人类凭据              |
+| B 消息恢复与终态              | 已完成本地实现     | 单元/组合回归及本地 PostgreSQL 4/4 通过                   | 真实 DWS 外发未开始      | `9be675d89`；unknown 诊断已提供          |
+| C 配置编译与快照              | 已完成本地核心契约 | 快照/恢复、技能知识隔离、启动及工具期 live authority 通过 | 真实群任务联调未开始     | `8b8670a1c`；F03/F04/F05/F10             |
+| D 账号与主体统一              | 已完成本地核心契约 | 换绑 CAS、身份分代、cleanup saga、历史隔离 PG 回归通过    | 真实 OAuth/换绑未开始    | `8b8670a1c`；V46 expand migration        |
+| E 持续前台与控制路由          | E1 已完成本地实现  | 同群连续/W-short/不同 generation/private completion 通过  | 真实群连续对话未开始     | `8b8670a1c`；E2/E3 待实施                |
+| F 后台会话与配置              | F1 已完成本地实现  | typed readiness 单因子、组合、旧身份/租户隔离回归通过     | 管理端真实数据验收未开始 | `8b8670a1c`；F2/F3/F4 待实施             |
+| G 普通群事件与补偿            | 未开始             | 未开始                                                    | 未开始                   | —                                        |
+| H 主动参与                    | 未开始             | 未开始                                                    | 未开始                   | —                                        |
+| I 员工记忆                    | 未开始             | 未开始                                                    | 未开始                   | —                                        |
+| J 长期职责                    | 未开始             | 未开始                                                    | 未开始                   | —                                        |
+| K1/K2/K3 反馈、确认与任务控制 | 未开始             | 未开始                                                    | 未开始                   | —                                        |
+| K4 Worker 压缩与恢复          | 未开始             | 未开始                                                    | 未开始                   | —                                        |
+| K5 文件与存储生命周期         | 未开始             | 未开始                                                    | 未开始                   | —                                        |
+| K6 诊断与运营                 | 部分完成           | unknown 脱敏列表与账号/群就绪诊断回归通过                 | 未开始                   | 已有 Web 就绪摘要；任务/工具诊断仍待扩展 |
+| 11.4 DWS/连接器功能对等各批次 | 未开始，需拆项     | 未开始                                                    | 未开始                   | —                                        |
+| L 飞书/企微                   | 后续范围           | 未开始                                                    | 未开始                   | —                                        |
 
 每次续接先补全以下摘要，再选择下一个未完成且依赖已具备的任务：
 
@@ -201,14 +201,14 @@ pnpm --version
 ```text
 更新时间：2026-09-08 19:05 CST
 实际仓库/worktree 路径：/Users/kaiyan001/code/agent-saas-dingtalk-employee
-当前分支、HEAD、基线：feat/dingtalk-digital-employee；HEAD 9be675d89；基线 dbb486cce（origin/main）
+当前分支、HEAD、基线：feat/dingtalk-digital-employee；HEAD 36a07ca61；基线 dbb486cce（origin/main）
 本项目已存在的授权和未授权外部动作：已授权本地修改/测试/提交、创建并推送分支、草稿 PR；未授权合并、部署、生产修改、真实外发
-当前工作包及本轮具体目标：提交 C/D、E1 持续群前台与 F1 就绪诊断，登记 36 个历史 migration review 并修复 PR 门禁；随后进入 E2/F2
-已完成修改与相关提交/PR：首批 `9be675d89` 已在草稿 PR #587；第二批工作树完成 WorkOrder `executionContext` v1、统一 Worker 启动/工具 live authority、显式刷新/换绑、单调 identity epoch、binding 分代与持久 cleanup saga；E1 固定每 binding 前台 `serviceSessionId`，F1 增加账号/群 typed readiness，尚待提交
+当前工作包及本轮具体目标：推送 C/D、E1 持续群前台与 F1 就绪诊断并确认 PR 门禁；随后进入 E2/F2
+已完成修改与相关提交/PR：首批 `9be675d89` 已在草稿 PR #587；第二批 `8b8670a1c` 完成 WorkOrder `executionContext` v1、Worker 启动/工具 live authority、显式刷新/换绑、单调 identity epoch、binding 分代与持久 cleanup saga、E1 稳定前台和 F1 typed readiness；`36a07ca61` 已登记 36 个历史 migration review
 验证命令、结果、证据路径：server 定向 146/146、web 20/20、本地 PostgreSQL/迁移 35/35、server/shared/web typecheck、Web production build、ratchets、diff check 全通过；迁移审核见 `docs/release/钉钉数字员工身份分代与运行期SQL审核-20260908.md`
-剩余问题与是否阻塞其他任务：历史 migration inventory 尚待按候选 Git blob 登记；本机 Node 22.21.1 低于固定 22.23.1；真实 DWS/NAS/OAuth/外发均未执行；旧 direct delivery 缺 requester 快照仍 fail closed；E2 快速控制、E3 多人控制、F2/F3/F4 及 G—K 尚未完成
+剩余问题与是否阻塞其他任务：本机 Node 22.21.1 低于固定 22.23.1；真实 DWS/NAS/OAuth/外发均未执行；旧 direct delivery 缺 requester 快照仍 fail closed；E2 快速控制、E3 多人控制、F2/F3/F4 及 G—K 尚未完成
 进行中子 Agent 的任务与文件边界：本批实现已冻结；C、D、E1、F1 均完成交叉独立审查并关闭全部 blocking
-下一步可直接执行的动作：提交第二批候选，机械更新 migration inventory、再次提交并跑历史迁移门禁，推送 PR；随后实现 E2 独立控制路径与 F2 人类可读生效预览
+下一步可直接执行的动作：提交本次交接更新并推送 PR，等待 Linux CI；随后实现 E2 独立控制路径与 F2 人类可读生效预览
 与原研究不同的结论及证据：三份交接材料已在 origin/main 跟踪；原目录存在与主线冲突的无关未跟踪 Hand 文档，故使用相邻独立 worktree 保留用户改动
 ```
 

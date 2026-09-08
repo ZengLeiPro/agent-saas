@@ -110,32 +110,25 @@ describe('ProviderQuotaPage', () => {
     api.refreshProviderQuota.mockReset().mockResolvedValue(overview);
   });
 
-  it('按账号渲染状态徽标、剩余额度瓷片、凭据事实与采集器状态', async () => {
+  it('按账号渲染卡级状态、额度、凭据事实与采集器状态，不重复显示窗口级状态或 24h 变化', async () => {
     render(<ProviderQuotaPage />);
     await waitFor(() => expect(screen.getByTestId('quota-account-volcengine:ark')).toBeTruthy());
-    // 卡级状态：火山接近上限（月度 94%），Codex 采集失败
-    expect(screen.getAllByText('接近上限').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('接近上限')).toHaveLength(1);
     expect(screen.getByText('采集失败')).toBeTruthy();
-    // 大数字是剩余百分比；用量用「万」表达
     expect(screen.getByText('94.1%')).toBeTruthy();
     expect(screen.getByText(/已用 37\.8万 \/ 40\.2万 AFP/u)).toBeTruthy();
     expect(screen.getByText('100.0%')).toBeTruthy();
-    // Codex 事实栅格：重置券、凭据到期、调度状态
     expect(screen.getByText('Codex 订阅 · Pro · 重置券 2')).toBeTruthy();
     expect(screen.getByTitle(/^凭据到期 /u)).toBeTruthy();
     expect(screen.getByText('冷却中')).toBeTruthy();
-    // 失败原因 + 上次成功数据提示
     expect(screen.getByText(/Codex usage HTTP 401。下方为/u)).toBeTruthy();
-    // 顶部汇总
+    expect(screen.queryByText(/24h [+-]/u)).toBeNull();
+    expect(screen.queryByText('已撞限')).toBeNull();
     expect(screen.queryByText(/每 5 分钟自动采集/u)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
     expect(screen.getByText(/每 5 分钟自动采集/u)).toBeTruthy();
     expect(screen.getByText(/1 个异常/u)).toBeTruthy();
     expect(screen.getByText(/1 个需关注/u)).toBeTruthy();
-    // 24h 变化来自 history 的最早成功点
-    expect(screen.getByText(/24h \+4\.1%/u)).toBeTruthy();
-    // 火山口径脚注
-    expect(screen.queryByText(/不计入 5 小时 \/ 周额度限制/u)).toBeNull();
     expect(api.providerQuotaHistory).toHaveBeenCalledWith(24);
   });
 
@@ -163,7 +156,7 @@ describe('ProviderQuotaPage', () => {
     expect(within(badge.parentElement!).getByText(`Credits ${balance}`)).toBeTruthy();
   });
 
-  it('Claude 订阅是推送型来源：正常渲染额度，但不给单账号刷新按钮', async () => {
+  it('Claude 只把 7 天额度作为主进度条，5 小时与 Fable 默认折叠，并保持推送型来源无单卡刷新', async () => {
     const claude = {
       sourceKind: 'claude_subscription' as const,
       accountKey: 'claude:kaiyankeji.5@gmail.com',
@@ -171,6 +164,7 @@ describe('ProviderQuotaPage', () => {
       windows: [
         { id: 'five_hour', label: '5 小时', windowSeconds: 18_000, usedPercent: 22, resetAt: '2026-09-05T11:20:00.000Z' },
         { id: 'seven_day', label: '7 天', windowSeconds: 604_800, usedPercent: 37, resetAt: '2026-09-11T00:00:00.000Z' },
+        { id: 'fable:seven_day', label: 'Fable · 7 天', windowSeconds: 604_800, usedPercent: 48, resetAt: '2026-09-11T00:00:00.000Z' },
       ],
       limitReached: false,
       ok: true,
@@ -178,13 +172,13 @@ describe('ProviderQuotaPage', () => {
     };
     api.providerQuota.mockResolvedValue({ ...overview, items: [...overview.items, claude] });
     render(<ProviderQuotaPage />);
-    await waitFor(() =>
-      expect(screen.getByTestId('quota-account-claude:kaiyankeji.5@gmail.com')).toBeTruthy(),
-    );
-    expect(screen.getByText('Claude 订阅')).toBeTruthy();
-    expect(screen.getByText('37.0%')).toBeTruthy();
-    expect(screen.getByText('22.0%')).toBeTruthy();
-    // 平台无法主动向 Anthropic 取数，单卡刷新按钮必须不存在（其他账号的仍在）。
+    const card = await screen.findByTestId('quota-account-claude:kaiyankeji.5@gmail.com');
+    expect(within(card).getByText('Claude 订阅')).toBeTruthy();
+    expect(within(card).getByTestId('quota-window-seven_day')).toBeTruthy();
+    const summary = within(card).getByText(/其他额度（2 个窗口）/u);
+    expect(summary.closest('details')?.open).toBe(false);
+    expect(within(summary.closest('details')!).getByTestId('quota-window-five_hour')).toBeTruthy();
+    expect(within(summary.closest('details')!).getByTestId('quota-window-fable:seven_day')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '刷新 kaiyankeji.5@gmail.com' })).toBeNull();
     expect(screen.getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' })).toBeTruthy();
   });
@@ -207,39 +201,46 @@ describe('ProviderQuotaPage', () => {
     const summary = screen.getByText(/其他模型额度/u);
     expect(summary.closest('details')?.open).toBe(false);
     expect(screen.getByText('1 个窗口已耗尽')).toBeTruthy();
+    expect(screen.queryByText('已撞限')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
     expect(screen.getByText(/页面不自动刷新/u)).toBeTruthy();
     expect(screen.queryByText('可用')).toBeNull();
     expect(screen.queryByText('已耗尽')).toBeNull();
   });
 
-  it('单个主额度占满一行、显示已用量，采集时间放在标题区', async () => {
+  it('单个主额度占满一行、卡片采用工作流同款渐变底色，采集文字使用等宽数字', async () => {
     render(<ProviderQuotaPage />);
     const card = await screen.findByTestId('quota-account-codex:c1');
     const tile = screen.getByTestId('quota-window-primary');
     expect(tile.parentElement?.className).not.toContain('sm:grid-cols-2');
     expect(tile.textContent).toContain('100.0%');
     expect(tile.textContent).toContain('周用量');
-    expect(screen.queryByText('供应商仅提供百分比')).toBeNull();
     expect(tile.textContent).not.toContain('剩余');
-    const timestamp = [...card.querySelectorAll('span')].find(el => el.textContent?.startsWith('采集失败于'));
+    expect(card.className).toContain('bg-gradient-to-b');
+    expect(card.className).toContain('from-brand-50/80');
+    expect(card.className).not.toContain('border-l-[3px]');
+    const timestamp = [...card.querySelectorAll('span')].find(el => el.textContent?.startsWith('采集 '));
+    expect(timestamp?.className).toContain('tabular-nums');
+    expect(timestamp?.textContent).not.toContain('采集于');
     expect(timestamp?.parentElement?.querySelector('button')?.getAttribute('aria-label')).toContain('刷新');
   });
 
-  it('零重置券隐藏，火山套餐信息与到期时间使用相同布局', async () => {
+  it('零重置券隐藏，采集与到期统一为两个字标签、相同字号与等宽数字', async () => {
     api.providerQuota.mockResolvedValue({ ...overview, items: overview.items.map(item => ({ ...item, resetCredits: 0 })) });
     render(<ProviderQuotaPage />);
     await screen.findByText('Codex 订阅 · Pro');
     expect(screen.queryByText(/重置券 0/)).toBeNull();
     expect(screen.getByText('火山 Agent Plan · Max')).toBeTruthy();
-    const expiry = screen.getByText(/^套餐到期 /);
+    const expiry = screen.getByText(/^到期 /);
     expect(expiry.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
-    expect(expiry.parentElement?.className).toContain('sm:col-start-2');
-    expect(expiry.parentElement?.className).toContain('text-xs');
+    expect(expiry.className).toContain('text-xs');
+    expect(expiry.className).toContain('tabular-nums');
+    expect(screen.queryByText(/^套餐到期 /)).toBeNull();
+    expect(screen.queryByText(/采集于|采集失败于/u)).toBeNull();
     expect(screen.queryByText('套餐状态')).toBeNull();
   });
 
-  it.each([90, 100])('附加模型已用 %s%% 不影响账号与顶部告警', async (usedPercent) => {
+  it.each([90, 100])('附加模型已用 %s%% 不显示窗口状态徽标，也不影响账号与顶部告警', async (usedPercent) => {
     const item = {
       ...overview.items[1]!, ok: true, error: undefined, limitReached: false,
       credential: { availability: 'available' as const },
@@ -253,6 +254,7 @@ describe('ProviderQuotaPage', () => {
     await screen.findByText('正常');
     expect(screen.queryByText(/个异常|个需关注/)).toBeNull();
     expect(screen.getByTestId('quota-window-primary').textContent).not.toMatch(/接近上限|已撞限/);
+    expect(screen.queryByText('已撞限')).toBeNull();
     expect(screen.queryByText('已耗尽')).toBeNull();
   });
 
@@ -303,13 +305,13 @@ describe('helpers', () => {
     expect(formatWan(0)).toBe('0');
   });
 
-  it('formatResetIn：分钟/小时/天三档，过期为即将重置', () => {
+  it('formatResetIn：只保留剩余时长，不再追加「后重置」', () => {
     const now = Date.parse('2026-09-05T06:00:00Z');
     expect(formatResetIn(undefined, now)).toBeNull();
     expect(formatResetIn('2026-09-05T05:00:00Z', now)).toBe('即将重置');
-    expect(formatResetIn('2026-09-05T06:30:00Z', now)).toBe('30 分钟后重置');
-    expect(formatResetIn('2026-09-05T09:15:00Z', now)).toBe('3 小时 15 分后重置');
-    expect(formatResetIn('2026-09-10T06:00:00Z', now)).toBe('5 天后重置');
+    expect(formatResetIn('2026-09-05T06:30:00Z', now)).toBe('30 分钟');
+    expect(formatResetIn('2026-09-05T09:15:00Z', now)).toBe('3 小时 15 分');
+    expect(formatResetIn('2026-09-10T06:00:00Z', now)).toBe('5 天');
   });
 
   it('baselineUsedPercent 只取该账号该窗口最早的成功点', () => {

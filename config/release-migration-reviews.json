@@ -13305,6 +13305,111 @@
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
         }
       ]
+    },
+    {
+      "baselineSha": "dbb486cce9803055c6d9ed36bb1a5a747c9b3dab",
+      "files": [
+        {
+          "path": "server/src/data/agentDwsAccounts/store.ts",
+          "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
+          "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
+          "classification": "no-schema-change",
+          "reason": "复用既有 event_policy_json 与 identity_updated_at 保存授权意图、身份 epoch 和可恢复 cleanup saga；均为运行期 SELECT/UPDATE，无启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/data/agentDwsMessages/store.ts",
+          "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
+          "targetDigest": "sha256:70efbe994ff164f16662c224e3b56a9b4e523c597d287e68542c45d98e0f1be5",
+          "classification": "no-schema-change",
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+        },
+        {
+          "path": "server/src/data/agentDwsMessages/types.ts",
+          "baselineDigest": "sha256:ef9925bd775254757216de406c799e9ad319abf3ef47e89cb359003c47b4d928",
+          "targetDigest": "sha256:0a3e995873562163060f90fc2c344cc7861b9032eb7faf6dcd1a07daa8fb6930",
+          "classification": "no-schema-change",
+          "reason": "仅扩展消息身份、请求者快照与恢复状态的 TypeScript 类型；无 SQL 或数据库执行。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:e077eb6bf9f79a8fee6a942ed1a90481e2ef31ffe9312a879970f69b90c91435",
+          "classification": "expand",
+          "reason": "V46 仅增加 nullable retired_at 与 logical_conversation_id；保留旧唯一约束；delivery 复合外键以 ON UPDATE CASCADE、NOT VALID 后 VALIDATE 重建，不删表删列且不回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/bindingIdentityStore.ts",
+          "baselineDigest": "sha256:68f676fa41e06b1a9df425e51257f098129cc3408bf3e5d03464b6d1cd50417c",
+          "targetDigest": "sha256:cb567715c804880fe0e93393f0a100c417dce4666a4f44400238670d9506061c",
+          "classification": "no-schema-change",
+          "reason": "在 V46 结构上执行运行期事务、advisory lock、当前账号身份核验、旧 generation 归档与新 generation 插入；无启动 DDL。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/deliveryClaims.ts",
+          "baselineDigest": "sha256:5a5296ebdfdcd169bf9a7a67cd93883b6563e4a67d5b107afdc7b337f45ddf48",
+          "targetDigest": "sha256:efbc87380edcf81e75e1f89751cc6509021f1435b1f190d42e5c82bdf8eab00f",
+          "classification": "no-schema-change",
+          "reason": "在既有 delivery/inbox 表上执行 claim、unknown reconcile 与终态重试运行期 SQL；无新增 DDL 或启动回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/store.ts",
+          "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
+          "targetDigest": "sha256:32033bff85e6a30573ca754b4abc7f533270b81618109bb1b20c440cc6babacc",
+          "classification": "no-schema-change",
+          "reason": "仅编排身份分代与消息恢复 store，schema init 仍由 governance migration 执行；本文件差异无 DDL。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/storeMappers.ts",
+          "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
+          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "classification": "no-schema-change",
+          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/钉钉数字员工身份分代与运行期SQL审核-20260908.md",
+          "digest": "sha256:2aa2cc995db78014d9515064596a8999bc128d26b16766e0de86c698383d4cb0"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsAccountRebind.pg.test.ts",
+          "digest": "sha256:06a6366a1846dc298ea0fd0f734d2c99ce840d9c55f4e6bdef6be3b7b4cdbc5f"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsIdentityCleanupSaga.test.ts",
+          "digest": "sha256:e504fdcfafa06f53d6f2ca5921f50a91656b6635f6819b97177ac71adf05b688"
+        },
+        {
+          "path": "server/src/__tests__/dwsDeliveryRecovery.pg.test.ts",
+          "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
+        },
+        {
+          "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
+          "digest": "sha256:c2b20a3048ac40c504c3c79b57e12123021ee746a714c97d6489b9768da161eb"
+        },
+        {
+          "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
+          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+        },
+        {
+          "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
+          "digest": "sha256:6cb67caba42ce746f63af3440e37639d7a438304e3a15c1780b1f175d99a7c54"
+        }
+      ]
     }
   ]
 }

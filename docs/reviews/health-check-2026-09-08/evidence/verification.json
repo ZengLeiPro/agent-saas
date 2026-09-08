@@ -1,0 +1,2307 @@
+{
+  "schemaVersion": 1,
+  "audit": {
+    "date": "2026-09-08",
+    "baselineSha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+    "baselineBranch": "main",
+    "workspace": "/Users/admin/code/agent-saas",
+    "initialWorktree": "clean, confirmed by main reviewer",
+    "laterConcurrentHeadSha": "c73689eab0f4a119f8efc1c5e0f8f8092493f33c",
+    "laterConcurrentChange": "Other work committed PR #572 during the audit: five business files, +153/-4, not authored by this audit.",
+    "verificationBoundary": "Results describe the snapshot when each check ran; no claim that the final dirty tree or later HEAD received the full baseline verification.",
+    "readOnlyReview": "No business-source fix, production access, workflow trigger or new security reproduction in this evidence-consolidation task.",
+    "sourceTempDirectory": "/private/tmp/agent-saas-health-20260908.82VCKZ",
+    "rawLogsRetention": "Temporary only; may expire. This JSON and test-evidence.md persist summaries, not original user content, secret values or large raw logs.",
+    "commandProvenance": "Known original commands are identified; other commands are equivalent rerun recipes, not a verbatim execution transcript."
+  },
+  "environment": {
+    "os": "macOS / Darwin",
+    "node": "22.23.1",
+    "nodeBinary": "/Users/admin/.nvm/versions/node/v22.23.1/bin/node",
+    "packageManager": "pnpm 10.18.3",
+    "vitest": "4.0.18",
+    "postgres": {
+      "version": "16.13",
+      "scope": "Dedicated temporary localhost database, not production",
+      "host": "127.0.0.1",
+      "port": 55438,
+      "database": "agent_saas_health_test",
+      "stateAtHandoff": "Safely stopped by main reviewer; temporary database files retained, not deleted."
+    },
+    "platformLimitations": [
+      "Linux /proc descriptor-relative file operations unavailable on Darwin",
+      "flock executable absent",
+      "macOS BSD tar lacks GNU tar --quoting-style and --transform semantics",
+      "/dev/full and Linux process-group/owner-proof fixtures have platform dependencies"
+    ],
+    "attributionCaution": "These explain multiple observed failures, not every failed assertion. Flakes, test-order, fixture and behavioral discrepancies require separate root-cause review."
+  },
+  "countingRules": {
+    "files": "Use testResults.length for Vitest file count, never numTotalTestSuites (nested describe suites).",
+    "skippedFiles": "Vitest JSON marks fully pending files passed; normalizedFileCounts excludes all-pending/todo files and is checked against console Test Files.",
+    "assertions": "Keep passed, failed, skipped, todo and unhandled errors separate.",
+    "release": "Node TAP: cancelled is separate from failed; 673+40+11+1=725.",
+    "inventory": "Static tracked-file inventory differs from executable Vitest include patterns and is not the same denominator.",
+    "coverage": "Local server failed and did not emit coverage-summary; do not use it as a complete baseline. Remote Linux aggregate is retained separately."
+  },
+  "inventory": {
+    "trackedFiles": 5647,
+    "groups": {
+      "acs-orchestrator": {
+        "sourceFiles": 57,
+        "sourceLines": 14352,
+        "testFiles": 48,
+        "testLines": 11103
+      },
+      "hand-server": {
+        "sourceFiles": 7,
+        "sourceLines": 2149,
+        "testFiles": 9,
+        "testLines": 1512
+      },
+      "mobile": {
+        "sourceFiles": 388,
+        "sourceLines": 50425,
+        "testFiles": 109,
+        "testLines": 10798
+      },
+      "packages/create-ky-app": {
+        "sourceFiles": 25,
+        "sourceLines": 1857,
+        "testFiles": 3,
+        "testLines": 413
+      },
+      "packages/ky-app-browser": {
+        "sourceFiles": 14,
+        "sourceLines": 1751,
+        "testFiles": 6,
+        "testLines": 1335
+      },
+      "packages/ky-app-cli": {
+        "sourceFiles": 37,
+        "sourceLines": 5654,
+        "testFiles": 11,
+        "testLines": 1105
+      },
+      "packages/ky-app-contract": {
+        "sourceFiles": 23,
+        "sourceLines": 2554,
+        "testFiles": 11,
+        "testLines": 1487
+      },
+      "packages/ky-app-server": {
+        "sourceFiles": 35,
+        "sourceLines": 4864,
+        "testFiles": 18,
+        "testLines": 3876
+      },
+      "server": {
+        "sourceFiles": 1268,
+        "sourceLines": 300723,
+        "testFiles": 935,
+        "testLines": 234046
+      },
+      "shared": {
+        "sourceFiles": 225,
+        "sourceLines": 50725,
+        "testFiles": 133,
+        "testLines": 21748
+      },
+      "web": {
+        "sourceFiles": 629,
+        "sourceLines": 119038,
+        "testFiles": 359,
+        "testLines": 51560
+      }
+    },
+    "largest": [
+      {
+        "p": "server/src/channels/web/channel.ts",
+        "lines": 4227,
+        "test": false
+      },
+      {
+        "p": "server/src/runtime/rawAgentLoop.ts",
+        "lines": 3893,
+        "test": false
+      },
+      {
+        "p": "server/src/routes/sessions.ts",
+        "lines": 3306,
+        "test": false
+      },
+      {
+        "p": "server/src/app/runtime.ts",
+        "lines": 2989,
+        "test": false
+      },
+      {
+        "p": "server/src/runtime/rawRuntimeRunDispatch.ts",
+        "lines": 2985,
+        "test": false
+      },
+      {
+        "p": "web/src/hooks/useChatAppState.ts",
+        "lines": 2707,
+        "test": false
+      },
+      {
+        "p": "server/src/data/billing/pgBillingStore.ts",
+        "lines": 2319,
+        "test": false
+      },
+      {
+        "p": "web/src/components/BillingManager/index.tsx",
+        "lines": 2256,
+        "test": false
+      },
+      {
+        "p": "server/src/dws/generated/commandPolicy.ts",
+        "lines": 2131,
+        "test": false
+      },
+      {
+        "p": "web/src/components/DesktopSessionSidebar.tsx",
+        "lines": 2039,
+        "test": false
+      },
+      {
+        "p": "server/src/runtime/responsesApiAdapter.ts",
+        "lines": 1924,
+        "test": false
+      },
+      {
+        "p": "server/src/data/transcripts/parse.ts",
+        "lines": 1916,
+        "test": false
+      },
+      {
+        "p": "mobile/src/hooks/useChatAppState.ts",
+        "lines": 1819,
+        "test": false
+      },
+      {
+        "p": "server/src/routes/auth.ts",
+        "lines": 1776,
+        "test": false
+      },
+      {
+        "p": "server/scripts/verify-runtime-chaos.mts",
+        "lines": 1455,
+        "test": false
+      },
+      {
+        "p": "server/src/agent/toolRuntime.ts",
+        "lines": 1404,
+        "test": false
+      },
+      {
+        "p": "server/src/app/config.ts",
+        "lines": 1384,
+        "test": false
+      },
+      {
+        "p": "server/src/routes/skills.ts",
+        "lines": 1384,
+        "test": false
+      },
+      {
+        "p": "web/src/components/ModelManager/index.tsx",
+        "lines": 1362,
+        "test": false
+      },
+      {
+        "p": "server/src/runtime/runStore.ts",
+        "lines": 1287,
+        "test": false
+      },
+      {
+        "p": "server/src/routes/platformObservability.ts",
+        "lines": 1276,
+        "test": false
+      },
+      {
+        "p": "server/src/app/runtimeGovernanceConnectors.ts",
+        "lines": 1234,
+        "test": false
+      },
+      {
+        "p": "web/src/components/TenantManager/index.tsx",
+        "lines": 1222,
+        "test": false
+      },
+      {
+        "p": "acs-orchestrator/src/sandboxManager.ts",
+        "lines": 1152,
+        "test": false
+      },
+      {
+        "p": "server/src/app/routes.ts",
+        "lines": 1112,
+        "test": false
+      },
+      {
+        "p": "server/src/runtime/types.ts",
+        "lines": 1092,
+        "test": false
+      },
+      {
+        "p": "server/src/cron/service.ts",
+        "lines": 1082,
+        "test": false
+      },
+      {
+        "p": "web/src/components/MessageItem.tsx",
+        "lines": 1082,
+        "test": false
+      },
+      {
+        "p": "mobile/scripts/release-manifest.cjs",
+        "lines": 1049,
+        "test": false
+      },
+      {
+        "p": "shared/src/schemas/workflowScenario.ts",
+        "lines": 1025,
+        "test": false
+      },
+      {
+        "p": "web/src/components/MessageList.tsx",
+        "lines": 1016,
+        "test": false
+      },
+      {
+        "p": "server/src/taskboard/store.ts",
+        "lines": 1011,
+        "test": false
+      },
+      {
+        "p": "server/src/data/usage/store.ts",
+        "lines": 1000,
+        "test": false
+      },
+      {
+        "p": "server/src/dws/personalMessageRouter.ts",
+        "lines": 1000,
+        "test": false
+      },
+      {
+        "p": "server/src/taskboard/workspaceCommitMaterializer.ts",
+        "lines": 1000,
+        "test": false
+      }
+    ],
+    "sourceOver1000": 32,
+    "aggregate": {
+      "sourceFiles": 2708,
+      "sourceLines": 554092,
+      "testFiles": 1642,
+      "testLines": 338983
+    },
+    "methodNote": "Classification and line counts copied from the captured tracked-file inventory; includes configured workspace source/test shapes, not a physical-line count of every tracked asset."
+  },
+  "suites": {
+    "server": {
+      "framework": "Vitest 4.0.18",
+      "jsonSource": "server-tests.json",
+      "logSource": "server-tests.log",
+      "success": false,
+      "startTimeUtc": "2026-09-08T00:19:53.114Z",
+      "fileCount": 906,
+      "rawJsonFileStatuses": {
+        "passed": 792,
+        "failed": 114
+      },
+      "normalizedFileCounts": {
+        "total": 906,
+        "passed": 789,
+        "failed": 114,
+        "skipped": 3
+      },
+      "skippedFilePaths": [
+        "server/src/__tests__/agentRuntimeProfileStore.pg.test.ts",
+        "server/src/__tests__/aliyunRuntimeWrapper.test.ts",
+        "server/src/__tests__/containerExecutionProvider.test.ts"
+      ],
+      "skippedFileReasons": {
+        "server/src/__tests__/agentRuntimeProfileStore.pg.test.ts": "Guard requires AGENT_PROFILE_TEST_PG_URL, separate from TEST_DATABASE_URL.",
+        "server/src/__tests__/aliyunRuntimeWrapper.test.ts": "Explicit process.platform !== linux skip guard.",
+        "server/src/__tests__/containerExecutionProvider.test.ts": "dockerReady() guard skipped; no successful container integration claim."
+      },
+      "assertions": {
+        "total": 8204,
+        "passed": 7378,
+        "failed": 801,
+        "skipped": 22,
+        "todo": 3
+      },
+      "unhandledErrors": 12,
+      "durationSeconds": 314.14,
+      "rawSuiteCountersNotFileCounts": {
+        "total": 2314,
+        "passed": 2067,
+        "failed": 247,
+        "pending": 0
+      },
+      "failedFiles": [
+        {
+          "path": "server/src/__tests__/adminConfigMutationService.test.ts",
+          "failedAssertions": 13,
+          "totalAssertions": 14
+        },
+        {
+          "path": "server/src/__tests__/agentRuntimeProfiles.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 13
+        },
+        {
+          "path": "server/src/__tests__/appRuntimeCoverage.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 8
+        },
+        {
+          "path": "server/src/__tests__/artifactRoutes.test.ts",
+          "failedAssertions": 14,
+          "totalAssertions": 14
+        },
+        {
+          "path": "server/src/__tests__/artifactShare.test.ts",
+          "failedAssertions": 10,
+          "totalAssertions": 10
+        },
+        {
+          "path": "server/src/__tests__/artifactStore.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 12
+        },
+        {
+          "path": "server/src/__tests__/audioTranscribeAdmin.test.ts",
+          "failedAssertions": 11,
+          "totalAssertions": 18
+        },
+        {
+          "path": "server/src/__tests__/audioTranscribeToolProvider.test.ts",
+          "failedAssertions": 8,
+          "totalAssertions": 10
+        },
+        {
+          "path": "server/src/__tests__/backgroundProfileRecovery.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 1
+        },
+        {
+          "path": "server/src/__tests__/builtinTools.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 14
+        },
+        {
+          "path": "server/src/__tests__/capabilityEnableTransaction.test.ts",
+          "failedAssertions": 7,
+          "totalAssertions": 13
+        },
+        {
+          "path": "server/src/__tests__/chatSubmissionV1.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 3
+        },
+        {
+          "path": "server/src/__tests__/clientDaemonRunner.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 9
+        },
+        {
+          "path": "server/src/__tests__/codexSubscriptionAdmin.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/emfileRegression.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 9
+        },
+        {
+          "path": "server/src/__tests__/feedbackRoutes.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 5
+        },
+        {
+          "path": "server/src/__tests__/fileRoutes.test.ts",
+          "failedAssertions": 13,
+          "totalAssertions": 15
+        },
+        {
+          "path": "server/src/__tests__/fileRoutesReadListDelete.test.ts",
+          "failedAssertions": 19,
+          "totalAssertions": 32
+        },
+        {
+          "path": "server/src/__tests__/groupsCoverage.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 11
+        },
+        {
+          "path": "server/src/__tests__/groupsRoutes.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 1
+        },
+        {
+          "path": "server/src/__tests__/guardrailService.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 12
+        },
+        {
+          "path": "server/src/__tests__/imageAttachments.test.ts",
+          "failedAssertions": 10,
+          "totalAssertions": 13
+        },
+        {
+          "path": "server/src/__tests__/imageGenPricingAdmin.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 6
+        },
+        {
+          "path": "server/src/__tests__/imageGenToolProvider.test.ts",
+          "failedAssertions": 16,
+          "totalAssertions": 26
+        },
+        {
+          "path": "server/src/__tests__/kbFileRoutes.test.ts",
+          "failedAssertions": 9,
+          "totalAssertions": 10
+        },
+        {
+          "path": "server/src/__tests__/kbPreviewGenerator.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/mcpConfigStore.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 19
+        },
+        {
+          "path": "server/src/__tests__/memoryConsolidation.test.ts",
+          "failedAssertions": 5,
+          "totalAssertions": 17
+        },
+        {
+          "path": "server/src/__tests__/memoryConsolidationEngine.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 21
+        },
+        {
+          "path": "server/src/__tests__/memoryContextReplay.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 1
+        },
+        {
+          "path": "server/src/__tests__/memoryPollingAdmin.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/modelsAdmin.test.ts",
+          "failedAssertions": 30,
+          "totalAssertions": 31
+        },
+        {
+          "path": "server/src/__tests__/modelsAdminGuardrailDisable.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 1
+        },
+        {
+          "path": "server/src/__tests__/modelsAdminQuotaSource.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/__tests__/parseTokenUsage.test.ts",
+          "failedAssertions": 11,
+          "totalAssertions": 11
+        },
+        {
+          "path": "server/src/__tests__/previewRoutes.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 3
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoop.automationGate.test.ts",
+          "failedAssertions": 5,
+          "totalAssertions": 5
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoop.compact.test.ts",
+          "failedAssertions": 11,
+          "totalAssertions": 12
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoop.test.ts",
+          "failedAssertions": 71,
+          "totalAssertions": 72
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoopClaimRecovery.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoopHandFailureCoverage.test.ts",
+          "failedAssertions": 7,
+          "totalAssertions": 7
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoopInterjectionBoundary.test.ts",
+          "failedAssertions": 10,
+          "totalAssertions": 10
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoopPolicyFailure.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 3
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoopResumeInterjectionBoundary.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoopTaskboardRetry.test.ts",
+          "failedAssertions": 9,
+          "totalAssertions": 9
+        },
+        {
+          "path": "server/src/__tests__/rawAgentLoopToolInput.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 1
+        },
+        {
+          "path": "server/src/__tests__/readImageTool.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/__tests__/runtimeAuditQuery.test.ts",
+          "failedAssertions": 6,
+          "totalAssertions": 8
+        },
+        {
+          "path": "server/src/__tests__/runtimeAuditRoutes.test.ts",
+          "failedAssertions": 14,
+          "totalAssertions": 14
+        },
+        {
+          "path": "server/src/__tests__/runtimeReplay.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/__tests__/runtimeSessionProjection.test.ts",
+          "failedAssertions": 6,
+          "totalAssertions": 6
+        },
+        {
+          "path": "server/src/__tests__/runtimeStage2.test.ts",
+          "failedAssertions": 6,
+          "totalAssertions": 21
+        },
+        {
+          "path": "server/src/__tests__/runtimeStoresPureSlices.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 39
+        },
+        {
+          "path": "server/src/__tests__/runtimeToolControlsRefresh.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/__tests__/runtimeTranscriptFdBoundaries.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/sessionCatalog.test.ts",
+          "failedAssertions": 13,
+          "totalAssertions": 18
+        },
+        {
+          "path": "server/src/__tests__/sessionContext.test.ts",
+          "failedAssertions": 6,
+          "totalAssertions": 7
+        },
+        {
+          "path": "server/src/__tests__/sessionsForkDeleteCoverage.test.ts",
+          "failedAssertions": 15,
+          "totalAssertions": 17
+        },
+        {
+          "path": "server/src/__tests__/sessionSharesRoutes.test.ts",
+          "failedAssertions": 12,
+          "totalAssertions": 13
+        },
+        {
+          "path": "server/src/__tests__/sessionsInteractionsPendingAccess.test.ts",
+          "failedAssertions": 7,
+          "totalAssertions": 8
+        },
+        {
+          "path": "server/src/__tests__/sessionsRoutesLifecycleCoverage.test.ts",
+          "failedAssertions": 20,
+          "totalAssertions": 24
+        },
+        {
+          "path": "server/src/__tests__/sessionsRoutesMetaOnly.test.ts",
+          "failedAssertions": 16,
+          "totalAssertions": 17
+        },
+        {
+          "path": "server/src/__tests__/sessionsRoutesMetaOnlyList.test.ts",
+          "failedAssertions": 6,
+          "totalAssertions": 8
+        },
+        {
+          "path": "server/src/__tests__/sessionsTaskboardReadAccess.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/sessionWarmupRoutes.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 3
+        },
+        {
+          "path": "server/src/__tests__/shellTimeout.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 1
+        },
+        {
+          "path": "server/src/__tests__/subagent.automationFence.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/__tests__/subagent.test.ts",
+          "failedAssertions": 25,
+          "totalAssertions": 29
+        },
+        {
+          "path": "server/src/__tests__/subagentLiveSwitch.test.ts",
+          "failedAssertions": 7,
+          "totalAssertions": 7
+        },
+        {
+          "path": "server/src/__tests__/systemPromptsAdmin.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/__tests__/taskboardAttachmentResponse.test.ts",
+          "failedAssertions": 7,
+          "totalAssertions": 7
+        },
+        {
+          "path": "server/src/__tests__/taskboardRoutes.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 17
+        },
+        {
+          "path": "server/src/__tests__/taskboardSessionTitle.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 6
+        },
+        {
+          "path": "server/src/__tests__/tenantRemoteHandsAdmin.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 6
+        },
+        {
+          "path": "server/src/__tests__/titleGenerator.test.ts",
+          "failedAssertions": 8,
+          "totalAssertions": 27
+        },
+        {
+          "path": "server/src/__tests__/tokenUsageRebuild.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 17
+        },
+        {
+          "path": "server/src/__tests__/toolConcurrencyRuntime.test.ts",
+          "failedAssertions": 10,
+          "totalAssertions": 10
+        },
+        {
+          "path": "server/src/__tests__/toolControlsAdmin.credentials.test.ts",
+          "failedAssertions": 8,
+          "totalAssertions": 16
+        },
+        {
+          "path": "server/src/__tests__/toolControlsAdmin.test.ts",
+          "failedAssertions": 18,
+          "totalAssertions": 21
+        },
+        {
+          "path": "server/src/__tests__/toolControlsConfigBaseline.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 5
+        },
+        {
+          "path": "server/src/__tests__/toolFailurePresentation.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/toolPresentationPersistence.test.ts",
+          "failedAssertions": 10,
+          "totalAssertions": 10
+        },
+        {
+          "path": "server/src/__tests__/toolRuntime.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 49
+        },
+        {
+          "path": "server/src/__tests__/toolRuntimeWorkspaceIo.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 3
+        },
+        {
+          "path": "server/src/__tests__/transcriptAttachments.test.ts",
+          "failedAssertions": 6,
+          "totalAssertions": 6
+        },
+        {
+          "path": "server/src/__tests__/transcriptDetailMemoryBounds.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/transcriptFinalOutput.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 3
+        },
+        {
+          "path": "server/src/__tests__/transcriptsDataCoverage.test.ts",
+          "failedAssertions": 8,
+          "totalAssertions": 15
+        },
+        {
+          "path": "server/src/__tests__/transcriptSessionIdIndex.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/transcriptWindow.test.ts",
+          "failedAssertions": 15,
+          "totalAssertions": 15
+        },
+        {
+          "path": "server/src/__tests__/trustedFile.test.ts",
+          "failedAssertions": 14,
+          "totalAssertions": 16
+        },
+        {
+          "path": "server/src/__tests__/trustedTranscriptBoundaries.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 3
+        },
+        {
+          "path": "server/src/__tests__/trustedWorkspaceAgentFiles.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 6
+        },
+        {
+          "path": "server/src/__tests__/uploadAudioRange.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 1
+        },
+        {
+          "path": "server/src/__tests__/uploadHardening.test.ts",
+          "failedAssertions": 21,
+          "totalAssertions": 26
+        },
+        {
+          "path": "server/src/__tests__/webChannelAgentTargetBinding.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 3
+        },
+        {
+          "path": "server/src/__tests__/webChannelAutoNaming.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 3
+        },
+        {
+          "path": "server/src/__tests__/webChannelCoverage.test.ts",
+          "failedAssertions": 12,
+          "totalAssertions": 58
+        },
+        {
+          "path": "server/src/__tests__/webChannelExecutionQueueProjection.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 7
+        },
+        {
+          "path": "server/src/__tests__/webChannelExecutionTarget.test.ts",
+          "failedAssertions": 6,
+          "totalAssertions": 17
+        },
+        {
+          "path": "server/src/__tests__/webChannelGuardrail.test.ts",
+          "failedAssertions": 15,
+          "totalAssertions": 20
+        },
+        {
+          "path": "server/src/__tests__/webChannelInteractionStagedLifecycle.test.ts",
+          "failedAssertions": 9,
+          "totalAssertions": 10
+        },
+        {
+          "path": "server/src/__tests__/webChannelPersistedQuestionResume.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/__tests__/webChannelPersistentInteractionRecovery.test.ts",
+          "failedAssertions": 7,
+          "totalAssertions": 11
+        },
+        {
+          "path": "server/src/__tests__/webChannelSandboxProfile.test.ts",
+          "failedAssertions": 2,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/__tests__/webChannelSessionMetaOrdering.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 1
+        },
+        {
+          "path": "server/src/__tests__/webChannelWsAuthorization.test.ts",
+          "failedAssertions": 6,
+          "totalAssertions": 18
+        },
+        {
+          "path": "server/src/agent/containerEditHelper.test.ts",
+          "failedAssertions": 10,
+          "totalAssertions": 10
+        },
+        {
+          "path": "server/src/agent/localShellExecution.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 4
+        },
+        {
+          "path": "server/src/agent/shellOutputAccumulator.test.ts",
+          "failedAssertions": 4,
+          "totalAssertions": 9
+        },
+        {
+          "path": "server/src/app/configRuntimeRecovery.integration.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/taskboard/safeServerGitRunner.test.ts",
+          "failedAssertions": 3,
+          "totalAssertions": 26
+        },
+        {
+          "path": "server/src/taskboard/taskboardTrustedWorkspaceResolver.test.ts",
+          "failedAssertions": 1,
+          "totalAssertions": 2
+        },
+        {
+          "path": "server/src/taskboard/workspaceCommitMaterializer.test.ts",
+          "failedAssertions": 20,
+          "totalAssertions": 20
+        }
+      ],
+      "commandKind": "equivalent_rerun_recipe_with_confirmed_maxWorkers",
+      "command": "pnpm -C server exec vitest run --coverage --reporter=default --reporter=json --outputFile.json=<NEW_EVIDENCE_DIR>/server-tests.json --coverage.reportsDirectory=<NEW_EVIDENCE_DIR>/server-coverage --maxWorkers=2"
+    },
+    "web": {
+      "framework": "Vitest 4.0.18",
+      "jsonSource": "web-tests.json",
+      "logSource": "web-tests.log",
+      "success": true,
+      "startTimeUtc": "2026-09-08T00:20:01.921Z",
+      "fileCount": 354,
+      "rawJsonFileStatuses": {
+        "passed": 354
+      },
+      "normalizedFileCounts": {
+        "total": 354,
+        "passed": 354,
+        "failed": 0,
+        "skipped": 0
+      },
+      "skippedFilePaths": [],
+      "assertions": {
+        "total": 2591,
+        "passed": 2591,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "unhandledErrors": 0,
+      "durationSeconds": 131.06,
+      "rawSuiteCountersNotFileCounts": {
+        "total": 866,
+        "passed": 866,
+        "failed": 0,
+        "pending": 0
+      },
+      "failedFiles": [],
+      "commandKind": "equivalent_rerun_recipe",
+      "command": "pnpm -C web exec vitest run --coverage --reporter=default --reporter=json --outputFile.json=<NEW_EVIDENCE_DIR>/web-tests.json --coverage.reportsDirectory=<NEW_EVIDENCE_DIR>/web-coverage"
+    },
+    "shared": {
+      "framework": "Vitest 4.0.18",
+      "jsonSource": "shared-tests.json",
+      "logSource": "shared-tests.log",
+      "success": true,
+      "startTimeUtc": "2026-09-08T00:19:54.251Z",
+      "fileCount": 133,
+      "rawJsonFileStatuses": {
+        "passed": 133
+      },
+      "normalizedFileCounts": {
+        "total": 133,
+        "passed": 133,
+        "failed": 0,
+        "skipped": 0
+      },
+      "skippedFilePaths": [],
+      "assertions": {
+        "total": 1850,
+        "passed": 1850,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "unhandledErrors": 0,
+      "durationSeconds": 6.96,
+      "rawSuiteCountersNotFileCounts": {
+        "total": 531,
+        "passed": 531,
+        "failed": 0,
+        "pending": 0
+      },
+      "failedFiles": [],
+      "commandKind": "equivalent_rerun_recipe",
+      "command": "pnpm -C shared exec vitest run --coverage --reporter=default --reporter=json --outputFile.json=<NEW_EVIDENCE_DIR>/shared-tests.json --coverage.reportsDirectory=<NEW_EVIDENCE_DIR>/shared-coverage"
+    },
+    "mobile": {
+      "framework": "Vitest 4.0.18",
+      "jsonSource": "mobile-tests.json",
+      "logSource": "mobile-tests.log",
+      "success": true,
+      "startTimeUtc": "2026-09-08T00:25:39.798Z",
+      "fileCount": 90,
+      "rawJsonFileStatuses": {
+        "passed": 90
+      },
+      "normalizedFileCounts": {
+        "total": 90,
+        "passed": 90,
+        "failed": 0,
+        "skipped": 0
+      },
+      "skippedFilePaths": [],
+      "assertions": {
+        "total": 458,
+        "passed": 458,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "unhandledErrors": 0,
+      "durationSeconds": 8.89,
+      "rawSuiteCountersNotFileCounts": {
+        "total": 210,
+        "passed": 210,
+        "failed": 0,
+        "pending": 0
+      },
+      "failedFiles": [],
+      "commandKind": "equivalent_rerun_recipe",
+      "command": "pnpm -C mobile exec vitest run --reporter=default --reporter=json --outputFile.json=<NEW_EVIDENCE_DIR>/mobile-tests.json"
+    },
+    "hand-server": {
+      "framework": "Vitest 4.0.18",
+      "jsonSource": "hand-server-tests.json",
+      "logSource": "hand-server-tests.log",
+      "success": true,
+      "startTimeUtc": "2026-09-08T00:25:40.964Z",
+      "fileCount": 9,
+      "rawJsonFileStatuses": {
+        "passed": 9
+      },
+      "normalizedFileCounts": {
+        "total": 9,
+        "passed": 9,
+        "failed": 0,
+        "skipped": 0
+      },
+      "skippedFilePaths": [],
+      "assertions": {
+        "total": 61,
+        "passed": 61,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "unhandledErrors": 0,
+      "durationSeconds": 2.13,
+      "rawSuiteCountersNotFileCounts": {
+        "total": 23,
+        "passed": 23,
+        "failed": 0,
+        "pending": 0
+      },
+      "failedFiles": [],
+      "commandKind": "equivalent_rerun_recipe",
+      "command": "pnpm -C hand-server exec vitest run --reporter=default --reporter=json --outputFile.json=<NEW_EVIDENCE_DIR>/hand-server-tests.json"
+    },
+    "acs-orchestrator": {
+      "framework": "Vitest 4.0.18",
+      "jsonSource": "acs-orchestrator-tests.json",
+      "logSource": "acs-orchestrator-tests.log",
+      "success": true,
+      "startTimeUtc": "2026-09-08T00:25:43.485Z",
+      "fileCount": 48,
+      "rawJsonFileStatuses": {
+        "passed": 48
+      },
+      "normalizedFileCounts": {
+        "total": 48,
+        "passed": 48,
+        "failed": 0,
+        "skipped": 0
+      },
+      "skippedFilePaths": [],
+      "assertions": {
+        "total": 413,
+        "passed": 413,
+        "failed": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "unhandledErrors": 0,
+      "durationSeconds": 17.54,
+      "rawSuiteCountersNotFileCounts": {
+        "total": 124,
+        "passed": 124,
+        "failed": 0,
+        "pending": 0
+      },
+      "failedFiles": [],
+      "commandKind": "equivalent_rerun_recipe",
+      "command": "pnpm -C acs-orchestrator exec vitest run --reporter=default --reporter=json --outputFile.json=<NEW_EVIDENCE_DIR>/acs-orchestrator-tests.json"
+    }
+  },
+  "additionalTests": {
+    "originalPgNamedSubset": {
+      "fileCount": 79,
+      "filesWithPassingAssertions": 78,
+      "fullySkippedFiles": 1,
+      "assertionStatuses": {
+        "passed": 451,
+        "skipped": 5
+      },
+      "source": "server-tests.json, names ending .pg.test.ts only",
+      "note": "Subset of original full run, not the separate post-run AGENT_PROFILE_TEST_PG_URL check; other database tests may use different filenames."
+    },
+    "agentProfilePgFollowup": {
+      "source": "agent-profile-pg-confirmed-tests.json / agent-profile-pg-confirmed-tests.log",
+      "status": "failed",
+      "commandKind": "confirmed_original_command_with_output_placeholder",
+      "command": "AGENT_PROFILE_TEST_PG_URL=postgresql://admin@127.0.0.1:55438/agent_saas_health_test pnpm -F server exec vitest run src/__tests__/agentRuntimeProfileStore.pg.test.ts --reporter=default --reporter=json --outputFile.json=<EVIDENCE_DIR>/agent-profile-pg-confirmed-tests.json",
+      "startTimeUtc": "2026-09-08T00:55:42.326Z",
+      "files": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0
+      },
+      "assertions": {
+        "total": 5,
+        "passed": 3,
+        "failed": 2,
+        "skipped": 0,
+        "todo": 0
+      },
+      "durationSeconds": 0.314,
+      "originalFullSuiteUnchanged": true,
+      "diagnosis": [
+        {
+          "location": "server/src/__tests__/agentRuntimeProfileStore.pg.test.ts:38",
+          "category": "stale_test_expectation",
+          "expected": 2,
+          "actual": 3,
+          "explanation": "memory_poll builtin intentionally is v3, subagent_explore v2; non-PG test already encodes distinct current versions. Fresh database seeding is correct."
+        },
+        {
+          "location": "server/src/__tests__/agentRuntimeProfileStore.pg.test.ts:68",
+          "category": "conditional_product_upgrade_gap_with_stale_target_expectation",
+          "expected": "v2 (test target stale; current intended target is v3)",
+          "actual": "v1",
+          "findingId": "REL-12",
+          "explanation": "seedBuiltins only matches the highest previous version (v2) and its draft digest. A restored untouched v1 remains v1 after repeated successful init. New database and v2-to-v3 unaffected; preserve custom drafts and pinned sessions."
+        }
+      ],
+      "preparationAttempt": {
+        "sources": ["agent-profile-pg-tests.json", "agent-profile-pg-tests.log"],
+        "status": "setup_error",
+        "reason": "Fixture PostgreSQL first restarted without the intended port; ECONNREFUSED was a verification setup error, not a product failure.",
+        "businessFinding": false
+      },
+      "databaseStateAtHandoff": "Dedicated fixture stopped again by main reviewer; no further database startup in this consolidation task."
+    },
+    "releaseContracts": {
+      "source": "release-tests.log",
+      "commandKind": "confirmed_original_command",
+      "command": "node --test --test-concurrency=2 scripts/release/*.test.mjs scripts/staging/*.test.mjs",
+      "status": "failed",
+      "assertions": {
+        "total": 725,
+        "passed": 673,
+        "failed": 40,
+        "skipped": 11,
+        "cancelled": 1,
+        "todo": 0
+      },
+      "durationMs": 75744.05875,
+      "failedAndCancelledByFile": {
+        "scripts/release/compatibility-deploy-transaction.test.mjs": {
+          "failed": 6,
+          "cancelled": 0
+        },
+        "scripts/release/compatibility-release.test.mjs": {
+          "failed": 3,
+          "cancelled": 0
+        },
+        "scripts/release/deploy-production-rollback.test.mjs": {
+          "failed": 3,
+          "cancelled": 0
+        },
+        "scripts/release/production-lock-lease.test.mjs": {
+          "failed": 2,
+          "cancelled": 0
+        },
+        "scripts/release/publish-release-record.test.mjs": {
+          "failed": 5,
+          "cancelled": 0
+        },
+        "scripts/release/run-with-production-lock-guard.test.mjs": {
+          "failed": 2,
+          "cancelled": 1
+        },
+        "scripts/release/seal-root-staged-payload.test.mjs": {
+          "failed": 5,
+          "cancelled": 0
+        },
+        "scripts/release/verify-selected-release-artifacts.test.mjs": {
+          "failed": 14,
+          "cancelled": 0
+        }
+      }
+    },
+    "mobileNodeContracts": {
+      "source": "mobile-contracts.log",
+      "commandKind": "equivalent_rerun_recipe",
+      "command": "Execute the node --test portion of mobile/package.json scripts.test (plugins, scripts, Maestro/native, rc, rehearsal and rollout contracts).",
+      "status": "passed",
+      "assertions": {
+        "total": 191,
+        "passed": 191,
+        "failed": 0,
+        "skipped": 0,
+        "cancelled": 0,
+        "todo": 0
+      },
+      "durationMs": 4077.689833
+    },
+    "packages": {
+      "source": "packages-tests.log",
+      "scope": "Individual Vitest runs, not every package test script or all native integration checks.",
+      "database": "ky-app-server received the dedicated temporary TEST_DATABASE_URL.",
+      "workspaces": [
+        {
+          "workspace": "packages/ky-app-contract",
+          "files": 11,
+          "assertions": 144,
+          "passed": true
+        },
+        {
+          "workspace": "packages/create-ky-app",
+          "files": 1,
+          "assertions": 15,
+          "passed": true
+        },
+        {
+          "workspace": "packages/ky-app-browser",
+          "files": 5,
+          "assertions": 50,
+          "passed": true
+        },
+        {
+          "workspace": "packages/ky-app-server",
+          "files": 15,
+          "assertions": 199,
+          "passed": true
+        },
+        {
+          "workspace": "packages/ky-app-cli",
+          "files": 11,
+          "assertions": 74,
+          "passed": true
+        }
+      ],
+      "totalFiles": 43,
+      "totalAssertions": 482
+    }
+  },
+  "lint": {
+    "source": "eslint.json",
+    "files": 4378,
+    "errors": 0,
+    "warnings": 1898,
+    "fatalErrors": 0,
+    "fixableErrors": 0,
+    "fixableWarnings": 2,
+    "byRule": {
+      "@typescript-eslint/no-explicit-any": {
+        "errors": 0,
+        "warnings": 1773
+      },
+      "react-hooks/exhaustive-deps": {
+        "errors": 0,
+        "warnings": 123
+      },
+      "unused-eslint-disable": {
+        "errors": 0,
+        "warnings": 2
+      }
+    },
+    "byWorkspace": {
+      "acs-orchestrator": {
+        "files": 105,
+        "errors": 0,
+        "warnings": 69
+      },
+      "hand-server": {
+        "files": 16,
+        "errors": 0,
+        "warnings": 31
+      },
+      "mobile": {
+        "files": 435,
+        "errors": 0,
+        "warnings": 137
+      },
+      "packages/create-ky-app": {
+        "files": 28,
+        "errors": 0,
+        "warnings": 0
+      },
+      "packages/ky-app-browser": {
+        "files": 20,
+        "errors": 0,
+        "warnings": 0
+      },
+      "packages/ky-app-cli": {
+        "files": 48,
+        "errors": 0,
+        "warnings": 0
+      },
+      "packages/ky-app-contract": {
+        "files": 34,
+        "errors": 0,
+        "warnings": 0
+      },
+      "packages/ky-app-server": {
+        "files": 53,
+        "errors": 0,
+        "warnings": 0
+      },
+      "scripts": {
+        "files": 159,
+        "errors": 0,
+        "warnings": 0
+      },
+      "server": {
+        "files": 2155,
+        "errors": 0,
+        "warnings": 1558
+      },
+      "shared": {
+        "files": 357,
+        "errors": 0,
+        "warnings": 6
+      },
+      "web": {
+        "files": 968,
+        "errors": 0,
+        "warnings": 97
+      }
+    },
+    "bySourceClass": {
+      "test": {
+        "warnings": 1529,
+        "byRule": {
+          "@typescript-eslint/no-explicit-any": 1528,
+          "unused-eslint-disable": 1
+        }
+      },
+      "nonTest": {
+        "warnings": 369,
+        "byRule": {
+          "@typescript-eslint/no-explicit-any": 245,
+          "react-hooks/exhaustive-deps": 123,
+          "unused-eslint-disable": 1
+        }
+      }
+    },
+    "initialAttempt": {
+      "source": "eslint.log",
+      "status": "cli_error",
+      "reason": "Explicit .github/scripts argument matched only ignored files; not a source-code lint error."
+    },
+    "effectiveAttempt": {
+      "source": "eslint.json",
+      "stderrSource": "eslint-second.log",
+      "status": "completed_zero_errors_with_warnings",
+      "commandKind": "equivalent_rerun_recipe",
+      "command": "pnpm exec eslint server shared web mobile acs-orchestrator hand-server packages scripts --format json"
+    }
+  },
+  "coverage": {
+    "web": {
+      "source": "web-coverage/coverage-summary.json",
+      "instrumentedFiles": 81,
+      "totals": {
+        "lines": {
+          "total": 1755,
+          "covered": 1446,
+          "skipped": 0,
+          "pct": 82.39
+        },
+        "statements": {
+          "total": 2104,
+          "covered": 1688,
+          "skipped": 0,
+          "pct": 80.22
+        },
+        "functions": {
+          "total": 474,
+          "covered": 403,
+          "skipped": 0,
+          "pct": 85.02
+        },
+        "branches": {
+          "total": 1893,
+          "covered": 1370,
+          "skipped": 0,
+          "pct": 72.37
+        },
+        "branchesTrue": {
+          "total": 0,
+          "covered": 0,
+          "skipped": 0,
+          "pct": 100
+        }
+      },
+      "largeLowBranchCoverageFiles": [
+        {
+          "path": "web/src/lib/messageCache.ts",
+          "lines": {
+            "total": 119,
+            "covered": 52,
+            "skipped": 0,
+            "pct": 43.69
+          },
+          "branches": {
+            "total": 84,
+            "covered": 24,
+            "skipped": 0,
+            "pct": 28.57
+          }
+        }
+      ],
+      "scope": "Logic-layer denominator only: .tsx, components, layouts, hooks, types and tests excluded. Not whole-UI coverage."
+    },
+    "shared": {
+      "source": "shared-coverage/coverage-summary.json",
+      "instrumentedFiles": 192,
+      "totals": {
+        "lines": {
+          "total": 9252,
+          "covered": 7691,
+          "skipped": 0,
+          "pct": 83.12
+        },
+        "statements": {
+          "total": 11041,
+          "covered": 8830,
+          "skipped": 0,
+          "pct": 79.97
+        },
+        "functions": {
+          "total": 1977,
+          "covered": 1551,
+          "skipped": 0,
+          "pct": 78.45
+        },
+        "branches": {
+          "total": 11198,
+          "covered": 8317,
+          "skipped": 0,
+          "pct": 74.27
+        },
+        "branchesTrue": {
+          "total": 0,
+          "covered": 0,
+          "skipped": 0,
+          "pct": 100
+        }
+      },
+      "largeLowBranchCoverageFiles": [
+        {
+          "path": "shared/src/hooks/useGroups.ts",
+          "lines": {
+            "total": 165,
+            "covered": 0,
+            "skipped": 0,
+            "pct": 0
+          },
+          "branches": {
+            "total": 84,
+            "covered": 0,
+            "skipped": 0,
+            "pct": 0
+          }
+        },
+        {
+          "path": "shared/src/schemas/workflowScenario.ts",
+          "lines": {
+            "total": 236,
+            "covered": 163,
+            "skipped": 0,
+            "pct": 69.06
+          },
+          "branches": {
+            "total": 189,
+            "covered": 65,
+            "skipped": 0,
+            "pct": 34.39
+          }
+        }
+      ],
+      "scope": "src/**/*.ts excluding declarations/tests/mocks and pure types."
+    },
+    "server": {
+      "source": "github-build-check.log:9444",
+      "environment": "Linux GitHub APP CI",
+      "status": "complete_logged_aggregate",
+      "percentages": {
+        "statements": 75.33,
+        "branches": 67.36,
+        "functions": 76.29,
+        "lines": 78.8
+      },
+      "localSummaryStatus": "not_emitted_after_failed_suite",
+      "scope": "server/vitest.config.ts includes src/**/*.ts, excluding tests/mocks, declarations, src/index.ts, scripts, migration directory and pure types."
+    }
+  },
+  "checks": {
+    "typecheck": {
+      "source": "typecheck.log",
+      "status": "passed",
+      "commandKind": "confirmed_original_command",
+      "command": "pnpm -r typecheck",
+      "workspaceCount": 11
+    },
+    "ratchets": {
+      "source": "ratchets.log",
+      "status": "passed",
+      "command": "pnpm check:ratchets",
+      "assertions": {
+        "total": 36,
+        "passed": 36,
+        "failed": 0
+      },
+      "grandfatheredFiles": 49,
+      "environmentVariableCounts": {
+        "server": 64,
+        "acs-orchestrator": 43,
+        "hand-server": 17,
+        "shared/runtime": 2,
+        "web build-time": 3,
+        "deployment/scripts": 40,
+        "packages": 19
+      },
+      "dynamicEnvironmentNames": "Reported in log, not counted by static-name totals."
+    },
+    "packagesBuild": {
+      "source": "packages-build.log",
+      "status": "passed",
+      "workspaceCount": 5,
+      "commandKind": "equivalent_rerun_recipe",
+      "command": "pnpm --filter './packages/*' run build"
+    },
+    "serverBuild": {
+      "source": "server-build.log",
+      "status": "passed",
+      "command": "pnpm -F server build",
+      "mainBundleApproxMiB": 9,
+      "sourceMapApproxMiB": 18.7,
+      "adminRunnerCommands": 7,
+      "adminRunnerLauncher": true
+    },
+    "webBuild": {
+      "source": "web-build.log",
+      "status": "passed",
+      "commandKind": "confirmed_original_command",
+      "command": "bash scripts/pr-preflight-task.sh web",
+      "checks": [
+        "API domain boundary",
+        "Workflow lint",
+        "Workflow sanitize",
+        "OSS split-domain build",
+        "OSS dist contract",
+        "HTTP upgrade/live OSS script tests",
+        "Startup budget"
+      ],
+      "workflowLint": {
+        "workflows": 28,
+        "catalog": 38,
+        "aliases": 53,
+        "legacy": 53
+      },
+      "sanitize": {
+        "scenarios": 38,
+        "workflows": 28,
+        "aliases": 53,
+        "blocked": 0,
+        "internalKeys": 0
+      },
+      "pwa": {
+        "precacheEntries": 202,
+        "precacheKiB": 5314.91
+      },
+      "vite": {
+        "modulesTransformed": 3257,
+        "buildSeconds": 5.51
+      },
+      "scriptAssertions": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0
+      },
+      "startup": {
+        "jsRequests": 1,
+        "cssRequests": 1,
+        "jsGzipBytes": 357588,
+        "cssGzipBytes": 35039,
+        "jsBrotliBytes": 285437,
+        "cssBrotliBytes": 27772
+      },
+      "warnings": [
+        "Browserslist data is eight months old",
+        "Main JS chunk exceeds the usual chunk warning threshold; startup budget still passed"
+      ],
+      "baselineWasNotUpdated": true
+    },
+    "browserLayout": {
+      "source": "browser-layout.log and main reviewer process-completion observation",
+      "command": "pnpm -F web check:comparison-layout",
+      "assertions": "passed",
+      "status": "cleanup_hang_required_manual_termination",
+      "fixtureWidth": 800,
+      "valueColumnStarts": [173, 401, 629],
+      "finalExitCode": 0,
+      "naturalCompletion": false,
+      "detail": "Layout assertions logged; dedicated Vite processes hung about 15 minutes. Reviewer terminated only those fixture processes; command then returned 0. Not a fully successful unattended check."
+    },
+    "managementContract": {
+      "source": "Main reviewer isolated execution and unchanged-baseline source comparison",
+      "command": "pnpm -F web check:management-contract",
+      "status": "failed",
+      "exitCode": 1,
+      "location": "web/scripts/check-management-contract.mjs:62",
+      "expectedPlatformConfigurationItems": 14,
+      "actual": 13,
+      "baselineIssue": true,
+      "diagnosis": "Stale standalone contract: PR #556 intentionally removed the old platform-system-deliveries navigation. The normal navigation contract already expects 13; not a missing product page.",
+      "detail": "This command failed independently; an outer shell ending 0 from another command must not conceal it."
+    },
+    "expo": {
+      "source": "expo-check.log",
+      "commandKind": "confirmed_original_command",
+      "command": "EXPO_OFFLINE=1 pnpm -F mobile exec expo install --check",
+      "status": "offline_check_passed_with_limitations",
+      "exitCode": 0,
+      "messages": [
+        "Dependency validation is unreliable in offline-mode",
+        "Dependencies are up to date"
+      ],
+      "nativeBuildOrDeviceE2E": false
+    }
+  },
+  "secretScan": {
+    "scope": "current tracked files only, no values emitted, no Git history or ignored config",
+    "scannedTextFiles": 5578,
+    "skippedBinaryOrLarge": 69,
+    "sensitiveNames": [".env.ecs.example"],
+    "hits": [
+      {
+        "path": "config.example.json",
+        "line": 198,
+        "kind": "private-key-marker"
+      },
+      {
+        "path": "packages/ky-app-cli/src/secretScan.test.ts",
+        "line": 49,
+        "kind": "private-key-marker"
+      },
+      {
+        "path": "packages/ky-app-cli/src/secretScan.test.ts",
+        "line": 50,
+        "kind": "private-key-marker"
+      },
+      {
+        "path": "server/src/__tests__/modelsAdmin.test.ts",
+        "line": 313,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/__tests__/modelsAdmin.test.ts",
+        "line": 320,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/__tests__/modelsAdmin.test.ts",
+        "line": 336,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/__tests__/modelsAdmin.test.ts",
+        "line": 353,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/__tests__/modelsAdmin.test.ts",
+        "line": 365,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/__tests__/modelsAdmin.test.ts",
+        "line": 375,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/__tests__/modelsAdmin.test.ts",
+        "line": 407,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/__tests__/runtimeStage2.test.ts",
+        "line": 692,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/__tests__/runtimeStage2.test.ts",
+        "line": 763,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/__tests__/sessionShareStore.test.ts",
+        "line": 136,
+        "kind": "private-key-marker"
+      },
+      {
+        "path": "server/src/release/adminRunner/governance.test.ts",
+        "line": 287,
+        "kind": "aws-access-key-id"
+      },
+      {
+        "path": "server/src/release/adminRunner/receipt.test.ts",
+        "line": 154,
+        "kind": "llm-key-shape"
+      },
+      {
+        "path": "server/src/release/configIdentity.test.ts",
+        "line": 162,
+        "kind": "private-key-marker"
+      }
+    ],
+    "maxScannedFileBytes": 2000000,
+    "reviewConclusion": "All 16 shape matches were in examples or tests; no confirmed real credential leak. No matched values persisted.",
+    "limitations": [
+      "No full Git history",
+      "No ignored local configuration",
+      "No image layers, CI artifacts or production logs",
+      "No vendor API validation of key validity"
+    ]
+  },
+  "remoteAppCi": {
+    "conclusion": "success",
+    "createdAt": "2026-09-07T23:14:24Z",
+    "event": "push",
+    "headSha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+    "jobs": [
+      {
+        "name": "预检 / 静态检查",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:28Z",
+        "completedAt": "2026-09-07T23:24:19Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886553778",
+        "databaseId": 101886553778
+      },
+      {
+        "name": "预检 / 规划",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:27Z",
+        "completedAt": "2026-09-07T23:14:34Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886553968",
+        "databaseId": 101886553968
+      },
+      {
+        "name": "预检 / PostgreSQL 契约",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:36Z",
+        "completedAt": "2026-09-07T23:15:37Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577498",
+        "databaseId": 101886577498
+      },
+      {
+        "name": "预检 / Web 生产构建",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:36Z",
+        "completedAt": "2026-09-07T23:15:57Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577508",
+        "databaseId": 101886577508
+      },
+      {
+        "name": "预检 / 移动端与原生发布契约",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:16:07Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577529",
+        "databaseId": 101886577529
+      },
+      {
+        "name": "预检 / 移动端路由导出",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:16:36Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577549",
+        "databaseId": 101886577549
+      },
+      {
+        "name": "预检 / 测试（server 1/4）",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:38Z",
+        "completedAt": "2026-09-07T23:17:43Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577591",
+        "databaseId": 101886577591
+      },
+      {
+        "name": "预检 / 测试（server 3/4）",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:07Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577600",
+        "databaseId": 101886577600
+      },
+      {
+        "name": "预检 / 测试（server 2/4）",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:11Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577604",
+        "databaseId": 101886577604
+      },
+      {
+        "name": "预检 / 测试（shared 1/1）",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:15:18Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577612",
+        "databaseId": 101886577612
+      },
+      {
+        "name": "预检 / 测试（web 1/2）",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:39Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577620",
+        "databaseId": 101886577620
+      },
+      {
+        "name": "预检 / 测试（web 2/2）",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:47Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577651",
+        "databaseId": 101886577651
+      },
+      {
+        "name": "预检 / 测试（server 4/4）",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:14:37Z",
+        "completedAt": "2026-09-07T23:17:05Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101886577692",
+        "databaseId": 101886577692
+      },
+      {
+        "name": "Build & Check",
+        "conclusion": "success",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:24:22Z",
+        "completedAt": "2026-09-07T23:25:13Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101888133498",
+        "databaseId": 101888133498
+      },
+      {
+        "name": "部署到 ECS",
+        "conclusion": "skipped",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:25:14Z",
+        "completedAt": "2026-09-07T23:25:14Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101888278340",
+        "databaseId": 101888278340
+      },
+      {
+        "name": "规划生产部署",
+        "conclusion": "skipped",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:25:14Z",
+        "completedAt": "2026-09-07T23:25:14Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101888278709",
+        "databaseId": 101888278709
+      },
+      {
+        "name": "将 Web 部署到 OSS",
+        "conclusion": "skipped",
+        "status": "completed",
+        "startedAt": "2026-09-07T23:25:14Z",
+        "completedAt": "2026-09-07T23:25:14Z",
+        "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270/job/101888279558",
+        "databaseId": 101888279558
+      }
+    ],
+    "updatedAt": "2026-09-07T23:25:14Z",
+    "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355270",
+    "buildCheckSummaryLines": [
+      {
+        "line": 508,
+        "text": "Test Files  133 passed (133)"
+      },
+      {
+        "line": 509,
+        "text": "Tests  1850 passed (1850)"
+      },
+      {
+        "line": 518,
+        "text": "All files          |   79.97 |    74.27 |   78.45 |   83.12 |                   "
+      },
+      {
+        "line": 9434,
+        "text": "Test Files  904 passed | 2 skipped (906)"
+      },
+      {
+        "line": 9435,
+        "text": "Tests  8183 passed | 18 skipped | 3 todo (8204)"
+      },
+      {
+        "line": 9444,
+        "text": "All files          |   75.33 |    67.36 |   76.29 |    78.8 |                   "
+      },
+      {
+        "line": 12419,
+        "text": "Test Files  354 passed (354)"
+      },
+      {
+        "line": 12420,
+        "text": "Tests  2591 passed (2591)"
+      },
+      {
+        "line": 12429,
+        "text": "All files          |   80.22 |    72.42 |   85.02 |   82.39 |                   "
+      }
+    ],
+    "runId": 34169355270,
+    "evidenceType": "Previously fetched local GitHub metadata and Build & Check log; no repeat network query.",
+    "expectedShards": {
+      "server": 4,
+      "web": 2,
+      "shared": 1
+    },
+    "coverageCounts": {
+      "source": "github-build-check.log:12534-12537",
+      "server": {
+        "statements": {
+          "covered": 72535,
+          "total": 96281
+        },
+        "branches": {
+          "covered": 56712,
+          "total": 84185
+        },
+        "functions": {
+          "covered": 12386,
+          "total": 16234
+        },
+        "lines": {
+          "covered": 66359,
+          "total": 84211
+        }
+      },
+      "web": {
+        "statements": {
+          "covered": 1688,
+          "total": 2104
+        },
+        "branches": {
+          "covered": 1371,
+          "total": 1893
+        },
+        "functions": {
+          "covered": 403,
+          "total": 474
+        },
+        "lines": {
+          "covered": 1446,
+          "total": 1755
+        }
+      },
+      "shared": {
+        "statements": {
+          "covered": 8830,
+          "total": 11041
+        },
+        "branches": {
+          "covered": 8317,
+          "total": 11198
+        },
+        "functions": {
+          "covered": 1551,
+          "total": 1977
+        },
+        "lines": {
+          "covered": 7691,
+          "total": 9252
+        }
+      },
+      "total": {
+        "statements": {
+          "covered": 83053,
+          "total": 109426,
+          "roundedPct": 75.9
+        },
+        "branches": {
+          "covered": 66400,
+          "total": 97276,
+          "roundedPct": 68.3
+        },
+        "functions": {
+          "covered": 14340,
+          "total": 18685,
+          "roundedPct": 76.7
+        },
+        "lines": {
+          "covered": 75496,
+          "total": 95218,
+          "roundedPct": 79.3
+        }
+      }
+    },
+    "observedShards": {
+      "server": 4,
+      "web": 2,
+      "shared": 1
+    },
+    "mergedResults": {
+      "server": {
+        "files": {
+          "total": 906,
+          "passed": 904,
+          "failed": 0,
+          "skipped": 2
+        },
+        "assertions": {
+          "total": 8204,
+          "passed": 8183,
+          "failed": 0,
+          "skipped": 18,
+          "todo": 3
+        },
+        "coveragePercentages": {
+          "statements": 75.33,
+          "branches": 67.36,
+          "functions": 76.29,
+          "lines": 78.8
+        }
+      },
+      "web": {
+        "files": {
+          "total": 354,
+          "passed": 354,
+          "failed": 0,
+          "skipped": 0
+        },
+        "assertions": {
+          "total": 2591,
+          "passed": 2591,
+          "failed": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "coveragePercentages": {
+          "statements": 80.22,
+          "branches": 72.42,
+          "functions": 85.02,
+          "lines": 82.39
+        }
+      },
+      "shared": {
+        "files": {
+          "total": 133,
+          "passed": 133,
+          "failed": 0,
+          "skipped": 0
+        },
+        "assertions": {
+          "total": 1850,
+          "passed": 1850,
+          "failed": 0,
+          "skipped": 0,
+          "todo": 0
+        },
+        "coveragePercentages": {
+          "statements": 79.97,
+          "branches": 74.27,
+          "functions": 78.45,
+          "lines": 83.12
+        }
+      }
+    }
+  },
+  "otherRemoteRuns": [
+    {
+      "name": "ACS CI",
+      "runId": 34169355282,
+      "conclusion": "success",
+      "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169355282",
+      "source": "Main reviewer already verified same audit baseline; not queried again in evidence consolidation.",
+      "limitations": "No claim of current production business health or all fault paths."
+    },
+    {
+      "name": "Staging",
+      "runId": 34169361409,
+      "conclusion": "success",
+      "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34169361409",
+      "source": "Main reviewer already verified same audit baseline; not queried again in evidence consolidation.",
+      "limitations": "No claim of current production business health or all fault paths."
+    },
+    {
+      "name": "Promotion",
+      "runId": 34171082432,
+      "conclusion": "success",
+      "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34171082432",
+      "source": "Main reviewer already verified same audit baseline; not queried again in evidence consolidation.",
+      "limitations": "No claim of current production business health or all fault paths."
+    }
+  ],
+  "sourceArtifacts": [
+    {
+      "name": "agent-profile-pg-confirmed-tests.json",
+      "bytes": 3154,
+      "sha256": "7f628dc095fa2d6b1634d72b4dda144ca2ef5fb6f6a5a71cbdef3f8be935b8cb"
+    },
+    {
+      "name": "agent-profile-pg-confirmed-tests.log",
+      "bytes": 3010,
+      "sha256": "f60da945b24417699dcbdb0ffe1e3381cec5cb06802720b3da2bdc954c61af06"
+    },
+    {
+      "name": "agent-profile-pg-tests.json",
+      "bytes": 2297,
+      "sha256": "4a39aa2bec72773daac51f2d8c1453da35cc72e450df91058122aefca0ceaf55"
+    },
+    {
+      "name": "agent-profile-pg-tests.log",
+      "bytes": 2535,
+      "sha256": "31dd28ad3ae57a8936f04a562dab7d4e8c2e60d45a3c84c9984f660463550832"
+    },
+    {
+      "name": "acs-orchestrator-tests.json",
+      "bytes": 149286,
+      "sha256": "b50f612f890dd37ceab32f7228de642964e892a198cb5dc165d1362e05f3a13f"
+    },
+    {
+      "name": "acs-orchestrator-tests.log",
+      "bytes": 1163,
+      "sha256": "a1debeb1e499d80383752d7e6218a8aae5b0504f2c6cd21ffe7dbbdd605d6f67"
+    },
+    {
+      "name": "browser-layout.log",
+      "bytes": 1069,
+      "sha256": "25eef1c19eb6b0d15936780560fcffcbb989145927abbc772db1bb37d38a4382"
+    },
+    {
+      "name": "eslint-second.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "eslint.json",
+      "bytes": 6895254,
+      "sha256": "0dc0b9664754938be9aace82c525859dfe1d2f29c46e616b70154e2a6c860101"
+    },
+    {
+      "name": "eslint.log",
+      "bytes": 985,
+      "sha256": "f2e0fc5aea703e24270e3cd9621b023396e7f7358913e1a17307ece284d82922"
+    },
+    {
+      "name": "expo-check.log",
+      "bytes": 80,
+      "sha256": "28adcc05dfc4b32af564b8765a9b02b663448cfb9640eefa9b9a48494f703f91"
+    },
+    {
+      "name": "github-app-ci.json",
+      "bytes": 30896,
+      "sha256": "c62b253e904214dff2615954a2fdcbe8e882dab211cb476fe0f3dc7119fe041f"
+    },
+    {
+      "name": "github-build-check.log",
+      "bytes": 2198434,
+      "sha256": "b9108689d971873ccb18a937494c72bb560f9d9210c4e709e9e5596bae425a9a"
+    },
+    {
+      "name": "hand-server-tests.json",
+      "bytes": 21612,
+      "sha256": "7f0d541412fe8eefad23471278c7a96995f801cd415505055a28917a9d71a308"
+    },
+    {
+      "name": "hand-server-tests.log",
+      "bytes": 443,
+      "sha256": "4283b658a37d63695c0d909536c28af823ed298603acca8ea0b80cfcb54f1116"
+    },
+    {
+      "name": "inventory.json",
+      "bytes": 5183,
+      "sha256": "d7b9d2e474cdae57e66e6e2979feb77d8bd6d116ae1acda0ba061ae789a56984"
+    },
+    {
+      "name": "mobile-contracts.log",
+      "bytes": 37900,
+      "sha256": "2b7f4400f56f69c3bbef3ad128b441973e459ca1e0743829b3228b0c9927dda0"
+    },
+    {
+      "name": "mobile-tests.json",
+      "bytes": 158387,
+      "sha256": "a878a04b548ea288a305cdf75d165f66aa6c2bbe147cb86ccdc4ba3e294e9e04"
+    },
+    {
+      "name": "mobile-tests.log",
+      "bytes": 1233,
+      "sha256": "8070999b0afd760d43e65036e0acbb4ec682d98b32cc8f618457f1bc8cf04f80"
+    },
+    {
+      "name": "packages-build.log",
+      "bytes": 597,
+      "sha256": "33fa9fd252f965b9fc4350545384581233dd63a249a073e885103fb53db40fe0"
+    },
+    {
+      "name": "packages-tests.log",
+      "bytes": 2170,
+      "sha256": "76943cb15e474cea593b7924540375e9432828bbb032300ca2195e619c4cc130"
+    },
+    {
+      "name": "ratchets.log",
+      "bytes": 10010,
+      "sha256": "f4fc11a4dddf963811a8a4a12dc64f98162e90a5b09d3456069491c099d24509"
+    },
+    {
+      "name": "release-tests.log",
+      "bytes": 216819,
+      "sha256": "13c1b7e87b1c7f54f67908a4e918afc548b3ad36c3f727fdfc73a5bd754ffd81"
+    },
+    {
+      "name": "secret-scan.json",
+      "bytes": 2177,
+      "sha256": "612454e9cf88bd5d1576c83e4822f23f847a9aa0a5186e6e5d1dc085f67aa840"
+    },
+    {
+      "name": "server-build.log",
+      "bytes": 2647,
+      "sha256": "9f68e53a6de76b311a033ba24c7a758c0efbcc109737c8c1385b8a3218e80e44"
+    },
+    {
+      "name": "server-tests.json",
+      "bytes": 29946887,
+      "sha256": "e81be5d8dcba2eaa8bd59539657e9e692b11401009f19d07a044fc06132a34ec"
+    },
+    {
+      "name": "server-tests.log",
+      "bytes": 932025,
+      "sha256": "a54043aaeebe46a9d92619e6b02016c1f85d4a936aca3bd89a277779cbb161c9"
+    },
+    {
+      "name": "shared-tests.json",
+      "bytes": 3841362,
+      "sha256": "8c2b3d8fe2872a5416b646e3abbbd9356d5409496763b55d9b0d8cec1ab24e81"
+    },
+    {
+      "name": "shared-tests.log",
+      "bytes": 23412,
+      "sha256": "31796371687aeb93a21dcf0c3ea7417f8a42e89009bcf7311c98b53e7a46a036"
+    },
+    {
+      "name": "typecheck.log",
+      "bytes": 898,
+      "sha256": "ea29dee78941904fc7ac058a2950bfdef056c68b8f8f3ed8cff122cc00ff298d"
+    },
+    {
+      "name": "web-build.log",
+      "bytes": 21427,
+      "sha256": "59e97dab2d20247f324b86c63bf302e4ee7965025a71e741f8b832c6270b0df2"
+    },
+    {
+      "name": "web-tests.json",
+      "bytes": 1514082,
+      "sha256": "f1533f092ba596d87a22f65ec965ff1f3697e636db12632a5c2ae1e43ee3c4a0"
+    },
+    {
+      "name": "web-tests.log",
+      "bytes": 62161,
+      "sha256": "ba78ade9fa9cd8a16e33d589cd2f26eb4fcefd73abd035fb6b4a527b6e69b280"
+    },
+    {
+      "name": "web-coverage/coverage-summary.json",
+      "bytes": 24582,
+      "sha256": "76f1cc1d69bb69f21eb4ef330e6afd1115ac164526da2fe8190fb5a006a942c4"
+    },
+    {
+      "name": "shared-coverage/coverage-summary.json",
+      "bytes": 59486,
+      "sha256": "45291f4cc52dfaec0880506604e812e408903cca175c5845c49c4e54ba662010"
+    }
+  ]
+}

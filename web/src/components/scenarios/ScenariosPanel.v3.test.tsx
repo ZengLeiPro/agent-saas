@@ -89,6 +89,10 @@ describe("ScenariosPanel V3", () => {
     expect(screen.queryByTestId("guided-presentations")).toBeNull();
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);
     const catalog = screen.getByTestId("workflow-catalog");
+    expect(catalog.className).toContain("grid-cols-1");
+    expect(catalog.className).toContain("md:grid-cols-2");
+    expect(catalog.className).toContain("lg:grid-cols-3");
+    expect(catalog.className).toContain("xl:grid-cols-4");
     expect(within(catalog).getAllByRole("button", { name: "试试" })).toHaveLength(2);
 
     fireEvent.click(within(catalog).getAllByRole("button", { name: "演示" })[0]!);

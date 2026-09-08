@@ -67,10 +67,9 @@ test('候选 API readiness 使用有界墙钟等待、静默重试与可操作�
 test('authority 提交后旧 generation 后台交接：marker + disable + SIGUSR2，短时确认、不 --now、committed 点前移', () => {
   const marker = deployApp.indexOf('commit_app_active_colors "$api_idle" "$worker_idle" "$api_active"');
   const committed = deployApp.indexOf('DEPLOY_APP_ROLLBACK_COMMITTED=true', marker);
-  const worker = deployApp.indexOf('hand_off_retired_authority "agent-saas-runtime-worker@$worker_active"', committed);
-  const api = deployApp.indexOf('hand_off_retired_authority "agent-saas-server@$api_active"', worker);
-  const finalCheck = deployApp.indexOf("'Committed candidate App final API ConfigIdentity'", api);
-  assert.ok(marker > -1 && committed > marker && worker > committed && api > worker && finalCheck > api);
+  const handoff = deployApp.indexOf('  complete_app_handoff', committed);
+  const finalCheck = deployApp.indexOf("'Committed candidate App final API ConfigIdentity'", handoff);
+  assert.ok(marker > -1 && committed > marker && handoff > committed && finalCheck > handoff);
   assert.doesNotMatch(deployApp, /retire_systemd_authority/u);
   assert.doesNotMatch(deployApp, /kill -USR2 "\$old_(?:worker|api)_pid"/u);
 

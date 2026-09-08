@@ -197,15 +197,21 @@ NODE
 cleanup_acs_failure() {
   local deploy_status=$?
   local rollback_status=0
+  if declare -F cancel_acs_deployment_drain >/dev/null; then
+    cancel_acs_deployment_drain || rollback_status=70
+  fi
   set +e
   if [ "$acs_committed" = false ] && [ "${acs_mutation_started:-false}" = true ]; then
-    rollback_acs_release
-    rollback_status=$?
+    rollback_acs_release || rollback_status=$?
     if [ "$rollback_status" -ne 0 ]; then
       echo "ACS deployment failed with status $deploy_status; rollback status $rollback_status" >&2
       trap - EXIT HUP INT TERM
       exit "$rollback_status"
     fi
+  fi
+  if [ "$rollback_status" -ne 0 ]; then
+    echo 'ACS drain recovery did not converge; preserving recovery evidence' >&2
+    exit "$rollback_status"
   fi
   rm -rf "$rollback_root"
   return "$deploy_status"
@@ -262,7 +268,9 @@ ROLLBACK_RUNTIME_VERIFY=true
 : "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
 : "${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}"
 VERIFY_ONLY="${VERIFY_ONLY:-false}"
+RESUME_HANDOFF="${RESUME_HANDOFF:-false}"
 case "$VERIFY_ONLY" in true|false) ;; *) echo 'VERIFY_ONLY must be true or false' >&2; exit 1 ;; esac
+case "$RESUME_HANDOFF:$PHASE:$VERIFY_ONLY" in false:*|true:app:true) ;; *) echo 'RESUME_HANDOFF requires the App verify-only path' >&2; exit 1 ;; esac
 case "$PHASE" in
   acs) : "${ACS_UNIT_TEMPLATE:?ACS_UNIT_TEMPLATE is required}" ;;
   app)
@@ -417,6 +425,9 @@ test -f "$config_identity_reader" || {
   echo 'Missing shared ConfigIdentity readiness contract module' >&2
   exit 1
 }
+if [ "$PHASE" = acs ]; then
+  source "$(dirname "$0")/acs-deployment-drain.sh"
+fi
 # Promotion 的 GitHub gate 与分阶段写入之间仍可能有手工/兼容入口；每个阶段必须在
 # 同一主机锁内从 observer、systemd 与已安装密封字节重建 live matrix，再只接受该阶段
 # 应看到的“冻结基线 + 已提交 phase”精确前置矩阵；重试时也只接受当前 phase 已精确提交的目标矩阵。
@@ -425,10 +436,35 @@ test -f "$config_identity_reader" || {
 production_now="/tmp/agent-saas-production-before-${PHASE}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 rm -f "$production_now"
 phase_config_identity_stage="$(node "$VERIFY_PROMOTION_PHASE_SCRIPT" "$MANIFEST_PATH" --config-identity-stage "$PHASE")"
-node "$READ_LIVE_COMPONENTS_SCRIPT" --config-identity-stage "$phase_config_identity_stage" --output "$production_now" >/dev/null
+if ! node "$READ_LIVE_COMPONENTS_SCRIPT" --config-identity-stage "$phase_config_identity_stage" --output "$production_now" >/dev/null; then
+  if [ "${PRODUCTION_RECOVERY_MODE:-normal}" = repair ] && [ "$VERIFY_ONLY" != true ] \
+      && { [ "$PHASE" = acs ] || [ "$PHASE" = app ]; }; then
+    recovery_reader="$(dirname "$config_identity_reader")/read-production-recovery-state.mjs"
+    test -f "$recovery_reader" || { echo 'Missing explicit production recovery reader' >&2; exit 1; }
+    node "$recovery_reader" --manifest "$MANIFEST_PATH" --config-identity-stage "$phase_config_identity_stage" --output "$production_now" >/dev/null
+  else
+    echo 'Production phase readiness failed; repair requires its explicit, sealed recovery contract' >&2
+    exit 1
+  fi
+fi
 node "$VERIFY_PROMOTION_PHASE_SCRIPT" "$MANIFEST_PATH" "$production_now" "$PHASE" >/dev/null
+if [ "$RESUME_HANDOFF" = true ]; then
+  node --input-type=module - "$MANIFEST_PATH" "$production_now" <<'NODE'
+import fs from 'node:fs';
+const [manifestPath, statePath] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath));
+const live = JSON.parse(fs.readFileSync(statePath));
+for (const role of ['api', 'runtimeWorker']) {
+  const target = manifest.components[role];
+  const actual = live.components[role];
+  if (target.action !== 'deploy' || actual.gitSha !== target.sourceSha || actual.artifactDigest !== target.artifactDigest) {
+    throw new Error('Handoff recovery requires the exact committed target App');
+  }
+}
+NODE
+fi
 rm -f "$production_now"
-if [ "$VERIFY_ONLY" = true ]; then
+if [ "$VERIFY_ONLY" = true ] && [ "$RESUME_HANDOFF" != true ]; then
   echo "$PHASE live precondition verified for $release_id"
   exit 0
 fi
@@ -1373,6 +1409,9 @@ deploy_acs() {
   trap cleanup_acs_failure EXIT
   arm_deploy_rollback cleanup_acs_failure
   trap 'exit 130' HUP INT TERM
+  # Stop only after a PID-bound clean terminal outcome; never rewrite the old
+  # generation's current/env before its accepted work has safely finished.
+  drain_acs_before_cutover
   acs_mutation_started=true
   install -m 0644 "$ACS_UNIT_TEMPLATE" "$unit_path"
   systemctl daemon-reload
@@ -1408,18 +1447,7 @@ fs.writeFileSync(`${identityPath}.candidate`, `${JSON.stringify(identity)}\n`, {
 fs.renameSync(`${identityPath}.candidate`, identityPath);
 NODE
   ln -sfn "$target" "$ACS_CURRENT_PATH"
-  if systemctl is-active --quiet "$ACS_SERVICE_NAME"; then
-    main_pid="$(systemctl show "$ACS_SERVICE_NAME" --property MainPID --value)"
-    kill -USR2 "$main_pid"
-    for _ in $(seq 1 330); do
-      systemctl is-active --quiet "$ACS_SERVICE_NAME" || break
-      sleep 2
-    done
-    systemctl is-active --quiet "$ACS_SERVICE_NAME" && {
-      echo 'Production ACS drain deadline exceeded' >&2
-      exit 20
-    }
-  fi
+  release_acs_drain_guard
   systemctl restart "$ACS_SERVICE_NAME"
   acs_health_path="/tmp/acs-promotion-health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
   rm -f "$acs_health_path"
@@ -1494,10 +1522,45 @@ wait_for_idle_app_slots() {
 # 自启、SIGUSR2 让进程在安全边界交棒/排空后自退。不等待也不 --now 强停：等待会把发布
 # 时长绑在最长 durable run 上（旧入口实测 905～935s 贴着超时回滚），强停会把在途 run
 # 变成 orphaned。下一次发布在 wait_for_idle_app_slots 里等它腾出槽位。
+# Explicit repair may retire a generation that had already crashed. Never stop or
+# signal a failed unit's surviving children; require manager + cgroup emptiness.
+retire_failed_app_generation() {
+  local unit="$1" marker="$2" group jobs tasks root
+  [ "${PRODUCTION_RECOVERY_MODE:-normal}" = repair ] || return 1
+  [ "$(systemctl show "$unit" --property=ActiveState --value)" = failed ] || return 1
+  [ "$(systemctl show "$unit" --property=MainPID --value)" = 0 ] || return 1
+  [ "$(systemctl show "$unit" --property=ControlPID --value)" = 0 ] || return 1
+  [ -e "$marker" ] || install -m 0644 /dev/null "$marker" || return 1
+  systemctl disable "$unit" >/dev/null 2>&1 || return 1
+  jobs="$(systemctl list-jobs --no-legend --no-pager)" || return 1
+  if printf '%s\n' "$jobs" | awk -v unit="${unit%.service}.service" '$2 == unit { found=1 } END { exit !found }'; then
+    echo "Pending systemd job prevents failed-generation retirement: $unit" >&2; return 1
+  fi
+  tasks="$(systemctl show "$unit" --property=TasksCurrent --value)" || return 1
+  [ "$tasks" = 0 ] || { echo "Unknown or remaining failed-generation tasks: $unit" >&2; return 1; }
+  group="$(systemctl show "$unit" --property=ControlGroup --value)" || return 1
+  if [ -n "$group" ]; then
+    [[ "$group" = /* && "$group" != / && "$group" != *..* ]] || return 1
+    root="${APP_REPAIR_CGROUP_ROOT:-/sys/fs/cgroup}$group"
+    if [ -e "$root" ]; then
+      [ -f "$root/cgroup.events" ] || return 1
+      [ "$(awk '$1=="populated" { print $2 }' "$root/cgroup.events")" = 0 ] || return 1
+    fi
+  fi
+  [ "$(systemctl show "$unit" --property=ActiveState --value)" = failed ] || return 1
+  [ "$(systemctl show "$unit" --property=MainPID --value)" = 0 ] || return 1
+  [ "$(systemctl show "$unit" --property=ControlPID --value)" = 0 ] || return 1
+  systemctl reset-failed "$unit" || return 1
+  [ "$(systemctl show "$unit" --property=ActiveState --value)" = inactive ] || return 1
+  [ "$(systemctl show "$unit" --property=MainPID --value)" = 0 ] || return 1
+  ! systemctl is-enabled --quiet "$unit"
+}
+
 hand_off_retired_authority() {
   local unit="$1" marker="$2" pidfile="$3" pid main_pid deadline state
   if ! systemctl is-active --quiet "$unit"; then
     state="$(systemctl show "$unit" --property=ActiveState --value)" || return 1
+    if [ "$state" = failed ] && retire_failed_app_generation "$unit" "$marker"; then return 0; fi
     [ "$state" = inactive ] || { echo "ERROR: unknown retired unit state: $unit $state" >&2; return 1; }
     systemctl disable "$unit" >/dev/null 2>&1 || return 1
     return 0
@@ -1519,8 +1582,8 @@ hand_off_retired_authority() {
     [ "$state" != inactive ] || return 0
     main_pid="$(systemctl show "$unit" --property=MainPID --value)" || return 1
     [ "$main_pid" = "$pid" ] || { echo "ERROR: retired PID changed: $unit" >&2; return 1; }
-    if [ "$state" = active ] && jq -e --argjson pid "$pid" \
-      'type=="object" and .pid==$pid and (.runtimeQuiesced|type)=="boolean" and (.activeStreams|type)=="number" and (.activeUploads|type)=="number"' \
+    if [ "$state" = active ] && jq -se --argjson pid "$pid" \
+      'length==1 and (.[0] | type=="object" and .pid==$pid and (.runtimeQuiesced|type)=="boolean" and (.activeStreams|type)=="number" and (.activeUploads|type)=="number")' \
       "$marker" >/dev/null 2>&1; then
       echo "$unit acknowledged drain (pid $pid); durable work continues to its safe boundary"
       return 0
@@ -1529,6 +1592,30 @@ hand_off_retired_authority() {
   done
   echo "ERROR: no drain acknowledgment from $unit pid $pid; handoff needs human review" >&2
   return 1
+}
+
+# A successful target readback alone cannot establish that the retired generation
+# stopped accepting work. Repeat this operation on already-target retries as well.
+complete_app_handoff() {
+  local current_api current_worker retired_api retired_worker evidence
+  current_api="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
+  current_worker="$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_PATH")"
+  case "$current_api:$current_worker" in blue:blue|blue:green|green:blue|green:green) ;; *) return 1 ;; esac
+  retired_api="$(other_color "$current_api")"
+  retired_worker="$(other_color "$current_worker")"
+  hand_off_retired_authority "agent-saas-runtime-worker@$retired_worker" \
+    "/run/agent-saas-runtime-worker-$retired_worker.draining" \
+    "/run/agent-saas-runtime-worker-$retired_worker.pid" || return 1
+  hand_off_retired_authority "agent-saas-server@$retired_api" \
+    "/run/agent-saas-server-$retired_api.draining" \
+    "/run/agent-saas-server-$retired_api.pid" || return 1
+  evidence="$(dirname "$MANIFEST_PATH")/app-handoff-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+  jq -n --arg releaseId "$release_id" --arg manifestDigest "$manifest_digest" \
+    --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+    --arg api "$current_api" --arg worker "$current_worker" \
+    '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,runId:$runId,runAttempt:$runAttempt,status:"acknowledged",active:{api:$api,runtimeWorker:$worker}}' \
+    > "$evidence.candidate" || return 1
+  chmod 0444 "$evidence.candidate" && mv "$evidence.candidate" "$evidence"
 }
 
 deploy_app() {
@@ -1951,12 +2038,7 @@ EOF
 
   # 交接点：authority 已提交给候选，从这里起任何失败都不再回滚到旧 generation。
   DEPLOY_APP_ROLLBACK_COMMITTED=true
-  hand_off_retired_authority "agent-saas-runtime-worker@$worker_active" \
-    "/run/agent-saas-runtime-worker-$worker_active.draining" \
-    "/run/agent-saas-runtime-worker-$worker_active.pid"
-  hand_off_retired_authority "agent-saas-server@$api_active" \
-    "/run/agent-saas-server-$api_active.draining" \
-    "/run/agent-saas-server-$api_active.pid"
+  complete_app_handoff
   validate_api_release_boundary "$api_idle" "$config_identity" \
     'Committed candidate App final API ConfigIdentity'
   validate_worker_release_boundary "$worker_idle" "$worker_env" - - \
@@ -1974,7 +2056,9 @@ EOF
 
 case "$PHASE" in
   acs) deploy_acs ;;
-  app) deploy_app ;;
+  app)
+    if [ "$RESUME_HANDOFF" = true ]; then complete_app_handoff; else deploy_app; fi
+    ;;
   web) exit 0 ;;
 esac
 echo "$PHASE phase completed for $release_id"

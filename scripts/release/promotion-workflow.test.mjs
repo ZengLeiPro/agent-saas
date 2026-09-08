@@ -134,7 +134,9 @@ test('promotion accepts only an approved release id and shares the production ru
   );
   assert.match(workflow, /deployments\/\$deployment_id\/statuses/u);
   assert.match(workflow, /actions\/runs\/\$staging_run_id/u);
-  assert.match(workflow, /deterministic-deployment-gates-v1/u);
+  assert.match(workflow, /deterministic-deployment-gates-v2/u);
+  assert.match(workflow, /staging-core-smoke-evidence\.mjs/u);
+  assert.match(workflow, /staging-evidence-\$RELEASE_ID-\$staging_run_attempt/u);
   assert.match(workflow, /verificationSummary/u);
   assert.doesNotMatch(workflow, /e2eRunId|e2eSummary|summarize-e2e/u);
   assert.match(workflow, /runtime_summary=/u);
@@ -495,15 +497,9 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.doesNotMatch(workflow, /jq -S \.components "\$RUNNER_TEMP\/production-confirmed\.json"/u);
   assert.match(workflow, /verify-promotion-acs-selection\.mjs/u);
   assert.match(workflow, /built\/artifact-index\.json/u);
-  assert.match(workflow, /built_base="\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID"/u);
-  assert.match(workflow, /runtimeDependencies\.path/u);
-  assert.match(
-    workflow,
-    /if \[ "\$\(jq -r \.schemaVersion "\$RUNNER_TEMP\/built\/artifact-index\.json"\)" = 2 \]; then/u,
-  );
-  assert.match(workflow, /\.artifacts\[\] \| \.path/u);
+  assert.match(workflow, /prefetch-promotion-artifacts\.mjs/u);
+  assert.match(workflow, /"\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID" "\$RUNNER_TEMP"/u);
   assert.doesNotMatch(workflow, /selected\/artifact-index\.json/u);
-  assert.match(workflow, /runtimeDependencies\.server\.uri/u);
   assert.match(workflow, /校验 OSS 中的不可变清单、产物索引与 Release 记录/u);
   assert.match(workflow, /verify-selected-release-artifacts\.mjs/u);
   assert.ok(
@@ -1120,15 +1116,8 @@ test('App cleanup after Worker drain restores both sides before the success rece
   const cleanupStart = deploy.indexOf('  cleanup_app_failure() {', appDeployStart);
   const cleanupEnd = deploy.indexOf('  arm_deploy_rollback cleanup_app_failure', cleanupStart);
   const cleanup = deploy.slice(cleanupStart, cleanupEnd);
-  const workerDrain = deploy.indexOf(
-    'hand_off_retired_authority "agent-saas-runtime-worker@$worker_active"',
-    cleanupEnd,
-  );
-  const apiDrain = deploy.indexOf(
-    'hand_off_retired_authority "agent-saas-server@$api_active"',
-    workerDrain,
-  );
-  assert.ok(workerDrain > cleanupEnd && apiDrain > workerDrain);
+  const handoff = deploy.indexOf('  complete_app_handoff', cleanupEnd);
+  assert.ok(handoff > cleanupEnd);
   assert.ok(cleanup.indexOf('agent-saas-server-$api_active.draining') >= 0);
   assert.ok(cleanup.indexOf('commit_rollback_worker_authority') >= 0);
   assert.ok(cleanup.indexOf('commit_rollback_api_authority') >= 0);

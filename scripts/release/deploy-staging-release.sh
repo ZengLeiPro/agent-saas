@@ -51,6 +51,11 @@ test -f "$config_identity_reader" || {
   echo 'Missing shared ConfigIdentity readiness contract module' >&2
   exit 1
 }
+source "$(dirname "$0")/acs-deployment-drain.sh"
+ACS_SERVICE_NAME=agent-saas-acs-orchestrator-staging.service
+ACS_HEALTH_URL=http://127.0.0.1:3410/health
+ACS_DRAIN_STATE_PATH="$run_root/acs-drain.json"
+acs_mutation_started=false
 
 runtime_dir="$runtime_root/server"
 artifact_dir="$runtime_root/artifacts"
@@ -141,6 +146,10 @@ rollback() {
   restore_optional_file "$had_acs_unit" \
     "$rollback_root/agent-saas-acs-orchestrator-staging.service" "$acs_unit" || rollback_failed=true
   systemctl daemon-reload || rollback_failed=true
+  if [ -n "${ACS_DRAIN_PID:-}" ] && [ "${acs_mutation_started:-false}" != true ]; then
+    # Restore old files first, then resume its existing process without killing accepted work.
+    cancel_acs_deployment_drain || rollback_failed=true
+  fi
   if [ "$runtime_mutated" = true ]; then
     rm -f "$run_root/runtime-worker.ready" \
       "$api_config_identity_snapshot" "$worker_config_identity_snapshot"
@@ -194,6 +203,9 @@ finish() {
   rm -f "$acs_health_probe" "$api_ready_probe"
   if [ "$deployment_committed" = false ]; then
     rollback || { [ "$status" -ne 0 ] || status=1; }
+  fi
+  if [ -n "${ACS_DRAIN_DROPIN:-}" ]; then
+    release_acs_drain_guard || { [ "$status" -ne 0 ] || status=1; }
   fi
   return "$status"
 }
@@ -514,6 +526,11 @@ if (failures.length > 0) {
 }
 NODE
 
+# Prove the old process drained before changing the code/env it would restart with.
+if systemctl is-active --quiet "$ACS_SERVICE_NAME"; then
+  drain_acs_before_cutover
+fi
+acs_mutation_started=true
 runtime_mutated=true
 ln -sfn "$target" "$current"
 node - "$server_config" "$deployment_attempt_id" <<'NODE'
@@ -611,22 +628,10 @@ fs.renameSync(candidatePath, identityPath);
 NODE
 runuser -u agent-saas-staging -- sh -c \
   'umask 077; printf "%s" "$2" > "$1"' sh "$artifact_persistence_probe" "$release_id"
-if systemctl is-active --quiet agent-saas-acs-orchestrator-staging.service; then
-  main_pid="$(systemctl show agent-saas-acs-orchestrator-staging.service --property MainPID --value)"
-  test "$main_pid" -gt 0
-  kill -USR2 "$main_pid"
-  for attempt in $(seq 1 330); do
-    systemctl is-active --quiet agent-saas-acs-orchestrator-staging.service || break
-    sleep 2
-  done
-  systemctl is-active --quiet agent-saas-acs-orchestrator-staging.service && {
-    echo 'Staging ACS drain deadline exceeded' >&2
-    exit 1
-  }
-fi
 rm -f "$run_root/runtime-worker.ready" \
   "$api_config_identity_snapshot" "$worker_config_identity_snapshot"
 systemctl restart agent-saas-acs-orchestrator-staging.service
+release_acs_drain_guard
 for attempt in $(seq 1 60); do
   curl -fsS http://127.0.0.1:3410/health >"$acs_health_probe" && break
   sleep 2

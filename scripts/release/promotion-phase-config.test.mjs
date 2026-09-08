@@ -10,7 +10,7 @@ const phaseVerifier = new URL('./verify-promotion-phase-state.mjs', import.meta.
 const liveReader = new URL('./read-live-production-components.mjs', import.meta.url).href;
 const script = readFileSync(new URL('./deploy-production-release.sh', import.meta.url), 'utf8');
 const start = script.indexOf('production_now="/tmp/agent-saas-production-before-');
-const end = script.indexOf('if [ "$VERIFY_ONLY" = true ]; then', start);
+const end = script.indexOf('if [ "$VERIFY_ONLY" = true ] && [ "$RESUME_HANDOFF" != true ]; then', start);
 assert.ok(start > 0 && end > start);
 const commands = script.slice(start, end);
 const fixture = JSON.parse(
@@ -87,6 +87,8 @@ writeFileSync(args[args.indexOf('--output') + 1], JSON.stringify(state));
       env: {
         ...process.env,
         PHASE: phase,
+        RESUME_HANDOFF: 'false',
+        VERIFY_ONLY: 'false',
         GITHUB_RUN_ID: '123',
         GITHUB_RUN_ATTEMPT: '1',
         MANIFEST_PATH: manifestPath,

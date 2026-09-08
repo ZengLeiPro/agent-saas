@@ -86,6 +86,27 @@ const configIdentityCases = JSON.parse(
   readFileSync(new URL('./fixtures/config-identity-summary-cases.json', import.meta.url), 'utf8'),
 ).cases;
 
+test('historical baseline cannot carry a current ConfigIdentity claim', () => {
+  const value = structuredClone(createValidReleaseEvidence());
+  value.baselineObservation = {
+    kind: 'last_committed',
+    releaseId: 'rc-20260908-00',
+    observedAt: '2026-09-08T00:00:00.000Z',
+    checkpointDigest: `sha256:${'a'.repeat(64)}`,
+  };
+  const seal = () => {
+    const { evidenceDigest: unused, ...body } = value;
+    value.evidenceDigest = digestBuffer(Buffer.from(canonicalJson(body)));
+  };
+  seal();
+  assert.equal(validateReleaseEvidenceDocument(value).baselineObservation.kind, 'last_committed');
+  value.configIdentity = structuredClone(
+    configIdentityCases.find((entry) => entry.valid.releaseEvidence).summary,
+  );
+  seal();
+  assert.throws(() => validateReleaseEvidenceDocument(value), /Historical baseline/u);
+});
+
 for (const fixtureCase of configIdentityCases) {
   test(`release evidence Config Identity fixture ${fixtureCase.valid.releaseEvidence ? 'accepts' : 'rejects'} ${fixtureCase.name}`, () => {
     const value = structuredClone(createValidReleaseEvidence());

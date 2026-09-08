@@ -2,9 +2,9 @@
 // CI 门禁计划：决定一次 run 要跑哪些测试分片、是否收集覆盖率、哪些辅助门禁可以跳过。
 //
 // - pull_request：affected 模式。只跑受影响工作区，server/web 在纯 TS 源码改动时用
-//   vitest --changed=<base> 选择相关测试，不收集覆盖率；未识别路径 fail closed 到全量。
+//   合并 Vitest changed/import 图与源码资源 guard 后分片；未知路径 fail closed 到全量。
 // - push main / workflow_dispatch：full 模式。全量分片 + 覆盖率 + 全部辅助门禁，
-//   这是合并后的权威门禁，也是覆盖率的唯一来源（PR 与 main 各跑一遍但内容不同，不重复）。
+//   这是合并后的权威门禁，也是覆盖率的唯一来源；PR 使用上述安全子集。
 import { appendFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -47,11 +47,18 @@ function requiresFullRun(file) {
 
 // vitest --changed 只能沿静态 import 图追踪。凡是可能被 fs 读取的资源、测试基建、
 // 类型声明或非 TS 文件，都必须退回该工作区全量。
-const NON_GRAPH_SEGMENTS = ['/fixtures/', '/__fixtures__/', '/__snapshots__/', '/__mocks__/', '/test/'];
+const NON_GRAPH_SEGMENTS = [
+  '/fixtures/',
+  '/__fixtures__/',
+  '/__snapshots__/',
+  '/__mocks__/',
+  '/test/',
+];
 
 function serverAffectedEligible(file) {
   if (!/^server\/src\/.+\.tsx?$/u.test(file) || file.endsWith('.d.ts')) return false;
-  if (file.startsWith('server/src/data/') || file.startsWith('server/src/agent/descriptions/')) return false;
+  if (file.startsWith('server/src/data/') || file.startsWith('server/src/agent/descriptions/'))
+    return false;
   return !NON_GRAPH_SEGMENTS.some((segment) => file.includes(segment));
 }
 
@@ -68,6 +75,8 @@ function fullPlan(reason) {
     postgres: true,
     webProduction: true,
     mobile: true,
+    releasePackages: true,
+    browserSmoke: true,
     reasons: [reason],
   };
 }
@@ -87,6 +96,8 @@ export function planCi(files, eventName = 'pull_request') {
     postgres: false,
     webProduction: false,
     mobile: false,
+    releasePackages: false,
+    browserSmoke: false,
     reasons: [],
   };
   const widen = (workspace, level, reason) => {
@@ -101,15 +112,20 @@ export function planCi(files, eventName = 'pull_request') {
     if (isDocumentationOnly(file)) continue;
     if (file.startsWith('server/') || file === 'config.json') {
       plan.postgres = true;
+      plan.releasePackages = true;
+      if (file.startsWith('server/src/kyapp/')) plan.browserSmoke = true;
       if (file.startsWith('server/src/data/scenarios/') || file.startsWith('server/scripts/')) {
         plan.webProduction = true;
       }
-      if (serverAffectedEligible(file)) widen('server', 'affected', `${file} → server affected tests`);
+      if (serverAffectedEligible(file))
+        widen('server', 'affected', `${file} → server affected tests`);
       else widen('server', 'full', `${file} → server full tests`);
       continue;
     }
     if (file.startsWith('web/')) {
       plan.webProduction = true;
+      plan.releasePackages = true;
+      plan.browserSmoke = true;
       if (webAffectedEligible(file)) widen('web', 'affected', `${file} → web affected tests`);
       else widen('web', 'full', `${file} → web full tests`);
       continue;
@@ -149,7 +165,9 @@ function changedFiles(baseSha, headSha) {
     });
     return output.split(/\r?\n/u).filter(Boolean);
   } catch (error) {
-    process.stderr.write(`ci plan: git diff failed, falling back to the full gate: ${error.message}\n`);
+    process.stderr.write(
+      `ci plan: git diff failed, falling back to the full gate: ${error.message}\n`,
+    );
     return null;
   }
 }
@@ -171,6 +189,8 @@ function main() {
     postgres: String(plan.postgres),
     web_production: String(plan.webProduction),
     mobile: String(plan.mobile),
+    release_packages: String(plan.releasePackages),
+    browser_smoke: String(plan.browserSmoke),
     changed_base: plan.mode === 'affected' ? baseSha : '',
     test_matrix: JSON.stringify(matrix),
   };
@@ -178,7 +198,12 @@ function main() {
   process.stdout.write(`reasons:\n${plan.reasons.map((reason) => `  - ${reason}\n`).join('')}`);
   const output = argument('--output');
   if (output) {
-    appendFileSync(output, Object.entries(outputs).map(([key, value]) => `${key}=${value}\n`).join(''));
+    appendFileSync(
+      output,
+      Object.entries(outputs)
+        .map(([key, value]) => `${key}=${value}\n`)
+        .join(''),
+    );
   }
   const summary = argument('--summary');
   if (summary) {

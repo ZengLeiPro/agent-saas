@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   createMigrationPlan,
+  createMigrationAnalysisContext,
   isMigrationPath,
   isProductionStartupSchemaRootSource,
   PRODUCTION_STARTUP_SCHEMA_ROOTS,
@@ -163,6 +164,70 @@ test('emits a deterministic baseline-bound no-migration plan', () => {
       target: TARGET,
       execFileSync,
     }).migrationPlan.planDigest,
+  );
+});
+
+test('analysis context reuses immutable inputs without caching final decisions or crossing readers', () => {
+  const source = sqlSource('CREATE TABLE IF NOT EXISTS safe(id text);');
+  const reader = gitFixture({
+    targets: { [PATH]: source },
+    diffs: { [PATH]: addedSourceDiff(source) },
+  });
+  const context = createMigrationAnalysisContext();
+  const input = { baseline: BASELINE, target: TARGET, changedPaths: [PATH], execFileSync: reader };
+  const expected = createMigrationPlan(input);
+  const first = createMigrationPlan({ ...input, analysisContext: context });
+  const afterFirst = context.statistics();
+  const second = createMigrationPlan({ ...input, analysisContext: context });
+  assert.deepEqual(first, expected);
+  assert.deepEqual(second, expected);
+  assert.equal(context.statistics().snapshotsCreated, 2);
+  assert.ok(context.statistics().snapshotHits >= 2);
+  assert.equal(context.statistics().sourceFilesParsed, afterFirst.sourceFilesParsed);
+  assert.ok(context.statistics().sourceFileHits > afterFirst.sourceFileHits);
+  assert.throws(
+    () => createMigrationPlan({ ...input, cwd: '/another-repository', analysisContext: context }),
+    /cannot cross repositories/u,
+  );
+  assert.throws(
+    () =>
+      createMigrationPlan({
+        ...input,
+        execFileSync: (...args) => reader(...args),
+        analysisContext: context,
+      }),
+    /cannot cross repositories/u,
+  );
+});
+
+test('shared analysis re-parses new content and preserves dynamic-loader fail closed across SHAs', () => {
+  const source = sqlSource('CREATE TABLE IF NOT EXISTS safe(id text);');
+  const safe = gitFixture({
+    targets: { [PATH]: source },
+    diffs: { [PATH]: addedSourceDiff(source) },
+  });
+  const loader = 'const provider = await import(process.env.MIGRATION_PROVIDER);';
+  const unsafe = gitFixture({
+    targets: { [PATH]: loader },
+    diffs: { [PATH]: addedSourceDiff(loader) },
+  });
+  const next = 'c'.repeat(40);
+  const reader = (command, args, options) =>
+    (args.some((arg) => String(arg).includes(next)) ? unsafe : safe)(command, args, options);
+  const context = createMigrationAnalysisContext();
+  const input = {
+    baseline: BASELINE,
+    changedPaths: [PATH],
+    execFileSync: reader,
+    analysisContext: context,
+  };
+  createMigrationPlan({ ...input, target: TARGET });
+  const result = createMigrationPlan({ ...input, target: next });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /dynamic import or require/u);
+  assert.deepEqual(
+    result,
+    createMigrationPlan({ ...input, target: next, analysisContext: undefined }),
   );
 });
 

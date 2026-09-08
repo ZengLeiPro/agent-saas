@@ -32,6 +32,7 @@ export interface ReleaseCandidateEvidence {
   sourcePullRequests: number[];
   checks: ReleaseManifestContent['checks'];
   productionBaseline: ReleaseComponentMatrix;
+  baselineObservation?: ReleaseManifestContent['baselineObservation'];
   affectedComponents: ReleaseComponent[];
   builtArtifacts: {
     serverBundle: ArtifactEntry;
@@ -126,6 +127,7 @@ export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): Rele
     integrationCandidates: evidence.integrationCandidates,
     sourcePullRequests: [...evidence.sourcePullRequests].sort((left, right) => left - right),
     productionBaseline: evidence.productionBaseline,
+    ...(evidence.baselineObservation ? { baselineObservation: evidence.baselineObservation } : {}),
     components,
     artifacts: {
       serverBundle: serverArtifact,

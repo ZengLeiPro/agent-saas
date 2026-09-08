@@ -140,6 +140,9 @@ test('classifies root dependency files while explicitly ignoring release-only go
     blockingReason: null,
   });
   for (const filePath of [
+    'scripts/ci-coverage-blobs.mjs',
+    'scripts/ci-source-guards.mjs',
+    'scripts/ci-test-selection.mjs',
     'scripts/pr-preflight-contract.test.mjs',
     'scripts/pr-preflight-task.sh',
     'scripts/pr-preflight.sh',

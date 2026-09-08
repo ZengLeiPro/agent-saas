@@ -245,7 +245,7 @@ describe('HttpTransport.invoke', () => {
     expect(calls).toBe(3);
   });
 
-  it('retries HTTP 503 (orchestrator draining) honoring retry-after', async () => {
+  it('does not replay an unstructured HTTP 503 with unknown execution status', async () => {
     let calls = 0;
     const fetchImpl = vi.fn(async () => {
       calls++;
@@ -265,8 +265,8 @@ describe('HttpTransport.invoke', () => {
       connectRetryBackoffMs: [5, 5],
     });
     const response = await transport.invoke(buildRequest());
-    expect(response.status).toBe('success');
-    expect(calls).toBe(2);
+    expect(response.status).toBe('error');
+    expect(calls).toBe(1);
   });
 
   it('fails fast on structured ACS capacity 503 instead of retrying', async () => {

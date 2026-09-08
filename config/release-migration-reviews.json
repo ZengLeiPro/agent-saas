@@ -10311,6 +10311,60 @@
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
         }
       ]
+    },
+    {
+      "baselineSha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+      "files": [
+        {
+          "path": "server/src/data/toolDescriptionStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",
+          "classification": "expand",
+          "reason": "新增工具提示语当前快照表和追加式审计表；仅在 advisory lock 保护的事务内执行幂等 CREATE TABLE IF NOT EXISTS 与单行 INSERT ON CONFLICT DO NOTHING，无既有表修改、回填或删除。运行期更新使用行锁、版本比较和同事务审计。"
+        },
+        {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
+          "targetDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
+          "classification": "expand",
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/工具提示语动态存储迁移审核-20260908.md",
+          "digest": "sha256:132148a6935e0c4c748ecc9579e5be2db5530b863bdf35799b382abb25ba8e25"
+        },
+        {
+          "path": "server/src/data/toolDescriptionStore.pg.test.ts",
+          "digest": "sha256:26400d1185b4fed03211e736e64f503f285f153e1699ea32bfb1d0d1f03bece2"
+        },
+        {
+          "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
+          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        }
+      ]
     }
   ]
 }

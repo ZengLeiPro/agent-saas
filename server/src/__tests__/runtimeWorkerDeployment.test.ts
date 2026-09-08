@@ -68,7 +68,10 @@ describe('Runtime Worker 生产部署契约', () => {
       join(repoRoot, 'daemon-packaging/systemd/nginx-agent-saas-nas.conf'),
       'utf-8',
     );
-    const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
+    // Retain historical rollback invariants after the unreachable ECS job was removed.
+    const workflow = await readFile(join(repoRoot, 'scripts/release/fixtures/legacy-ecs-workflow.yml'), 'utf-8');
+    const activeWorkflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
+    expect(activeWorkflow).not.toMatch(/^  deploy-ecs:/m);
     const authorityHelper = await readFile(
       join(repoRoot, 'scripts/release/compat-app-authority.sh'),
       'utf-8',

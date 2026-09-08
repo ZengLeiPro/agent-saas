@@ -1,10 +1,51 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 const helper = new URL('./acs-deployment-drain.sh', import.meta.url).pathname;
+
+test('actual compatibility cutover never restarts after a failed drain', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'acs-compat-drain-'));
+  try {
+    await mkdir(join(root, 'scripts/release'), { recursive: true });
+    await writeFile(
+      join(root, 'scripts/release/acs-deployment-drain.sh'),
+      'drain_acs_before_cutover() { return "$DRAIN_RESULT"; }\nrelease_acs_drain_guard() { :; }\n',
+    );
+    const source = await readFile(
+      new URL('../deploy-acs-orchestrator.sh', import.meta.url),
+      'utf8',
+    );
+    const block = source.slice(source.indexOf('# ── 3. Drain'), source.indexOf('# ── 4. 等新进程'));
+    assert.ok(block.includes('drain_acs_before_cutover'));
+    assert.doesNotMatch(block, /RESTART_FALLBACK|kill -KILL|kill -TERM/u);
+    for (const status of ['0', '75']) {
+      const result = spawnSync(
+        'bash',
+        ['-ec', 'systemctl() { echo RESTARTED; }; rollback_and_exit() { exit "$1"; };\n' + block],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            APP_DIR: root,
+            RUNTIME_PREFLIGHT_ROOT: root,
+            COMPAT_RELEASE_ID: 'compat-test',
+            ORCHESTRATOR_ARTIFACT_DIGEST: 'sha256:' + 'a'.repeat(64),
+            SYSTEMCTL_BIN: 'systemctl',
+            ACS_SERVICE_NAME: 'acs',
+            DRAIN_RESULT: status,
+          },
+        },
+      );
+      assert.equal(result.status, Number(status), result.stderr);
+      assert.equal(result.stdout.includes('RESTARTED'), status === '0');
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 const mocks = `
 systemctl() {

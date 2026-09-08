@@ -7,6 +7,7 @@ acs-orchestrator/src/backgroundShellWorker.ts
 acs-orchestrator/src/capacityReservations.ts
 acs-orchestrator/src/cidr.ts
 acs-orchestrator/src/config.ts
+acs-orchestrator/src/deploymentDrain.ts
 acs-orchestrator/src/executor.ts
 acs-orchestrator/src/index.ts
 acs-orchestrator/src/invocationCompletionRecovery.ts

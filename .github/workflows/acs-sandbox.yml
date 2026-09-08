@@ -823,7 +823,8 @@ jobs:
           install -m 0555 \
             workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py \
             "$stage/workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py"
-          install -m 0444 scripts/release/artifact-lib.mjs \
+          install -m 0444 scripts/release/acs-deployment-drain.sh \
+            scripts/release/artifact-lib.mjs \
             scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs \

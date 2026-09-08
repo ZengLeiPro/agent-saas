@@ -1,0 +1,700 @@
+{
+  "schemaVersion": 1,
+  "purpose": "CI/CD implementation rollout evidence summary; not a release approval",
+  "recordedAt": "2026-09-08T03:40:57.903542+00:00",
+  "pullRequests": [
+    {
+      "number": 574,
+      "mergeSha": "780b8755f3969c28b7c2c1f477749ee251a04c3d"
+    },
+    {
+      "number": 577,
+      "mergeSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c"
+    }
+  ],
+  "ciRuns": [
+    {
+      "conclusion": "success",
+      "createdAt": "2026-09-08T02:32:38Z",
+      "databaseId": 34180413256,
+      "headSha": "bdbd3a42d4dc84aa57cc5db8c4641d59f3e05bcd",
+      "status": "completed",
+      "updatedAt": "2026-09-08T02:38:07Z",
+      "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34180413256"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-09-08T02:38:25Z",
+      "databaseId": 34180749442,
+      "headSha": "780b8755f3969c28b7c2c1f477749ee251a04c3d",
+      "status": "completed",
+      "updatedAt": "2026-09-08T02:42:38Z",
+      "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34180749442"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-09-08T03:13:47Z",
+      "databaseId": 34182784851,
+      "headSha": "0879cf09290da6a8d4e7cd5a23e8d19280ddb16c",
+      "status": "completed",
+      "updatedAt": "2026-09-08T03:17:56Z",
+      "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34182784851"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-09-08T03:18:31Z",
+      "databaseId": 34183057734,
+      "headSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
+      "status": "completed",
+      "updatedAt": "2026-09-08T03:23:05Z",
+      "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34183057734"
+    }
+  ],
+  "staging": {
+    "runId": 34183084701,
+    "runAttempt": 1,
+    "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34183084701",
+    "status": "completed",
+    "conclusion": "success",
+    "createdAt": "2026-09-08T03:19:00Z",
+    "updatedAt": "2026-09-08T03:37:40Z",
+    "deploymentId": 6320050801,
+    "deploymentStatus": "success",
+    "releaseId": "rc-20260908-86",
+    "releaseSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
+    "manifestDigest": "sha256:c3c2521d59dfb0d299beb639705f7f44761c682cc98ae1919318b3c431250892",
+    "artifactName": "staging-evidence-rc-20260908-86-1",
+    "migrationPlan": {
+      "phase": "expand",
+      "planDigest": "sha256:faceb5394d90d642baf56fc39cf57c186468aa2103b7c229ce85e14a47c98019",
+      "confirmation": "required_after_observation",
+      "contract": "separate_release",
+      "postconditionsDigest": "sha256:ba1a755349bdf6b83d1e59d5cc7b15406ebbd35743531c2abef66c8cfb7b9d83",
+      "postconditions": [
+        {
+          "id": "tool-description-runtime-schema",
+          "description": "工具提示语快照表和审计表已创建",
+          "configPath": "runtimeEventStore",
+          "sql": "SELECT to_regclass($1 || '_tool_descriptions') IS NOT NULL AND to_regclass($1 || '_tool_description_audit') IS NOT NULL AND (SELECT count(*) = 3 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 || '_tool_descriptions' AND column_name IN ('id', 'revision', 'overrides')) AND (SELECT count(*) = 6 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 || '_tool_description_audit' AND column_name IN ('revision', 'tool_id', 'previous_override', 'next_override', 'actor', 'created_at')) AS ok",
+          "params": ["$tablePrefix"],
+          "sourcePath": "server/src/data/toolDescriptionStore.ts",
+          "sourceDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6"
+        }
+      ]
+    },
+    "promotionPolicy": {
+      "expiresAt": "2026-09-09T03:19:00.000Z",
+      "minimumPromotableSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
+      "requiresHumanApproval": true
+    },
+    "finalState": {
+      "schemaVersion": 1,
+      "releaseId": "rc-20260908-86",
+      "observedAt": "2026-09-08T03:37:33.354Z",
+      "components": {
+        "api": {
+          "pid": "192082",
+          "releaseId": "rc-20260908-86",
+          "sourceSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
+          "artifactDigest": "sha256:ae8895e0be34a88d1e05194dad5f7feb66a52b3a3b0c461c22891f6413ded02c"
+        },
+        "runtimeWorker": {
+          "pid": "192111",
+          "releaseId": "rc-20260908-86",
+          "sourceSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
+          "artifactDigest": "sha256:ae8895e0be34a88d1e05194dad5f7feb66a52b3a3b0c461c22891f6413ded02c"
+        },
+        "web": {
+          "releaseId": "rc-20260908-86",
+          "sourceSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
+          "artifactDigest": "sha256:86410ca8cd2a61bc9f1d79cfd1be8b361eee484c4986e1b5e10e0f947d55f378"
+        },
+        "acs": {
+          "releaseId": "rc-20260908-86",
+          "sourceSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
+          "artifactDigest": "sha256:d2155e8242d3dbe1ceaa6e359fea3b09d5bc0752439241503d664f2eca429372",
+          "sandboxImageDigest": "sha256:5f84174dc72136aa16233814393cd8b87316917d3a9e0f7c55a94290c0f8881d"
+        }
+      },
+      "state": "target_runtime",
+      "runtimeConverged": true,
+      "recovery": "Runtime observation only; acceptance requires the final GitHub deployment success after cleanup. A failed attempt requires successful redeployment."
+    },
+    "coreSmoke": {
+      "schemaVersion": 1,
+      "environment": "staging",
+      "status": "passed",
+      "releaseId": "rc-20260908-86",
+      "sourceSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
+      "manifestDigest": "sha256:c3c2521d59dfb0d299beb639705f7f44761c682cc98ae1919318b3c431250892",
+      "stagingRunId": "34183084701",
+      "stagingRunAttempt": "1",
+      "actor": "staging-e2e-admin",
+      "checks": ["login", "authenticated-read", "persistence-read", "websocket"],
+      "observedAt": "2026-09-08T03:36:46.923Z",
+      "evidenceDigest": "sha256:bc54217c06338ddb78b4ead1c3bf05f4fabaded3b7944bc0fd4441411cf16162"
+    },
+    "databaseReadback": {
+      "checks": [
+        {
+          "database": "agent_saas_staging",
+          "id": "tool-description-runtime-schema",
+          "status": "passed",
+          "targetDigest": "sha256:75e21a958af39d61698da8778a052fbc58694a287a9ba7cec9c3b6021085b9ba"
+        }
+      ],
+      "environment": "staging",
+      "manifestDigest": "sha256:c3c2521d59dfb0d299beb639705f7f44761c682cc98ae1919318b3c431250892",
+      "observedAt": "2026-09-08T03:36:26.529Z",
+      "planDigest": "sha256:faceb5394d90d642baf56fc39cf57c186468aa2103b7c229ce85e14a47c98019",
+      "postconditionsDigest": "sha256:ba1a755349bdf6b83d1e59d5cc7b15406ebbd35743531c2abef66c8cfb7b9d83",
+      "releaseId": "rc-20260908-86",
+      "schemaVersion": 1,
+      "status": "passed"
+    },
+    "isolation": {
+      "schemaVersion": 1,
+      "environment": "staging",
+      "status": "verified-with-accepted-residual-risk",
+      "residualRisks": ["privileged-host-can-remount-shared-filesystem-root"],
+      "evidenceDigest": "sha256:01141965883fb4784a40cf1170a82157441c3f72a0872c7dc492c17c596c3132",
+      "observedAt": "2026-09-08T03:37:14.406Z",
+      "releaseId": "rc-20260908-86",
+      "manifestDigest": "sha256:c3c2521d59dfb0d299beb639705f7f44761c682cc98ae1919318b3c431250892",
+      "stagingRunId": "34183084701",
+      "stagingRunAttempt": "1"
+    },
+    "web": {
+      "status": "passed",
+      "observedAt": "2026-09-08T03:36:16.238Z",
+      "fileCount": 165
+    },
+    "evidenceFiles": [
+      {
+        "name": "isolation-summary.json",
+        "sha256": "6b23b49185150a9d1743543b34d56d95d9ae2e6352eb63444180a3d2d8f9534a"
+      },
+      {
+        "name": "manifest.json",
+        "sha256": "3570bad77be6d716cfe2829172ec595558d5098a81e49190bb27674dfe48619a"
+      },
+      {
+        "name": "staging-before.json",
+        "sha256": "2471216c05083ab0351ef600acf50178ebeebf7424380c1f945e4e3069d7e584"
+      },
+      {
+        "name": "staging-core-smoke.json",
+        "sha256": "2ac0f2e98477fc9c6be29f1c70acfe1010292173e44b49a83784976a423be7c5"
+      },
+      {
+        "name": "staging-database-readback.json",
+        "sha256": "6965ab689b8d39b7b6f51c90b6f37ca030023859baaa59acbb8c3e9149dc15ce"
+      },
+      {
+        "name": "staging-final.json",
+        "sha256": "663e4388c35cb7a06f209566efed14fbce231de3a7e31f994b142a3e08c32a9e"
+      },
+      {
+        "name": "staging-integration-fixture.json",
+        "sha256": "483334702b74a9695a73d0ad62bb1d24be3cbab2ebfc27c0556ed27060c6adf2"
+      },
+      {
+        "name": "staging-public-web.json",
+        "sha256": "7b50ded047b2606eb99ec2cb1e17be19b3cf09a157170cc7d774a03fc452a7ea"
+      },
+      {
+        "name": "staging-runtime-summary.json",
+        "sha256": "6a92d757bd6fb14e5e7444a4c15e9abe6b56067415f741622292bd670d4cd7dd"
+      }
+    ],
+    "jobs": [
+      {
+        "name": "按需升级发布证据 Writer",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-09-08T03:19:06Z",
+        "completedAt": "2026-09-08T03:19:40Z",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:07Z",
+            "completedAt": "2026-09-08T03:19:08Z"
+          },
+          {
+            "name": "检出不可变触发版本",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:08Z",
+            "completedAt": "2026-09-08T03:19:13Z"
+          },
+          {
+            "name": "配置 pnpm",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:13Z",
+            "completedAt": "2026-09-08T03:19:15Z"
+          },
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:15Z",
+            "completedAt": "2026-09-08T03:19:29Z"
+          },
+          {
+            "name": "构建并验证 Writer 制品",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:29Z",
+            "completedAt": "2026-09-08T03:19:35Z"
+          },
+          {
+            "name": "判断 Writer 是否需要升级或恢复",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:35Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "升级前确认可信 main 与 APP CI",
+            "conclusion": "skipped",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "安装阿里云 CLI",
+            "conclusion": "skipped",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "为当前 Runner 授权测试环境 SSH",
+            "conclusion": "skipped",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "配置固定的 Staging SSH",
+            "conclusion": "skipped",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "原子升级并验证 Writer",
+            "conclusion": "skipped",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "撤销临时测试环境 SSH 入站授权",
+            "conclusion": "skipped",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "Post 配置 Node.js",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "Post 配置 pnpm",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "Post 检出不可变触发版本",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:37Z",
+            "completedAt": "2026-09-08T03:19:37Z"
+          }
+        ]
+      },
+      {
+        "name": "准备发布证据",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-09-08T03:19:44Z",
+        "completedAt": "2026-09-08T03:23:53Z",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:45Z",
+            "completedAt": "2026-09-08T03:19:46Z"
+          },
+          {
+            "name": "校验证据写入器配置",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:46Z",
+            "completedAt": "2026-09-08T03:19:46Z"
+          },
+          {
+            "name": "校验证据写入器架构兼容性",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:46Z",
+            "completedAt": "2026-09-08T03:19:47Z"
+          },
+          {
+            "name": "检出用于生成证据的不可变触发版本",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:47Z",
+            "completedAt": "2026-09-08T03:19:51Z"
+          },
+          {
+            "name": "配置 pnpm",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:51Z",
+            "completedAt": "2026-09-08T03:19:52Z"
+          },
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:19:52Z",
+            "completedAt": "2026-09-08T03:20:02Z"
+          },
+          {
+            "name": "安装依赖",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:20:02Z",
+            "completedAt": "2026-09-08T03:20:08Z"
+          },
+          {
+            "name": "等待应用 CI 成功并校验已合并的 GitHub PR",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:20:08Z",
+            "completedAt": "2026-09-08T03:23:15Z"
+          },
+          {
+            "name": "解析同一发布 SHA 的 ACS 证据",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:15Z",
+            "completedAt": "2026-09-08T03:23:16Z"
+          },
+          {
+            "name": "存在时复用不可变发布证据",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:16Z",
+            "completedAt": "2026-09-08T03:23:17Z"
+          },
+          {
+            "name": "配置固定的生产只读 SSH",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:17Z",
+            "completedAt": "2026-09-08T03:23:18Z"
+          },
+          {
+            "name": "只读获取在线生产状态",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:18Z",
+            "completedAt": "2026-09-08T03:23:40Z"
+          },
+          {
+            "name": "安装用于生产证据的阿里云 CLI",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:40Z",
+            "completedAt": "2026-09-08T03:23:41Z"
+          },
+          {
+            "name": "将不可变 OSS 产物绑定到在线生产环境",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:41Z",
+            "completedAt": "2026-09-08T03:23:44Z"
+          },
+          {
+            "name": "生成、发布并回读不可变发布证据",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:44Z",
+            "completedAt": "2026-09-08T03:23:50Z"
+          },
+          {
+            "name": "上传生产基线观测诊断",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:50Z",
+            "completedAt": "2026-09-08T03:23:51Z"
+          },
+          {
+            "name": "Post 配置 Node.js",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:51Z",
+            "completedAt": "2026-09-08T03:23:51Z"
+          },
+          {
+            "name": "Post 配置 pnpm",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:51Z",
+            "completedAt": "2026-09-08T03:23:51Z"
+          },
+          {
+            "name": "Post 检出用于生成证据的不可变触发版本",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:51Z",
+            "completedAt": "2026-09-08T03:23:52Z"
+          },
+          {
+            "name": "Complete job",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:52Z",
+            "completedAt": "2026-09-08T03:23:52Z"
+          }
+        ]
+      },
+      {
+        "name": "部署并校验精确的测试环境 RC",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-09-08T03:23:57Z",
+        "completedAt": "2026-09-08T03:37:39Z",
+        "steps": [
+          {
+            "name": "Set up job",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:58Z",
+            "completedAt": "2026-09-08T03:23:59Z"
+          },
+          {
+            "name": "锁定触发 SHA",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:23:59Z",
+            "completedAt": "2026-09-08T03:24:09Z"
+          },
+          {
+            "name": "检出不可变触发版本",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:09Z",
+            "completedAt": "2026-09-08T03:24:13Z"
+          },
+          {
+            "name": "确认 SHA 属于可信 main 历史",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:13Z",
+            "completedAt": "2026-09-08T03:24:14Z"
+          },
+          {
+            "name": "确认测试环境资源已准备好首次部署",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:14Z",
+            "completedAt": "2026-09-08T03:24:14Z"
+          },
+          {
+            "name": "配置 pnpm",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:14Z",
+            "completedAt": "2026-09-08T03:24:15Z"
+          },
+          {
+            "name": "配置 Node.js",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:15Z",
+            "completedAt": "2026-09-08T03:24:27Z"
+          },
+          {
+            "name": "安装依赖",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:27Z",
+            "completedAt": "2026-09-08T03:24:32Z"
+          },
+          {
+            "name": "安装阿里云 CLI",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:32Z",
+            "completedAt": "2026-09-08T03:24:33Z"
+          },
+          {
+            "name": "任务重跑时恢复不可变 RC",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:33Z",
+            "completedAt": "2026-09-08T03:24:33Z"
+          },
+          {
+            "name": "读取权威候选与生产证据",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:33Z",
+            "completedAt": "2026-09-08T03:24:38Z"
+          },
+          {
+            "name": "按需解析精确 ACS 镜像",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:24:38Z",
+            "completedAt": "2026-09-08T03:25:16Z"
+          },
+          {
+            "name": "消费同一 main CI 已验证的不可变产物",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:25:16Z",
+            "completedAt": "2026-09-08T03:25:21Z"
+          },
+          {
+            "name": "持久化内容寻址产物",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:25:21Z",
+            "completedAt": "2026-09-08T03:27:00Z"
+          },
+          {
+            "name": "创建规范发布清单",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:27:00Z",
+            "completedAt": "2026-09-08T03:27:01Z"
+          },
+          {
+            "name": "实例化并校验清单选定产物",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:27:01Z",
+            "completedAt": "2026-09-08T03:27:55Z"
+          },
+          {
+            "name": "创建不可变 RC 标签、Release 与构建证明",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:27:55Z",
+            "completedAt": "2026-09-08T03:29:05Z"
+          },
+          {
+            "name": "创建 GitHub 测试环境部署记录",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:29:05Z",
+            "completedAt": "2026-09-08T03:29:06Z"
+          },
+          {
+            "name": "为当前 Runner 授权测试环境 SSH",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:29:06Z",
+            "completedAt": "2026-09-08T03:29:08Z"
+          },
+          {
+            "name": "配置测试环境 SSH",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:29:08Z",
+            "completedAt": "2026-09-08T03:29:10Z"
+          },
+          {
+            "name": "记录部署前测试环境组件状态",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:29:10Z",
+            "completedAt": "2026-09-08T03:29:21Z"
+          },
+          {
+            "name": "部署精确的测试环境 API、Worker 与 ACS 产物",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:29:21Z",
+            "completedAt": "2026-09-08T03:34:18Z"
+          },
+          {
+            "name": "最后发布精确的测试环境 Web 产物",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:34:18Z",
+            "completedAt": "2026-09-08T03:36:16Z"
+          },
+          {
+            "name": "逐项核验本次迁移的数据库后置条件",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:36:16Z",
+            "completedAt": "2026-09-08T03:36:32Z"
+          },
+          {
+            "name": "校验迁移与隔离的集成测试夹具",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:36:32Z",
+            "completedAt": "2026-09-08T03:36:41Z"
+          },
+          {
+            "name": "验证登录、持久化读回与鉴权 WebSocket 核心路径",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:36:41Z",
+            "completedAt": "2026-09-08T03:36:46Z"
+          },
+          {
+            "name": "校验在线反向隔离证据",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:36:46Z",
+            "completedAt": "2026-09-08T03:37:14Z"
+          },
+          {
+            "name": "记录确定性的测试环境部署与校验结果",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:37:14Z",
+            "completedAt": "2026-09-08T03:37:23Z"
+          },
+          {
+            "name": "最终对账并阻止混合版本验收",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:37:23Z",
+            "completedAt": "2026-09-08T03:37:33Z"
+          },
+          {
+            "name": "撤销临时测试环境 SSH 入站授权",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:37:33Z",
+            "completedAt": "2026-09-08T03:37:35Z"
+          },
+          {
+            "name": "校验完整的测试环境证据包",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:37:35Z",
+            "completedAt": "2026-09-08T03:37:35Z"
+          },
+          {
+            "name": "上传独立测试环境证据",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:37:35Z",
+            "completedAt": "2026-09-08T03:37:36Z"
+          },
+          {
+            "name": "完成 GitHub 测试环境部署记录",
+            "conclusion": "success",
+            "startedAt": "2026-09-08T03:37:36Z",
+            "completedAt": "2026-09-08T03:37:36Z"
+          }
+        ]
+      }
+    ]
+  },
+  "production": {
+    "promotedByThisWork": false,
+    "currentReadiness": {
+      "url": "https://api.agent.kaiyan.net/api/healthz/ready",
+      "httpStatus": 200,
+      "releaseId": "rc-20260907-84",
+      "sourceSha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
+      "observedAt": "2026-09-08T03:40:57.903512+00:00"
+    }
+  },
+  "limitations": [
+    "Timing comparisons are a small rollout sample, not a new P50/P95 estimate.",
+    "Staging core smoke covers authentication, persisted reads and authenticated WebSocket reconnect; long external Agent acceptance remains optional.",
+    "RC86 includes the already merged PR575 tool-description schema expansion and requires observation before production migration confirmation.",
+    "Privileged hosts can remount the shared filesystem root under the previously accepted isolation boundary."
+  ],
+  "laterConcurrentRollout": {
+    "observedAt": "2026-09-08T05:07:07.816662+00:00",
+    "runId": 34185380783,
+    "url": "https://github.com/ZengLeiPro/agent-saas/actions/runs/34185380783",
+    "status": "success",
+    "releaseId": "rc-20260908-88",
+    "releaseSha": "687c3e811fbaa0f2a518e123e9a40c28c5380b17",
+    "manifestDigest": "sha256:dd6b9d037869b6b45cbb91d6610482a00422fb7507122bfa1c02570d99eb7176",
+    "finalState": "target_runtime",
+    "runtimeConverged": true,
+    "coreSmoke": {
+      "schemaVersion": 1,
+      "environment": "staging",
+      "status": "passed",
+      "releaseId": "rc-20260908-88",
+      "sourceSha": "687c3e811fbaa0f2a518e123e9a40c28c5380b17",
+      "manifestDigest": "sha256:dd6b9d037869b6b45cbb91d6610482a00422fb7507122bfa1c02570d99eb7176",
+      "stagingRunId": "34185380783",
+      "stagingRunAttempt": "1",
+      "actor": "staging-e2e-admin",
+      "checks": ["login", "authenticated-read", "persistence-read", "websocket"],
+      "observedAt": "2026-09-08T04:16:43.801Z",
+      "evidenceDigest": "sha256:37574bc30d60078e0471531dee25760f7d57f5e28dcc9deae00a80f4a2a3c0e0"
+    },
+    "productionReadiness": {
+      "httpStatus": 200,
+      "releaseId": "rc-20260907-84"
+    },
+    "note": "Later rollout performed by concurrent work, after RC86 verification; not attributed to this implementation run."
+  }
+}

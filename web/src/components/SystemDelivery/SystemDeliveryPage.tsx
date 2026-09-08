@@ -7,6 +7,7 @@ import type { OnboardExecution, OnboardResponse } from '@/lib/kyAppManagementTyp
 import { useManagementResource, ResourceState } from '../BusinessSystems/ManagementResource';
 import { credentialClaimUrl } from '../KyAppCredentialClaim/claimRoute';
 import { CreateDeliveryForm } from './CreateDeliveryForm';
+import { businessStatusLabel, formatBusinessSystemTime } from '../BusinessSystems/presentation';
 const routeId = 'platform.runtime.system-deliveries';
 const stepNames: Record<string, string> = {
   existing_organization: '组织与技术联系人',
@@ -99,7 +100,7 @@ function DeliveryList({ systemId, onOpen }: { systemId?: string; onOpen: (id: st
           className="flex items-center justify-between rounded border p-3"
         >
           <span>
-            {execution.systemId} · {execution.tenantId} · {execution.status}
+            组织 {execution.tenantId} · {businessStatusLabel(execution.status)}
           </span>
           <Button variant="outline" onClick={() => onOpen(execution.executionId)}>
             查看进度
@@ -165,18 +166,19 @@ function DeliveryExecution({
       ) : (
         <>
           <p>
-            {execution.tenantId} · {execution.installationId} · {execution.status}
+            组织 {execution.tenantId} · {businessStatusLabel(execution.status)}
           </p>
           <ol className="space-y-2">
             {execution.steps.map((step) => (
               <li className="rounded border p-3" key={step.id}>
-                <strong>{stepNames[step.id] ?? step.id}</strong> · {step.status}
-                {step.code && <p>阻断码：{step.code}</p>}
-                {step.detail && (
-                  <details>
-                    <summary>处理信息</summary>
+                <strong>{stepNames[step.id] ?? '接入步骤'}</strong> ·{' '}
+                {businessStatusLabel(step.status)}
+                {(step.code || step.detail) && (
+                  <details className="mt-2">
+                    <summary>高级信息</summary>
+                    {step.code && <p>问题代码：{step.code}</p>}
                     <pre className="whitespace-pre-wrap break-all text-xs">
-                      {JSON.stringify(step.detail, null, 2)}
+                      {JSON.stringify(step.detail ?? {}, null, 2)}
                     </pre>
                   </details>
                 )}
@@ -189,7 +191,8 @@ function DeliveryExecution({
           {claim && ticket && (
             <div className="rounded border p-3">
               <p>
-                平台管理员可直接领取，也可将链接交给技术联系人。过期时间：{claim.ticketExpiresAt}
+                平台管理员可直接领取，也可将链接交给技术联系人。过期时间：
+                {formatBusinessSystemTime(claim.ticketExpiresAt)}
               </p>
               <input
                 aria-label="凭据领取链接"

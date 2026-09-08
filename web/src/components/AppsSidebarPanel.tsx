@@ -9,8 +9,8 @@
  * 点击后走土制路由（`navigateApps` → pushState + 合成 popstate），
  * 由 `useChatUrlSync` 的 popstate 订阅把 `activeTab` 切到 `apps`。
  */
-import { useCallback, useMemo } from 'react';
-import { AppWindow } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { AppWindow, Bot, Search } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { navigateApps } from '@/lib/urlSync';
@@ -19,6 +19,7 @@ import { useMySystems } from '@/hooks/useMySystems';
 import { isSystemOpenable, type MySystemInstallation, type MySystemState } from '@/lib/systemsApi';
 import type { AppTab } from '@/types/sidebar';
 import { NAV_ITEM_SELECTED, NAV_ITEM_UNSELECTED } from './DesktopSessionSidebarControls';
+import { Input } from './ui/input';
 
 /** 一个安装实例对应的一条左栏导航项。`tab` 恒为 `"apps"`，实例靠 `installationId` 区分。 */
 export interface AppsNavItem {
@@ -40,6 +41,55 @@ export const APPS_NAV_UNAVAILABLE_MARK = '暂不可用';
 
 export function appsNavStateMark(state: MySystemState): string | null {
   return state === 'disabled' || state === 'unavailable' ? APPS_NAV_UNAVAILABLE_MARK : null;
+}
+
+export function DesktopWorkspaceSwitcher({
+  active,
+  onOpenAgent,
+}: {
+  active: 'agent' | 'business';
+  onOpenAgent: () => void;
+}) {
+  const { installations } = useMySystems();
+  if (installations.length === 0) return null;
+  const openBusiness = () => {
+    const first = installations[0];
+    if (first) navigateApps({ installationId: first.installationId, appPath: '/' });
+  };
+  return (
+    <div
+      className="mx-2 mb-2 grid grid-cols-2 rounded-lg bg-muted p-1"
+      role="tablist"
+      aria-label="工作区"
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'agent'}
+        className={cn(
+          'flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium',
+          active === 'agent' && 'bg-background shadow-sm',
+        )}
+        onClick={onOpenAgent}
+      >
+        <Bot className="h-3.5 w-3.5" />
+        开沿 Agent
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active === 'business'}
+        className={cn(
+          'flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium',
+          active === 'business' && 'bg-background shadow-sm',
+        )}
+        onClick={openBusiness}
+      >
+        <AppWindow className="h-3.5 w-3.5" />
+        业务系统
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -89,6 +139,12 @@ export function AppsSidebarPanel({ beforeNavigate }: AppsSidebarPanelProps) {
   const { activeInstallationId } = useAppsShellState();
   const { status, installations, reload } = useMySystems();
   const items = useMemo(() => buildAppsNavItems(installations), [installations]);
+  const [query, setQuery] = useState('');
+  const visibleItems = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase('zh-CN');
+    if (!keyword) return items;
+    return items.filter((item) => item.label.toLocaleLowerCase('zh-CN').includes(keyword));
+  }, [items, query]);
   // §6.6：客户面不写技术归因，只给「暂时取不到 + 重试」。
   const failed = status === 'failed';
 
@@ -104,8 +160,18 @@ export function AppsSidebarPanel({ beforeNavigate }: AppsSidebarPanelProps) {
   if (items.length === 0 && !failed) return null;
 
   return (
-    <nav className="flex flex-col gap-1 px-2 pb-3" aria-label="业务系统">
-      <div className="px-2 pb-1 text-xs font-medium text-muted-foreground/70">业务系统</div>
+    <nav className="flex min-h-0 flex-1 flex-col gap-1 px-2 pb-3" aria-label="业务系统">
+      <div className="relative mb-2">
+        <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          aria-label="搜索业务系统"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          className="h-8 pl-8 text-sm"
+          placeholder="搜索业务系统"
+        />
+      </div>
+      <div className="px-2 pb-1 text-xs font-medium text-muted-foreground/70">最近使用</div>
       {failed && (
         <button
           type="button"
@@ -118,7 +184,7 @@ export function AppsSidebarPanel({ beforeNavigate }: AppsSidebarPanelProps) {
           暂时无法加载，点此重试
         </button>
       )}
-      {items.map((item) => {
+      {visibleItems.map((item) => {
         const selected = activeInstallationId === item.installationId;
         const mark = appsNavStateMark(item.state);
         return (
@@ -156,6 +222,15 @@ export function AppsSidebarPanel({ beforeNavigate }: AppsSidebarPanelProps) {
                 {mark}
               </span>
             )}
+            {mark === null &&
+              item.state === 'enabled' &&
+              installations.find(
+                (installation) => installation.installationId === item.installationId,
+              )?.canUseAgent === false && (
+                <span className="ml-auto shrink-0 rounded px-1 text-[10px] font-normal text-muted-foreground">
+                  AI 能力待完成
+                </span>
+              )}
           </button>
         );
       })}

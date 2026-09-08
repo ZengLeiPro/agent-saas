@@ -45,7 +45,12 @@ import { GatewayPolicy } from './gateway/policy.js';
 import { AppLogicalCallRunner } from './gateway/lcid.js';
 import { createAppCapabilityInvoker } from './gateway/invoker.js';
 import { AppCapabilityToolProvider } from './gateway/toolProvider.js';
-import { setAppCapabilityGateway, type AppCapabilityGatewayBinding } from './gateway/runtimeBinding.js';
+import { BusinessSystemsCatalogToolProvider } from './catalog/toolProvider.js';
+import {
+  setAppCapabilityGateway,
+  type AppCapabilityGatewayBinding,
+} from './gateway/runtimeBinding.js';
+import { MySystemsService } from './systems/mySystemsService.js';
 import { KyAppSatIssuer } from './sat/issuer.js';
 import { KyAppSuspensionRegistry } from './sat/suspension.js';
 import { PgKyAppSystemStore } from './systems/store.js';
@@ -83,6 +88,8 @@ export interface KyAppAssembly {
   worker: KyAppWorker;
   /** WP3 Capability Gateway：会话工具快照 + `app__` 工具 provider（规范 §6.1）。 */
   gateway: AppCapabilityGatewayBinding;
+  /** 页面、管理 API 与 Agent 目录工具共用的成员业务系统事实源。 */
+  mySystems: MySystemsService;
   /** 建表（幂等，跑 governance 迁移 runner）后再启动后台循环。 */
   start(): Promise<void>;
   stop(): void;
@@ -107,7 +114,9 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
       : undefined;
   const base = { pool, ...(tablePrefix ? { tablePrefix } : {}) };
   const now = options.now ?? Date.now;
-  const assignmentAccess = runtime.assignmentStore ? new KyAppAssignmentAccess(pool, runtime.assignmentStore, runtime.directoryGroupStore) : null;
+  const assignmentAccess = runtime.assignmentStore
+    ? new KyAppAssignmentAccess(pool, runtime.assignmentStore, runtime.directoryGroupStore)
+    : null;
 
   const systems = new PgKyAppSystemStore(base);
   const credentialStore = new PgKyAppCredentialStore(base);
@@ -116,6 +125,12 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
   const nonces = new PgKyAppNonceStore(base);
   const signingKeyStore = new PgKyAppSigningKeyStore(base);
   const directory = new KyAppInstallationDirectory(pool, systems.installationsTable);
+  const mySystems = new MySystemsService({
+    systems,
+    ...(assignmentAccess ? { assignments: assignmentAccess } : {}),
+    runtimeStore,
+    failureThreshold: config.probe.failureThreshold,
+  });
 
   const keys = new KyAppSigningKeyService({ store: signingKeyStore, vault, now });
   const suspensions = new KyAppSuspensionRegistry({ now });
@@ -153,7 +168,8 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     events: eventStore,
     now,
     // `installation.*` 与 registeredDigest 变化是会话工具快照的两个失效入口（§6.1）。
-    onInstallationStateChanged: (installationId) => gateway.snapshots.invalidateInstallation(installationId),
+    onInstallationStateChanged: (installationId) =>
+      gateway.snapshots.invalidateInstallation(installationId),
     ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
     ...(runtime.assignmentStore ? { assignments: runtime.assignmentStore } : {}),
     ...(runtime.membershipStore
@@ -174,8 +190,13 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     credentials,
     issuer,
     canAccessInstallation: async (installation, user) =>
-      (await assignmentAccess?.listEffectiveResourceIds(user.tenantId, user.userId, 'system_installation') ?? [])
-        .some(item => item.resourceId === installation.installationId),
+      (
+        (await assignmentAccess?.listEffectiveResourceIds(
+          user.tenantId,
+          user.userId,
+          'system_installation',
+        )) ?? []
+      ).some((item) => item.resourceId === installation.installationId),
     now,
     ...(runtime.governanceAuditStore
       ? {
@@ -333,7 +354,13 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
   // 逻辑调用状态机 + 四道闸门 + 审批绑定，串成 provider 的 invoke（§6.2）。
   const gatewayPolicy = new GatewayPolicy({ limits: config.gateway.limits, now });
   const gatewayApprovals = new AppApprovalRegistry({ now });
-  const isTenantAdminForGateway = async ({ tenantId, userId }: { tenantId: string; userId: string }) => {
+  const isTenantAdminForGateway = async ({
+    tenantId,
+    userId,
+  }: {
+    tenantId: string;
+    userId: string;
+  }) => {
     if (!runtime.membershipStore) return false;
     const membership = await runtime.membershipStore.getMembership(tenantId, userId);
     return membership?.status === 'active' && membership.persona === 'org_admin';
@@ -359,9 +386,11 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     invoker: gatewayInvoker,
     logger: { warn: (message) => serverLogger.warn(message) },
   });
+  const catalogProvider = new BusinessSystemsCatalogToolProvider(mySystems);
   const gateway: AppCapabilityGatewayBinding = {
     snapshots,
     provider: gatewayProvider,
+    catalogProvider,
     approvalTtlMs: config.gateway.approvalTtlMs,
     approvals: gatewayApprovals,
   };
@@ -414,6 +443,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     outbound,
     worker,
     gateway,
+    mySystems,
     diagnostics,
     async start() {
       // 全部 store 共用同一套 governance 迁移（含 WP2b 的 v42 目录两表）；

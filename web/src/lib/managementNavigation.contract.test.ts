@@ -26,12 +26,20 @@ describe('管理后台导航契约', () => {
   it('配置面保留业务系统统一入口', () => {
     expect(managementPagesFor('config', 'organization')).toHaveLength(18);
     expect(managementPagesFor('config', 'platform')).toHaveLength(13);
-    expect(managementPagesFor('config', 'platform').some(page => page.routeId === 'platform.runtime.system-deliveries')).toBe(false);
-    expect(managementPagesFor('config', 'platform').some(page => page.routeId === 'platform.resource-center.business-systems')).toBe(true);
+    expect(
+      managementPagesFor('config', 'platform').some(
+        (page) => page.routeId === 'platform.runtime.system-deliveries',
+      ),
+    ).toBe(false);
+    expect(
+      managementPagesFor('config', 'platform').some(
+        (page) => page.routeId === 'platform.resource-center.business-systems',
+      ),
+    ).toBe(true);
   });
 
   it('分析面只注册有真实页面的组织 4 项、平台 9 项', () => {
-    expect(managementPagesFor('analytics', 'organization')).toHaveLength(5);
+    expect(managementPagesFor('analytics', 'organization')).toHaveLength(4);
     expect(managementPagesFor('analytics', 'platform')).toHaveLength(10);
   });
 

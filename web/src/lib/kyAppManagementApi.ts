@@ -52,6 +52,10 @@ export interface InstallationItem {
   registeredDigest: string | null;
   publishedDigest: string | null;
   allowedActions?: string[];
+  domainVerifiedAt?: string | null;
+  deliveryStatus?: string | null;
+  lastUsageAt?: string | null;
+  updatedAt?: string | null;
 }
 export interface InstallationPage {
   installations: InstallationItem[];

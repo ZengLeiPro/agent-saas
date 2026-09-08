@@ -59,7 +59,9 @@ import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
 import type { DesktopSessionSidebarProps } from "./desktopSessionSidebarTypes";
 import { SessionRow } from "./DesktopSessionSidebarRow";
-import { AppsSidebarPanel } from "@/components/AppsSidebarPanel";
+import { DesktopWorkspaceSwitcher } from '@/components/AppsSidebarPanel';
+import { DesktopBusinessWorkspaceSidebar } from '@/components/BusinessSystems/DesktopBusinessWorkspaceSidebar';
+import { useMySystems } from '@/hooks/useMySystems';
 import {
   CompactSessionGroupLeadingIcon,
   SessionGroupGlyph,
@@ -72,7 +74,6 @@ import {
   SessionSelectionActions,
   SidebarNav,
 } from "./DesktopSessionSidebarControls";
-
 const USER_MENU_ITEM =
   "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] text-foreground transition-colors hover:bg-accent";
 const USER_MENU_SECTION = "border-t border-border/60 py-1.5";
@@ -602,6 +603,7 @@ export function DesktopSessionSidebar({
   responsiveMode = "none",
 }: DesktopSessionSidebarProps) {
   const { user: authUser, accounts, switchAccount, authEnabled } = useAuth();
+  const { installations: workspaceSystems } = useMySystems();
   const { summary: billingSummary, allowance: billingAllowance } = useTenantBillingAllowance(authUser?.tenantId);
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
   const compactList = authUser?.preferences?.showSessionListAvatar !== true;
@@ -1311,7 +1313,7 @@ export function DesktopSessionSidebar({
         footer={sidebarFooter}
       />;
   }
-
+  if (activeTab === "apps" && workspaceSystems.length > 0) return <DesktopBusinessWorkspaceSidebar width={sidebarLayout === "single" ? singlePanelWidth : mainPanelWidth} hidden={hidden || responsiveMode === "hidden"} className={className} header={<SidebarBrandHeader onCollapse={onCollapse} />} footer={sidebarFooter} onOpenAgent={() => onTabChange?.("chat")} onResizeMouseDown={sidebarLayout === "single" ? onSingleResizeMouseDown : onMainResizeMouseDown} onResizeDoubleClick={sidebarLayout === "single" ? onSingleResizeDoubleClick : onMainResizeDoubleClick} />;
   if (sidebarLayout === "single") {
     const visibleSingleSessions = singleExpandedGroup?.children ?? [];
     return (
@@ -1325,7 +1327,7 @@ export function DesktopSessionSidebar({
         {...{ inert: hidden || responsiveMode === "hidden" ? true : undefined }}
       >
         <SidebarBrandHeader onCollapse={onCollapse} />
-
+        <DesktopWorkspaceSwitcher active="agent" onOpenAgent={() => onTabChange?.("chat")} />
         <SidebarNav
           navItems={navItems}
           activeTab={activeTab}
@@ -1336,7 +1338,6 @@ export function DesktopSessionSidebar({
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
           constrainNewButton={false}
         />
-        <AppsSidebarPanel beforeNavigate={() => setSingleExpandedGroupKey(null)} />
         {renderSessionSearchBox("inline")}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 flex flex-col bg-background" style={{ transform: singleExpandedGroup ? "translateX(-100%)" : "translateX(0)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
@@ -1557,7 +1558,7 @@ export function DesktopSessionSidebar({
         >
           {/* Header: 品牌徽标 + 收起侧边栏 */}
           <SidebarBrandHeader onCollapse={onCollapse} />
-
+          <DesktopWorkspaceSwitcher active="agent" onOpenAgent={() => onTabChange?.("chat")} />
           {/* Navigation: 新建会话 + 竖排导航 */}
           <SidebarNav
             navItems={navItems}
@@ -1567,7 +1568,6 @@ export function DesktopSessionSidebar({
             onNew={onNew}
             onTabChange={onTabChange}
           />
-          <AppsSidebarPanel />
           {/* 导航与分组之间的分隔线 */}
           <div className="mx-2 my-1 border-t" />
 

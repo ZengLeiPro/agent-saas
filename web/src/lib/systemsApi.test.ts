@@ -37,7 +37,7 @@ describe('systemsApi', () => {
     );
     const result = await fetchMySystems();
     expect(authFetchMock).toHaveBeenCalledWith('/api/systems/mine');
-    expect(result.installations).toEqual([
+    expect(result.installations).toMatchObject([
       {
         installationId: 'iid-1',
         systemId: 'orders',

@@ -61,13 +61,13 @@ assert.equal(
 );
 assert.equal(
   (registry.match(/surface:\s*'config',\s*area:\s*'platform'/g) ?? []).length,
-  14,
-  '平台配置页必须是 14 项',
+  13,
+  '平台配置页必须是 13 项',
 );
 assert.equal(
   (registry.match(/surface:\s*'analytics',\s*area:\s*'organization'/g) ?? []).length,
-  5,
-  '组织分析页必须是 5 项',
+  4,
+  '组织分析页必须是 4 项',
 );
 assert.equal(
   (registry.match(/surface:\s*'analytics',\s*area:\s*'platform'/g) ?? []).length,

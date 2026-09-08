@@ -31,6 +31,7 @@ import {
 import { createKyAppInstallationsRouter } from '../kyapp/routes/installations.js';
 import { createKyAppJwksHandler, createKyAppKeysRouter } from '../kyapp/routes/keys.js';
 import { createKyAppMineRouter } from '../kyapp/routes/mine.js';
+import { InstallationAccessOverviewService } from '../kyapp/installations/accessOverview.js';
 import { createKyAppShellEventsRouter } from '../kyapp/routes/shellEvents.js';
 import { createKyAppSystemsRouter } from '../kyapp/routes/systems.js';
 import type { KyAppToolRegistrationDryRun } from '../kyapp/systems/publishGate.js';
@@ -114,6 +115,17 @@ export function registerKyAppRoutes(
       : undefined,
     runtime.runtimePgEventStore!.eventsTable,
   );
+  const accessOverview =
+    runtime.userStore && runtime.membershipStore && assembly.assignmentAccess
+      ? new InstallationAccessOverviewService({
+          users: runtime.userStore,
+          memberships: runtime.membershipStore,
+          assignments: assembly.assignmentAccess,
+          assignmentSets: runtime.assignmentStore!,
+          ...(runtime.directoryGroupStore ? { groups: runtime.directoryGroupStore } : {}),
+          ...(runtime.orgAgentStore ? { agents: runtime.orgAgentStore } : {}),
+        })
+      : undefined;
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppSystemsRouter({
@@ -136,6 +148,7 @@ export function registerKyAppRoutes(
       installations: assembly.installations,
       credentials: assembly.credentials,
       runtimeStore: assembly.runtimeStore,
+      ...(accessOverview ? { accessOverview } : {}),
     }),
   );
   const onboard =
@@ -284,11 +297,7 @@ export function registerKyAppRoutes(
   app.use(
     '/api',
     createKyAppMineRouter({
-      systems: assembly.systems,
-      ...(assembly.assignmentAccess ? { assignments: assembly.assignmentAccess } : {}),
-      // §4.6 的探测结果是壳侧「维护中 / digest 不一致」的唯一检测源（偏差 4-B-06）。
-      runtimeStore: assembly.runtimeStore,
-      failureThreshold: config.probe.failureThreshold,
+      service: assembly.mySystems,
     }),
   );
   // JWKS 挂 app 级：`/api` 之外天然公开，不经会话中间件（`index.ts:251` 只挂 `/api`）。

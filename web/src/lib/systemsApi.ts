@@ -39,11 +39,27 @@ export interface MySystemInstallation {
   state: MySystemState;
   /** manifest 的 `externalLinkHosts`（§5.4 `link.open` 白名单）；缺省空数组 = fail-closed。 */
   externalLinkHosts: string[];
+  pageStatus?: 'not_configured' | 'available' | 'unavailable';
+  agentStatus?:
+    | 'not_configured'
+    | 'waiting_service'
+    | 'waiting_assignment'
+    | 'waiting_personal_authorization'
+    | 'ready'
+    | 'degraded'
+    | 'disabled';
+  personalAuthorizationStatus?:
+    'not_required' | 'pending' | 'connected' | 'expired' | 'insufficient_scope';
+  canOpenPage?: boolean;
+  canUseAgent?: boolean;
+  reasonCode?: string | null;
+  nextAction?: 'none' | 'continue_onboarding' | 'edit_assignment' | 'authorize' | 'retry';
+  message?: string;
 }
 
 /** 能不能真的进这个系统（挂 iframe）。其余状态一律只渲染标签与文案。 */
 export function isSystemOpenable(installation: MySystemInstallation): boolean {
-  return installation.state === 'enabled';
+  return installation.canOpenPage ?? installation.state === 'enabled';
 }
 
 export interface MySystemsResponse {
@@ -67,15 +83,54 @@ function asInstallation(value: unknown): MySystemInstallation | null {
     origin,
     // 未知/缺失的 state 回落 `unavailable` 而不是 `enabled`：新增状态时宁可
     // 让标签停在「暂不可用」，也不要让壳去挂一个服务端已经不认的实例。
-    state: typeof record.state === 'string' && STATE_SET.has(record.state)
-      ? (record.state as MySystemState)
-      : 'unavailable',
+    state:
+      typeof record.state === 'string' && STATE_SET.has(record.state)
+        ? (record.state as MySystemState)
+        : 'unavailable',
     externalLinkHosts: Array.isArray(record.externalLinkHosts)
       ? record.externalLinkHosts
           .filter((item): item is string => typeof item === 'string')
           .map((item) => item.trim().toLowerCase())
           .filter((item) => item !== '')
       : [],
+    pageStatus: ['not_configured', 'available', 'unavailable'].includes(String(record.pageStatus))
+      ? (record.pageStatus as MySystemInstallation['pageStatus'])
+      : record.state === 'enabled'
+        ? 'available'
+        : 'unavailable',
+    agentStatus: [
+      'not_configured',
+      'waiting_service',
+      'waiting_assignment',
+      'waiting_personal_authorization',
+      'ready',
+      'degraded',
+      'disabled',
+    ].includes(String(record.agentStatus))
+      ? (record.agentStatus as MySystemInstallation['agentStatus'])
+      : record.state === 'enabled'
+        ? 'ready'
+        : 'disabled',
+    personalAuthorizationStatus: [
+      'not_required',
+      'pending',
+      'connected',
+      'expired',
+      'insufficient_scope',
+    ].includes(String(record.personalAuthorizationStatus))
+      ? (record.personalAuthorizationStatus as MySystemInstallation['personalAuthorizationStatus'])
+      : 'not_required',
+    canOpenPage:
+      typeof record.canOpenPage === 'boolean' ? record.canOpenPage : record.state === 'enabled',
+    canUseAgent:
+      typeof record.canUseAgent === 'boolean' ? record.canUseAgent : record.state === 'enabled',
+    reasonCode: typeof record.reasonCode === 'string' ? record.reasonCode : null,
+    nextAction: ['none', 'continue_onboarding', 'edit_assignment', 'authorize', 'retry'].includes(
+      String(record.nextAction),
+    )
+      ? (record.nextAction as MySystemInstallation['nextAction'])
+      : 'none',
+    message: typeof record.message === 'string' ? record.message : '',
   };
 }
 

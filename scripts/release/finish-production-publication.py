@@ -25,7 +25,7 @@ p.write_text(s.replace(old, "await validatePrivateConfigIdentityReleaseBinding({
 path = 'docs/config-identity.md'
 p = Path(path)
 s = p.read_text()
-heading = '# ConfigIdentity：发布级有效配置身份\n'
+heading = '# Release-bound Config Identity（配置身份）\n'
 assert s.count(heading) == 1
 s = s.replace(heading, heading + '\n> 2026-09-09 补充：生产模型管理已增加签名的在线配置发布权威。下文的 `.release.env` 仍是不可变的代码发布基线；同一代码版本上经过受控保存的配置，以签名在线版本作为 expected。详见本文末节和 `docs/plans/production-model-config-online-save.md`。\n')
 s += '''

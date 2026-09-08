@@ -88,6 +88,18 @@ export class KyAppInstallationDirectory {
     return listEnabledKyAppInstallations(this.pool, this.table);
   }
 
+  /** 首次接入先取得 ready 才启用；仅探测已验证域名的 pending 实例。 */
+  async listProbeable(): Promise<KyAppInstallationBrief[]> {
+    const result = await this.pool.query(
+      `SELECT installation_id, tenant_id, system_id, base_url, origin, status,
+              state_version, registered_digest
+       FROM ${this.table}
+       WHERE status = 'enabled' OR (status = 'pending' AND domain_verified_at IS NOT NULL)
+       ORDER BY installation_id`,
+    );
+    return result.rows.map((row) => rowToBrief(row as Record<string, unknown>));
+  }
+
   listLive(): Promise<KyAppInstallationBrief[]> {
     return listLiveKyAppInstallations(this.pool, this.table);
   }

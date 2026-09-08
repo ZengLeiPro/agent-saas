@@ -73,7 +73,7 @@ export interface KyAppClaimedCredential {
   /** 服务凭据明文，只在领取响应里出现这一次。 */
   serviceCredential: string;
   keyVersion: string;
-  /** 安装密钥明文（base64），定制项目写进自己的密钥管理。 */
+  /** 安装密钥明文（base64url），可直接传给 SDK 的 KY_INSTALLATION_KEY。 */
   installationKey: string;
   scopes: KyAppCredentialScope[];
   ackDeadlineAt: string;
@@ -202,7 +202,7 @@ export class KyAppCredentialManager {
         credentialId: record.credentialId,
         serviceCredential: payload.token,
         keyVersion: key.keyVersion,
-        installationKey,
+        installationKey: Buffer.from(installationKey, 'base64').toString('base64url'),
         scopes: record.scopes,
         ackDeadlineAt: record.ackDeadlineAt,
         expiresAt: record.expiresAt,

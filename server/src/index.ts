@@ -5,6 +5,7 @@ import type { Server } from 'http';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { createRuntime } from './app/runtime.js';
 import { registerRoutes } from './app/routes.js';
+import { startKyAppWorkerRuntime } from './app/kyAppWorkerRuntime.js';
 import { createBrowserRouter } from './routes/browser.js';
 import type { AppRuntime } from './app/runtime.js';
 import type { CronService } from './cron/service.js';
@@ -186,6 +187,7 @@ async function startServer(): Promise<void> {
   cronService = cronRuntime.service;
   if (processRole === 'scheduler-only' || processRole === 'runtime-worker') {
     if (processRole === 'runtime-worker') {
+      await startKyAppWorkerRuntime(runtime);
       runtime.startCronCoordinator();
       kbPreviewScheduler = startKbPreviewScheduler(runtime.processCwd);
       await syncRuntimeWorkerReadyFile();
@@ -490,6 +492,7 @@ process.on('SIGUSR2', () => {
     serverLogger.warn(`Drain: DWS shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
   });
   runtime?.feishuAuthKeepaliveShutdown?.();
+  runtime?.kyAppShutdown?.();
   kbPreviewScheduler?.stop();
 
   // durable foreground run 不在部署时取消。先请求它们在完整模型轮/工具批次边界

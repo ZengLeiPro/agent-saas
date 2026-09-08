@@ -268,6 +268,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     onAlert: alerts.onHealthAlert,
   });
   const worker = new KyAppWorker({
+    canRun: () => runtime.getRuntimeAdmissionSnapshot?.().admitting === true,
     dispatcher,
     prober,
     credentials,

@@ -3,7 +3,7 @@
  */
 import { describe, expect, it, afterEach } from 'vitest';
 
-import { issueAttestation, deriveInstallationKeys } from '@kaiyan/ky-app-server';
+import { issueAttestation, deriveInstallationKeys, decodeInstallationKey } from '@kaiyan/ky-app-server';
 
 import {
   KY_APP_CREDENTIAL_ACK_WINDOW_MS,
@@ -58,6 +58,14 @@ async function claimCredential(harness: KyAppTestRig): Promise<{
 }
 
 describe('服务凭据一次性领取与确认', () => {
+  it('平台领取的安装密钥无需手动转码即可被业务 SDK 读取', async () => {
+    const harness = await rig();
+    await seedPublishedInstallation(harness);
+    const claimed = await claimCredential(harness);
+    expect(claimed.installationKey).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(decodeInstallationKey(claimed.installationKey, 'KY_INSTALLATION_KEY'))
+      .toEqual(new Uint8Array(Buffer.from(claimed.installationKey, 'base64')));
+  });
   it('签发响应不含明文；联系人领取只成功一次；普通成员不能领', async () => {
     const harness = await rig();
     await seedPublishedInstallation(harness);

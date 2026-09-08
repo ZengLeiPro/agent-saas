@@ -48,6 +48,8 @@ export interface KyAppDirectoryMaintenance {
 }
 
 export interface KyAppWorkerOptions {
+  /** 候选/排空 Worker 不运行后台任务，防止蓝绿双执行。 */
+  canRun?: () => boolean;
   dispatcher: KyAppEventDispatcher;
   prober: KyAppHealthProber;
   credentials: KyAppCredentialManager;
@@ -200,6 +202,7 @@ export class KyAppWorker {
 
   private schedule(intervalMs: number, run: () => Promise<void>): ReturnType<typeof setInterval> {
     const timer = setInterval(() => {
+      if (this.options.canRun && !this.options.canRun()) return;
       void run();
     }, intervalMs);
     timer.unref?.();

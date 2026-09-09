@@ -1,17 +1,31 @@
 import { ManifestDiff } from './ManifestDiff';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { kyAppPost, KyAppManagementError } from '@/lib/kyAppManagementApi';
 import type { SystemDetail } from '@/lib/kyAppManagementTypes';
-export function SystemVersions({ detail, reload }: { detail: SystemDetail; reload: () => void }) {
+
+export function PublishVersionAction({
+  detail,
+  digest,
+  reload,
+}: {
+  detail: SystemDetail;
+  digest?: string;
+  reload: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  async function publish(digest: string) {
-    const message =
-      detail.definition.status === 'disabled'
-        ? '确认重新发布并恢复系统？所有已接入组织的工作区入口将按各自实例状态恢复可用；切换版本仍需部署并验证。'
-        : '确认发布此版本？现有实例需部署并验证后才能切换。';
-    if (busy || !window.confirm(message)) return;
+  const [open, setOpen] = useState(false);
+  async function publish() {
+    if (busy || !digest) return;
     setBusy(true);
     setError('');
     try {
@@ -19,6 +33,7 @@ export function SystemVersions({ detail, reload }: { detail: SystemDetail; reloa
         `/systems/${encodeURIComponent(detail.definition.systemId)}/versions/${digest}/publish`,
         { expectedVersion: detail.definition.version },
       );
+      setOpen(false);
       reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '操作失败');
@@ -27,14 +42,50 @@ export function SystemVersions({ detail, reload }: { detail: SystemDetail; reloa
       setBusy(false);
     }
   }
+  const restoring = detail.definition.status === 'disabled';
+  return (
+    <>
+      <Button
+        disabled={!digest || busy}
+        title={digest ? undefined : '暂无待发布版本'}
+        onClick={() => setOpen(true)}
+      >
+        {restoring ? '重新发布并恢复系统' : '发布版本'}
+      </Button>
+      <Dialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{restoring ? '重新发布并恢复系统' : '发布业务系统版本'}</DialogTitle>
+            <DialogDescription>
+              {restoring
+                ? '系统目录将恢复可用；各组织仍需完成对应版本的部署与验证。'
+                : '发布后，现有组织实例仍需部署并验证该版本，平台不会自动切换运行版本。'}
+            </DialogDescription>
+          </DialogHeader>
+          <p className="break-all rounded-lg bg-muted p-3 font-mono text-xs">{digest}</p>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={busy} onClick={() => setOpen(false)}>
+              取消
+            </Button>
+            <Button disabled={busy} onClick={() => void publish()}>
+              {busy ? '发布中…' : '确认发布'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export function SystemVersions({ detail }: { detail: SystemDetail }) {
   return (
     <section className="space-y-3">
       <h3 className="font-medium">系统版本</h3>
-      {error && (
-        <p role="alert" className="text-destructive">
-          {error}
-        </p>
-      )}
       {detail.versions.length === 0 && <p>暂无登记版本</p>}
       {detail.versions.map((version) => (
         <article key={version.digest} className="space-y-3 rounded-lg border p-4">
@@ -72,15 +123,6 @@ export function SystemVersions({ detail, reload }: { detail: SystemDetail; reloa
               {JSON.stringify(version.manifest, null, 2)}
             </pre>
           </details>
-          <div className="flex gap-2">
-            {version.allowedActions?.includes('publish_version') &&
-              (detail.definition.publishedDigest !== version.digest ||
-                detail.definition.status === 'disabled') && (
-                <Button disabled={busy} onClick={() => void publish(version.digest)}>
-                  {detail.definition.status === 'disabled' ? '重新发布并恢复系统' : '发布版本'}
-                </Button>
-              )}
-          </div>
         </article>
       ))}
     </section>

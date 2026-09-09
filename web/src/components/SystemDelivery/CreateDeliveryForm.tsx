@@ -1,5 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { kyAppPost, type SystemDefinition } from '@/lib/kyAppManagementApi';
 import type { OnboardResponse } from '@/lib/kyAppManagementTypes';
 import {
@@ -188,17 +196,16 @@ function ConnectionForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const data = resource.data;
   const contactId = contact || data?.members.find((member) => member.isAdmin)?.userId || '';
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!data?.eligible || !contactId || busy || !options.publishedDigest) return;
-    if (
-      !window.confirm(
-        `确认将当前业务系统接入「${data.tenant.name}」，技术联系人为「${data.members.find((member) => member.userId === contactId)?.name}」？接入后仍需配置成员与 Agent 授权。`,
-      )
-    )
-      return;
+    setConfirmOpen(true);
+  }
+  async function confirmConnection() {
+    if (!data?.eligible || !contactId || busy || !options.publishedDigest) return;
     setBusy(true);
     onBusy(true);
     setError('');
@@ -213,6 +220,7 @@ function ConnectionForm({
           ...(override ? { deployment: { baseUrl: baseUrl.trim(), origin: origin.trim() } } : {}),
         }),
       );
+      setConfirmOpen(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '接入失败');
     } finally {
@@ -252,89 +260,111 @@ function ConnectionForm({
       </div>
     );
   return (
-    <form onSubmit={(event) => void submit(event)} className="space-y-4">
-      <label className="block text-sm">
-        技术联系人
-        <select
-          aria-label="技术联系人"
-          required
-          value={contactId}
-          disabled={busy}
-          onChange={(event) => setContact(event.target.value)}
-          className="mt-2 block w-full rounded border bg-background p-2"
-        >
-          <option value="">请选择组织成员</option>
-          {data.members.map((member) => (
-            <option key={member.userId} value={member.userId}>
-              {member.name}
-              {member.isAdmin ? '（组织管理员）' : ''}
-            </option>
-          ))}
-        </select>
-      </label>
-      {!data.members.length && <p>该组织暂无有效成员，请先在组织成员管理中添加。</p>}
-      {options.settings.baseUrl && options.settings.origin && (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={override}
+    <>
+      <form onSubmit={(event) => void submit(event)} className="space-y-4">
+        <label className="block text-sm">
+          技术联系人
+          <select
+            aria-label="技术联系人"
+            required
+            value={contactId}
             disabled={busy}
-            onChange={(event) => setOverride(event.target.checked)}
-          />
-          为本组织使用独立部署地址
+            onChange={(event) => setContact(event.target.value)}
+            className="mt-2 block w-full rounded border bg-background p-2"
+          >
+            <option value="">请选择组织成员</option>
+            {data.members.map((member) => (
+              <option key={member.userId} value={member.userId}>
+                {member.name}
+                {member.isAdmin ? '（组织管理员）' : ''}
+              </option>
+            ))}
+          </select>
         </label>
-      )}
-      {override ? (
-        <fieldset disabled={busy} className="space-y-3 rounded border p-3">
-          <legend className="px-1 text-sm">本组织部署地址</legend>
-          <p className="text-xs text-muted-foreground">
-            未配置默认地址时，请填写技术联系人提供的地址；也可先到系统“接入配置”维护默认地址。
+        {!data.members.length && <p>该组织暂无有效成员，请先在组织成员管理中添加。</p>}
+        {options.settings.baseUrl && options.settings.origin && (
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={override}
+              disabled={busy}
+              onChange={(event) => setOverride(event.target.checked)}
+            />
+            为本组织使用独立部署地址
+          </label>
+        )}
+        {override ? (
+          <fieldset disabled={busy} className="space-y-3 rounded border p-3">
+            <legend className="px-1 text-sm">本组织部署地址</legend>
+            <p className="text-xs text-muted-foreground">
+              未配置默认地址时，请填写技术联系人提供的地址；也可先到系统“接入配置”维护默认地址。
+            </p>
+            <label className="block text-sm">
+              业务服务地址
+              <input
+                required
+                type="url"
+                value={baseUrl}
+                onChange={(event) => setBaseUrl(event.target.value)}
+                className="mt-1 block w-full rounded border bg-background p-2"
+              />
+            </label>
+            <label className="block text-sm">
+              业务页面地址
+              <input
+                required
+                type="url"
+                value={origin}
+                onChange={(event) => setOrigin(event.target.value)}
+                className="mt-1 block w-full rounded border bg-background p-2"
+              />
+            </label>
+          </fieldset>
+        ) : (
+          <p className="break-all text-sm text-muted-foreground">
+            服务地址：{resolveConnectionAddress(options.settings.baseUrl, tenantId, systemId)}
+            <br />
+            页面地址：{resolveConnectionAddress(options.settings.origin, tenantId, systemId)}
           </p>
-          <label className="block text-sm">
-            业务服务地址
-            <input
-              required
-              type="url"
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              className="mt-1 block w-full rounded border bg-background p-2"
-            />
-          </label>
-          <label className="block text-sm">
-            业务页面地址
-            <input
-              required
-              type="url"
-              value={origin}
-              onChange={(event) => setOrigin(event.target.value)}
-              className="mt-1 block w-full rounded border bg-background p-2"
-            />
-          </label>
-        </fieldset>
-      ) : (
-        <p className="break-all text-sm text-muted-foreground">
-          服务地址：{resolveConnectionAddress(options.settings.baseUrl, tenantId, systemId)}
-          <br />
-          页面地址：{resolveConnectionAddress(options.settings.origin, tenantId, systemId)}
+        )}
+        <p className="text-sm">
+          接入组织：{data.tenant.name}；技术联系人：
+          {data.members.find((member) => member.userId === contactId)?.name || '未选择'}。
         </p>
-      )}
-      <p className="text-sm">
-        接入组织：{data.tenant.name}；技术联系人：
-        {data.members.find((member) => member.userId === contactId)?.name || '未选择'}。
-      </p>
-      <details className="text-xs text-muted-foreground">
-        <summary>查看发布版本</summary>
-        <code className="break-all">{options.publishedDigest}</code>
-      </details>
-      {error && (
-        <div role="alert">
-          <p>{error}</p>
-          <Button type="button" variant="link" onClick={onRefresh}>
-            刷新组织与系统配置
-          </Button>
-        </div>
-      )}
-      <Button disabled={busy || !contactId}>{busy ? '接入中…' : '确认接入'}</Button>
-    </form>
+        <details className="text-xs text-muted-foreground">
+          <summary>查看发布版本</summary>
+          <code className="break-all">{options.publishedDigest}</code>
+        </details>
+        {error && (
+          <div role="alert">
+            <p>{error}</p>
+            <Button type="button" variant="link" onClick={onRefresh}>
+              刷新组织与系统配置
+            </Button>
+          </div>
+        )}
+        <Button disabled={busy || !contactId}>{busy ? '接入中…' : '确认接入'}</Button>
+      </form>
+      <Dialog open={confirmOpen} onOpenChange={(open) => !busy && setConfirmOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>确认接入组织</DialogTitle>
+            <DialogDescription>
+              将当前业务系统接入“{data.tenant.name}”，技术联系人为“
+              {data.members.find((member) => member.userId === contactId)?.name}
+              ”。接入后仍需配置成员与 Agent 授权。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={busy} onClick={() => setConfirmOpen(false)}>
+              取消
+            </Button>
+            <Button disabled={busy} onClick={() => void confirmConnection()}>
+              {busy ? '接入中…' : '确认接入'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

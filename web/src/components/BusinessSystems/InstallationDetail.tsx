@@ -13,7 +13,6 @@ import { installationPath, kyAppPost } from '@/lib/kyAppManagementApi';
 import type { InstallationManagement } from '@/lib/kyAppManagementTypes';
 import { loadMySystems } from '@/lib/mySystemsSource';
 import { useManagementResource, ResourceState } from './ManagementResource';
-import { InstallationAssignments } from './InstallationAssignments';
 import { InstallationRuntime } from './InstallationRuntime';
 import { InstallationAccessOverview } from './InstallationAccessOverview';
 import { InstallationActivity } from './InstallationActivity';
@@ -212,15 +211,9 @@ export function InstallationDetail({
           <InstallationActivity installationId={installationId} />
         </TabsContent>
         <TabsContent value="access" className="space-y-4">
-          {actions.includes('edit_assignments') ? (
-            <InstallationAssignments
-              tenantId={detail.installation.tenantId}
-              installationId={installationId}
-              name={detail.definition?.name ?? installationId}
-            />
-          ) : (
+          {!actions.includes('edit_assignments') ? (
             <p>当前实例不可编辑访问范围；请先启用实例并确认管理权限。</p>
-          )}
+          ) : null}
           <InstallationAccessOverview
             installationId={installationId}
             tenantId={detail.installation.tenantId}

@@ -76,6 +76,7 @@ export async function ensureIdentityBoundShadowBinding(
   pool: pg.Pool,
   bindingsTable: string,
   accountsTable: string,
+  deliveriesTable: string,
   input: EnsureIdentityBoundShadowBindingInput,
 ): Promise<OrgAgentChannelBinding> {
   assertTexts(
@@ -159,6 +160,7 @@ export async function ensureIdentityBoundShadowBinding(
           input.accountIdentity.identityUpdatedAt],
       );
       if (!authorized.rows[0]) throw new Error('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_CONFLICT');
+      await assertBindingGenerationContract(client, bindingsTable, deliveriesTable);
       await client.query(
         `UPDATE ${bindingsTable}
          SET logical_conversation_id=COALESCE(logical_conversation_id,conversation_id),
@@ -206,6 +208,25 @@ export async function ensureIdentityBoundShadowBinding(
   } finally {
     client.release();
   }
+}
+
+async function assertBindingGenerationContract(
+  client: pg.PoolClient,
+  bindingsTable: string,
+  deliveriesTable: string,
+): Promise<void> {
+  const result = await client.query<{ ready: boolean }>(
+    `SELECT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid=$1::regclass AND confrelid=$2::regclass
+        AND contype='f' AND convalidated AND confupdtype='c'
+        AND pg_get_constraintdef(oid) LIKE
+          'FOREIGN KEY (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)%'
+    ) AS ready`,
+    [deliveriesTable, bindingsTable],
+  );
+  if (result.rows[0]?.ready !== true)
+    throw new Error('ORG_AGENT_BINDING_GENERATION_CONTRACT_REQUIRED');
 }
 
 function assertBindingScope(

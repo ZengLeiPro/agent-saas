@@ -101,7 +101,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     input: EnsureIdentityBoundShadowBindingInput,
   ): Promise<OrgAgentChannelBinding> {
     return await ensureIdentityBoundShadowBinding(
-      this.pool, this.bindingsTable, this.accountsTable, input,
+      this.pool, this.bindingsTable, this.accountsTable, this.deliveriesTable, input,
     );
   }
 

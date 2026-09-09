@@ -238,7 +238,7 @@ describePg('组织群 binding 身份分代兼容与历史隔离', () => {
         newIdentity.identityUpdatedAt,
       ],
     );
-    const current = await store.ensureShadowBinding({
+    const rebindInput = {
       tenantId: 'tenant-a',
       accountId: 'account-a',
       agentId: 'agent-a',
@@ -246,7 +246,22 @@ describePg('组织群 binding 身份分代兼容与历史隔离', () => {
       channelKind: 'group',
       workspaceId: 'workspace-a',
       accountIdentity: newIdentity,
+    } as const;
+    await expect(store.ensureShadowBinding(rebindInput)).rejects.toThrow(
+      'ORG_AGENT_BINDING_GENERATION_CONTRACT_REQUIRED',
+    );
+    const unchanged = await pool.query(
+      `SELECT conversation_id,retired_at FROM ${prefix}_org_agent_channel_bindings
+       WHERE binding_id=$1`,
+      [enabled.bindingId],
+    );
+    expect(unchanged.rows[0]).toMatchObject({
+      retired_at: null,
+      conversation_id: 'group-generation',
     });
+
+    await installBindingGenerationContract();
+    const current = await store.ensureShadowBinding(rebindInput);
     expect(current.bindingId).not.toBe(enabled.bindingId);
     expect(
       (await store.listBindings('tenant-a', 'account-a')).map((item) => item.bindingId),
@@ -273,4 +288,27 @@ describePg('组织群 binding 身份分代兼容与历史隔离', () => {
     expect(history.workOrders.map((item) => item.workOrderId)).toContain(oldWork.workOrderId);
     expect(history.memories.map((item) => item.memoryId)).toContain(oldMemory.memoryId);
   });
+
+  async function installBindingGenerationContract(): Promise<void> {
+    const bindings = `${prefix}_org_agent_channel_bindings`;
+    const deliveries = `${prefix}_agent_dws_delivery_intents`;
+    const current = await pool.query<{ conname: string }>(
+      `SELECT conname FROM pg_constraint
+       WHERE conrelid=$1::regclass AND confrelid=$2::regclass AND contype='f'
+         AND pg_get_constraintdef(oid) LIKE
+           'FOREIGN KEY (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)%'`,
+      [deliveries, bindings],
+    );
+    expect(current.rows).toHaveLength(1);
+    const constraint = `"${current.rows[0]!.conname.replaceAll('"', '""')}"`;
+    await pool.query(`ALTER TABLE ${deliveries} DROP CONSTRAINT ${constraint}`);
+    await pool.query(`ALTER TABLE ${deliveries}
+      ADD CONSTRAINT ${deliveries}_binding_generation_fk
+      FOREIGN KEY (tenant_id,binding_id,agent_id,conversation_space_id,account_id,conversation_id)
+      REFERENCES ${bindings}(tenant_id,binding_id,agent_id,conversation_space_id,account_id,conversation_id)
+      ON UPDATE CASCADE NOT VALID`);
+    await pool.query(
+      `ALTER TABLE ${deliveries} VALIDATE CONSTRAINT ${deliveries}_binding_generation_fk`,
+    );
+  }
 });

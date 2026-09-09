@@ -10,6 +10,7 @@ export const SYSTEM_PROMPT_IDS = [
   'subagent.general',
   'subagent.explore',
   'utility.title',
+  'utility.sessionGrouping',
   'utility.guardrail',
   'utility.imageUnderstanding',
   'utility.compaction',

@@ -1,5 +1,5 @@
 /**
- * P3-3d：个人设置 8 分区注册表与 Web 的同名同序契约测试。
+ * P3-3d：个人设置分区注册表与 Web 的同名同序契约测试。
  *
  * Web 的权威源是 `web/src/lib/unifiedSettingsRegistry.ts`（跨 package 不能直接
  * import，这里按文本解析其 `scope: "personal"` 条目），断言：
@@ -52,8 +52,8 @@ function readWebPersonalSections(): WebPersonalEntry[] {
 describe('P3-3d 个人设置分区与 Web 对齐', () => {
   const webSections = readWebPersonalSections();
 
-  it('能解析到 Web 的 8 个个人分区（防止解析失效导致空跑）', () => {
-    expect(webSections).toHaveLength(8);
+  it('能解析到 Web 的 9 个个人分区（防止解析失效导致空跑）', () => {
+    expect(webSections).toHaveLength(9);
     expect(webSections[0].id).toBe('account-security');
   });
 
@@ -103,6 +103,7 @@ describe('P3-3d 个人设置分区与 Web 对齐', () => {
       'account-security',
       'my-agent',
       'chat-model',
+      'session-organization',
       'appearance-layout',
       'my-permissions',
       'connections',

@@ -66,6 +66,8 @@ export default function SettingsScreen() {
       // 服务端未下发该开关时按开启处理（与 shared 默认口径一致）。
       "my-agent": tenantFeatures.personalAgentEnabled !== false,
       "chat-model": true,
+      // 本期仅交付 Web 会话智能整理，React Native 保留注册表契约但不展示入口。
+      "session-organization": false,
       "appearance-layout": true,
       "my-permissions": isV1RouteAllowed("settings/my-permissions", v1Profile),
       connections: isV1RouteAllowed("capabilities/connectors", v1Profile),
@@ -133,6 +135,7 @@ export default function SettingsScreen() {
         setTrashVisible(true);
         return;
       }
+      if (section.target.kind === "unavailable") return;
       // 落点来自注册表（`src/lib/settings/personalSettingsSections.ts`），
       // 其 V1 分类由该模块的单测断言，这里不再重复静态字符串。
       const pathname = `/${section.target.route}`;

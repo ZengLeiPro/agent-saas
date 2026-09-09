@@ -28,6 +28,7 @@ import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDi
 import { LazySessionShareDialog } from "@/components/chat/LazySessionShareDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
+import { SmartGroupingButton } from "@/components/chat/SmartGroupingDialog";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -620,7 +621,6 @@ export function DesktopSessionSidebar({
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
   const actionMenuRef = useRef<HTMLDivElement>(null);
 
-  // 排序齿轮下拉菜单
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const sortMenuRef = useRef<HTMLDivElement>(null);
 
@@ -637,7 +637,6 @@ export function DesktopSessionSidebar({
   const sessionSearch = useSessionSearch(sessionSearchQuery);
   const isSessionSearchActive = sessionSearchQuery.trim().length > 0;
   const highlightedSessionId = activeTab === "chat" ? activeSessionId : null;
-  // 分组重命名/删除状态
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const [deleteGroupId, setDeleteGroupId] = useState<string | null>(null);
@@ -664,7 +663,6 @@ export function DesktopSessionSidebar({
     }
   }, [activeTab]);
 
-  // 无限滚动 ref(useEffect 在 selectedView/subPanelOpen 声明后)
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   // 选中视图状态：'__all__' | '__ungrouped__' | 真实 groupId
@@ -1357,6 +1355,7 @@ export function DesktopSessionSidebar({
                 />
               ) : (
                 <div className="flex shrink-0 items-center gap-1">
+                  <SmartGroupingButton onApplied={groupsHook.loadGroups} />
                   <Button
                     type="button"
                     variant="ghost"
@@ -1629,6 +1628,7 @@ export function DesktopSessionSidebar({
 
                   {/* 新建分组 + 右侧排序状态按钮 */}
                   <div className="flex items-center gap-1">
+                    {!groupsHook.editing && <SmartGroupingButton compact onApplied={groupsHook.loadGroups} />}
                     {!groupsHook.editing && (
                       <button
                         type="button"

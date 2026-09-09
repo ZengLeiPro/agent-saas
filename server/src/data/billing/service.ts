@@ -264,7 +264,7 @@ export class BillingService {
     userId?: string;
     username: string;
     sessionId?: string;
-    channel: 'guardrail' | 'title' | 'memory_embedding' | 'automation_evaluator';
+    channel: 'guardrail' | 'title' | 'session_grouping' | 'memory_embedding' | 'automation_evaluator';
     attribution?: { rootAutomationId: string; automationExecutionId: string; automationGeneration: number };
   }): Promise<BillingUtilityModelRun> {
     const runId = `utility-${input.channel}-${randomUUID()}`;

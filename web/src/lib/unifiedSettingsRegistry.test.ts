@@ -20,6 +20,7 @@ const EXPECTED_KEYS = [
   "personal:account-security",
   "personal:my-agent",
   "personal:chat-model",
+  "personal:session-organization",
   "personal:appearance-layout",
   "personal:my-permissions",
   "personal:connections",
@@ -67,10 +68,10 @@ function expectUnique(values: readonly string[]) {
 }
 
 describe("unified settings registry", () => {
-  it("穷举唯一的 37 个叶子，scope 数量固定为 8/11/18", () => {
+  it("穷举唯一的 38 个叶子，scope 数量固定为 9/11/18", () => {
     expect(SETTINGS_REGISTRY.map((entry) => entry.key)).toEqual(EXPECTED_KEYS);
     expectUnique(SETTINGS_REGISTRY.map((entry) => entry.key));
-    expect(settingsSectionsForScope("personal")).toHaveLength(8);
+    expect(settingsSectionsForScope("personal")).toHaveLength(9);
     expect(settingsSectionsForScope("tenant")).toHaveLength(11);
     expect(settingsSectionsForScope("platform")).toHaveLength(18);
   });
@@ -102,7 +103,7 @@ describe("unified settings registry", () => {
     const groups = groupPersonalSettingsSections(settingsSectionsForScope("personal"));
     expect(groups.map((group) => [group.group, group.items.length])).toEqual([
       ["personal", 2],
-      ["preferences", 2],
+      ["preferences", 3],
       ["access", 2],
       ["data", 2],
     ]);

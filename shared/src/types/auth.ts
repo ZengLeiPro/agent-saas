@@ -22,6 +22,10 @@ export interface UserPreferences {
   activeRoleId?: string;
   /** 用户选择或系统推断的业态偏好，用于推荐排序。 */
   industryHint?: IndustryType;
+  /** 追加在平台会话标题提示语后的个人偏好。 */
+  titlePromptAddition?: string;
+  /** 追加在平台智能分组提示语后的个人偏好。 */
+  sessionGroupingPromptAddition?: string;
 }
 
 export interface TenantFeatureFlags {

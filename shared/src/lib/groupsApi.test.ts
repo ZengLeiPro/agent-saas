@@ -15,6 +15,8 @@ import {
   fetchGroupSessions,
   fetchGroupSorting,
   saveGroupSorting,
+  generateSmartGroupingPlan,
+  applySmartGroupingPlan,
 } from './groupsApi';
 
 const mockAuthFetch = vi.mocked(authFetch);
@@ -43,6 +45,16 @@ function lastCall() {
 describe('groupsApi', () => {
   beforeEach(() => {
     mockAuthFetch.mockReset();
+  });
+
+  it('智能分组严格分为预览和应用两个请求', async () => {
+    const plan = { scope: 'ungrouped' as const, fingerprint: 'fp', groups: [{ name: '客户', sessionIds: ['s1'] }], ungroupedSessionIds: [], sessions: [{ sessionId: 's1', title: '报价' }], truncated: false };
+    mockAuthFetch.mockResolvedValueOnce(ok(plan)).mockResolvedValueOnce(ok({ ok: true }));
+    await expect(generateSmartGroupingPlan('ungrouped')).resolves.toEqual(plan);
+    expect(lastCall().url).toBe('/api/groups/smart-plan');
+    await applySmartGroupingPlan(plan);
+    expect(lastCall().url).toBe('/api/groups/smart-apply');
+    expect(JSON.parse(String(lastCall().init.body))).toEqual({ fingerprint: 'fp', targetSessionIds: ['s1'], groups: plan.groups });
   });
 
   describe('fetchGroups', () => {

@@ -12,6 +12,8 @@ import {
   useSessionUsageStats,
 } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
+import { definedSessionAgentTargetFields, type SessionAgentTargetFields } from "@/lib/sessionAgentTargetIdentity";
+import { useSessionAgentTargetSync } from "./useSessionAgentTargetSync";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
 import { removeTabScopedAuth, writeTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { sessionsPreload } from "@/lib/preload";
@@ -113,7 +115,7 @@ export interface SessionState {
     patch: { preview?: string; updatedAtMs?: number; hasUnreadAiReply?: boolean },
   ) => void;
   removeSession: (sessionId: string) => void;
-  upsertSession: (session: {
+  upsertSession: (session: SessionAgentTargetFields & {
     sessionId: string;
     title?: string;
     preview?: string;
@@ -155,6 +157,7 @@ export function useSession(
     options?.initialSessionId ?? null,
   );
   const [sessions, setSessions] = useState<ApiSessionListItem[]>([]);
+  useSessionAgentTargetSync(sessions, setSessions, identity);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [deleteSessionIds, setDeleteSessionIds] = useState<string[]>([]);
   const [hasMore, setHasMore] = useState(true);
@@ -499,7 +502,7 @@ export function useSession(
 
   /** 插入或更新会话（其他设备创建的新会话无需 HTTP 请求） */
   const upsertSession = useCallback(
-    (newSession: {
+    (newSession: SessionAgentTargetFields & {
       sessionId: string;
       title?: string;
       preview?: string;
@@ -547,6 +550,7 @@ export function useSession(
                   ...(newSession.orgAgentAvailable !== undefined
                     ? { orgAgentAvailable: newSession.orgAgentAvailable }
                     : {}),
+                  ...definedSessionAgentTargetFields(newSession),
                 }
               : s,
           );
@@ -572,6 +576,7 @@ export function useSession(
             ...(newSession.orgAgentAvailable !== undefined
               ? { orgAgentAvailable: newSession.orgAgentAvailable }
               : {}),
+            ...definedSessionAgentTargetFields(newSession),
           };
           updated = [entry, ...prev];
         }

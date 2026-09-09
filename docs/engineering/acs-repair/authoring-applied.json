@@ -1,0 +1,9 @@
+{
+  "id": "reader-preparation",
+  "baseSha": "f48833a04db69c5e753e90ebce6fec06fb272bc5",
+  "files": [
+    "acs-orchestrator/src/sandboxLifecyclePolicy.ts",
+    "acs-orchestrator/src/invocationRestartRecovery.ts",
+    "acs-orchestrator/src/acsHangRegression.test.ts"
+  ]
+}

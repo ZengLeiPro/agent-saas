@@ -207,7 +207,8 @@ export function expiredActiveInvocationLeaseAnnotationKeys(
 ): string[] {
   return activeInvocationLeaseSnapshots(annotations)
     .filter((snapshot) => {
-      if (snapshot.malformed) return !snapshot.until || Date.parse(snapshot.until) <= nowMs;
+      // A malformed/future ownership record is not evidence that a writer stopped.
+      if (snapshot.malformed) return false;
       if (snapshot.state !== 'executing') return false;
       const untilMs = snapshot.until ? Date.parse(snapshot.until) : Number.NaN;
       return !Number.isFinite(untilMs) || untilMs <= nowMs;
@@ -221,7 +222,8 @@ export function malformedActiveInvocationLeaseAnnotationKeys(
   nowMs = Date.now(),
 ): string[] {
   return activeInvocationLeaseSnapshots(annotations)
-    .filter((snapshot) => snapshot.malformed
+    // Unknown state requires exact remote reconciliation, not a TTL cleanup.
+    .filter((snapshot) => snapshot.malformed && snapshot.state !== 'unknown'
       && (!snapshot.until || Date.parse(snapshot.until) <= nowMs))
     .map((snapshot) => snapshot.annotationKey);
 }

@@ -107,7 +107,7 @@ describe('ACS actual-module bounded waiting regressions', () => {
     const task = new Kubectl(config).run(['get', 'pods'], options);
     try {
       await Promise.resolve();
-      expect(spawnMock).not.toHaveBeenCalled();
+      expect(spawnMock.mock.calls.length).toBe(0);
       expect(await task).toMatchObject({ exitCode: -1, remoteState: 'not_started' });
     } finally {
       child.emit('close', 0, null);

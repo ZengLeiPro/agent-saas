@@ -54,8 +54,10 @@ export async function reconcileInvocationRestartRecovery(
     const valid = snapshots.filter((lease) => !lease.malformed);
     const malformed = snapshots.filter((lease) => lease.malformed);
     const completionPending = valid.filter((lease) => lease.state === 'completion_pending');
-    const backgroundCandidates = valid.filter((lease) => lease.state === 'background_pending'
-      || (lease.state === 'executing' && leaseExpired(lease, nowMs)));
+    // Background inventory cannot prove a foreground attempt (including an expired
+    // legacy executing lease) stopped. Preserve those owners for exact reconciliation.
+    const backgroundCandidates = valid.filter((lease) => lease.state === 'background_pending');
+    const unresolvedForeground = valid.some((lease) => lease.state === 'executing');
 
     for (const lease of completionPending) {
       try {
@@ -70,7 +72,7 @@ export async function reconcileInvocationRestartRecovery(
       }
     }
 
-    let unresolvedLease = backgroundCandidates.some(
+    let unresolvedLease = unresolvedForeground || malformed.length > 0 || backgroundCandidates.some(
       (lease) => lease.state === 'background_pending' && !leaseExpired(lease, nowMs),
     );
     if (backgroundCandidates.length > 0 || malformed.length > 0) {
@@ -103,10 +105,9 @@ export async function reconcileInvocationRestartRecovery(
           await persistAndComplete(input, sandbox.name, sandbox.uid, lease.invocationKey, recoveredAt);
         }
         if (malformed.length > 0) {
-          // Unknown ownership is released only after strict inventory succeeds. Refreshing
-          // activity first prevents a no-worker residue from exposing an old TTL edge.
-          if (!active) await input.sandboxManager.touch(sandbox.name, recoveredAt, sandbox.uid);
-          await input.sandboxManager.clearMalformedInvocationLeases(sandbox.name, sandbox.uid, recoveredAt);
+          // Empty background inventory says nothing about malformed/future foreground
+          // ownership. Keep the exact annotation and report a truthful blocker.
+          input.logger.warn(`invocation_restart_unknown_retained sandbox=${sandbox.name} count=${malformed.length}`);
         }
       } catch (err) {
         unresolvedLease = true;

@@ -300,7 +300,16 @@ export class ProductionModelPublisher implements ProductionPublisher {
       // Never overwrite an unrelated winning transaction or discard recovery evidence.
       try {
         const current = this.state();
-        if (current.revision === rolling.revision && current.phase !== 'committed') {
+        // Atomic replacement may succeed before fsync throws and the assignment
+        // to rolling completes. Recognize only this process's exact rollback head.
+        const rollbackHeadSelected =
+          current.phase === 'rolling_back' &&
+          current.releaseId === state.releaseId &&
+          current.revision === state.previous?.revision &&
+          current.rawRevision === state.previous?.rawRevision &&
+          current.sequence === state.sequence + 1 &&
+          canonical(current.owner) === canonical(processIdentity());
+        if ((current.revision === rolling.revision || rollbackHeadSelected) && current.phase !== 'committed') {
           this.transition(current, 'recovery_required');
         }
       } catch {

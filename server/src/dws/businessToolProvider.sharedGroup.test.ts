@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ToolCallContext } from '../agent/toolRuntime.js';
 import { InMemoryGovernanceAuditStore } from '../data/governance-audit/store.js';
 import { DwsBusinessToolProvider } from './businessToolProvider.js';
+import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtime/runtimeIsolationEvidence.js';
 
 const account = {
   accountId: 'account-a',
@@ -215,7 +216,48 @@ function setup(sharedGroup: SharedGroupInput) {
   return { provider, invoke, context, listEffectiveResourceIds, getMembership };
 }
 
+function attestedWorker(base: ToolCallContext): ToolCallContext {
+  const workspaceId = 'task-workspace-a', sandboxScopeId = 'task-scope-a';
+  return { ...base, workspace: { ...base.workspace, id: workspaceId, sandboxScopeId },
+    executionRole: 'worker', runtimeIsolationAttested: true,
+    runtimeIsolationRequirement: { tenantId: 'tenant-a', taskId: 'work-order-a', runId: 'run-a',
+      sessionId: 'session-a', workspaceId, policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST },
+    orgAgentTaskLineage: { kind: 'org_agent_task', tenantId: 'tenant-a', agentId: 'agent-a', accountId: 'account-a',
+      ownerWorkspaceId: 'org-agent-workspace-a', bindingId: 'binding-a', conversationSpaceId: 'space-a',
+      workConversationId: 'work-conversation-a', channelConversationId: 'group-a', policyRevision: 7,
+      workOrderId: 'work-order-a', taskRunId: 'run-a', taskSessionId: 'session-a', attemptId: 'attempt-a',
+      attemptNo: 1, currentAttemptNo: 1, taskWorkspaceId: workspaceId, sandboxScopeId, allowedSourceIds: [] },
+    orgAgentTaskAuthority: { taskRunId: 'run-a', taskSessionId: 'session-a', attemptId: 'attempt-a',
+      assertCurrent: vi.fn().mockResolvedValue(undefined) } };
+}
+
 describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
+  it('allows only a live attested Worker and rechecks before transport', async () => {
+    const worker = setup({ assurance: 'mapped', actorRole: 'member', approvalRoles: ['member'],
+      sessionExecutionRole: 'worker' });
+    const taskWorkspaceId = 'task-workspace-a', sandboxScopeId = 'task-scope-a';
+    const assertCurrent = vi.fn().mockResolvedValue(undefined);
+    const context = { ...worker.context,
+      workspace: { ...worker.context.workspace, id: taskWorkspaceId, sandboxScopeId },
+      executionRole: 'worker' as const, runtimeIsolationAttested: true,
+      runtimeIsolationRequirement: { tenantId: 'tenant-a', taskId: 'work-order-a', runId: 'run-a',
+        sessionId: 'session-a', workspaceId: taskWorkspaceId, policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST },
+      orgAgentTaskLineage: { kind: 'org_agent_task' as const, tenantId: 'tenant-a', agentId: 'agent-a',
+        accountId: 'account-a', ownerWorkspaceId: 'org-agent-workspace-a', bindingId: 'binding-a',
+        conversationSpaceId: 'space-a', workConversationId: 'work-conversation-a',
+        channelConversationId: 'group-a', policyRevision: 7, workOrderId: 'work-order-a',
+        taskRunId: 'run-a', taskSessionId: 'session-a', attemptId: 'attempt-a', attemptNo: 1,
+        currentAttemptNo: 1, taskWorkspaceId, sandboxScopeId, allowedSourceIds: [] },
+      orgAgentTaskAuthority: { taskRunId: 'run-a', taskSessionId: 'session-a',
+        attemptId: 'attempt-a', assertCurrent } } satisfies ToolCallContext;
+    const call = { toolId: 'DwsBusiness', input: { args: ['doc', 'read', '--node', 'doc-a'],
+      credentialMode: 'agent' as const }, authorization: { approved: true as const, source: 'policy_auto' as const } };
+    await expect(worker.provider.invoke(call, context)).resolves.toMatchObject({ content: '{"ok":true}' });
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
+    worker.invoke.mockClear(); assertCurrent.mockRejectedValue(new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE'));
+    await expect(worker.provider.invoke(call, context)).rejects.toThrow('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE');
+    expect(worker.invoke).not.toHaveBeenCalled();
+  });
   it('mapped 与未映射访客都只可读取当前 binding 显式登记的资源', async () => {
     for (const assurance of ['mapped', 'unmapped'] as const) {
       const test = setup({
@@ -417,7 +459,7 @@ describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
         },
         worker.context,
       ),
-    ).rejects.toThrow('organization Worker cannot use DwsBusiness');
+    ).rejects.toThrow('organization Worker DWS task lineage is not attested');
     expect(worker.invoke).not.toHaveBeenCalled();
   });
 
@@ -481,5 +523,20 @@ describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
       authorization: { approved: true, source: 'human_approval', approvalId: 'approval-a' },
     }, revokedAssignment.context)).rejects.toThrow('原请求者当前已无权');
     expect(revokedAssignment.invoke).not.toHaveBeenCalled();
+
+    for (const kind of ['membership', 'assignment'] as const) {
+      const worker = setup({ assurance: 'mapped', actorRole: 'member', approvalRoles: ['member'],
+        sessionExecutionRole: 'worker' });
+      if (kind === 'assignment') worker.listEffectiveResourceIds.mockResolvedValueOnce([]);
+      else worker.getMembership.mockResolvedValueOnce({ tenantId: 'tenant-a', userId: 'user-a',
+        persona: 'member', isOwner: false, status: 'disabled', source: 'governance', version: 2,
+        createdAt: '2026-09-04T00:00:00.000Z', createdBy: 'admin-a',
+        updatedAt: '2026-09-04T01:00:00.000Z', updatedBy: 'admin-a' });
+      await expect(worker.provider.invoke({ toolId: 'DwsBusiness',
+        input: { args: ['doc', 'read', '--node', 'doc-a'], credentialMode: 'agent' },
+        authorization: { approved: true, source: 'policy_auto' } }, attestedWorker(worker.context)))
+        .rejects.toThrow('原请求者当前已无权');
+      expect(worker.invoke).not.toHaveBeenCalled();
+    }
   });
 });

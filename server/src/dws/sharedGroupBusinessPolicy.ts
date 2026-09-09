@@ -57,9 +57,10 @@ export function decideSharedGroupDwsAction(input: {
   channel: OrgAgentChannel;
   resourceAllowlist?: readonly string[];
   executionRole?: 'worker';
+  workerTaskAuthorized?: boolean;
 }): SharedGroupDwsDecision {
-  if (input.executionRole === 'worker') {
-    return { allowed: false, reason: 'organization Worker cannot use DwsBusiness' };
+  if (input.executionRole === 'worker' && input.workerTaskAuthorized !== true) {
+    return { allowed: false, reason: 'organization Worker DWS task lineage is not attested' };
   }
   if (
     input.channel.externalActor.kind === 'service_event' ||

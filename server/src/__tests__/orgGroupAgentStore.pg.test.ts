@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PgGovernanceMigrationRunner } from '../data/governance-schema/migrations.js';
 import { PgOrgGroupAgentStore } from '../data/orgGroupAgents/store.js';
 import { PgAgentDwsMessageStore } from '../data/agentDwsMessages/store.js';
+import { installBindingGenerationContract } from './helpers/bindingGenerationContract.js';
 
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
@@ -25,6 +26,7 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
     await new PgGovernanceMigrationRunner(pool, prefix).run();
+    await installBindingGenerationContract(pool, prefix);
     await pool.query(`INSERT INTO ${prefix}_managed_agents
       (agent_id,tenant_id,kind,owner_user_id,status,revision,created_by,updated_by)
       VALUES ('agent-a','tenant-a','org_agent','admin','enabled',1,'admin','admin')`);
@@ -37,8 +39,6 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
     );
     store = new PgOrgGroupAgentStore(pool, prefix);
   }, 60_000);
-
-  // 每个用例共享随机前缀，只清理本测试套件创建的对象。
   afterAll(async () => {
     if (!pool) return;
     try {
@@ -91,13 +91,14 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
       SET account_profile_id=NULL,account_corp_id=NULL,account_dingtalk_user_id=NULL,
           account_identity_updated_at=NULL,created_at='2026-09-03T00:00:00.000Z'
       WHERE binding_id=$1`, [old.bindingId]);
-    await expect(store.ensureShadowBinding({
+    const nextGeneration = await store.ensureShadowBinding({
       tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
       conversationId: 'group-rolling-old', channelKind: 'group',
       workspaceId: 'agent-workspace-a', accountIdentity,
-    })).rejects.toThrow('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_CONFLICT');
+    });
+    expect(nextGeneration.bindingId).not.toBe(old.bindingId);
+    expect((await store.getBindingById('tenant-a', old.bindingId))?.bindingId).toBe(old.bindingId);
   });
-
   it('固定账号、binding、topic、work、attempt 身份且 unknown delivery 不自动重发', async () => {
     const shadow = await store.ensureShadowBinding({
       tenantId: 'tenant-a',
@@ -127,7 +128,7 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
         profileId: 'corp-b:agent-member-b', corpId: 'corp-b', dingtalkUserId: 'agent-member-b',
         identityUpdatedAt: '2026-09-05T00:00:00.000Z',
       },
-    })).rejects.toThrow('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_CONFLICT');
+    })).rejects.toThrow('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_STALE');
     const binding = await store.updateBinding({
       tenantId: 'tenant-a',
       accountId: 'account-a',

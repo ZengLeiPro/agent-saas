@@ -18,6 +18,8 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { authFetch } from '@/lib/authFetch';
 import { WorkspaceHierarchy } from './GroupAgentWorkspaceHierarchy';
+import { ReadinessSummary } from './ReadinessSummary';
+import { EffectiveConfigPreview } from './EffectiveConfigPreview';
 import {
   GroupAgentApprovalQueue,
   type GroupAgentApproval,
@@ -72,6 +74,8 @@ export interface Binding {
       accountStatus: string;
     };
   };
+  readiness?: import('@agent/shared/types/agentDwsAccount').AgentDwsReadiness;
+  effectiveConfigPreview?: import('@agent/shared/types/agentDwsAccount').AgentDwsConfigPreview;
 }
 
 export interface WorkOrder {
@@ -522,7 +526,12 @@ function BindingEditor({
   const [sources, setSources] = useState(binding.effectiveConfig.knowledge.sourceIds);
   const [memoryPolicy, setMemoryPolicy] = useState(binding.effectiveConfig.memory);
   const computation = binding.effectiveConfigComputation;
-  const skillCatalog = computation?.publishedAgent.skillIds;
+  const skillCatalog = computation
+    ? [...new Set([
+        ...computation.publishedAgent.skillIds,
+        ...computation.publishedAgent.knowledgeSkillIds,
+      ])]
+    : undefined;
   const toolCatalog = computation?.channelCeiling.toolNames;
   const sourceCatalog = computation?.channelCeiling.contextDirectoryAvailable
     ? computation.channelCeiling.contextSourceIds.filter((sourceId) =>
@@ -600,14 +609,20 @@ function BindingEditor({
           立即阻断
         </label>
       </div>
+      <ReadinessSummary readiness={binding.readiness} />
+      <EffectiveConfigPreview preview={binding.effectiveConfigPreview} />
       <div>
         <Label htmlFor={`instructions-${binding.bindingId}`}>群 Agent 指令</Label>
         <Textarea
           id={`instructions-${binding.bindingId}`}
           value={instructions}
+          maxLength={20_000}
           placeholder="只对当前群生效的职责、边界与输出要求"
           onChange={(event) => setInstructions(event.target.value)}
         />
+        <p className="mt-1 text-xs text-muted-foreground">
+          保留段落与列表结构，最多 20,000 字符；更长资料请配置为知识源。{instructions.length.toLocaleString()}/20,000
+        </p>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div>

@@ -38,9 +38,11 @@ import {
 import {
   assertDwsReplyAttemptFresh,
   authorizeCurrentDwsRequester,
+  authorizeDirectDelivery,
   boundedExternalId,
   boundedPositive,
   buildSystemContext,
+  buildOrgAgentSharedContext,
   collectAssistantText,
   compactError,
   deterministicId,
@@ -51,6 +53,8 @@ import {
   persistedRejectionReason,
   prepareRoutingClarificationReply,
   rejectionMessage,
+  rejectDwsAccess,
+  requesterIdentitySnapshot,
   safeLogId,
   serviceIdentity,
 } from './personalMessageRouterHelpers.js';
@@ -62,6 +66,10 @@ import {
 } from './orgAgentVisibleReply.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
+import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
+import {
+  OrgAgentFastControlPump,
+} from './orgAgentFastControl.js';
 
 const DEFAULT_POLL_MS = 1_000;
 const DEFAULT_LEASE_TTL_MS = 120_000;
@@ -153,6 +161,7 @@ export interface AgentDwsMessageRouterOptions {
   sender: DwsPersonalMessageSenderLike;
   runStore?: ExistingRunStore;
   eventStore?: ExistingRunEventStore;
+  backgroundTasks?: Pick<BackgroundTaskRuntime, 'get' | 'cancel' | 'controlWorkOrder'>;
   pollMs?: number;
   leaseTtlMs?: number;
   leaseRenewMs?: number;
@@ -176,6 +185,7 @@ export class AgentDwsMessageRouter {
   private readonly visibleReply: OrgAgentVisibleReplyService;
   private readonly active = new Set<Promise<void>>();
   private readonly activeAborts = new Set<AbortController>();
+  private readonly fastControl?: OrgAgentFastControlPump;
   private timer?: NodeJS.Timeout;
   private retryTimer?: NodeJS.Timeout;
   private pumping = false;
@@ -198,17 +208,35 @@ export class AgentDwsMessageRouter {
       this.leaseTtlMs,
       this.frontReplyDeadlineMs,
     );
+    if (options.backgroundTasks && options.messageStore.claimNextControl) {
+      this.fastControl = new OrgAgentFastControlPump({
+        agentCwd: options.agentCwd, messageStore: options.messageStore,
+        accountStore: options.accountStore, runtime: options.backgroundTasks,
+        visibleReply: this.visibleReply, leaseTtlMs: this.leaseTtlMs,
+        leaseRenewMs: this.leaseRenewMs, sharedOptions: options,
+        resolveRequester: options.resolveRequester,
+        ...(options.resolveRequesterOutcome ? { resolveRequesterOutcome: options.resolveRequesterOutcome } : {}),
+        authorizeRequester: options.authorizeRequester,
+        reject: (account, item, reason, requester, owner) => this.rejectAccess(
+          account, item, reason, requester, owner,
+        ),
+        warn: message => options.logger?.warn(message),
+      });
+    }
     if (this.leaseRenewMs >= this.leaseTtlMs) {
       throw new Error('Agent DWS inbox lease renew interval must be shorter than its TTL');
     }
   }
   start(): void {
     if (this.stopped || this.timer) return;
-    this.timer = setInterval(() => this.scheduleKick(), this.pollMs);
+    this.timer = setInterval(() => {
+      this.scheduleKick();
+      this.fastControl?.kick();
+    }, this.pollMs);
     this.timer.unref?.();
     this.scheduleKick();
+    this.fastControl?.kick();
   }
-
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
@@ -217,8 +245,8 @@ export class AgentDwsMessageRouter {
     this.retryTimer = undefined;
     for (const controller of this.activeAborts) controller.abort();
     await Promise.allSettled([...this.active]);
+    await this.fastControl?.stop();
   }
-
   async ingest(account: AgentDwsAccountRecord, event: DwsPersonalEvent): Promise<boolean> {
     if (!hasExactAgentDwsProfile(account)) {
       this.options.logger?.warn(
@@ -292,7 +320,10 @@ export class AgentDwsMessageRouter {
       event,
       item: result.record,
     });
-    if (result.created) this.scheduleKick();
+    if (result.created) {
+      this.scheduleKick();
+      this.fastControl?.kick();
+    }
     return result.created;
   }
 
@@ -310,6 +341,13 @@ export class AgentDwsMessageRouter {
         ...(this.options.authorizeCompletionRequester
           ? { authorizeCompletionRequester: this.options.authorizeCompletionRequester }
           : {}),
+        authorizeDirectDelivery: (delivery, account) => authorizeDirectDelivery({
+          delivery, account, messageStore: this.options.messageStore,
+          resolveRequester: this.options.resolveRequester,
+          ...(this.options.resolveRequesterOutcome
+            ? { resolveRequesterOutcome: this.options.resolveRequesterOutcome } : {}),
+          authorizeRequester: this.options.authorizeRequester,
+        }),
       }))
     )
       return true;
@@ -593,13 +631,17 @@ export class AgentDwsMessageRouter {
           'agent-dws-private-completion',
           `${privateCompletion.workOrderId}:${privateCompletion.createdByActor.openId}`,
         )
-      : (shared?.workConversation.sessionId ?? legacyBinding!.sessionId);
+      // ConversationSpace owns the durable front desk. WorkConversation remains a
+      // topic/task index and must not split ordinary channel dialogue into a random
+      // session whenever routing selects or creates another topic.
+      : (shared?.binding.serviceSessionId ?? legacyBinding!.sessionId);
     const claimed = await this.options.messageStore.markDispatchStarted(
       item.inboxId,
       this.workerId,
       item.leaseFence,
       sessionId,
       runId,
+      requesterIdentitySnapshot(requester),
     );
 
     const frontReplyDeadline =
@@ -699,62 +741,20 @@ export class AgentDwsMessageRouter {
       `Agent DWS inbox completed account=${item.accountId} event=${item.eventId} session=${sessionId}`,
     );
   }
+
   private async rejectAccess(
     account: AgentDwsAccountRecord,
     item: AgentDwsInboxRecord,
     reason: string,
     requester?: UserIdentity,
+    owner = this.workerId,
   ): Promise<void> {
-    await this.options.auditRequesterRejection({
-      account,
-      eventId: item.eventId,
-      ...(requester ? { requester } : {}),
-      reason,
-    });
-    if (item.state === 'reply_pending' && item.replyKind !== 'access_rejection') {
-      await this.visibleReply.replacePendingWithAccessRejection(
-        account, item, rejectionMessage(reason), reason,
-      );
-      this.options.logger?.warn(`Agent DWS pending normal reply reconciled account=${item.accountId} event=${item.eventId} reason=${reason}`);
-      return;
-    }
-    // processing 阶段先持久化拒绝正文与类型；拒绝型 reply_pending 重领时直接恢复。
-    const saved = item.state === 'reply_pending'
-      ? item
-      : await this.options.messageStore.saveRejectionResult(
-          item.inboxId,
-          this.workerId,
-          item.leaseFence,
-          rejectionMessage(reason),
-          reason,
-        );
-    const responseText = saved.responseText ?? rejectionMessage(reason);
-    const reasonCode = saved.rejectionReasonCode ?? reason;
-    const replyAttempt = await this.options.messageStore.markReplyAttemptStarted(
-      item.inboxId,
-      this.workerId,
-      item.leaseFence,
-    );
-    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'rejection reply', this.options.now?.() ?? Date.now());
-    const rejectionDelivery = await this.visibleReply.send(
-      account,
-      item,
-      responseText,
-      undefined,
-      'access_rejection',
-      'rejected',
-    );
-    if (!(await finalizeReplyDelivery(this.options.messageStore, this.workerId, item, rejectionDelivery))) return;
-    await this.options.messageStore.reject(
-      item.inboxId,
-      this.workerId,
-      item.leaseFence,
-      reasonCode,
-    );
-    this.options.logger?.warn(
-      `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reasonCode}`,
-    );
+    await rejectDwsAccess({ account, item, reason, ...(requester ? { requester } : {}),
+      owner, messageStore: this.options.messageStore, visibleReply: this.visibleReply,
+      audit: this.options.auditRequesterRejection, now: this.options.now,
+      warn: message => this.options.logger?.warn(message) });
   }
+
   private async recoverOrResumeMissingRun(
     item: AgentDwsInboxRecord,
     sessionId: string,
@@ -881,6 +881,7 @@ export class AgentDwsMessageRouter {
                 allowedSkillIds: [...shared.binding.effectiveConfig.capabilities.skillIds],
                 allowedSourceIds: [...shared.binding.effectiveConfig.knowledge.sourceIds],
                 dwsResourceIds: [...shared.binding.effectiveConfig.capabilities.dwsResourceIds],
+                sharedContext: buildOrgAgentSharedContext(shared),
                 contextEnabled: shared.binding.effectiveConfig.knowledge.contextEnabled,
                 taskVisibility: shared.binding.policy.taskVisibility,
                 ...(shared.governanceRole ? { actorRole: shared.governanceRole } : {}),
@@ -996,5 +997,4 @@ export class AgentDwsMessageRouter {
     return await resolveSharedGroupContext(this.options, account, item, requester, senderName);
   }
 }
-
 export { buildSystemContext } from './personalMessageRouterHelpers.js';

@@ -6,7 +6,7 @@ import type {
 
 const SHORT_ID_PATTERN = /(?:^|[\s#（(])((?:W)-[A-F0-9]{12})(?=$|[\s，。！？、）)])/i;
 const OBVIOUS_CONTINUATION =
-  /^(?:继续|接着|补充|追加|再做|改成|调整|暂停|恢复|复核|重试|转派|取消)(?:一下|这个|该|任务|刚才|上面|前面|：|:|，|,|\s|$)/u;
+  /^(?:继续|接着|补充|追加|再做|改成|调整|暂停|恢复|复核|重试|转派|取消)(?:一下|这个|当前|该|任务|刚才|上面|前面|：|:|，|,|\s|$)/u;
 
 export interface OrgAgentConversationRouteHint {
   workOrder?: OrgAgentWorkOrder;

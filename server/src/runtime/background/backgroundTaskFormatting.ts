@@ -38,6 +38,28 @@ export interface BackgroundShellView {
   completedAt?: string;
 }
 
+export function failedBackgroundResult(
+  status: 'failed' | 'cancelled',
+  message: string,
+): StoredBackgroundResult {
+  return {
+    status, text: '', errorMessage: message, totalTokens: 0,
+    toolUseCount: 0, turnCount: 0, durationMs: 0,
+  };
+}
+
+export function terminalBackgroundResult(
+  status: 'completed' | 'failed' | 'cancelled',
+  message: string,
+): StoredBackgroundResult {
+  return {
+    status,
+    text: status === 'completed' ? message : '',
+    ...(status === 'completed' ? {} : { errorMessage: message }),
+    totalTokens: 0, toolUseCount: 0, turnCount: 0, durationMs: 0,
+  };
+}
+
 export function compactCommandPreview(command: string): string {
   const compact = command.replace(/\s+/g, ' ').trim();
   return compact.length <= 160 ? compact : `${compact.slice(0, 157)}...`;

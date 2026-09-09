@@ -15,7 +15,7 @@ import {
 } from './dwsOrgGroupMessageRouterFixtures.js';
 
 describe('AgentDwsMessageRouter organization group discovery/binding', () => {
-  it('uses an Agent-owned WorkConversation and durable delivery', async () => {
+  it('uses an Agent-owned ConversationSpace front desk and durable delivery', async () => {
     const test = setup();
     await expect(test.router.runOnce()).resolves.toBe(true);
     expect(test.messageStore.getOrCreateBinding).not.toHaveBeenCalled();
@@ -29,7 +29,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     expect(test.dispatch).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
-        resumeSessionId: 'session-a',
+        resumeSessionId: 'service-session-a',
         sessionOwner: expect.objectContaining({ username: 'agent-dws:agent-a' }),
         orgAgentChannel: expect.objectContaining({
           bindingId: 'channel-binding-a',
@@ -96,7 +96,180 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     );
     expect(test.dispatch).toHaveBeenCalledWith(
       expect.any(Object),
-      expect.objectContaining({ resumeSessionId: 'session-routed' }),
+      expect.objectContaining({ resumeSessionId: 'service-session-a' }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+  });
+
+  it('keeps an explicit W-short routed task on the ConversationSpace front desk', async () => {
+    const routed = workOrder({ shortId: 'W-123456ABCDEF' });
+    const test = setup({
+      content: '继续 W-123456ABCDEF',
+      shortWorkOrder: routed,
+    });
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.orgStore.pinInboxContext).toHaveBeenCalledWith(
+      expect.objectContaining({ workConversationId: 'workconv-route-a' }),
+    );
+    expect(test.dispatch).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        resumeSessionId: 'service-session-a',
+        orgAgentChannel: expect.objectContaining({ workConversationId: 'workconv-route-a' }),
+      }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+  });
+
+  it('控制消息绕过普通执行队列，并通过同一群权限上下文暂停指定任务', async () => {
+    const routed = workOrder({ shortId: 'W-123456ABCDEF' });
+    const backgroundTasks = {
+      get: vi.fn().mockResolvedValue({ status: 'running' }),
+      cancel: vi.fn(),
+      controlWorkOrder: vi.fn().mockResolvedValue({
+        task: null,
+        workOrder: { ...routed, state: 'paused' },
+      }),
+    };
+    const test = setup({
+      claimedSequence: [],
+      controlClaimed: {
+        ...item,
+        content: '暂停 W-123456ABCDEF',
+        workConversationId: 'workconv-route-a',
+      },
+      shortWorkOrder: routed,
+      workOrders: [routed],
+      backgroundTasks,
+    });
+
+    test.router.start();
+    await vi.waitFor(() => expect(backgroundTasks.controlWorkOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelContext: expect.objectContaining({
+          orgAgentChannel: expect.objectContaining({
+            bindingId: 'channel-binding-a',
+            workConversationId: 'workconv-route-a',
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        taskId: 'W-123456ABCDEF',
+        action: 'pause',
+        durableResult: expect.objectContaining({ inboxId: 'inbox-a', leaseFence: 1 }),
+      }),
+    ));
+    expect(test.dispatch).not.toHaveBeenCalled();
+    expect(test.messageStore.complete).toHaveBeenCalledWith(
+      'inbox-a', 'agent-dws-control', 1,
+    );
+    await test.router.stop();
+  });
+
+  it('原生话题内仅有一个可见任务时，自然控制指令安全命中该任务', async () => {
+    const routed = workOrder({ shortId: 'W-123456ABCDEF' });
+    const backgroundTasks = {
+      get: vi.fn().mockResolvedValue({ status: 'running' }),
+      cancel: vi.fn(),
+      controlWorkOrder: vi.fn().mockResolvedValue({
+        task: null,
+        workOrder: { ...routed, state: 'paused' },
+      }),
+    };
+    const test = setup({
+      claimedSequence: [],
+      controlClaimed: {
+        ...item,
+        content: '暂停这个任务',
+        workConversationId: 'workconv-route-a',
+      },
+      workOrders: [routed],
+      backgroundTasks,
+    });
+
+    test.router.start();
+    await vi.waitFor(() => expect(backgroundTasks.controlWorkOrder).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        taskId: 'W-123456ABCDEF',
+        action: 'pause',
+        durableResult: expect.objectContaining({ inboxId: 'inbox-a', leaseFence: 1 }),
+      }),
+    ));
+    expect(test.messageStore.complete).toHaveBeenCalledWith(
+      'inbox-a', 'agent-dws-control', 1,
+    );
+    await test.router.stop();
+  });
+
+  it('自然控制指令没有确定话题目标时只返回澄清，不执行 mutation', async () => {
+    const routed = workOrder({ shortId: 'W-123456ABCDEF' });
+    const backgroundTasks = {
+      get: vi.fn(),
+      cancel: vi.fn(),
+      controlWorkOrder: vi.fn(),
+    };
+    const test = setup({
+      claimedSequence: [],
+      controlClaimed: { ...item, content: '取消当前任务' },
+      workOrders: [routed],
+      backgroundTasks,
+    });
+
+    test.router.start();
+    await vi.waitFor(() => expect(test.messageStore.complete).toHaveBeenCalled());
+    expect(backgroundTasks.cancel).not.toHaveBeenCalled();
+    expect(backgroundTasks.controlWorkOrder).not.toHaveBeenCalled();
+    expect(test.messageStore.saveDispatchResult).toHaveBeenCalledWith(
+      'inbox-a', 'agent-dws-control', 1, expect.stringContaining('W-123456ABCDEF'),
+    );
+    await test.router.stop();
+  });
+
+  it('keeps consecutive messages in one group on the same ConversationSpace front desk', async () => {
+    const test = setup({
+      claimedSequence: [
+        item,
+        {
+          ...item,
+          inboxId: 'inbox-b',
+          eventId: 'event-b',
+          messageId: 'mid-b',
+          content: '再说明一下交付格式',
+        },
+      ],
+    });
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.dispatch).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(test.dispatch).mock.calls.map((call) => call[1].resumeSessionId)).toEqual([
+      'service-session-a',
+      'service-session-a',
+    ]);
+  });
+
+  it('keeps distinct binding generations on distinct ConversationSpace front desks', async () => {
+    const previous = setup({ serviceSessionId: 'service-session-old' });
+    const current = setup({ serviceSessionId: 'service-session-current' });
+
+    await expect(previous.router.runOnce()).resolves.toBe(true);
+    await expect(current.router.runOnce()).resolves.toBe(true);
+
+    expect(previous.dispatch).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ resumeSessionId: 'service-session-old' }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(current.dispatch).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ resumeSessionId: 'service-session-current' }),
       expect.any(Object),
       expect.any(Object),
     );
@@ -545,6 +718,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     expect(test.dispatch).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
+        resumeSessionId: 'service-session-a',
         user: undefined,
         orgAgentChannel: expect.objectContaining({
           externalActorAssurance: 'service',
@@ -581,6 +755,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
       1,
       expect.stringMatching(/^agent-dws-private-completion-/),
       expect.any(String),
+      undefined,
     );
     expect(test.orgStore.createDelivery).toHaveBeenCalledWith(
       expect.objectContaining({

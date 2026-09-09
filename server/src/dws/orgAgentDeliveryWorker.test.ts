@@ -427,6 +427,59 @@ describe('deliverNextOrgAgentIntent provider fences', () => {
     );
   });
 
+  it('私聊 unknown 恢复在 provider-start 前重查 requester 授权，撤权后不发送', async () => {
+    const direct = {
+      ...delivery,
+      agentId: undefined,
+      bindingId: undefined,
+      conversationId: 'direct-1',
+      destination: {
+        provider: 'dingtalk' as const, accountId: 'account-1',
+        conversationId: 'direct-1', kind: 'direct' as const, peerOpenId: 'open-a',
+      },
+    };
+    const test = harness({ claimedDelivery: direct });
+    const authorizeDirectDelivery = vi.fn().mockResolvedValue({
+      allowed: false, reason: 'ASSIGNMENT_DENIED',
+    });
+
+    await expect(deliverNextOrgAgentIntent({
+      ...test.options, authorizeDirectDelivery,
+    })).resolves.toBe(true);
+
+    expect(authorizeDirectDelivery).toHaveBeenCalledWith(direct, account);
+    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7,
+      'ORG_AGENT_DIRECT_REQUESTER_ACCESS_REVOKED:ASSIGNMENT_DENIED',
+    );
+  });
+
+  it('私聊 unknown 恢复只有 requester 当前仍获授权时才发送固定正文', async () => {
+    const direct = {
+      ...delivery,
+      agentId: undefined,
+      bindingId: undefined,
+      conversationId: 'direct-1',
+      destination: {
+        provider: 'dingtalk' as const, accountId: 'account-1',
+        conversationId: 'direct-1', kind: 'direct' as const, peerOpenId: 'open-a',
+      },
+    };
+    const test = harness({ claimedDelivery: direct });
+    const authorizeDirectDelivery = vi.fn().mockResolvedValue({ allowed: true });
+
+    await expect(deliverNextOrgAgentIntent({
+      ...test.options, authorizeDirectDelivery,
+    })).resolves.toBe(true);
+
+    expect(authorizeDirectDelivery).toHaveBeenCalledWith(direct, account);
+    expect(test.sender.send).toHaveBeenCalledWith(
+      account, expect.objectContaining({ conversationId: 'direct-1' }),
+      '处理完成', 'delivery-key', expect.any(Function),
+    );
+  });
+
   it('账号身份切换后不会用旧 binding 投递，而是 dead-letter', async () => {
     const test = harness();
     const currentBinding = await test.store.getBinding('tenant-1', 'account-1', 'group-1');

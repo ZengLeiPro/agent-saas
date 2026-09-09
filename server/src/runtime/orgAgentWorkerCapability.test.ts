@@ -123,6 +123,14 @@ function policyContext(input: {
     executionRole: 'worker',
     runtimeIsolationRequirement,
     runtimeIsolationAttested: input.attested,
+    orgAgentTaskLineage: { kind: 'org_agent_task', tenantId: 'tenant-a', agentId: 'agent-a',
+      accountId: 'account-a', ownerWorkspaceId: 'workspace-agent-a', bindingId: 'binding-a',
+      conversationSpaceId: 'space-a', workConversationId: 'workconv-a', channelConversationId: 'group-a',
+      policyRevision: 3, workOrderId: 'work-order-a', taskRunId: 'background-a',
+      taskSessionId: 'background-session-a', attemptId: 'attempt-a', attemptNo: 1, currentAttemptNo: 1,
+      taskWorkspaceId: 'task-workspace-a', sandboxScopeId: 'scope-task-a', allowedSourceIds: [] },
+    orgAgentTaskAuthority: { taskRunId: 'background-a', taskSessionId: 'background-session-a',
+      attemptId: 'attempt-a', assertCurrent: vi.fn().mockResolvedValue(undefined) },
     approvalPolicy: { autoApproveTools: true, lowRiskOnly: true },
     channelContext: {
       channel: 'dingtalk',
@@ -172,7 +180,7 @@ describe('组织群前台与隔离 Worker 工具能力拆分', () => {
     const policy = new DefaultToolPolicy(async () => ({ allowed: true }));
     expect(
       await policy.decide(descriptor('DwsBusiness', 'safe'), {}, policyContext({ attested: true })),
-    ).toEqual({ type: 'deny', reason: 'organization Worker cannot use DwsBusiness' });
+    ).toEqual({ type: 'deny', reason: 'invalid DwsBusiness input' });
     expect(
       await policy.decide(
         descriptor('Write'),

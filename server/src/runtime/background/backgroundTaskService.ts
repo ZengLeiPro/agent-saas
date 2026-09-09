@@ -23,7 +23,11 @@ import {
   resolveSessionCatalog,
   type RawRuntimeRunDispatchConfig,
 } from '../rawRuntimeRunDispatch.js';
-import { createRuntimeSessionRecord, type RuntimeSessionRecord } from '../sessionCatalog.js';
+import {
+  createOrgAgentSessionSnapshot,
+  createRuntimeSessionRecord,
+  type RuntimeSessionRecord,
+} from '../sessionCatalog.js';
 import { withOrgAgentArtifactContract } from '../orgAgentArtifactPublisher.js';
 import { getSubagentType } from '../subagent/agentTypes.js';
 import {
@@ -60,6 +64,7 @@ import {
   OrgAgentBackgroundWorkCoordinator,
   prepareOrgAgentBackgroundWork,
 } from './orgAgentBackgroundWork.js';
+import { executionContextSessionSnapshot } from './orgAgentExecutionContext.js';
 import {
   assertAgentProfileExecutionTarget,
   profileRunMetadata,
@@ -128,27 +133,35 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     // 此处不能用旧余额快照门禁，否则父 run 自己的 reservation 会误拒绝派生。
     const executionTarget = context.channelContext.orgAgentChannel
       ? 'server-remote' as const : context.workspace.executionTarget;
+    const orgChannel = context.channelContext.orgAgentChannel;
+    const currentOrgAgent = orgChannel ? this.config.orgAgentStore?.get(orgChannel.agentId) : undefined;
+    if (orgChannel && (!currentOrgAgent || !currentOrgAgent.enabled
+      || currentOrgAgent.tenantId !== orgChannel.agentPrincipal.tenantId)) {
+      throw new Error('组织群后台任务无法固化当前员工配置');
+    }
+    const effectiveOrgAgentSnapshot = currentOrgAgent
+      ? createOrgAgentSessionSnapshot(currentOrgAgent) : parentSession.orgAgentSnapshot;
     let boundProfile: BoundAgentRuntimeProfile | undefined;
     if (this.config.agentRuntimeProfileResolver) {
       boundProfile = await this.config.agentRuntimeProfileResolver.resolveForSession({
         existingSession: null,
         bindingKey: request.agentType === 'explore' ? 'background_explore' : 'background_general',
       });
-      if (parentSession.orgAgentSnapshot) {
+      if (effectiveOrgAgentSnapshot) {
         boundProfile = {
           ...boundProfile,
           version: {
             ...boundProfile.version,
             config: mergeOrgAgentWorkerRuntimePolicy(
               boundProfile.version.config,
-              parentSession.orgAgentSnapshot.runtime,
+              effectiveOrgAgentSnapshot.runtime,
             ),
           },
         };
       }
       assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
     }
-    const configuredWorkerModel = parentSession.orgAgentSnapshot?.runtime.workerModel;
+    const configuredWorkerModel = effectiveOrgAgentSnapshot?.runtime.workerModel;
     const modelRef = boundProfile?.version.config.model.strategy === 'fixed'
       ? boundProfile.version.config.model.modelRef
       : configuredWorkerModel?.strategy === 'fixed'
@@ -187,6 +200,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     }
     const { taskLayout, workOrder } = await prepareOrgAgentBackgroundWork({
       config: this.config, context, request, parentRunId, toolCallId, taskId,
+      agent: currentOrgAgent!, modelRef, ...(boundProfile ? { profile: boundProfile } : {}),
     });
     const runtimeIsolationRequirement = taskLayout && workOrder ? {
       tenantId: workOrder.tenantId,
@@ -210,9 +224,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       workspaceId: taskLayout?.taskWorkspaceId ?? context.workspace.id ?? taskSessionId,
       status: 'idle',
       kind: 'subagent',
-      executionRole: 'worker', sandboxWorkloadDescriptor: parentSession.sandboxWorkloadDescriptor,
+      ...(workOrder && taskLayout ? { executionRole: 'worker' as const } : {}),
+      sandboxWorkloadDescriptor: parentSession.sandboxWorkloadDescriptor,
       ...(parentSession.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
-      ...(parentSession.orgAgentSnapshot ? { orgAgentSnapshot: parentSession.orgAgentSnapshot } : {}),
+      ...(effectiveOrgAgentSnapshot ? { orgAgentSnapshot: effectiveOrgAgentSnapshot } : {}),
       ...(parentSession.principal ? { principal: parentSession.principal } : {}),
     });
     if (boundProfile && this.config.agentRuntimeProfileResolver) {
@@ -272,10 +287,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         description: request.description,
         basePrompt: request.prompt,
         prompt: request.prompt,
-        executionRole: 'worker',
+        ...(workOrder && taskLayout ? { executionRole: 'worker' as const } : {}),
         ...(parentSession.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
-        ...(parentSession.orgAgentSnapshot?.runtime.executionMode
-          ? { executionMode: parentSession.orgAgentSnapshot.runtime.executionMode }
+        ...(effectiveOrgAgentSnapshot?.runtime.executionMode
+          ? { executionMode: effectiveOrgAgentSnapshot.runtime.executionMode }
           : {}),
         ...(dwsCompletionRoute.version === 'exact' ? { dwsCompletionRoute: dwsCompletionRoute.route } : {}),
         ...(dwsCompletionRoute.version === 'invalid' ? { dwsCompletionRouteVersion: 'invalid' } : {}),
@@ -475,7 +490,13 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   async execute(record: RunRecord, lease?: BackgroundTaskLease): Promise<void> {
     const metadata = parseBackgroundTaskMetadata(record);
     if (!metadata) throw new Error(`后台任务 metadata 不完整：${record.runId}`);
-    await this.orgWork.markRunning(record);
+    const orgAgentTaskLineage = await this.orgWork.markRunning(record);
+    const orgAgentTaskAuthority = orgAgentTaskLineage
+      ? this.orgWork.createLiveTaskAuthority(orgAgentTaskLineage, metadata.orgAgentChannel) : undefined;
+    const effectiveExecutionContext = orgAgentTaskLineage
+      ? await this.orgWork.loadExecutionContext(orgAgentTaskLineage) : undefined;
+    // Worker 启动本身也是受治理动作；必须在 child session、remote hand、模型调用前实时复核。
+    await orgAgentTaskAuthority?.assertCurrent('OrgAgentWorkerStart');
     const sessionCatalog = resolveSessionCatalog(this.config);
     const taskSession = await sessionCatalog.get(record.sessionId);
     if (!taskSession) throw new Error(`后台任务 session 不存在：${record.sessionId}`);
@@ -525,13 +546,16 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       });
       await automationResource.prepared();
       await sessionCatalog.markStatus(record.sessionId, 'running');
-      const orgAgentSnapshot = taskSession.orgAgentSnapshot;
+      const orgAgentSnapshot = effectiveExecutionContext
+        ? executionContextSessionSnapshot(effectiveExecutionContext) : taskSession.orgAgentSnapshot;
       const tooling = await collectRuntimeTooling(
         this.config,
         resolveBackgroundSkillUsername(taskSession),
         orgAgentSnapshot
-          ? composeSkillFilters(buildOrgAgentSkillFilter(orgAgentSnapshot),
-              buildOrgAgentChannelSkillFilter(metadata.orgAgentChannel))
+          ? (effectiveExecutionContext
+              ? buildOrgAgentSkillFilter(orgAgentSnapshot)
+              : composeSkillFilters(buildOrgAgentSkillFilter(orgAgentSnapshot),
+                  buildOrgAgentChannelSkillFilter(metadata.orgAgentChannel)))
           : () => true,
         orgAgentSnapshot ? resolveOrgAgentRuntimeSkillIds(orgAgentSnapshot) : [],
         undefined,
@@ -560,7 +584,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       );
       const baseParentContext = buildBackgroundTaskParentContext({
         record, metadata, taskSession, channelContext, env: connectorRunEnv,
-        runtimeIsolationRequirement, signal: abortController.signal,
+        runtimeIsolationRequirement, orgAgentTaskLineage, orgAgentTaskAuthority,
+        signal: abortController.signal,
       });
       const parentContext: ToolCallContext = metadata.workload
         ? { ...baseParentContext, workspace: { ...baseParentContext.workspace, workload: metadata.workload } }
@@ -575,10 +600,14 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         parentContext,
         agentType,
         profileSourceSession: taskSession,
+        ...(effectiveExecutionContext ? { orgAgentExecutionContext: effectiveExecutionContext } : {}),
         request: {
-          description: metadata.description,
-          prompt: withOrgAgentArtifactContract(metadata.prompt, Boolean(metadata.orgAgentChannel)),
-          model: metadata.modelRef,
+          description: effectiveExecutionContext?.task.acceptance.join('\n') ?? metadata.description,
+          prompt: withOrgAgentArtifactContract(
+            effectiveExecutionContext?.task.goal ?? metadata.prompt,
+            Boolean(metadata.orgAgentChannel),
+          ),
+          model: effectiveExecutionContext?.model.modelRef ?? metadata.modelRef,
           includeCompanyInfo: metadata.includeCompanyInfo,
         },
         preparedChildIdentity: preparedIdentity,
@@ -712,8 +741,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     return await this.orgWork.cancel(tenantId, workOrderId, expectedVersion);
   }
 
-  async pauseWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord | null> {
-    return await this.orgWork.pause(tenantId, workOrderId, expectedVersion);
+  async pauseWorkOrder(
+    tenantId: string, workOrderId: string, expectedVersion: number,
+    inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt,
+  ): Promise<RunRecord | null> {
+    return await this.orgWork.pause(tenantId, workOrderId, expectedVersion, inboxReceipt);
   }
 
   async retryWorkOrder(
@@ -724,6 +756,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       allowPendingArtifacts?: boolean;
       control?: import('../../data/orgGroupAgents/index.js').OrgAgentWorkOrderControl;
       supersedePendingCompletion?: boolean;
+      supersedeActiveAttempt?: boolean;
+      inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
     },
   ): Promise<RunRecord> {
     return await this.orgWork.retry(tenantId, workOrderId, expectedVersion, options);

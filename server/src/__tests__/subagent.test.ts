@@ -29,6 +29,7 @@ import type { BillingService } from '../data/billing/service.js';
 import { DEFAULT_ORG_AGENT_RUNTIME_POLICY } from '../data/orgAgents/runtimePolicy.js';
 
 import { buildContextProjection } from '../runtime/contextProjection.js';
+import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 import { createRuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 import { AgentToolProvider } from '../runtime/subagent/agentToolProvider.js';
 import { SUBAGENT_TYPES } from '../runtime/subagent/agentTypes.js';
@@ -232,6 +233,38 @@ describe('runSubagent', () => {
     expect(systemText).toContain('<org-agent-worker-policy>');
     expect(systemText).toContain('不得访问组织范围外的数据');
     expect(systemText).toContain('不承担前台接待或再次派单');
+  });
+
+  it('仅有组织快照的普通 background child 不会误标为 Worker', async () => {
+    const fixture = await makeFixture({ cleanupDirs });
+    const parent = await fixture.config.sessionCatalog!.get(fixture.parentSessionId);
+    expect(parent).not.toBeNull();
+    await fixture.config.sessionCatalog!.upsert({
+      ...parent!,
+      orgAgentId: 'org-kaikai',
+      orgAgentSnapshot: {
+        name: '开开', instructions: '普通后台任务', allowedSkills: [], allowedKnowledge: [],
+        runtime: {
+          ...structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY), executionMode: 'dispatcher',
+        },
+      },
+    });
+
+    const outcome = await runSubagent({
+      ...runnerDeps(fixture),
+      parentProviders: [createBuiltinTools()],
+      agentType: SUBAGENT_TYPES.general,
+      request: { description: '普通后台任务', prompt: '完成任务', includeCompanyInfo: false },
+      limiter: new SubagentLimiter(),
+      modelAdapterFactory: () => new TextOnlyAdapter(),
+      profileSourceSession: {
+        ...(await fixture.config.sessionCatalog!.get(fixture.parentSessionId))!,
+        executionRole: undefined,
+      },
+    });
+
+    const child = await fixture.config.sessionCatalog!.get(outcome.childSessionId);
+    expect(child).not.toHaveProperty('executionRole');
   });
 
   it('billing hard cap 拒绝：child Run 实际用量门禁失败后停止模型调用', async () => {
@@ -510,7 +543,7 @@ describe('AgentToolProvider', () => {
       description: '执行任务',
       model: 'worker-model',
     });
-    fixture.config.backgroundTasks = { enqueue } as any;
+    fixture.config.backgroundTasks = { enqueue } as unknown as BackgroundTaskRuntime;
     const provider = makeProvider(fixture, {
       outcome: fakeOutcome(fixture),
       modePolicy: 'background_only',
@@ -577,7 +610,7 @@ describe('AgentToolProvider', () => {
       description: '长时调研',
       model: 'mock-model',
     });
-    fixture.config.backgroundTasks = { enqueue } as any;
+    fixture.config.backgroundTasks = { enqueue } as unknown as BackgroundTaskRuntime;
     const foreground = vi.fn();
     const provider = makeProvider(fixture, { impl: foreground as typeof runSubagent });
 

@@ -19,6 +19,12 @@ const MAX_PAYLOAD_BYTES = 256 * 1024;
 const PAYLOAD_SIZE_MARGIN = 128;
 const MAX_LEASE_TTL_MS = 24 * 60 * 60 * 1_000;
 const MAX_RETRY_DELAY_MS = 24 * 60 * 60 * 1_000;
+const PREPARED_CONTROL_RETRY_DELAY_MS = 60_000;
+const PREPARED_FAST_CONTROL_SQL = `(response_text IS NULL AND payload_json->>'fastControlPhase'='prepared'
+  AND NULLIF(payload_json->>'fastControlWorkOrderId','') IS NOT NULL)`;
+const EXPLICIT_CONTROL_PATTERN = '(status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)[[:space:]]+W-[A-F0-9]{12}([[:space:]]+.+)?|W-[A-F0-9]{12}[[:space:]]+(status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)([[:space:]]+.+)?';
+const CONTEXTUAL_CONTROL_PATTERN = '(取消|暂停|恢复)[[:space:]]*(这个|当前)?[[:space:]]*任务|(查看|查询)?[[:space:]]*(这个|当前)?[[:space:]]*任务[[:space:]]*(状态|进度)';
+const CONTROL_MESSAGE_PATTERN = `^[[:space:]]*(${EXPLICIT_CONTROL_PATTERN}|${CONTEXTUAL_CONTROL_PATTERN})[[:space:]]*$`;
 
 type PgPool = pg.Pool;
 
@@ -141,8 +147,29 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     return result.rows.map((row: Record<string, unknown>) => mapInboxRow(row));
   }
 
+  async getById(tenantId: string, inboxId: string): Promise<AgentDwsInboxRecord | null> {
+    assertTexts(tenantId, inboxId);
+    const result = await this.pool.query(
+      `SELECT * FROM ${this.inboxTable} WHERE tenant_id=$1 AND inbox_id=$2`,
+      [tenantId, inboxId],
+    );
+    return result.rows[0] ? mapInboxRow(result.rows[0] as Record<string, unknown>) : null;
+  }
+
   /** Legacy v1 reply rows retain reply_pending so identity reconciliation cannot rerun dispatch. */
   async claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null> {
+    return await this.claimNextMatching(owner, ttlMs, false);
+  }
+
+  async claimNextControl(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null> {
+    return await this.claimNextMatching(owner, ttlMs, true);
+  }
+
+  private async claimNextMatching(
+    owner: string,
+    ttlMs: number,
+    controlOnly: boolean,
+  ): Promise<AgentDwsInboxRecord | null> {
     assertOwnerFence(owner, 1, false);
     if (!Number.isInteger(ttlMs) || ttlMs < 1 || ttlMs > MAX_LEASE_TTL_MS) {
       throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
@@ -163,6 +190,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
             )
             OR (item.state='processing' AND item.lease_expires_at <= NOW())
           )
+          AND (($3 AND item.content ~* $4) OR (NOT $3 AND item.content !~* $4))
           AND NOT EXISTS (
             SELECT 1
             FROM ${this.inboxTable} active
@@ -175,6 +203,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
                 OR active.work_conversation_id=item.work_conversation_id
               )
               AND active.inbox_id<>item.inbox_id
+              AND (($3 AND active.content ~* $4) OR (NOT $3 AND active.content !~* $4))
               AND (active.state='processing' OR active.state='reply_pending')
               AND active.lease_expires_at > NOW()
           )
@@ -190,6 +219,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
                 OR earlier.work_conversation_id=item.work_conversation_id
               )
               AND earlier.state IN ('pending','processing','retry_wait','reply_pending')
+              AND (($3 AND earlier.content ~* $4) OR (NOT $3 AND earlier.content !~* $4))
               AND (
                 COALESCE(earlier.event_timestamp,earlier.created_at),
                 earlier.created_at,
@@ -206,14 +236,16 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
         )
         UPDATE ${this.inboxTable} inbox
         SET state=CASE WHEN inbox.state='reply_pending' THEN 'reply_pending' ELSE 'processing' END,
-            attempt=inbox.attempt+1,lease_owner=$1,
+            attempt=CASE WHEN inbox.payload_json->>'fastControlPhase'='prepared'
+              THEN LEAST(inbox.attempt+1,inbox.max_attempts) ELSE inbox.attempt+1 END,
+            lease_owner=$1,
             lease_fence=inbox.lease_fence+1,
             lease_expires_at=NOW()+($2::bigint * INTERVAL '1 millisecond'),
             next_attempt_at=NULL,updated_at=NOW()
         FROM candidate
         WHERE inbox.inbox_id=candidate.inbox_id
         RETURNING inbox.*
-      `, [owner, ttlMs]);
+      `, [owner, ttlMs, controlOnly, CONTROL_MESSAGE_PATTERN]);
       await client.query('COMMIT');
       const row = result.rows[0] as Record<string, unknown> | undefined;
       return row ? mapInboxRow(row) : null;
@@ -389,17 +421,30 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     fence: number,
     sessionId: string,
     runId?: string,
+    requesterIdentity?: {
+      id: string;
+      username: string;
+      role: 'admin' | 'user';
+      tenantId: string;
+      dingtalkStaffId?: string;
+    },
   ): Promise<AgentDwsInboxRecord> {
     assertOwnerFence(owner, fence);
     assertTexts(inboxId, sessionId);
     if (runId !== undefined) assertTexts(runId);
     return await this.updateWithLease(`
       UPDATE ${this.inboxTable}
-      SET session_id=$4,run_id=COALESCE($5,run_id),updated_at=NOW()
+      SET session_id=$4,run_id=COALESCE($5,run_id),
+          payload_json=CASE WHEN $6::jsonb IS NULL THEN payload_json
+            ELSE payload_json || jsonb_build_object('requesterIdentity',$6::jsonb) END,
+          updated_at=NOW()
       WHERE inbox_id=$1 AND state IN ('processing','reply_pending')
         AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
       RETURNING *
-    `, [inboxId, owner, fence, sessionId, runId ?? null]);
+    `, [
+      inboxId, owner, fence, sessionId, runId ?? null,
+      requesterIdentity ? JSON.stringify(requesterIdentity) : null,
+    ]);
   }
 
   async saveDispatchResult(
@@ -551,11 +596,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     `, [inboxId, owner, fence, reasonCode]);
   }
 
-  async markReplyUnknown(
-    inboxId: string,
-    owner: string,
-    fence: number,
-  ): Promise<AgentDwsInboxRecord> {
+  async markReplyUnknown(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord> {
     assertOwnerFence(owner, fence);
     assertTexts(inboxId);
     return await this.updateWithLease(`
@@ -569,13 +610,8 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     `, [inboxId, owner, fence]);
   }
 
-  async fail(
-    inboxId: string,
-    owner: string,
-    fence: number,
-    error: unknown,
-    retryDelayMs?: number,
-  ): Promise<AgentDwsInboxRecord> {
+  async fail(inboxId: string, owner: string, fence: number, error: unknown,
+    retryDelayMs?: number): Promise<AgentDwsInboxRecord> {
     assertOwnerFence(owner, fence);
     assertTexts(inboxId);
     if (retryDelayMs !== undefined && (
@@ -586,12 +622,65 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     return await this.updateWithLease(`
       UPDATE ${this.inboxTable}
       SET state=CASE
+            WHEN ${PREPARED_FAST_CONTROL_SQL} THEN 'retry_wait'
+            WHEN attempt>=max_attempts AND response_text IS NULL
+              AND COALESCE(payload_json->>'disposition','')<>'execution_failed'
+              THEN 'reply_pending'
+            WHEN COALESCE(payload_json->>'disposition','')='execution_failed'
+              AND (CASE WHEN COALESCE(payload_json->>'terminalReplyAttempt','') ~ '^[0-9]+$'
+                THEN (payload_json->>'terminalReplyAttempt')::int ELSE 0 END) < 2
+              THEN 'reply_pending'
             WHEN attempt>=max_attempts THEN 'dead_letter'
             WHEN response_text IS NOT NULL THEN 'reply_pending'
             ELSE 'retry_wait'
           END,
+          response_text=CASE
+            WHEN ${PREPARED_FAST_CONTROL_SQL} THEN NULL
+            WHEN attempt>=max_attempts AND response_text IS NULL
+              AND COALESCE(payload_json->>'disposition','')<>'execution_failed'
+              THEN '这次处理未能完成，请稍后重试；如持续出现，请联系管理员查看运行记录。'
+            ELSE response_text
+          END,
+          payload_json=CASE
+            WHEN ${PREPARED_FAST_CONTROL_SQL} THEN payload_json
+              || jsonb_build_object('fastControlRecoveryRequired',true)
+            WHEN attempt>=max_attempts AND response_text IS NULL
+              AND COALESCE(payload_json->>'disposition','')<>'execution_failed'
+              THEN payload_json || jsonb_build_object(
+                'replyKind','normal','disposition','execution_failed','terminalReplyAttempt',0
+              )
+            WHEN COALESCE(payload_json->>'disposition','')='execution_failed'
+              THEN payload_json || jsonb_build_object(
+                'disposition',CASE
+                  WHEN (CASE WHEN COALESCE(payload_json->>'terminalReplyAttempt','') ~ '^[0-9]+$'
+                    THEN (payload_json->>'terminalReplyAttempt')::int ELSE 0 END) < 2
+                    THEN 'execution_failed'
+                  ELSE 'execution_failure_delivery_exhausted'
+                END,
+                'terminalReplyAttempt',
+                  (CASE WHEN COALESCE(payload_json->>'terminalReplyAttempt','') ~ '^[0-9]+$'
+                    THEN (payload_json->>'terminalReplyAttempt')::int ELSE 0 END)+1
+              )
+            ELSE payload_json
+          END,
           lease_owner=NULL,lease_expires_at=NULL,
           next_attempt_at=CASE
+            WHEN ${PREPARED_FAST_CONTROL_SQL}
+              THEN NOW()+(GREATEST(
+                COALESCE($5::bigint,${PREPARED_CONTROL_RETRY_DELAY_MS}::bigint),${PREPARED_CONTROL_RETRY_DELAY_MS}::bigint
+              ) * INTERVAL '1 millisecond')
+            WHEN attempt>=max_attempts AND response_text IS NULL
+              AND COALESCE(payload_json->>'disposition','')<>'execution_failed'
+              THEN NOW()+(COALESCE($5::bigint,1000::bigint) * INTERVAL '1 millisecond')
+            WHEN COALESCE(payload_json->>'disposition','')='execution_failed'
+              AND (CASE WHEN COALESCE(payload_json->>'terminalReplyAttempt','') ~ '^[0-9]+$'
+                THEN (payload_json->>'terminalReplyAttempt')::int ELSE 0 END) < 2
+              THEN NOW()+(
+                COALESCE($5::bigint,1000::bigint*POWER(2,
+                  CASE WHEN COALESCE(payload_json->>'terminalReplyAttempt','') ~ '^[0-9]+$'
+                    THEN (payload_json->>'terminalReplyAttempt')::int ELSE 0 END
+                )::bigint) * INTERVAL '1 millisecond'
+              )
             WHEN attempt>=max_attempts THEN NULL
             ELSE NOW()+(
               COALESCE(
@@ -601,7 +690,18 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
             )
           END,
           last_error=$4,
-          completed_at=CASE WHEN attempt>=max_attempts THEN NOW() ELSE NULL END,
+          completed_at=CASE
+            WHEN ${PREPARED_FAST_CONTROL_SQL} THEN NULL
+            WHEN attempt>=max_attempts AND response_text IS NULL
+              AND COALESCE(payload_json->>'disposition','')<>'execution_failed'
+              THEN NULL
+            WHEN COALESCE(payload_json->>'disposition','')='execution_failed'
+              AND (CASE WHEN COALESCE(payload_json->>'terminalReplyAttempt','') ~ '^[0-9]+$'
+                THEN (payload_json->>'terminalReplyAttempt')::int ELSE 0 END) < 2
+              THEN NULL
+            WHEN attempt>=max_attempts THEN NOW()
+            ELSE NULL
+          END,
           updated_at=NOW()
       WHERE inbox_id=$1 AND state IN ('processing','reply_pending')
         AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
@@ -649,6 +749,9 @@ function mapInboxRow(row: Record<string, unknown>): AgentDwsInboxRecord {
   const disposition = payload.disposition === 'rejected'
     || payload.disposition === 'reply_blocked'
     || payload.disposition === 'delivery_unknown'
+    || payload.disposition === 'delivery_recovery_pending'
+    || payload.disposition === 'execution_failed'
+    || payload.disposition === 'execution_failure_delivery_exhausted'
     ? payload.disposition
     : undefined;
   const rejectionReasonCode = optionalText(payload.rejectionReasonCode);

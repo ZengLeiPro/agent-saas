@@ -63,6 +63,24 @@ describe('createModelResolvers 异步配置刷新门禁', () => {
     expect(modelResolver?.('main/gpt')).toMatchObject({ model: 'gpt-test' });
   });
 
+  it('向惰性辅助链暴露 SecretVault 已解析的模型快照', async () => {
+    const config = { models: { groups: [GROUP], default: 'main/gpt' } } as unknown as AppConfig;
+    const resolvedGroup = { ...GROUP, protocol: 'responses' as const, apiKey: 'resolved-key' };
+    const { getRuntimeModels, updateModelsConfig } = createModelResolvers({
+      config,
+      processCwd: dir,
+      titleGeneratorConfigs: [],
+      onGuardrailModelConfigsUpdated: () => {},
+      getGuardrailModelConfigs: () => [],
+      prepareSystemPromptOverridesUpdate: () => () => {},
+      resolveRuntimeModels: async (models) => ({ ...models, groups: [resolvedGroup] }),
+    });
+
+    await updateModelsConfig(config.models!);
+
+    expect(getRuntimeModels()?.groups[0]?.apiKey).toBe('resolved-key');
+  });
+
   it('跨进程修复悬空旧门禁引用时从已生效运行态回滚，不再重解旧配置', async () => {
     const stale = parseAppConfig({
       agent: { cwd: '.' }, server: { port: 3200 },

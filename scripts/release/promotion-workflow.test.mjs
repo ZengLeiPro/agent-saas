@@ -625,10 +625,11 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /web-oss-readback/u);
   assert.match(
     workflow,
-    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '[\s\S]*< <\(find "\$WEB_ASSETS_ROOT" -type f -print0\)/u,
+    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '[\s\S]*< <\(find "\$WEB_ASSETS_ROOT" -type f -not -path "\$WEB_ASSETS_ROOT\/assets\/\*" -print0\)/u,
   );
-  assert.match(workflow, /gzip -n -9 -c "\$source" > "\$expected"/u);
-  assert.match(workflow, /cmp "\$expected" "\$target"/u);
+  // aliyun `oss cp` gunzips Content-Encoding: gzip objects and fails CRC; assets are read back by the SDK helper.
+  assert.doesNotMatch(workflow, /gzip -n -9 -c "\$source"/u);
+  assert.match(workflow, /cmp "\$source" "\$target"/u);
   assert.doesNotMatch(
     workflow,
     /done < <\(find "\$RUNNER_TEMP\/web-assets" -type f -print0\)/u,
@@ -760,7 +761,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
     workflow.indexOf('- name: 持久化 Web 操作回执'),
   );
   const parallelReadback = webStep.match(
-    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '\n[\s\S]*?\n\s+' _ < <\(find "\$WEB_ASSETS_ROOT" -type f -print0\)/u,
+    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '\n[\s\S]*?\n\s+' _ < <\(find "\$WEB_ASSETS_ROOT" -type f -not -path "\$WEB_ASSETS_ROOT\/assets\/\*" -print0\)/u,
   )?.[0];
   assert.ok(parallelReadback, 'parallel Web readback must remain inside run_with_web_lock');
   assert.equal(webStep.match(/cleanup_web_on_exit\(\)/gu)?.length, 1);

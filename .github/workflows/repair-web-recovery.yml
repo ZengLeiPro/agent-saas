@@ -52,15 +52,17 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.1'
-          # 本工作流只用 node --test 与 python3，不安装依赖；setup-node@v5 默认按 packageManager 自动启用 pnpm 缓存，
-          # 而这里没有执行 ./.github/actions/setup-pnpm，会因找不到 pnpm 直接失败（run 34307920167）。
-          package-manager-cache: false
+          cache: pnpm
+      - name: Install dependencies for the ali-oss readback helper
+        run: pnpm install --frozen-lockfile
       - name: Validate repair confirmation and run offline regression tests
         run: |
           set -euo pipefail
+          node scripts/release/put-web-asset-create-only.mjs --self-check
           case "$RECOVERY_MODE" in
             audit) ;;
             repair)
@@ -78,6 +80,14 @@ jobs:
           unzip -oq "$RUNNER_TEMP/ossutil.zip" -d "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/ossutil-2.1.2-linux-amd64/ossutil" /usr/local/bin/ossutil
           ossutil version | grep -Fx '2.1.2'
+          : "${OSS_ACCESS_KEY_ID:?Missing OSS_ACCESS_KEY_ID}"
+          : "${OSS_ACCESS_KEY_SECRET:?Missing OSS_ACCESS_KEY_SECRET}"
+          # Stored-bytes readback helper reads a runner-private credentials file, never argv or env.
+          (
+            umask 077
+            jq -n --arg accessKeyId "$OSS_ACCESS_KEY_ID" --arg accessKeySecret "$OSS_ACCESS_KEY_SECRET" \
+              '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$RUNNER_TEMP/web-oss-sdk-credentials.json"
+          )
           : "${ECS_HOST:?Missing ECS_HOST}"
           : "${ECS_USER:?Missing ECS_USER}"
           : "${ECS_SSH_KEY:?Missing ECS_SSH_KEY}"

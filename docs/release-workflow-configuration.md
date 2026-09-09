@@ -211,7 +211,7 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   原先是 present 还是 missing；present 内容和对象 headers/metadata 同时进入事务镜像，内容还要与 recovery Web 基线按字节核对。最终现场读回在 Web-only 路径中还必须先证明未发布的 API、Runtime Worker、ACS 与 mutation 前冻结 identity 完全一致；写入后 confirmed readback 再按忽略 `deployedAt` 的完整四组件矩阵与现场比较，不能只验证 Web。identity
   写入或确认读回失败时，必须恢复 present 键、删除事务新增的 missing 键，并恢复 recovery Web 与原
   identity；随后逐键证明 OSS/recovery 的内容、对象 metadata 或 404 状态，再完成权威 Production 读回。hash assets
-  先生成最终传输字节，再由独立 helper 只创建或精确复用；写入由仓库锁定的 `ali-oss` SDK 读取 runner 上权限收紧的临时凭据文件，使用规范化 `oss-<region>` endpoint，并发送真实 `x-oss-forbid-overwrite:true` 条件请求；固定 ossutil 2.1.2 只运行安装后已探测支持的 stat/readback 参数，不承担条件写；只有 SDK 精确返回 HTTP 409 `FileAlreadyExists` 才进入复用证明，并发同名创建或既有对象的字节/headers 漂移会在固定键 mutation 前 fail closed；recovery Web 的 `assets/**` 与 `workbox-*.js` 也会在复制和 symlink 切换前逐字节验证同名共享文件，冲突时保持 current/previous 不变且不写 `activated`。补偿或证明不完整则进入人工处置。ACS 通道在初始检查和实际生产
+  先生成最终传输字节，再由独立 helper 只创建或精确复用；写入由仓库锁定的 `ali-oss` SDK 读取 runner 上权限收紧的临时凭据文件，使用规范化 `oss-<region>` endpoint，并发送真实 `x-oss-forbid-overwrite:true` 条件请求；固定 ossutil 2.1.2 只运行安装后已探测支持的 stat，不承担条件写，字节回读由同一 SDK 的 GET（不带 Accept-Encoding）完成——ossutil/aliyun `cp` 会对 `Content-Encoding: gzip` 对象透明解压并因 CRC 不一致失败；只有 SDK 精确返回 HTTP 409 `FileAlreadyExists` 才进入复用证明，并发同名创建或既有对象的字节/headers 漂移会在固定键 mutation 前 fail closed；recovery Web 的 `assets/**` 与 `workbox-*.js` 也会在复制和 symlink 切换前逐字节验证同名共享文件，冲突时保持 current/previous 不变且不写 `activated`。补偿或证明不完整则进入人工处置。ACS 通道在初始检查和实际生产
   部署 mutation 前都会校验 latest main；即使 exact-SHA ACR build record 已进入 `PENDING`/`BUILDING`，
   main 前进也会让旧 dispatch 在部署前 fail closed。两个入口都不能 dispatch 任意旧 commit/tag，也不生成不可变 RC、
   Staging E2E、完整 Promotion receipt 或跨组件物理收敛证据。ACS 的 `main` push 只分类/测试，非 `main` dispatch 也不进入

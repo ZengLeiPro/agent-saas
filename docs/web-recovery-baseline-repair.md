@@ -23,6 +23,13 @@ audit 按 `gzip-n9-assets-v1` 契约校验，对 Promotion 发布出的生产会
   被 OSS 动态压缩掩盖的对象），重传前后解压字节逐一核对一致。此后按魔数逐对象核实：
   14,842 个 js/mjs/css 对象全部为存储 gzip + `charset=utf-8` + immutable Cache-Control。
 
+同日第二次 audit（run 34311098459）暴露另一缺陷：`ossutil cp` 与 `aliyun oss cp` 都会对
+`Content-Encoding: gzip` 对象透明解压再做 CRC64 校验，对任何 gzip 资产必然报 `crc is inconsistent`；
+`upload-web-assets-immutable.sh` 的回读与本脚本的 `read_key` 均踩此坑且此前从未在真实 OSS 上跑过。
+现改为 `scripts/release/get-web-object.mjs`（ali-oss SDK 先 HEAD 再 GET，不带 Accept-Encoding，凭据只读 runner
+私有凭据文件）读取存储原字节；ossutil 只保留 stat。Promotion 的 `aliyun oss cp` 回读只覆盖壳文件，
+assets 由 immutable helper 逐对象回读并校验公开 headers。
+
 本 audit/repair 入口保留为异常兜底（人为改动、磁盘损坏、OSS 漂移），不再是常规发布的一部分。
 
 ## 适用的失败

@@ -8,6 +8,7 @@ on:
       - scripts/release/finish-production-publication.py
 permissions:
   contents: write
+  actions: read
 concurrency:
   group: production-model-publication-integration
   cancel-in-progress: false
@@ -21,6 +22,24 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: Capture bounded diagnostics from the previously failed Server shard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import re, subprocess
+          result = subprocess.run(['gh', 'api', 'repos/ZengLeiPro/agent-saas/actions/jobs/102296304860/logs'], capture_output=True, text=True, timeout=60)
+          if result.returncode:
+              print('Previous job diagnostics unavailable; current source tests remain authoritative.')
+          else:
+              text = re.sub(r'\x1b\[[0-9;]*m', '', result.stdout)
+              lines = text.splitlines()
+              selected = set()
+              for i, line in enumerate(lines):
+                  if re.search(r'FAIL\s|Failed Tests|AssertionError|Test Files|Tests\s+[0-9]+ failed', line):
+                      selected.update(range(max(0, i - 2), min(len(lines), i + 24)))
+              print('\n'.join(lines[i] for i in sorted(selected))[-18000:])
+          PY
       - name: Apply final reviewed boundary changes
         run: python3 scripts/release/finish-production-publication.py
       - uses: ./.github/actions/setup-pnpm
@@ -34,11 +53,11 @@ jobs:
       - name: Verify without hiding independent failures
         run: |
           python3 - <<'PY'
-          import glob, json, re, subprocess
+          import json, re, subprocess
           from pathlib import Path
           root = Path('/tmp/production-model-final')
           root.mkdir()
-          base = '9bfd1a56ec561f63570a8e58f7cd4f0e13f5c262'
+          base = '692618557f76bce83549584be0e434a559696ef8'
           paths = set(subprocess.check_output(['git', 'diff', '--name-only', base], text=True).splitlines())
           lint = sorted(p for p in paths if Path(p).is_file() and re.search(r'\.(?:mjs|cjs|js|jsx|ts|tsx|mts|cts)$', p))
           checks = [

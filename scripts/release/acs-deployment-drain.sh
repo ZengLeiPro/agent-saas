@@ -4,6 +4,72 @@
 ACS_DRAIN_PID=''
 ACS_DRAIN_PROTOCOL=''
 ACS_DRAIN_DROPIN=''
+ACS_DRAIN_LAST_INFLIGHT=unknown
+# 外层等待窗口。ACS 进程内部的 deadline 必须严格小于它：进程一旦自己把 drain
+# 判成 timed_out 就会恢复准入并放弃换代，此时外层再长的等待都没有意义。
+ACS_DRAIN_WINDOW_SECONDS=660
+# 留给终态取证与回执落盘的余量。
+ACS_DRAIN_DEADLINE_MARGIN_SECONDS=60
+
+acs_runtime_config_url() {
+  local health="${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}"
+  printf '%s' "${health%/health}/runtime-config"
+}
+
+# Bearer token 只经 stdin 交给 curl，避免出现在 /proc/*/cmdline 里；-q 必须是首参数
+# 才能挡掉可能开了 verbose 的 .curlrc，否则 Authorization 头会被打进部署日志。
+_acs_runtime_config_request() {
+  local token env_path="${ACS_ENV_PATH:-/etc/agent-saas/acs-orchestrator.env}"
+  [ -r "$env_path" ] || { echo "ACS env file is unreadable: $env_path" >&2; return 1; }
+  token="$(sed -n 's/^[[:space:]]*ACS_ORCH_AUTH_TOKEN=//p' "$env_path" | tail -n1)" || return 1
+  token="${token%\"}"
+  token="${token#\"}"
+  [ -n "$token" ] || { echo 'ACS_ORCH_AUTH_TOKEN is missing from the ACS env file' >&2; return 1; }
+  printf 'header = "Authorization: Bearer %s"\n' "$token" | curl -q -fsS --max-time 10 -K - "$@"
+}
+
+# xtrace 会把上面 printf 的参数原样展开到 stderr，凭据必须在此期间关掉它。
+acs_runtime_config_request() {
+  local resume_xtrace='' status=0
+  case "$-" in *x*) resume_xtrace='set -x'; set +x ;; esac
+  _acs_runtime_config_request "$@" || status=$?
+  ${resume_xtrace:-:}
+  return "$status"
+}
+
+acs_read_drain_deadline() {
+  local value
+  value="$(acs_runtime_config_request "$(acs_runtime_config_url)" \
+    | jq -r '.runtimeConfig.drainDeadlineMs // empty')" || return 1
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo 'ACS did not report a usable drainDeadlineMs' >&2; return 1; }
+  printf '%s' "$value"
+}
+
+# 抬高 ACS 自身的 drain deadline，使其覆盖本次发布窗口。默认 120s 远小于换代
+# 需要的时间，任何一条仍在执行的 Agent 工具调用都会让 drain 提前认输。
+#
+# 抬高后不再还原：这个值本就应当覆盖发布窗口，而还原动作要么落在旧进程已退出、
+# 要么落在回滚半途，反而制造出"有时 120s 有时 600s"的不确定状态。ACS 目前把同一
+# 个字段复用为 SNAT rollback 的 quiesce 上限，因此该上限会一并放宽——方向是等得
+# 更久才报超时，不会改变结果；真正的修法是在 ACS 里把两者解耦，不属于发布脚本。
+align_acs_drain_deadline() {
+  local target current applied
+  target=$(((ACS_DRAIN_WINDOW_SECONDS - ACS_DRAIN_DEADLINE_MARGIN_SECONDS) * 1000))
+  [ "$target" -ge 1000 ] || { echo 'ACS drain window is too small to align' >&2; return 1; }
+  current="$(acs_read_drain_deadline)" || return 1
+  if [ "$current" -ge "$target" ]; then
+    printf 'ACS drain deadline already covers the promotion window: %sms\n' "$current" >&2
+    return 0
+  fi
+  applied="$(acs_runtime_config_request -X PATCH -H 'content-type: application/json' \
+    -d "{\"drainDeadlineMs\":$target}" "$(acs_runtime_config_url)" \
+    | jq -r '.runtimeConfig.drainDeadlineMs // empty')" || return 1
+  [ "$applied" = "$target" ] || {
+    echo "ACS applied drainDeadlineMs=${applied:-none}, expected $target" >&2
+    return 1
+  }
+  printf 'Aligned ACS drain deadline with the promotion window: %sms -> %sms\n' "$current" "$applied" >&2
+}
 
 release_acs_drain_guard() {
   [ -n "$ACS_DRAIN_DROPIN" ] || return 0
@@ -57,6 +123,7 @@ drain_acs_before_cutover() {
       echo 'Legacy ACS must report valid inflight work and must not already be draining' >&2
       return 75
     }
+    ACS_DRAIN_LAST_INFLIGHT="$(printf '%s' "$health" | jq -r '.inflight')"
     printf 'Legacy ACS: stopping admission and waiting for accepted work: %s\n' \
       "$(printf '%s' "$health" | jq -c '{inflight,draining,drainDeadlineMs:.lifecycle.drainDeadlineMs}')" >&2
     legacy_deadline_ms="$(printf '%s' "$health" | jq -r '.lifecycle.drainDeadlineMs // 0')"
@@ -76,15 +143,17 @@ drain_acs_before_cutover() {
   [ ! -e "$ACS_DRAIN_DROPIN" ] || { ACS_DRAIN_DROPIN=''; ACS_DRAIN_PID=''; echo 'Existing ACS drain guard requires recovery' >&2; return 1; }
   (set -o noclobber; printf '[Service]\nRestart=no\n' > "$ACS_DRAIN_DROPIN") || return 1
   systemctl daemon-reload || return 1
+  [ "$ACS_DRAIN_PROTOCOL" != 1 ] || align_acs_drain_deadline || return 1
   drain_started=$SECONDS
   kill -USR2 "$ACS_DRAIN_PID" || return 1
-  deadline=$((SECONDS + 660))
+  deadline=$((SECONDS + ACS_DRAIN_WINDOW_SECONDS))
   next_progress=$SECONDS
   while [ "$SECONDS" -lt "$deadline" ]; do
     state="$(systemctl show "$ACS_SERVICE_NAME" --property=ActiveState --value)" || return 1
     if [ "$SECONDS" -ge "$next_progress" ]; then
-      printf 'Waiting for ACS drain: pid=%s protocol=%s state=%s remainingSeconds=%s\n' \
-        "$ACS_DRAIN_PID" "$ACS_DRAIN_PROTOCOL" "$state" "$((deadline - SECONDS))" >&2
+      printf 'Waiting for ACS drain: pid=%s protocol=%s state=%s inflight=%s remainingSeconds=%s\n' \
+        "$ACS_DRAIN_PID" "$ACS_DRAIN_PROTOCOL" "$state" "$ACS_DRAIN_LAST_INFLIGHT" \
+        "$((deadline - SECONDS))" >&2
       next_progress=$((SECONDS + 15))
     fi
     if [ "$state" = inactive ] || [ "$state" = failed ]; then
@@ -128,8 +197,11 @@ drain_acs_before_cutover() {
     if [ "$current_pid" = 0 ] || [ "$state" = deactivating ]; then sleep 1; continue; fi
     if [ "$ACS_DRAIN_PROTOCOL" = 1 ]; then
       health="$(curl -fsS --max-time 5 "${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}")" || { sleep 1; continue; }
+      ACS_DRAIN_LAST_INFLIGHT="$(printf '%s' "$health" | jq -r '.inflight // "unknown"')"
       if printf '%s' "$health" | jq -e '.deploymentDrain.state=="timed_out" or .deploymentDrain.state=="cancelled"' >/dev/null; then
-        echo 'ACS drain was cancelled or reached its safe deadline; old work was preserved' >&2; return 1
+        printf 'ACS drain was cancelled or reached its safe deadline; old work was preserved (inflight=%s)\n' \
+          "$ACS_DRAIN_LAST_INFLIGHT" >&2
+        return 1
       fi
     fi
     sleep 1

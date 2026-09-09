@@ -82,6 +82,35 @@ kill() {
   if [ "$CASE" != missingproof ]; then printf '%s' '{"protocolVersion":1,"pid":42,"state":"completed","inflight":0}' > "$ACS_DRAIN_STATE_PATH"; fi
 }
 curl() {
+  local args="$*"
+  case "$args" in
+    *runtime-config*)
+      printf 'curl runtime-config %s\\n' "$args" >> "$TEST_ROOT/events"
+      case "$args" in *Bearer*) echo 'token leaked into argv' >&2; return 1 ;; esac
+      test "$1" = -q || { echo 'runtime-config call did not disable .curlrc as the first argument' >&2; return 1; }
+      local seen_config=false prev=''
+      for arg in "$@"; do
+        if [ "$prev" = -K ] && [ "$arg" = - ]; then seen_config=true; fi
+        prev="$arg"
+      done
+      test "$seen_config" = true \
+        || { echo 'runtime-config call did not read a stdin curl config' >&2; return 1; }
+      local stdin_payload requested current
+      stdin_payload="$(cat)"
+      test "$stdin_payload" = 'header = "Authorization: Bearer test-token"' \
+        || { echo 'runtime-config call did not carry the stdin auth header' >&2; return 1; }
+      test -f "$TEST_ROOT/deadline" || printf '%s' "$INITIAL_DRAIN_DEADLINE_MS" > "$TEST_ROOT/deadline"
+      case "$args" in
+        *'-X PATCH'*)
+          test "$CASE" != patchfails || return 22
+          requested="$(printf '%s' "$args" | sed -n 's/.*drainDeadlineMs":\\([0-9]*\\).*/\\1/p')"
+          test "$CASE" = patchrefused || printf '%s' "$requested" > "$TEST_ROOT/deadline"
+          ;;
+      esac
+      current="$(cat "$TEST_ROOT/deadline")"
+      printf '{"status":"ok","runtimeConfig":{"drainDeadlineMs":%s}}' "$current"
+      return 0 ;;
+  esac
   local protocol=1 inflight=0 state=idle draining=false
   case "$CASE" in
     legacybusy|legacyforced|legacyearlyforced) protocol=0; inflight=3 ;;
@@ -113,14 +142,25 @@ for (const scenario of [
   'unknownprotocol',
   'timeout',
   'pidchange',
+  'deadlinealreadyaligned',
+  'patchrefused',
+  'patchfails',
+  'missingtoken',
 ]) {
   test(`ACS cutover observes old PID outcome: ${scenario}`, async () => {
     const root = await mkdtemp(join(tmpdir(), 'acs-drain-host-'));
     try {
+      await writeFile(
+        join(root, 'acs.env'),
+        scenario === 'missingtoken' ? 'UNRELATED=1\n' : 'ACS_ORCH_AUTH_TOKEN="test-token"\n',
+      );
+      const initialDeadlineMs = scenario === 'deadlinealreadyaligned' ? '600000' : '120000';
       const env = {
         ...process.env,
         TEST_ROOT: root,
         CASE: scenario,
+        ACS_ENV_PATH: join(root, 'acs.env'),
+        INITIAL_DRAIN_DEADLINE_MS: initialDeadlineMs,
         ACS_SERVICE_NAME: 'acs',
         ACS_SYSTEMD_RUNTIME_ROOT: join(root, 'systemd'),
         ACS_DRAIN_STATE_PATH: join(root, 'drain.json'),
@@ -142,6 +182,7 @@ for (const scenario of [
         'legacyforced',
         'exitbetweenreads',
         'deactivating',
+        'deadlinealreadyaligned',
       ].includes(scenario);
       assert.equal(result.status === 0, success, result.stderr);
       const proofPath = join(root, 'acs-drain-123-2.json');
@@ -169,10 +210,27 @@ for (const scenario of [
       if (scenario === 'legacyforced') {
         assert.match(result.stderr, /audited one-time compatibility cutover/u);
       }
-      assert.doesNotMatch(
-        await readFile(join(root, 'events'), 'utf8'),
-        /restart|kill -KILL|kill -TERM/u,
-      );
+      const events = await readFile(join(root, 'events'), 'utf8');
+      if (['patchrefused', 'patchfails', 'missingtoken'].includes(scenario)) {
+        // 对齐不确定就不能开始换代：绝不能已经停了准入却拿不到足够的 drain 窗口。
+        assert.doesNotMatch(events, /kill -USR2/u);
+      }
+      if (scenario === 'clean') {
+        // deadline 必须在发 USR2 之前抬到覆盖 660s 窗口的值，否则 ACS 会自己先认输。
+        assert.ok(events.indexOf('-X PATCH') < events.indexOf('kill -USR2'));
+        assert.equal(await readFile(join(root, 'deadline'), 'utf8'), '600000');
+        assert.match(result.stderr, /Aligned ACS drain deadline .*120000ms -> 600000ms/u);
+        assert.match(result.stderr, /Waiting for ACS drain: .*inflight=/u);
+      }
+      if (scenario === 'deadlinealreadyaligned') {
+        assert.doesNotMatch(events, /-X PATCH/u);
+        assert.match(result.stderr, /already covers the promotion window: 600000ms/u);
+      }
+      if (['legacyquiet', 'legacybusy', 'legacyforced'].includes(scenario)) {
+        // 兼容协议由旧二进制自己掌管超时，不去改它的运行时配置。
+        assert.doesNotMatch(events, /runtime-config/u);
+      }
+      assert.doesNotMatch(events, /restart|kill -KILL|kill -TERM/u);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -182,6 +240,7 @@ for (const scenario of [
 test('failed native drain restores the old generation admission and Restart policy without replacing its PID', async () => {
   const root = await mkdtemp(join(tmpdir(), 'acs-drain-cancel-'));
   try {
+    await writeFile(join(root, 'acs.env'), 'ACS_ORCH_AUTH_TOKEN="test-token"\n');
     const result = spawnSync(
       'bash',
       [
@@ -201,6 +260,8 @@ test -e "$TEST_ROOT/cancelled"`,
           DRAIN_HELPER: helper,
           TEST_ROOT: root,
           CASE: 'timeout',
+          ACS_ENV_PATH: join(root, 'acs.env'),
+          INITIAL_DRAIN_DEADLINE_MS: '120000',
           ACS_SERVICE_NAME: 'acs',
           ACS_SYSTEMD_RUNTIME_ROOT: join(root, 'systemd'),
           ACS_DRAIN_STATE_PATH: join(root, 'drain.json'),
@@ -216,6 +277,48 @@ test -e "$TEST_ROOT/cancelled"`,
     const events = await readFile(join(root, 'events'), 'utf8');
     assert.match(events, /kill -USR1 42/u);
     assert.doesNotMatch(events, /restart|kill -KILL|kill -TERM|start acs/u);
+    // 对齐后的 deadline 有意不还原：它本就该覆盖发布窗口，还原只会制造不确定状态。
+    assert.equal(await readFile(join(root, 'deadline'), 'utf8'), '600000');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const drainEnv = (root, scenario = 'clean') => ({
+  ...process.env,
+  TEST_ROOT: root,
+  CASE: scenario,
+  ACS_ENV_PATH: join(root, 'acs.env'),
+  INITIAL_DRAIN_DEADLINE_MS: '120000',
+  ACS_SERVICE_NAME: 'acs',
+  ACS_SYSTEMD_RUNTIME_ROOT: join(root, 'systemd'),
+  ACS_DRAIN_STATE_PATH: join(root, 'drain.json'),
+  MANIFEST_PATH: join(root, 'manifest.json'),
+  GITHUB_RUN_ID: '123',
+  GITHUB_RUN_ATTEMPT: '2',
+  release_id: 'rc-20260908-01',
+  manifest_digest: `sha256:${'a'.repeat(64)}`,
+});
+
+test('xtrace never expands the bearer token into the deployment log', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'acs-drain-xtrace-'));
+  try {
+    await writeFile(join(root, 'acs.env'), 'ACS_ORCH_AUTH_TOKEN="test-token"\n');
+    const result = spawnSync(
+      'bash',
+      [
+        '-c',
+        `set -euxo pipefail
+source "$DRAIN_HELPER"
+${mocks}
+drain_acs_before_cutover
+case "$-" in *x*) ;; *) echo 'xtrace was not restored' >&2; exit 3 ;; esac`,
+      ],
+      { encoding: 'utf8', env: { ...drainEnv(root), DRAIN_HELPER: helper } },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /test-token/u);
+    assert.match(result.stderr, /\+ kill -USR2 42/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

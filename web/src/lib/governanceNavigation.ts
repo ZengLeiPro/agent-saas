@@ -263,7 +263,6 @@ const SETTINGS_LEGACY: Readonly<Record<string, { routeId: string; tab?: string }
   "/settings/all-agents": { routeId: personalSettingsRouteId("my-agent") },
   "/settings/memory": { routeId: personalSettingsRouteId("my-agent"), tab: "memory" },
   "/settings/skills": { routeId: personalSettingsRouteId("my-permissions") },
-  "/settings/mcp": { routeId: personalSettingsRouteId("connections") },
   "/settings/files": { routeId: personalSettingsRouteId("files-storage") },
   "/settings/storage": { routeId: personalSettingsRouteId("files-storage") },
   "/settings/data": { routeId: personalSettingsRouteId("trash") },

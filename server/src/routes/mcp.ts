@@ -383,7 +383,7 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
       } catch {
         if (result.ok) {
           return res.status(202).type('html').send(
-            '<!doctype html><meta charset="utf-8"><p>连接器授权已成功，但 App 回跳交付暂时失败；请返回 App 的连接与授权页面刷新状态。</p>',
+            '<!doctype html><meta charset="utf-8"><p>连接器授权已成功，但 App 回跳交付暂时失败；请返回能力中心的连接器页面刷新状态。</p>',
           );
         }
         throw new Error('OAuth native handoff delivery failed');

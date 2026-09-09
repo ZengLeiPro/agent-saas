@@ -24,10 +24,10 @@ import {
 import { SettingsPanelHeader, SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { BrowserNotificationSettings } from "@/components/SettingsCenter/BrowserNotificationSettings";
 import { AppearanceLayoutPreferences } from "@/components/SettingsCenter/AppearanceLayoutPreferences";
+import { ConversationBehaviorSettings } from "@/components/SettingsCenter/ConversationBehaviorSettings";
 import { SessionOrganizationSettings } from "@/components/SettingsCenter/SessionOrganizationSettings";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import {
-  ConnectionsSection,
   FilesStorageSection,
   MyAgentSection,
   MyPermissionsSection,
@@ -60,7 +60,6 @@ const SETTINGS_NAV_ITEM_SELECTED =
   "bg-brand-accent-soft text-foreground font-semibold";
 const SETTINGS_NAV_ITEM_UNSELECTED =
   "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
-const RUN_SHELL_APPROVAL_STORAGE_PREFIX = "agentChat.autoApproveRunShell.";
 
 function initials(name?: string) {
   return (name || "U").trim().slice(0, 1).toUpperCase();
@@ -98,25 +97,13 @@ function SettingsSectionFallback() {
   );
 }
 
-function clearRunShellApprovalStorage() {
-  for (let i = localStorage.length - 1; i >= 0; i--) {
-    const key = localStorage.key(i);
-    if (key?.startsWith(RUN_SHELL_APPROVAL_STORAGE_PREFIX)) {
-      localStorage.removeItem(key);
-    }
-  }
-}
-
 export function GeneralSection() {
-  // 授权模式对所有用户开放（2026-07-02 起）；TASK-256：缺失字段默认开启（!== false），与服务端 ?? true 一致。
   const { user, updatePreferences } = useAuth();
-  const authorizationModeEnabled = user ? user.preferences?.authorizationModeEnabled !== false : false;
   const preferredDefaultModel = user?.preferences?.defaultModel;
   const recoveredDraft = useRef(restoreSettingsDraft<{
     defaultModel?: string;
   }>("chat-model"));
   const [modelList, setModelList] = useState<ModelList | null>(null);
-  const [draftAuthorizationMode, setDraftAuthorizationMode] = useState(authorizationModeEnabled);
   const [draftDefaultModel, setDraftDefaultModel] = useState(recoveredDraft.current?.defaultModel ?? preferredDefaultModel ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -139,7 +126,6 @@ export function GeneralSection() {
   }, [preferredDefaultModel]);
 
   useEffect(() => {
-    setDraftAuthorizationMode(authorizationModeEnabled);
     if (recoveredDraft.current && modelList) {
       setDraftDefaultModel(recoveredDraft.current.defaultModel ?? modelList.default);
       recoveredDraft.current = null;
@@ -147,26 +133,22 @@ export function GeneralSection() {
       setDraftDefaultModel(modelList?.default ?? "");
     }
     setSaved(false);
-  }, [authorizationModeEnabled, modelList]);
+  }, [modelList]);
 
   const currentDefaultModel = modelList?.default ?? "";
-  const hasChanges = draftAuthorizationMode !== authorizationModeEnabled
-    || (!!draftDefaultModel && draftDefaultModel !== currentDefaultModel);
+  const hasChanges = !!draftDefaultModel && draftDefaultModel !== currentDefaultModel;
 
   const handleSave = useCallback(async () => {
     const next = {
-      authorizationModeEnabled: draftAuthorizationMode,
       ...(draftDefaultModel ? { defaultModel: draftDefaultModel } : {}),
     };
     setSaving(true);
     setSaved(false);
     updatePreferences(next);
-    if (!draftAuthorizationMode) clearRunShellApprovalStorage();
     try {
       const savedPreferences = await saveUserPreferences(next);
       if (!savedPreferences) throw new Error("保存失败");
       updatePreferences(savedPreferences);
-      if (savedPreferences.authorizationModeEnabled !== true) clearRunShellApprovalStorage();
       if (savedPreferences.defaultModel) {
         window.dispatchEvent(new CustomEvent("agent:default-model-changed", {
           detail: { model: savedPreferences.defaultModel },
@@ -176,7 +158,6 @@ export function GeneralSection() {
       window.setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       updatePreferences({
-        authorizationModeEnabled,
         defaultModel: preferredDefaultModel,
       });
       setDraftDefaultModel(modelList?.default ?? "");
@@ -185,13 +166,12 @@ export function GeneralSection() {
     } finally {
       setSaving(false);
     }
-  }, [authorizationModeEnabled, draftAuthorizationMode, draftDefaultModel, modelList?.default, preferredDefaultModel, updatePreferences]);
+  }, [draftDefaultModel, modelList?.default, preferredDefaultModel, updatePreferences]);
 
   const discardDraft = useCallback(() => {
-    setDraftAuthorizationMode(authorizationModeEnabled);
     setDraftDefaultModel(modelList?.default ?? "");
     setSaved(false);
-  }, [authorizationModeEnabled, modelList?.default]);
+  }, [modelList?.default]);
 
   useSettingsDirtyEntry({
     id: "chat-model",
@@ -242,6 +222,7 @@ export function GeneralSection() {
             </SelectContent>
           </Select>
         </div>
+        <ConversationBehaviorSettings />
         <BrowserNotificationSettings />
       </div>
     </PlaceholderSection>
@@ -877,7 +858,6 @@ export function SettingsModalInner({
       ),
     },
     { id: "my-permissions", node: <MyPermissionsSection /> },
-    { id: "connections", node: <ConnectionsSection /> },
     { id: "files-storage", node: <FilesStorageSection renderFiles={renderFiles} /> },
     {
       id: "trash",

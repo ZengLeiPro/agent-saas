@@ -10,7 +10,12 @@ export function capabilityTabFromPath(pathname: string, templatesEnabled = true)
     pathname === "/scenarios"
   )) return "templates";
   if (pathname === "/capabilities/skills" || pathname === "/settings/skills") return "skills";
-  if (pathname === "/capabilities/connectors" || pathname === "/settings/mcp" || pathname === "/mcp") return "connectors";
+  if (
+    pathname === "/capabilities/connectors" ||
+    pathname === "/settings/connections" ||
+    pathname === "/settings/mcp" ||
+    pathname === "/mcp"
+  ) return "connectors";
   return "experts";
 }
 

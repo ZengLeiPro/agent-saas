@@ -83,11 +83,12 @@ describe("能力中心 URL", () => {
     expect(buildUrl("capabilities", null)).toBe("/capabilities");
   });
 
-  it("个人设置旧路径进入 V2 独立页面，产品级旧入口仍收敛到能力中心", () => {
+  it("个人设置旧路径进入 V2 独立页面，连接器旧入口收敛到能力中心", () => {
     expect(parseUrl("/settings/skills")).toMatchObject({ tab: "chat", canonicalPath: "/settings/my-permissions" });
-    expect(parseUrl("/settings/mcp")).toMatchObject({ tab: "chat", canonicalPath: "/settings/connections" });
     expect(parseUrl("/settings/all-agents")).toMatchObject({ tab: "chat", canonicalPath: "/settings/my-agent" });
-    expect(parseUrl("/mcp")).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/connectors" });
+    for (const path of ["/settings/connections", "/settings/mcp", "/mcp"]) {
+      expect(parseUrl(path)).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/connectors" });
+    }
     for (const path of ["/agents", "/all-agents"]) {
       expect(parseUrl(path)).toMatchObject({ tab: "capabilities", canonicalPath: "/capabilities/experts" });
     }

@@ -29,7 +29,6 @@ describe("V2 个人设置路由与来源返回", () => {
     ["chat-model", "/settings/chat-model"],
     ["appearance-layout", "/settings/appearance-layout"],
     ["my-permissions", "/settings/my-permissions"],
-    ["connections", "/settings/connections"],
     ["files-storage", "/settings/files-storage"],
     ["trash", "/settings/trash"],
   ] as const)("%s 使用 canonical URL", (section, expected) => {
@@ -63,14 +62,14 @@ describe("V2 个人设置路由与来源返回", () => {
     expect(closePersonalSettingsHistory("/fallback")).toBe("back");
     expect(go).toHaveBeenCalledWith(-2);
 
-    window.history.replaceState({}, "", "/settings/connections");
+    window.history.replaceState({}, "", "/settings/my-permissions");
     const replace = vi.spyOn(window.history, "replaceState");
     expect(closePersonalSettingsHistory("/chat/source")).toBe("replace");
     expect(replace).toHaveBeenLastCalledWith(expect.objectContaining({ __appHistoryIndex: 0 }), "", "/chat/source");
   });
 
   it("直达设置深链后首次切页会先把当前历史位替换为产品来源", () => {
-    window.history.replaceState({}, "", "/settings/connections");
+    window.history.replaceState({}, "", "/settings/my-permissions");
     const replace = vi.spyOn(window.history, "replaceState");
     const { result } = renderHook(() => usePersonalSettingsNavigation({
       getActiveTab: () => "chat",

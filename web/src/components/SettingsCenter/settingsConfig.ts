@@ -1,4 +1,4 @@
-import { Bot, HardDrive, Link2, MessageSquare, Palette, Sparkles, User, type LucideIcon } from "lucide-react";
+import { Bot, HardDrive, MessageSquare, Palette, Sparkles, User, type LucideIcon } from "lucide-react";
 
 import { EntityIcons } from "@/lib/icons";
 import {
@@ -14,7 +14,6 @@ const PERSONAL_SETTINGS_ICONS: Record<PersonalSettingsIconKey, LucideIcon> = {
   sparkles: Sparkles,
   palette: Palette,
   admin: EntityIcons.admin,
-  link: Link2,
   "hard-drive": HardDrive,
   trash: EntityIcons.trash,
 };

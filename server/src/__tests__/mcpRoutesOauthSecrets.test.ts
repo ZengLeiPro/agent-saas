@@ -318,7 +318,10 @@ describe('MCP routes: oauth callback/start/disconnect + admin secrets + oauthRed
 
       const res = await r.request('/api/mcp/oauth/callback?state=s&code=c', { redirect: 'manual' });
       expect(res.status).toBe(202);
-      expect(await res.text()).toContain('App 回跳交付暂时失败');
+      const html = await res.text();
+      expect(html).toContain('App 回跳交付暂时失败');
+      expect(html).toContain('能力中心的连接器页面');
+      expect(html).not.toContain('连接与授权');
       expect(recordOAuthGrant).toHaveBeenCalledTimes(1);
       expect(oauth.disconnectCalls).toEqual([]);
       expect(complete).toHaveBeenCalledWith('s', { status: 'succeeded' });

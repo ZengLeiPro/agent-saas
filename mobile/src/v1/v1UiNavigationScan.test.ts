@@ -239,9 +239,9 @@ describe('M00-01 生产界面导航扫描', () => {
       '账户与安全',
       '我的 Agent',
       '对话与模型',
+      '会话智能整理',
       '外观与布局',
       '我的权限',
-      '连接与授权',
       '文件与存储',
       '回收站',
     ]) {
@@ -253,5 +253,26 @@ describe('M00-01 生产界面导航扫描', () => {
       'utf8',
     );
     expect(appearance.includes('字体大小')).toBe(true);
+  });
+
+  it('我的权限隐藏诊断信息，对话与模型承接操作确认和执行过程设置', () => {
+    const permissions = readFileSync(
+      join(MOBILE_ROOT, 'app/settings/my-permissions.tsx'),
+      'utf8',
+    );
+    for (const internalCopy of ['个人调试模式', '决定因素：', '访问判定：', '执行就绪：']) {
+      expect(permissions.includes(internalCopy), `我的权限仍暴露：${internalCopy}`).toBe(false);
+    }
+
+    const chatModel = readFileSync(join(MOBILE_ROOT, 'app/settings/chat-model.tsx'), 'utf8');
+    for (const userFacingCopy of [
+      '操作前确认',
+      '每次操作前询问',
+      '自动执行低风险操作',
+      '尽量自动执行',
+      '显示详细执行过程',
+    ]) {
+      expect(chatModel.includes(userFacingCopy), `对话与模型缺少：${userFacingCopy}`).toBe(true);
+    }
   });
 });

@@ -1,5 +1,5 @@
 /**
- * 个人设置 9 分区注册表 —— 与 Web `web/src/lib/unifiedSettingsRegistry.ts`
+ * 个人设置 8 分区注册表 —— 与 Web `web/src/lib/unifiedSettingsRegistry.ts`
  * 的 `scope: "personal"` 条目同名、同序、同 ID、同分组。
  *
  * 约定：
@@ -9,7 +9,7 @@
  *    图标映射放在 `src/components/settings/settingsIcons.ts`
  *    （与 Web `SettingsCenter/settingsConfig.ts` 的分层一致）；
  * 3. `target` 是移动端的落点：多数分区落自己的 Stack 路由，
- *    「连接与授权」复用能力中心连接器 Tab，「回收站」是设置页内的底部面板。
+ *    「回收站」是设置页内的底部面板。
  */
 
 export const PERSONAL_SETTINGS_GROUP_ORDER = ['personal', 'preferences', 'access', 'data'] as const;
@@ -31,13 +31,12 @@ export type PersonalSettingsSectionId =
   | 'session-organization'
   | 'appearance-layout'
   | 'my-permissions'
-  | 'connections'
   | 'files-storage'
   | 'trash';
 
 /** 与 Web `PERSONAL_SETTINGS_ICONS` 的键一致。 */
 export type PersonalSettingsIconKey =
-  'user' | 'bot' | 'message-square' | 'sparkles' | 'palette' | 'admin' | 'link' | 'hard-drive' | 'trash';
+  'user' | 'bot' | 'message-square' | 'sparkles' | 'palette' | 'admin' | 'hard-drive' | 'trash';
 
 /** 移动端落点：Stack 路由 pattern（与 V1 能力清单同一书写法）或页内浮层。 */
 export type PersonalSettingsTarget =
@@ -103,15 +102,6 @@ export const PERSONAL_SETTINGS_SECTIONS: readonly PersonalSettingsSection[] = [
     group: 'access',
     iconKey: 'admin',
     target: { kind: 'route', route: 'settings/my-permissions' },
-  },
-  {
-    id: 'connections',
-    label: '连接与授权',
-    description: '长期账号授权与运行时工具批准。',
-    group: 'access',
-    iconKey: 'link',
-    // 与 Web 一致：连接器管理已并入能力中心（P3-3a），这里直接跳过去。
-    target: { kind: 'route', route: 'capabilities/connectors' },
   },
   {
     id: 'files-storage',

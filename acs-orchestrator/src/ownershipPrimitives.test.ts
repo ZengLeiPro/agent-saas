@@ -111,7 +111,7 @@ describe('actual ownership primitives (new-module coverage, not baseline reprodu
     expect((await waiting).stdout).toBe('中文事件');
   });
 
-  it('does not confuse path ancestors with string-prefix siblings or read-only mounts', () => {
+  it('does not confuse path ancestors with string-prefix siblings or other storage', () => {
     expect(scopesOverlap(scope, { ...scope, mountSubPath: 'workspaces/a/nested' })).toBe(true);
     expect(scopesOverlap(scope, { ...scope, mountSubPath: 'workspaces/ab' })).toBe(false);
     expect(scopesOverlap(scope, { ...scope, storageId: 'different-storage' })).toBe(false);
@@ -153,12 +153,48 @@ describe('actual ownership primitives (new-module coverage, not baseline reprodu
     await expect(fixture.journal.update({ ...record(), revision: 2, resource: 'running' }, 1)).rejects.toBeInstanceOf(OwnershipBlockedError);
   });
 
+  it('does not settle an outcome merely because cancellation was requested', async () => {
+    const owners = new OwnedOperations();
+    const operation = await owners.begin({ kind: 'invocation', invocationId: 'logical', attemptId: 'attempt', scope });
+    operation.requestCancel();
+    expect(operation.record.outcome).toBe('pending');
+    await operation.complete('success', { kind: 'never_dispatched', attemptId: 'attempt' }, 'not_started');
+    expect(operation.record.outcome).toBe('success');
+    expect(operation.requestCancel().requested).toBe(false);
+  });
+
+  it('does not erase an unknown blocker when a timed-out persistence call later succeeds', async () => {
+    vi.useFakeTimers();
+    let finish!: (value: OwnershipRecord) => void;
+    let attempted!: OwnershipRecord;
+    const journal = {
+      reserve: async (value: OwnershipRecord) => value,
+      update: async (value: OwnershipRecord) => {
+        attempted = value;
+        return await new Promise<OwnershipRecord>((resolve) => { finish = resolve; });
+      },
+      snapshot: () => ({ available: true, records: [] }),
+    } as unknown as OwnershipJournal;
+    const owners = new OwnedOperations(journal);
+    const operation = await owners.begin({ kind: 'invocation', invocationId: 'late', attemptId: 'late-attempt', scope });
+    const updating = operation.update({ resource: 'running', phase: 'dispatch' });
+    const rejected = expect(updating).rejects.toMatchObject({ code: 'wait_timed_out' });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await rejected;
+    expect(operation.record.resource).toBe('unknown');
+    finish(attempted);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(operation.record.resource).toBe('unknown');
+    expect(owners.drainBlockers()).toBe(1);
+  });
+
   it('keeps a local truthful blocker when durable reservation fails', async () => {
     const run = vi.fn<OwnershipJournalTransport['run']>(async () => result('', 1, 'Forbidden'));
     const owners = new OwnedOperations(new OwnershipJournal(config, { run }));
     await expect(owners.begin({ kind: 'invocation', invocationId: 'logical', attemptId: 'attempt', scope }))
       .rejects.toBeInstanceOf(OwnershipUnavailableError);
-    expect(owners.drainBlockers()).toBe(1);
+    // One unresolved owner plus one unavailable-journal blocker.
+    expect(owners.drainBlockers()).toBe(2);
     expect(owners.records()[0]?.resource).toBe('unknown');
   });
 });

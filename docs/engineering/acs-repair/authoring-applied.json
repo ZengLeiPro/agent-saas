@@ -1,8 +1,7 @@
 {
-  "id": "pre-abort-guards",
-  "baseSha": "194b959f1251df778e30ae193610821ba718c878",
+  "id": "primitive-evidence-finalization",
+  "baseSha": "ab21b9d863f0fabf8f9b93ee2c466cae2d204165",
   "files": [
-    "acs-orchestrator/src/persistentRunner.ts",
-    "acs-orchestrator/src/kubectl.ts"
+    "acs-orchestrator/src/ownershipPrimitives.test.ts"
   ]
 }

@@ -152,7 +152,6 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   },
   {
     id: "governance", label: "用量与治理", routes: [
-      route("organization", "governance", "business-system-usage", "业务系统用量", ["tenant-admin", "governance", "business-system-usage"], { entity: "optional" }),
       route("organization", "governance", "automation", "自动化任务", ["tenant-admin", "governance", "automation"], { entity: "optional" }),
       route("organization", "governance", "usage", "用量、预算与计费", ["tenant-admin", "governance", "usage"]),
       route("organization", "governance", "qa", "会话质检", ["tenant-admin", "governance", "qa"], { entity: "optional" }),
@@ -240,6 +239,7 @@ const PLATFORM_SETTINGS_LEGACY: Readonly<Record<string, string>> = {
 const TENANT_LEGACY: Readonly<Record<string, string>> = {
   "/tenant-admin": "organization.overview.overview",
   "/tenant-admin/usage": "organization.governance.usage",
+  "/tenant-admin/governance/business-system-usage": "organization.governance.usage",
   "/tenant-admin/qa": "organization.governance.qa",
   "/tenant-admin/audit": "organization.governance.audit",
   "/users": "organization.members.accounts",

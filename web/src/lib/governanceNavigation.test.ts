@@ -24,7 +24,7 @@ function expectRoute(input: string, routeId: string, canonicalPath: string | nul
 }
 
 describe("governance navigation registry", () => {
-  it("只暴露平台/组织各五个工作区，并完整登记本地叶子与八个个人设置页", () => {
+  it("只暴露平台/组织各五个工作区，并完整登记本地叶子与九个个人设置页", () => {
     expect(GOVERNANCE_NAVIGATION.platform.map((item) => item.id)).toEqual([
       "overview", "org-business", "resource-center", "runtime", "governance",
     ]);
@@ -32,8 +32,8 @@ describe("governance navigation registry", () => {
       "overview", "members", "agents", "governance", "settings",
     ]);
     expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(28);
-    expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(29);
-    expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(8);
+    expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(28);
+    expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(9);
   });
 
   it("平台与组织控制台菜单全部使用中文标签", () => {
@@ -141,6 +141,7 @@ describe("legacy URL canonical adapters", () => {
   it.each([
     ["/tenant-admin", "organization.overview.overview", "/tenant-admin/overview"],
     ["/tenant-admin/usage?org=acme&usageRange=90d", "organization.governance.usage", "/tenant-admin/governance/usage?org=acme&usageRange=90d"],
+    ["/tenant-admin/governance/business-system-usage?org=acme", "organization.governance.usage", "/tenant-admin/governance/usage?org=acme"],
     ["/tenant-admin/qa?org=acme", "organization.governance.qa", "/tenant-admin/governance/qa?org=acme"],
     ["/tenant-admin/audit?org=acme", "organization.governance.audit", "/tenant-admin/governance/audit?org=acme"],
     ["/tenant-admin/settings/users?org=acme", "organization.members.accounts", "/tenant-admin/members/accounts?org=acme"],

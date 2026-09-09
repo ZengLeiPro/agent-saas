@@ -66,7 +66,7 @@ import type { UserStore } from '../../data/users/store.js';
 import { tenantAccessErrorMessage } from '../../data/tenants/access.js';
 import { EventBufferStore } from './eventBuffer.js';
 import { clearSessionsListCache } from '../../routes/sessions.js';
-import { extractTitleContext, generateTitleWithFallback, shouldGenerateTitleFromFirstMessage } from '../../agent/titleGenerator.js';
+import { TITLE_SYSTEM_PROMPT, appendUserPromptAddition, extractTitleContext, generateTitleWithFallback, shouldGenerateTitleFromFirstMessage } from '../../agent/titleGenerator.js';
 import { checkTopicScope, extractRecentUserMessages } from '../../agent/guardrail.js';
 import { isCompactCommand } from '../../agent/prompt.js';
 import { isAssignedToOrgAgent, parseOrgAgentAudience } from '../../data/orgAgents/store.js';
@@ -4001,11 +4001,7 @@ export class WebChannel implements BaseChannel {
    *   - 混合内容 → 发清理后的文本 + voice 事件
    * - 文本不以 [VOICE 开头 → 正常流式推送，结尾 VOICE 标记在 onTextEnd 处理
    */
-  /**
-   * 自动命名核心 IO：解析 cwd → 读 meta 防覆盖 → 读 transcript 抽前两轮 →
-   * 调上游模型 → 落 meta.generatedTitle。首条长消息、续聊补偿、所有终态与
-   * 跨进程 durable 终态共用；会话级 in-flight 仅合并并发，失败后仍可重试。
-   */
+  /** 自动命名核心 IO：解析 cwd → 读 meta 防覆盖 → 读 transcript 抽前两轮 → 调模型 → 落 generatedTitle。 */
   private async markSessionUnread(input: {
     userId: string;
     sessionId: string;
@@ -4117,11 +4113,12 @@ export class WebChannel implements BaseChannel {
       });
       let title: string | null;
       try {
+        const titleSystemPrompt = appendUserPromptAddition(this.config.getTitleSystemPrompt?.() ?? TITLE_SYSTEM_PROMPT, this.config.userStore?.findById(userInfo.id)?.preferences?.titlePromptAddition, 'title');
         title = await generateTitleWithFallback(
           userMessage, assistantReply, titleConfigs,
           ctx?.userMessages[1], ctx?.assistantReplies[1],
           {
-            systemPrompt: this.config.getTitleSystemPrompt?.(),
+            systemPrompt: titleSystemPrompt,
             modelAdapterFactory: this.config.titleModelAdapterFactory,
             runtimeContext: { sessionId, tenantId: userInfo.tenantId, cwd: userCwd },
             beforeModelCall: () => utilityBilling?.beforeModelCall(),

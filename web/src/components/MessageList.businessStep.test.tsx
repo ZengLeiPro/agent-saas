@@ -518,9 +518,12 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
 
+    // 已发送的插话现在会把主卡带到流尾；用尚未送达的排队消息撑开列表，
+    // 继续验证主卡真正移出窗口后的详情保留与焦点回退，而不是旧的位置策略。
     const trailing = Array.from({ length: 180 }, (_, index): MessageItem => ({
       id: `trailing-${index}`,
       type: "user",
+      status: "queued",
       content: `后续消息 ${index}`,
       timestamp: 10_000 + index,
     }));

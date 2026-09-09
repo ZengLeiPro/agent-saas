@@ -3,6 +3,7 @@ import { Loader2, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { isUsageOverview, type UsageOverview } from '@/lib/kyAppUsageOverview';
 import {
   Table,
   TableBody,
@@ -11,16 +12,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-interface UsageOverview {
-  currentMonthCreditsUsed: number;
-  balanceCredits: number;
-  estimatedDaysRemaining: number | null;
-  topUsers: Array<{ userId: string; name: string; creditsUsed: number }>;
-  topCapabilities: Array<{ capabilityId: string; calls: number }>;
-  weeklyTrend: Array<{ date: string; creditsUsed: number }>;
-  capabilityMetric: 'call_count';
-}
 
 interface DeliveryHealth {
   installationId: string;
@@ -54,24 +45,23 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
   );
 }
 
-export function KyAppTenantUsagePanel({ tenantId, installationId }: { tenantId: string; installationId?: string }) {
-  const resource = useManagementResource<{ overview: UsageOverview }>(installationId ? `/installations/${encodeURIComponent(installationId)}/usage` : `/usage?tenantId=${encodeURIComponent(tenantId)}`);
-  const data = resource.data?.overview; const error = resource.error; const load = resource.reload; const loading = !data;
-  if (error) return <ResourceState error={error} retry={load} />;
-  if (!data)
-    return loading ? (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
-        加载 AI 使用概览
-      </div>
-    ) : null;
-  const warning =
-    data.balanceCredits <= 0
-      ? 'AI 积分已用完，定制软件仍可正常使用。请联系服务顾问续费。'
-      : data.estimatedDaysRemaining !== null && data.estimatedDaysRemaining <= 3
-        ? `按近 30 天使用速度，AI 积分预计还能使用 ${data.estimatedDaysRemaining} 天。请联系服务顾问续费。`
-        : null;
-  const maxTrend = Math.max(1, ...data.weeklyTrend.map((item) => item.creditsUsed));
+export function KyAppTenantUsagePanel({
+  tenantId,
+  installationId,
+}: {
+  tenantId: string;
+  installationId?: string;
+}) {
+  const resource = useManagementResource<{ overview?: unknown }>(
+    installationId
+      ? `/installations/${encodeURIComponent(installationId)}/usage`
+      : `/usage?tenantId=${encodeURIComponent(tenantId)}`,
+  );
+  const overview = resource.data?.overview;
+  const data = isUsageOverview(overview) ? overview : undefined;
+  const error =
+    resource.error ??
+    (!resource.loading && !data ? 'AI 使用概览数据格式异常，请重试或联系管理员。' : undefined);
   return (
     <Card data-testid="ky-app-tenant-usage">
       <CardHeader className="flex-row items-center justify-between">
@@ -81,75 +71,97 @@ export function KyAppTenantUsagePanel({ tenantId, installationId }: { tenantId: 
             能力排行按真实调用次数统计，不把一次 Run 成本重复分摊到每个能力。
           </p>
         </div>
-        <Button size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} />
+        <Button size="sm" variant="outline" onClick={resource.reload} disabled={resource.loading}>
+          <RefreshCw className={`size-4 ${resource.loading ? 'animate-spin' : ''}`} />
           刷新
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
-        {warning ? (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-            {warning}
+        {resource.loading ? (
+          <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            加载 AI 使用概览
           </div>
+        ) : error ? (
+          <ResourceState error={error} retry={resource.reload} />
+        ) : data ? (
+          <UsageMetrics data={data} />
         ) : null}
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <Metric label="本月消耗" value={credits(data.currentMonthCreditsUsed)} />
-          <Metric label="剩余积分" value={credits(data.balanceCredits)} />
-          <Metric
-            label="预计可用"
-            value={
-              data.estimatedDaysRemaining === null
-                ? '数据不足'
-                : `${data.estimatedDaysRemaining} 天`
-            }
-            hint="按近 30 天日均消耗"
-          />
-        </div>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div>
-            <p className="mb-2 text-sm font-medium">使用人 Top 5</p>
-            {data.topUsers.length ? (
-              data.topUsers.map((item) => (
-                <div key={item.userId} className="flex justify-between border-b py-2 text-sm">
-                  <span>{item.name}</span>
-                  <span className="tabular-nums">{credits(item.creditsUsed)}</span>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">本月暂无消耗</p>
-            )}
-          </div>
-          <div>
-            <p className="mb-2 text-sm font-medium">能力 Top 5</p>
-            {data.topCapabilities.length ? (
-              data.topCapabilities.map((item) => (
-                <div key={item.capabilityId} className="flex justify-between border-b py-2 text-sm">
-                  <span className="font-mono text-xs">{item.capabilityId}</span>
-                  <span>{item.calls} 次</span>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">本月暂无能力调用</p>
-            )}
-          </div>
-        </div>
-        <div>
-          <p className="mb-2 text-sm font-medium">近 7 天趋势</p>
-          <div className="flex h-24 items-end gap-2">
-            {data.weeklyTrend.map((item) => (
-              <div key={item.date} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-                <div
-                  className="w-full rounded-t bg-primary/70"
-                  style={{ height: `${Math.max(2, (item.creditsUsed / maxTrend) * 64)}px` }}
-                  title={`${item.date}：${credits(item.creditsUsed)}`}
-                />
-                <span className="text-[10px] text-muted-foreground">{item.date.slice(5)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function UsageMetrics({ data }: { data: UsageOverview }) {
+  const warning =
+    data.balanceCredits <= 0
+      ? 'AI 积分已用完，定制软件仍可正常使用。请联系服务顾问续费。'
+      : data.estimatedDaysRemaining !== null && data.estimatedDaysRemaining <= 3
+        ? `按近 30 天使用速度，AI 积分预计还能使用 ${data.estimatedDaysRemaining} 天。请联系服务顾问续费。`
+        : null;
+  const maxTrend = Math.max(1, ...data.weeklyTrend.map((item) => item.creditsUsed));
+  return (
+    <>
+      {warning ? (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+          {warning}
+        </div>
+      ) : null}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <Metric label="本月消耗" value={credits(data.currentMonthCreditsUsed)} />
+        <Metric label="剩余积分" value={credits(data.balanceCredits)} />
+        <Metric
+          label="预计可用"
+          value={
+            data.estimatedDaysRemaining === null ? '数据不足' : `${data.estimatedDaysRemaining} 天`
+          }
+          hint="按近 30 天日均消耗"
+        />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div>
+          <p className="mb-2 text-sm font-medium">使用人 Top 5</p>
+          {data.topUsers.length ? (
+            data.topUsers.map((item) => (
+              <div key={item.userId} className="flex justify-between border-b py-2 text-sm">
+                <span>{item.name}</span>
+                <span className="tabular-nums">{credits(item.creditsUsed)}</span>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-muted-foreground">本月暂无消耗</p>
+          )}
+        </div>
+        <div>
+          <p className="mb-2 text-sm font-medium">能力 Top 5</p>
+          {data.topCapabilities.length ? (
+            data.topCapabilities.map((item) => (
+              <div key={item.capabilityId} className="flex justify-between border-b py-2 text-sm">
+                <span className="font-mono text-xs">{item.capabilityId}</span>
+                <span>{item.calls} 次</span>
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-muted-foreground">本月暂无能力调用</p>
+          )}
+        </div>
+      </div>
+      <div>
+        <p className="mb-2 text-sm font-medium">近 7 天趋势</p>
+        <div className="flex h-24 items-end gap-2">
+          {data.weeklyTrend.map((item) => (
+            <div key={item.date} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+              <div
+                className="w-full rounded-t bg-primary/70"
+                style={{ height: `${Math.max(2, (item.creditsUsed / maxTrend) * 64)}px` }}
+                title={`${item.date}：${credits(item.creditsUsed)}`}
+              />
+              <span className="text-[10px] text-muted-foreground">{item.date.slice(5)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 

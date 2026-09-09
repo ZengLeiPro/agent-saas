@@ -47,8 +47,8 @@ function SettingsForm({
   const [capability, setCapability] = useState(
     initial.settings.diagnostic?.readOnlyCapabilityId ?? '',
   );
-  const [input, setInput] = useState(
-    JSON.stringify(initial.settings.diagnostic?.readOnlyInput ?? {}, null, 2),
+  const [input, setInput] = useState<Record<string, unknown>>(
+    initial.settings.diagnostic?.readOnlyInput ?? {},
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -61,16 +61,13 @@ function SettingsForm({
     setBusy(true);
     setError('');
     try {
-      const parsed = capability ? JSON.parse(input) : undefined;
-      if (capability && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)))
-        throw new Error('诊断参数必须是 JSON 对象');
       await kyAppPost(path, {
         expectedVersion: initial.version,
         settings: {
           baseUrl: baseUrl.trim(),
           origin: origin.trim(),
           ...(capability
-            ? { diagnostic: { readOnlyCapabilityId: capability, readOnlyInput: parsed } }
+            ? { diagnostic: { readOnlyCapabilityId: capability, readOnlyInput: input } }
             : {}),
         },
       });
@@ -132,16 +129,12 @@ function SettingsForm({
           </select>
         </label>
         {capability && (
-          <label className="block text-sm">
-            诊断参数（JSON）
-            <textarea
-              value={input}
-              disabled={busy}
-              onChange={(event) => setInput(event.target.value)}
-              rows={5}
-              className="mt-1 block w-full rounded border bg-background p-2 font-mono text-xs"
-            />
-          </label>
+          <DiagnosticInputFields
+            schema={manifest?.capabilities.find((item) => item.id === capability)?.inputSchema}
+            value={input}
+            disabled={busy}
+            onChange={setInput}
+          />
         )}
       </details>
       {error && (
@@ -156,5 +149,99 @@ function SettingsForm({
         {busy ? '保存中…' : '保存接入配置'}
       </Button>
     </form>
+  );
+}
+
+function DiagnosticInputFields({
+  schema,
+  value,
+  disabled,
+  onChange,
+}: {
+  schema: Record<string, unknown> | undefined;
+  value: Record<string, unknown>;
+  disabled: boolean;
+  onChange: (value: Record<string, unknown>) => void;
+}) {
+  const properties =
+    schema && typeof schema.properties === 'object' && schema.properties !== null
+      ? (schema.properties as Record<string, Record<string, unknown>>)
+      : {};
+  const required = new Set(
+    Array.isArray(schema?.required)
+      ? schema.required.filter((item): item is string => typeof item === 'string')
+      : [],
+  );
+  if (Object.keys(properties).length === 0)
+    return <p className="text-sm text-muted-foreground">此能力不需要诊断参数。</p>;
+  return (
+    <div className="grid gap-3 rounded border p-3">
+      <p className="text-sm font-medium">诊断参数</p>
+      {Object.entries(properties).map(([key, field]) => {
+        const label = typeof field.description === 'string' ? field.description : key;
+        const options = Array.isArray(field.enum) ? field.enum : null;
+        if (
+          !options &&
+          field.type !== 'string' &&
+          field.type !== 'number' &&
+          field.type !== 'integer' &&
+          field.type !== 'boolean'
+        )
+          return null;
+        const update = (next: unknown) => onChange({ ...value, [key]: next });
+        if (field.type === 'boolean')
+          return (
+            <label key={key} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={value[key] === true}
+                disabled={disabled}
+                onChange={(event) => update(event.target.checked)}
+              />
+              {label}
+            </label>
+          );
+        if (options)
+          return (
+            <label key={key} className="text-sm">
+              {label}
+              <select
+                required={required.has(key)}
+                value={String(value[key] ?? '')}
+                disabled={disabled}
+                onChange={(event) => update(event.target.value)}
+                className="mt-1 block w-full rounded border bg-background p-2"
+              >
+                <option value="">请选择</option>
+                {options.map((option) => (
+                  <option key={String(option)} value={String(option)}>
+                    {String(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        const numeric = field.type === 'number' || field.type === 'integer';
+        return (
+          <label key={key} className="text-sm">
+            {label}
+            <input
+              type={numeric ? 'number' : 'text'}
+              required={required.has(key)}
+              value={String(value[key] ?? '')}
+              disabled={disabled}
+              onChange={(event) =>
+                update(
+                  numeric && event.target.value !== ''
+                    ? Number(event.target.value)
+                    : event.target.value,
+                )
+              }
+              className="mt-1 block w-full rounded border bg-background p-2"
+            />
+          </label>
+        );
+      })}
+    </div>
   );
 }

@@ -7,6 +7,7 @@ import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
 import { AddToGroupDialog } from "@/components/chat/AddToGroupDialog";
 import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDialog";
+import { SmartGroupingButton } from "@/components/chat/SmartGroupingDialog";
 import { MobileNewSessionActions } from "@/components/mobile/MobileNewSessionActions";
 import { TrashView } from "@/components/chat/TrashView";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
@@ -766,6 +767,7 @@ export function MobileSessionList({
 
             {/* Chat tab */}
             <div className={cn("flex min-h-0 flex-1 flex-col", activeTab !== "chat" && "hidden")}>
+              <div className="flex h-10 items-center justify-between px-3"><span className="text-sm font-semibold">全部会话</span><SmartGroupingButton compact onApplied={groupsHook.loadGroups} /></div>
               <ScrollArea ref={mobileScrollAreaRef} className="flex-1 [&_[style*=table]]:!block">
                 <div className="px-2 py-1 pb-24">
                   {isLoading && groupedEntries.length === 0 ? (

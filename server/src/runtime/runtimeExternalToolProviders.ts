@@ -51,6 +51,9 @@ export async function pushExternalToolProviders(input: {
   // registeredDigest) 冻结，恢复路径读的是同一份，因此工具指纹逐字节稳定。
   const gateway = getAppCapabilityGateway();
   if (gateway && warmupContext?.tenantId) {
+    // 平台目录工具始终先加入。即使外部 /me 失败或尚未登记 digest，Agent 仍能解释
+    // 当前成员已经被分配的业务系统及其待处理状态。
+    providers.push(gateway.catalogProvider);
     try {
       await gateway.provider.warmup({
         sessionId: warmupContext.sessionId,

@@ -64,6 +64,21 @@ const url = process.env.TEST_DATABASE_URL;
     await pool.query(
       `UPDATE ${store.installationsTable} SET updated_at='2026-09-07T00:00:00.123456Z'`,
     );
+    await pool.query(
+      `INSERT INTO ${store.definitionsTable}
+         (system_id,name,status,version,created_by,updated_by)
+       SELECT 'bulk-' || lpad(n::text,3,'0'),'批量系统 ' || n,'draft',1,'admin','admin'
+       FROM generate_series(1,105) n`,
+    );
+    await pool.query(
+      `INSERT INTO ${store.installationsTable}
+         (installation_id,tenant_id,system_id,base_url,origin,tech_contact_user_id,
+          status,state_version,created_by,updated_by,updated_at)
+       SELECT 'bulk-install-' || lpad(n::text,3,'0'),'large',
+         'bulk-' || lpad(n::text,3,'0'),'https://demo.example','https://demo.example',
+         'tc','pending',1,'admin','admin','2026-09-07T00:00:00.123456Z'
+       FROM generate_series(1,105) n`,
+    );
   });
   afterAll(async () => {
     const tables = await pool.query(
@@ -111,6 +126,28 @@ const url = process.env.TEST_DATABASE_URL;
     expect(second.installations.map((item) => item.installationId)).toEqual(['two']);
     expect(second.nextCursor).toBeNull();
   });
+  it('超过 100 个接入记录可通过服务端游标完整翻页', async () => {
+    const first = await queries.installations({ tenantId: 'large', limit: 60 }, PLATFORM_ADMIN);
+    expect(first.installations).toHaveLength(60);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    const second = await queries.installations(
+      { tenantId: 'large', limit: 60, cursor: first.nextCursor! },
+      PLATFORM_ADMIN,
+    );
+    expect(second.installations).toHaveLength(45);
+    expect(second.nextCursor).toBeNull();
+    expect(
+      new Set([...first.installations, ...second.installations].map((item) => item.installationId))
+        .size,
+    ).toBe(105);
+  });
+  it('搜索和业务状态在服务端筛选，pending 属于需要处理', async () => {
+    const result = await queries.installations(
+      { tenantId: 'target', query: '演示二', businessStatus: 'action_required', limit: 10 },
+      PLATFORM_ADMIN,
+    );
+    expect(result.installations.map((item) => item.installationId)).toEqual(['two']);
+  });
   it('无事件表时异常筛选安全返回空集合', async () => {
     const withoutEvents = new KyAppManagementQueries(pool, store, prefix);
     expect(
@@ -120,11 +157,12 @@ const url = process.env.TEST_DATABASE_URL;
   });
   it('聚合安装数和风险，列表不返回 Manifest', async () => {
     const list = await queries.systemsList();
-    expect(list[0]?.metrics).toMatchObject({
+    const demo = list.find((item) => item.systemId === 'demo');
+    expect(demo?.metrics).toMatchObject({
       installationCount: 2,
       externalWriteCapabilityCount: 1,
     });
-    expect(list[0]).not.toHaveProperty('manifest');
+    expect(demo).not.toHaveProperty('manifest');
     expect(await queries.installationSummary('one')).toMatchObject({
       assignmentSummary: { configured: false, ruleCount: 0 },
       credentialSummary: [],

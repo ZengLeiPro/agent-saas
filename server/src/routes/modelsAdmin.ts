@@ -16,6 +16,7 @@ import type {
 } from '../app/config.js';
 import {
   AdminConfigMutationService,
+  ProductionConfigPublishRequiredError,
   ConfigConflictError,
   ConfigMutationCommittedError,
   RuntimeRestoreFailedError,
@@ -50,6 +51,7 @@ export interface CreateModelsAdminRouterOptions {
 }
 
 class RuntimeConfigValidationError extends Error {}
+class ModelsCandidateValidationError extends Error {}
 
 function sendRevisionMutationError(res: Response, error: unknown): void {
   if (error instanceof ConfigConflictError && error.currentRevision) {
@@ -382,6 +384,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
     res.setHeader('ETag', `"${revision}"`);
     res.json({
       revision,
+      writePolicy: configMutationService.getWritePolicy(),
       models: redactModels(diskConfig.models),
       memoryIndex: redactMemoryIndex(diskConfig.memory?.index ?? null),
       titleGenerator: titleGeneratorView(diskConfig),
@@ -403,6 +406,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
     try {
       const result = await configMutationService.mutate({
         actor: requestContext.actor,
+        productionConfirmation: typeof req.body?.productionConfirmation === 'string' ? req.body.productionConfirmation : undefined,
         expectedRevision: expectedRevisions[0],
         changedPaths: ['models', 'memory.index', 'titleGenerator', 'guardrail', 'systemPrompts.utility.title'],
         validateBaseline: async (configText, _current) => {
@@ -416,7 +420,8 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         },
         buildCandidate: async (configText, rawConfig) => {
           const persisted = parseAppConfig(rawConfig);
-          nextUpdate = validateModelsUpdate(rawConfig, restoreSecrets(req.body, persisted));
+          try { nextUpdate = validateModelsUpdate(rawConfig, restoreSecrets(req.body, persisted)); }
+          catch (error) { throw new ModelsCandidateValidationError(error instanceof Error ? error.message : String(error)); }
           nextUpdate = {
             ...nextUpdate,
             models: await persistSubmittedModelCredentials({
@@ -503,7 +508,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       });
       const pruneErrors = await revokeModelRefs(
         options.secretVault,
-        unreferencedReplacedRefs(result.config, replacedRefs),
+        configMutationService.isControlledProductionPublisher() ? [] : unreferencedReplacedRefs(result.config, replacedRefs),
       );
       if (pruneErrors.length > 0) {
         throw new ConfigMutationCommittedError(
@@ -514,6 +519,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       res.setHeader('ETag', `"${result.revision}"`);
       res.json({
         revision: result.revision,
+        writePolicy: configMutationService.getWritePolicy(),
         models: redactModels(result.config.models!),
         memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
         titleGenerator: titleGeneratorView(options.config),
@@ -527,7 +533,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         // durable/runtime 已提交；只撤销最终配置中已无任何引用的旧 refs。
         cleanupErrors = await revokeModelRefs(
           options.secretVault,
-          unreferencedReplacedRefs(options.config, replacedRefs),
+          configMutationService.isControlledProductionPublisher() ? [] : unreferencedReplacedRefs(options.config, replacedRefs),
         );
       } else if (!(error instanceof RuntimeRestoreFailedError)) {
         // 提交前失败或完整回滚：候选 refs 无人引用，旧 refs 仍需保留。
@@ -546,17 +552,9 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         sendConfigMutationError(res, error);
         return;
       }
-      if (
-        error instanceof Error
-        && !(error instanceof ConfigConflictError)
-        && !(error instanceof ConfigMutationCommittedError)
-        && !(error instanceof RuntimeRestoreFailedError)
-      ) {
-        // 仅提交前候选校验属于 client error；已提交/恢复失败必须走服务端错误。
-        if (/models|memory|标题|提示语|配置|门禁模型/u.test(error.message)) {
-          res.status(400).json({ error: error.message });
-          return;
-        }
+      if (error instanceof ModelsCandidateValidationError) {
+        res.status(400).json({ error: error.message });
+        return;
       }
       // 配置已提交但维护失败必须保留 5xx，提示调用方重新读取服务端状态与凭据状态。
       sendRevisionMutationError(res, error);

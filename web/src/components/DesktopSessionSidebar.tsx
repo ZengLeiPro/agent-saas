@@ -28,6 +28,7 @@ import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDi
 import { LazySessionShareDialog } from "@/components/chat/LazySessionShareDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
+import { SmartGroupingButton } from "@/components/chat/SmartGroupingDialog";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,7 +60,9 @@ import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
 import type { DesktopSessionSidebarProps } from "./desktopSessionSidebarTypes";
 import { SessionRow } from "./DesktopSessionSidebarRow";
-import { AppsSidebarPanel } from "@/components/AppsSidebarPanel";
+import { DesktopWorkspaceSwitcher } from '@/components/AppsSidebarPanel';
+import { DesktopBusinessWorkspaceSidebar } from '@/components/BusinessSystems/DesktopBusinessWorkspaceSidebar';
+import { useMySystems } from '@/hooks/useMySystems';
 import {
   CompactSessionGroupLeadingIcon,
   SessionGroupGlyph,
@@ -72,7 +75,6 @@ import {
   SessionSelectionActions,
   SidebarNav,
 } from "./DesktopSessionSidebarControls";
-
 const USER_MENU_ITEM =
   "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] text-foreground transition-colors hover:bg-accent";
 const USER_MENU_SECTION = "border-t border-border/60 py-1.5";
@@ -602,6 +604,7 @@ export function DesktopSessionSidebar({
   responsiveMode = "none",
 }: DesktopSessionSidebarProps) {
   const { user: authUser, accounts, switchAccount, authEnabled } = useAuth();
+  const { installations: workspaceSystems } = useMySystems();
   const { summary: billingSummary, allowance: billingAllowance } = useTenantBillingAllowance(authUser?.tenantId);
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
   const compactList = authUser?.preferences?.showSessionListAvatar !== true;
@@ -620,7 +623,6 @@ export function DesktopSessionSidebar({
   const [actionMenuId, setActionMenuId] = useState<string | null>(null);
   const actionMenuRef = useRef<HTMLDivElement>(null);
 
-  // 排序齿轮下拉菜单
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const sortMenuRef = useRef<HTMLDivElement>(null);
 
@@ -637,7 +639,6 @@ export function DesktopSessionSidebar({
   const sessionSearch = useSessionSearch(sessionSearchQuery);
   const isSessionSearchActive = sessionSearchQuery.trim().length > 0;
   const highlightedSessionId = activeTab === "chat" ? activeSessionId : null;
-  // 分组重命名/删除状态
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const [deleteGroupId, setDeleteGroupId] = useState<string | null>(null);
@@ -664,7 +665,6 @@ export function DesktopSessionSidebar({
     }
   }, [activeTab]);
 
-  // 无限滚动 ref(useEffect 在 selectedView/subPanelOpen 声明后)
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   // 选中视图状态：'__all__' | '__ungrouped__' | 真实 groupId
@@ -1311,7 +1311,7 @@ export function DesktopSessionSidebar({
         footer={sidebarFooter}
       />;
   }
-
+  if (activeTab === "apps" && workspaceSystems.length > 0) return <DesktopBusinessWorkspaceSidebar width={sidebarLayout === "single" ? singlePanelWidth : mainPanelWidth} hidden={hidden || responsiveMode === "hidden"} className={className} header={<SidebarBrandHeader onCollapse={onCollapse} />} footer={sidebarFooter} onOpenAgent={() => onTabChange?.("chat")} onResizeMouseDown={sidebarLayout === "single" ? onSingleResizeMouseDown : onMainResizeMouseDown} onResizeDoubleClick={sidebarLayout === "single" ? onSingleResizeDoubleClick : onMainResizeDoubleClick} />;
   if (sidebarLayout === "single") {
     const visibleSingleSessions = singleExpandedGroup?.children ?? [];
     return (
@@ -1325,7 +1325,7 @@ export function DesktopSessionSidebar({
         {...{ inert: hidden || responsiveMode === "hidden" ? true : undefined }}
       >
         <SidebarBrandHeader onCollapse={onCollapse} />
-
+        <DesktopWorkspaceSwitcher active="agent" onOpenAgent={() => onTabChange?.("chat")} />
         <SidebarNav
           navItems={navItems}
           activeTab={activeTab}
@@ -1336,7 +1336,6 @@ export function DesktopSessionSidebar({
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
           constrainNewButton={false}
         />
-        <AppsSidebarPanel beforeNavigate={() => setSingleExpandedGroupKey(null)} />
         {renderSessionSearchBox("inline")}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 flex flex-col bg-background" style={{ transform: singleExpandedGroup ? "translateX(-100%)" : "translateX(0)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
@@ -1357,6 +1356,7 @@ export function DesktopSessionSidebar({
                 />
               ) : (
                 <div className="flex shrink-0 items-center gap-1">
+                  <SmartGroupingButton onApplied={groupsHook.loadGroups} />
                   <Button
                     type="button"
                     variant="ghost"
@@ -1557,7 +1557,7 @@ export function DesktopSessionSidebar({
         >
           {/* Header: 品牌徽标 + 收起侧边栏 */}
           <SidebarBrandHeader onCollapse={onCollapse} />
-
+          <DesktopWorkspaceSwitcher active="agent" onOpenAgent={() => onTabChange?.("chat")} />
           {/* Navigation: 新建会话 + 竖排导航 */}
           <SidebarNav
             navItems={navItems}
@@ -1567,7 +1567,6 @@ export function DesktopSessionSidebar({
             onNew={onNew}
             onTabChange={onTabChange}
           />
-          <AppsSidebarPanel />
           {/* 导航与分组之间的分隔线 */}
           <div className="mx-2 my-1 border-t" />
 
@@ -1629,6 +1628,7 @@ export function DesktopSessionSidebar({
 
                   {/* 新建分组 + 右侧排序状态按钮 */}
                   <div className="flex items-center gap-1">
+                    {!groupsHook.editing && <SmartGroupingButton compact onApplied={groupsHook.loadGroups} />}
                     {!groupsHook.editing && (
                       <button
                         type="button"

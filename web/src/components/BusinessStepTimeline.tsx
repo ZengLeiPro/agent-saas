@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { RenderItem } from "./types";
+import { anchorBusinessStepPlans } from "./anchorBusinessStepPlans";
 
 function mainConversationItems(items: RenderItem[]): RenderItem[] {
   const interactions: RenderItem[] = [];
@@ -18,6 +19,7 @@ function mainConversationItems(items: RenderItem[]): RenderItem[] {
 /**
  * 主对话区域只保留每个 Run 的最新计划卡、真实人工门禁与排队中的用户插话。
  * start/terminal/section 数据仍留在完整投影中供详情目录使用，但不再打印第二套步骤正文。
+ * 同 Run 插话后，计划卡整体跟随到用户消息下方，原始过程归属与详情选择不变。
  */
 export function businessStepMainItems(items: RenderItem[]): RenderItem[] {
   const result: RenderItem[] = [];
@@ -32,7 +34,7 @@ export function businessStepMainItems(items: RenderItem[]): RenderItem[] {
     }
     result.push(item);
   }
-  return result;
+  return anchorBusinessStepPlans(items, result);
 }
 
 export function BusinessStepTimeline({

@@ -19,6 +19,8 @@ export interface SystemDetail {
     unhealthyInstallationCount: number;
     capabilityCount: number;
     externalWriteCapabilityCount: number;
+    readyInstallationCount: number;
+    actionRequiredInstallationCount: number;
   };
   allowedActions?: string[];
 }
@@ -101,4 +103,15 @@ export interface InstallationManagement {
     canSwitch: boolean;
   };
   allowedActions?: string[];
+  readiness?: {
+    overallStatus: 'action_required' | 'ready' | 'degraded' | 'disabled';
+    pageStatus: string;
+    agentStatus: string;
+    personalAuthorizationMode: string;
+    currentStep: string | null;
+    reasonCode: string | null;
+    ownerRole: string | null;
+    nextAction: string;
+    lastCheckedAt: string | null;
+  };
 }

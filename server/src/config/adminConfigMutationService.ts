@@ -1,3 +1,5 @@
+import type { ProductionPublisher } from './productionModelPublisher.js';
+import { getConfigWritePolicy, PRODUCTION_CONFIG_PUBLISH_MESSAGE, PRODUCTION_CONFIG_PUBLISH_REQUIRED, type ConfigWritePolicy } from '@agent/shared/configWritePolicy';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -66,7 +68,7 @@ function isProcessAlive(pid: number | undefined): boolean {
 
 class ConfigLockGuardBusyError extends Error {}
 
-async function acquireFileGuard(path: string): Promise<() => Promise<void>> {
+export async function acquireFileGuard(path: string): Promise<() => Promise<void>> {
   const child = spawn(
     'flock',
     ['--nonblock', path, 'sh', '-c', 'printf "acquired\\n"; cat >/dev/null'],
@@ -119,10 +121,11 @@ export class ConfigConflictError extends Error {
 
 /** Production 的 expected ConfigIdentity 绑定 release；在线改盘必须改走受控配置发布。 */
 export class ProductionConfigPublishRequiredError extends Error {
-  readonly code = 'PRODUCTION_CONFIG_PUBLISH_REQUIRED';
+  readonly code = PRODUCTION_CONFIG_PUBLISH_REQUIRED;
+  readonly writePolicy = getConfigWritePolicy('production');
 
   constructor() {
-    super('生产配置不能直接在线保存，请通过受控配置发布流程变更');
+    super(PRODUCTION_CONFIG_PUBLISH_MESSAGE);
     this.name = 'ProductionConfigPublishRequiredError';
   }
 }
@@ -190,7 +193,8 @@ export interface AdminConfigMutationResult {
   appliedAt: string;
 }
 
-interface MutationInput {
+export interface MutationInput {
+  productionConfirmation?: string;
   actor: string;
   changedPaths: string[];
   expectedFingerprint?: string;
@@ -270,6 +274,7 @@ export class AdminConfigMutationService {
       auditAppender?: (path: string, line: string) => Promise<void>;
       /** 仅供受控运维发布器注入；普通 Runtime 管理接口不得开启。 */
       allowProductionMutation?: boolean;
+      productionPublisher?: ProductionPublisher;
     },
   ) {
     this.stateDir = join(options.processCwd, 'data', 'config-governance');
@@ -284,8 +289,32 @@ export class AdminConfigMutationService {
     return configFingerprint(parseRaw(await readFile(this.options.configPath, 'utf8')));
   }
 
+  /** Authoritative capability for the configured service, not client-supplied environment. */
+  getWritePolicy(): ConfigWritePolicy {
+    if (this.options.environment === 'production' && this.options.productionPublisher) {
+      return this.options.productionPublisher.getWritePolicy();
+    }
+    return getConfigWritePolicy(this.options.environment, this.options.allowProductionMutation === true);
+  }
+
+  isControlledProductionPublisher(): boolean {
+    return this.options.environment === 'production' && Boolean(this.options.productionPublisher);
+  }
+
+  async recoverProductionPublication(): Promise<void> {
+    if (!this.isControlledProductionPublisher()) return;
+    const release = await this.acquireLock();
+    try { await this.options.productionPublisher!.recover(); }
+    finally { await release(); }
+  }
+
   async mutate(input: MutationInput): Promise<AdminConfigMutationResult> {
-    if (this.options.environment === 'production' && this.options.allowProductionMutation !== true) {
+    if (this.isControlledProductionPublisher()) {
+      const release = await this.acquireLock();
+      try { return await this.options.productionPublisher!.mutate(input); }
+      finally { await release(); }
+    }
+    if (!this.getWritePolicy().canSave) {
       throw new ProductionConfigPublishRequiredError();
     }
     const releaseLock = await this.acquireLock();

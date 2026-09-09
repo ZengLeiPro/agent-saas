@@ -13,9 +13,12 @@
 import type { AppApprovalRegistry } from './approval.js';
 import type { AppToolSnapshotService } from './snapshot.js';
 import type { AppCapabilityToolProvider } from './toolProvider.js';
+import type { BusinessSystemsCatalogToolProvider } from '../catalog/toolProvider.js';
 
 export interface AppCapabilityGatewayBinding {
   provider: AppCapabilityToolProvider;
+  /** 平台自有目录工具不依赖 registeredDigest 或外部 /me。 */
+  catalogProvider: BusinessSystemsCatalogToolProvider;
   snapshots: AppToolSnapshotService;
   /** §6.2-3 的审批 TTL（`kyApp.gateway.approvalTtlMs`）。channel 侧建确认卡片时要用。 */
   approvalTtlMs: number;

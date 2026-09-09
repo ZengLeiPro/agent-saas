@@ -13,6 +13,7 @@ import mobileSessionListSource from '@/components/MobileSessionList.tsx?raw';
 import appHostSource from '@/components/AppHost/index.tsx?raw';
 import controllerSource from '@/components/AppHost/controller.ts?raw';
 import sidebarSource from '@/components/DesktopSessionSidebar.tsx?raw';
+import businessSidebarSource from '@/components/BusinessSystems/DesktopBusinessWorkspaceSidebar.tsx?raw';
 
 describe('桌面双标签壳骨架', () => {
   it('AppHost 走 lazy() + Suspense，不进 startup chunk', () => {
@@ -40,11 +41,12 @@ describe('桌面双标签壳骨架', () => {
     expect(source).toContain('<AppHostPanel appsRoute={appsRoute} />');
   });
 
-  it('左栏定制软件入口挂在两处 SidebarNav 之后', () => {
-    expect(sidebarSource).toContain(
-      'import { AppsSidebarPanel } from "@/components/AppsSidebarPanel";',
-    );
-    expect(sidebarSource.match(/<AppsSidebarPanel\b/g)).toHaveLength(2);
+  it('左栏通过工作区切换进入独立业务系统目录', () => {
+    expect(sidebarSource).toContain("activeTab === \"apps\" && workspaceSystems.length > 0");
+    expect(sidebarSource).toContain('<DesktopBusinessWorkspaceSidebar');
+    expect(sidebarSource.match(/<DesktopWorkspaceSwitcher\b/g)).toHaveLength(2);
+    expect(businessSidebarSource.match(/<DesktopWorkspaceSwitcher\b/g)).toHaveLength(1);
+    expect(businessSidebarSource.match(/<AppsSidebarPanel\b/g)).toHaveLength(1);
   });
 
   it('§5.1 iframe 属性只在 AppHost 里出现一次，且不含被禁的 sandbox 令牌', () => {

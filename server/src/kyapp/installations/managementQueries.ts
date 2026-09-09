@@ -13,6 +13,8 @@ export interface InstallationFilter {
   systemId?: string;
   status?: string;
   signal?: string;
+  query?: string;
+  businessStatus?: 'action_required' | 'ready' | 'disabled';
   cursor?: string;
   limit: number;
 }
@@ -31,12 +33,17 @@ export class KyAppManagementQueries {
   async systemsList() {
     const result = await this.pool.query(`SELECT d.*, COALESCE(m.total,0)::int AS total,
       COALESCE(m.enabled,0)::int AS enabled, COALESCE(m.unhealthy,0)::int AS unhealthy,
+      COALESCE(m.ready,0)::int AS ready, COALESCE(m.action_required,0)::int AS action_required,
       COALESCE(jsonb_array_length(v.manifest_json->'capabilities'),0) AS capabilities,
       (SELECT count(*)::int FROM jsonb_array_elements(COALESCE(v.manifest_json->'capabilities','[]'::jsonb)) c WHERE c->>'riskLevel'='external_write') AS writes
       FROM ${this.systems.definitionsTable} d
       LEFT JOIN ${this.systems.versionsTable} v ON v.system_id=d.system_id AND v.digest=d.published_digest
       LEFT JOIN (SELECT i.system_id,count(*) AS total,count(*) FILTER(WHERE i.status='enabled') AS enabled,
-        count(*) FILTER(WHERE r.live_status='failed' OR r.ready_status='failed') AS unhealthy
+        count(*) FILTER(WHERE r.live_status='failed' OR r.ready_status='failed') AS unhealthy,
+        count(*) FILTER(WHERE i.status='enabled' AND i.registered_digest IS NOT NULL
+          AND r.live_status='ok' AND r.ready_status='ok' AND r.manifest_digest=i.registered_digest) AS ready,
+        count(*) FILTER(WHERE i.status<>'deleted' AND NOT (i.status='enabled' AND i.registered_digest IS NOT NULL
+          AND r.live_status='ok' AND r.ready_status='ok' AND r.manifest_digest=i.registered_digest)) AS action_required
         FROM ${this.systems.installationsTable} i LEFT JOIN ${this.prefix}_ky_app_installation_runtime r USING(installation_id)
         WHERE i.status<>'deleted' GROUP BY i.system_id) m ON m.system_id=d.system_id ORDER BY d.system_id`);
     return result.rows.map((row) => ({
@@ -49,6 +56,8 @@ export class KyAppManagementQueries {
         installationCount: Number(row.total),
         enabledInstallationCount: Number(row.enabled),
         unhealthyInstallationCount: Number(row.unhealthy),
+        readyInstallationCount: Number(row.ready),
+        actionRequiredInstallationCount: Number(row.action_required),
         capabilityCount: Number(row.capabilities),
         externalWriteCapabilityCount: Number(row.writes),
       },
@@ -151,6 +160,56 @@ export class KyAppManagementQueries {
       ready: runtime.rows[0]?.ready_status === 'ok',
     };
   }
+
+  async installationActivity(tenantId: string, installationId: string) {
+    if (!this.eventsTable)
+      return {
+        periodDays: 30,
+        callCount: 0,
+        userCount: 0,
+        successRate: null,
+        failureCount: 0,
+        lastCalledAt: null,
+        topCapabilities: [],
+      };
+    const [summary, capabilities] = await Promise.all([
+      this.pool.query(
+        `SELECT COUNT(*)::int AS calls,
+          COUNT(DISTINCT NULLIF(event_json->>'userId',''))::int AS users,
+          COUNT(*) FILTER (WHERE event_json->>'status'='success')::int AS successes,
+          COUNT(*) FILTER (WHERE event_json->>'status'='error')::int AS failures,
+          MAX(timestamp) AS last_called_at
+         FROM ${this.eventsTable}
+         WHERE tenant_id=$1 AND event_type='tool_audit'
+           AND event_json->>'installationId'=$2 AND timestamp>=NOW()-INTERVAL '30 days'`,
+        [tenantId, installationId],
+      ),
+      this.pool.query(
+        `SELECT event_json->>'capabilityId' AS capability_id,COUNT(*)::int AS calls
+         FROM ${this.eventsTable}
+         WHERE tenant_id=$1 AND event_type='tool_audit'
+           AND event_json->>'installationId'=$2 AND timestamp>=NOW()-INTERVAL '30 days'
+           AND COALESCE(event_json->>'capabilityId','')<>''
+         GROUP BY 1 ORDER BY calls DESC,capability_id LIMIT 10`,
+        [tenantId, installationId],
+      ),
+    ]);
+    const row = summary.rows[0] ?? {};
+    const calls = Number(row.calls ?? 0);
+    const successes = Number(row.successes ?? 0);
+    return {
+      periodDays: 30,
+      callCount: calls,
+      userCount: Number(row.users ?? 0),
+      successRate: calls > 0 ? successes / calls : null,
+      failureCount: Number(row.failures ?? 0),
+      lastCalledAt: date(row.last_called_at),
+      topCapabilities: capabilities.rows.map((item) => ({
+        capabilityId: String(item.capability_id),
+        calls: Number(item.calls),
+      })),
+    };
+  }
   async installations(filter: InstallationFilter, user: JwtPayload) {
     const params: unknown[] = [];
     const where: string[] = [];
@@ -172,6 +231,19 @@ export class KyAppManagementQueries {
           : 'FALSE',
       );
     }
+    if (filter.query?.trim()) {
+      params.push(`%${filter.query.trim().toLocaleLowerCase('zh-CN')}%`);
+      where.push(
+        `(LOWER(d.name) LIKE $${params.length} OR LOWER(i.system_id) LIKE $${params.length} OR LOWER(i.installation_id) LIKE $${params.length})`,
+      );
+    }
+    const readyCondition = `COALESCE((i.status='enabled' AND d.status='published'
+      AND i.registered_digest IS NOT NULL AND r.live_status='ok' AND r.ready_status='ok'
+      AND r.manifest_digest=i.registered_digest AND i.registered_digest=d.published_digest),FALSE)`;
+    if (filter.businessStatus === 'ready') where.push(readyCondition);
+    if (filter.businessStatus === 'disabled') where.push("i.status IN ('disabled','deleted')");
+    if (filter.businessStatus === 'action_required')
+      where.push(`i.status NOT IN ('disabled','deleted') AND NOT ${readyCondition}`);
     if (filter.cursor) {
       const cursor = JSON.parse(Buffer.from(filter.cursor, 'base64url').toString()) as {
         at: string;

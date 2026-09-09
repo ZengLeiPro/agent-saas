@@ -8,120 +8,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type { ModelList } from "@/types/models";
 import { DescriptionTip, SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { SettingsTwoColumn } from "@/components/SettingsCenter/SettingsTwoColumn";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { CodexSubscriptionCard } from "./CodexSubscriptionCard";
-import { GroupCredentialsFields, normalizeQuotaSourceForSave, type EditableQuotaSource } from "./GroupCredentialsFields";
-import { UtilityModelSettings, useUtilityModelSettings, type UtilityModelAdminFields } from "./UtilityModelSettings";
-type ModelProtocol = "chat_completions" | "responses";
-type ResponsesTransport = "openai_compatible" | "codex_subscription";
-type McpLoadingMode = "auto" | "eager" | "deferred";
-type ToolSearchProtocol = "none" | "openai_responses_hosted";
+import { GroupCredentialsFields, normalizeQuotaSourceForSave } from "./GroupCredentialsFields";
+import { UtilityModelSettings, useUtilityModelSettings } from "./UtilityModelSettings";
+import type {
+  ModelProtocol, ResponsesTransport, McpLoadingMode, ToolSearchProtocol, EditableModel,
+  EditableGroup, EditableModelsConfig, EditableMemoryIndexConfig, AdminModelsResponse,
+} from "./modelConfigTypes";
+import { useModelWritePolicy } from "./useModelWritePolicy";
 
 const DEFAULT_PROTOCOL: ModelProtocol = "chat_completions";
 const INHERIT_PROTOCOL = "__inherit__";
-
-type EditableModel = {
-  id: string;
-  name: string;
-  value: string;
-  pricing?: {
-    input: number;
-    output: number;
-    cacheCreation: number;
-    cacheRead: number;
-  };
-  thinking?: unknown;
-  reasoning_effort?: string;
-  reasoningEffort?: string;
-  extraBody?: Record<string, unknown>;
-  input_modalities?: Array<"text" | "image">;
-  protocol?: ModelProtocol;
-  responses_transport?: ResponsesTransport;
-  usage_accounting?: "input_includes_cache" | "cache_tokens_separate";
-  alias_actual?: string;
-  context_window?: number;
-  auto_compact_threshold?: number;
-  tool_choice_modes?: Array<"auto" | "required" | "none" | "specific">;
-  is_pseudo_reasoning?: boolean;
-  mcp_loading_mode?: McpLoadingMode;
-  tool_search_protocol?: ToolSearchProtocol;
-};
-
-type EditableGroup = {
-  id: string;
-  name: string;
-  /** 本地 draft：GET 不再回显明文，留空/缺失时服务端保留现有 Key */
-  apiKey?: string;
-  /** 服务端脱敏标记：该分组是否已配置 API Key（GET 无明文 apiKey） */
-  hasApiKey?: boolean;
-  baseUrl?: string | null;
-  disable_response_chaining?: boolean;
-  disable_prompt_cache_key?: boolean;
-  protocol?: ModelProtocol;
-  responses_transport?: ResponsesTransport;
-  thinking?: unknown;
-  reasoning_effort?: string;
-  reasoningEffort?: string;
-  extraBody?: Record<string, unknown>;
-  input_modalities?: Array<"text" | "image">;
-  mcp_loading_mode?: McpLoadingMode;
-  tool_search_protocol?: ToolSearchProtocol;
-  /** 套餐用量查询来源（管控面凭据）；GET 只回 hasQuotaSecret */
-  quotaSource?: EditableQuotaSource;
-  models: EditableModel[];
-};
-
-type EditableModelsConfig = {
-  groups: EditableGroup[];
-  default: string;
-  allowCrossGroupSwitch: boolean;
-  imageUnderstanding?: {
-    model: string;
-    fallbackModels?: string[];
-    timeoutMs?: number;
-  };
-};
-
-type EditableMemoryIndexConfig = {
-  enabled?: boolean;
-  dbDir?: string;
-  embedding: {
-    baseUrl: string;
-    /** 本地 draft：GET 不再回显明文，留空/缺失时服务端保留现有 Key */
-    apiKey?: string;
-    /** 服务端脱敏标记：embedding 是否已配置 API Key */
-    hasApiKey?: boolean;
-    model: string;
-    dimensions: number;
-  };
-  chunking?: {
-    tokens?: number;
-    overlap?: number;
-  };
-  search?: {
-    vectorWeight?: number;
-    textWeight?: number;
-    maxResults?: number;
-    minScore?: number;
-  };
-  temporalDecay?: {
-    enabled?: boolean;
-    halfLifeDays?: number;
-  };
-  sync?: {
-    debounceMs?: number;
-  };
-};
-
-type AdminModelsResponse = UtilityModelAdminFields & {
-  revision: string; models: EditableModelsConfig;
-  memoryIndex: EditableMemoryIndexConfig | null;
-  publicModelList: ModelList;
-};
 
 type SelectedPanel =
   | { type: "general" }
@@ -253,7 +154,8 @@ function formatEffectiveValue(value: string | undefined): string {
 
 export function ModelManager() {
   // 只读平台 admin：保存并生效与分组/模型的增删等 draft 写操作全部 disabled
-  const { platformReadOnly } = useAuth();
+  const { platformReadOnly: accountReadOnly } = useAuth();
+  const { readOnly: platformReadOnly, acceptPolicy, acceptFailure, assertWritable, notice, confirmationFor } = useModelWritePolicy(accountReadOnly);
   const [models, setModels] = useState<EditableModelsConfig | null>(null);
   const [revision, setRevision] = useState(""); const [memoryIndex, setMemoryIndex] = useState<EditableMemoryIndexConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -299,10 +201,12 @@ export function ModelManager() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setSavedAt(null);
     try {
       const res = await authFetch("/api/admin/models");
-      const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string };
+      const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string; code?: string };
       if (!res.ok || !data.revision || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
+      acceptPolicy(data.writePolicy);
       setRevision(data.revision); setModels(data.models);
       setMemoryIndex(data.memoryIndex ?? null);
       titleSettings.applyResponse(data as AdminModelsResponse);
@@ -314,11 +218,12 @@ export function ModelManager() {
       hydrateAdvancedText(data.models);
       setError(null);
     } catch (err) {
+      acceptPolicy(undefined);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [hydrateAdvancedText, titleSettings.applyResponse]);
+  }, [acceptPolicy, hydrateAdvancedText, titleSettings.applyResponse]);
   useEffect(() => { void refresh(); }, [refresh]);
   const updateModels = useCallback((updater: (current: EditableModelsConfig) => EditableModelsConfig) => {
     setModels((current) => current ? updater(current) : current);
@@ -656,18 +561,22 @@ export function ModelManager() {
       : null;
     return { models: nextModels, memoryIndex: nextMemoryIndex, ...titleSettings.buildPayload() };
   }, [advancedText, memoryIndex, models, titleSettings.buildPayload]);
-
   const save = useCallback(async () => {
     setSaving(true);
+    setSavedAt(null);
     try {
+      assertWritable();
       const payload = buildPayload(); if (!revision) throw new Error("配置版本尚未加载，请先刷新");
+      const productionConfirmation = confirmationFor(revision); if (productionConfirmation === null) return;
       const res = await authFetch("/api/admin/models", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, expectedRevision: revision }),
+        body: JSON.stringify({ ...payload, expectedRevision: revision, ...(productionConfirmation ? { productionConfirmation } : {}) }),
       });
-      const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string };
+      const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string; code?: string };
+      if (!res.ok) acceptFailure(data);
       if (!res.ok || !data.revision || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
+      acceptPolicy(data.writePolicy);
       setRevision(data.revision); setModels(data.models);
       setMemoryIndex(data.memoryIndex ?? null);
       titleSettings.applyResponse(data as AdminModelsResponse);
@@ -680,7 +589,7 @@ export function ModelManager() {
     } finally {
       setSaving(false);
     }
-  }, [buildPayload, hydrateAdvancedText, revision, titleSettings.applyResponse]);
+  }, [confirmationFor, acceptFailure, acceptPolicy, assertWritable, buildPayload, hydrateAdvancedText, revision, titleSettings.applyResponse]);
 
   if (loading && !models) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
@@ -695,12 +604,13 @@ export function ModelManager() {
           <>
             {savedAt && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存</Badge>}
             <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading || saving}><RefreshCw className="size-3.5" />刷新</Button>
-            <Button size="sm" onClick={save} disabled={platformReadOnly || saving || !models}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
+            <Button size="sm" onClick={save} disabled={platformReadOnly || loading || saving || !models}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
           </>
         )}
       />
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto">
+      {notice && <div role="status" className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">{notice}</div>}
       {error && <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"><CircleAlert className="mt-0.5 size-4 shrink-0" />{error}</div>}
 
       {models && (
@@ -739,13 +649,13 @@ export function ModelManager() {
                         <div
                           key={`${group.id || "group"}-${groupIndex}`}
                           onDragOver={(event) => {
-                            if (draggingItem?.type !== "group") return;
+                            if (platformReadOnly || saving || draggingItem?.type !== "group") return;
                             event.preventDefault();
                             event.dataTransfer.dropEffect = "move";
                             setDragOverItem({ type: "group", groupId: group.id });
                           }}
                           onDrop={(event) => {
-                            if (draggingItem?.type !== "group") return;
+                            if (platformReadOnly || saving || draggingItem?.type !== "group") return;
                             event.preventDefault();
                             reorderGroup(draggingItem.groupId, group.id);
                             setDraggingItem(null);
@@ -761,7 +671,8 @@ export function ModelManager() {
                           <div className="flex items-center gap-1">
                             <button
                               type="button"
-                              draggable
+                              draggable={!platformReadOnly && !saving}
+                              disabled={platformReadOnly || saving}
                               onDragStart={(event) => {
                                 event.stopPropagation();
                                 event.dataTransfer.effectAllowed = "move";
@@ -817,14 +728,14 @@ export function ModelManager() {
                                   <div
                                     key={`${model.id || "model"}-${modelIndex}`}
                                     onDragOver={(event) => {
-                                      if (draggingItem?.type !== "model" || draggingItem.groupId !== group.id) return;
+                                      if (platformReadOnly || saving || draggingItem?.type !== "model" || draggingItem.groupId !== group.id) return;
                                       event.preventDefault();
                                       event.stopPropagation();
                                       event.dataTransfer.dropEffect = "move";
                                       setDragOverItem({ type: "model", groupId: group.id, modelId: model.id });
                                     }}
                                     onDrop={(event) => {
-                                      if (draggingItem?.type !== "model" || draggingItem.groupId !== group.id) return;
+                                      if (platformReadOnly || saving || draggingItem?.type !== "model" || draggingItem.groupId !== group.id) return;
                                       event.preventDefault();
                                       event.stopPropagation();
                                       reorderModel(group.id, draggingItem.modelId, model.id);
@@ -840,7 +751,8 @@ export function ModelManager() {
                                   >
                                     <button
                                       type="button"
-                                      draggable
+                                      draggable={!platformReadOnly && !saving}
+                                      disabled={platformReadOnly || saving}
                                       onDragStart={(event) => {
                                         event.stopPropagation();
                                         event.dataTransfer.effectAllowed = "move";
@@ -901,7 +813,7 @@ export function ModelManager() {
                     <DescriptionTip description="这些设置作用于整个模型配置，而不是某个单独分组。" />
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="grid gap-3 md:grid-cols-2">
+                <fieldset disabled={platformReadOnly || saving} className="m-0 min-w-0 border-0 p-0"><CardContent className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>全局默认模型</Label>
                     <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={models.default} onChange={(e) => updateModels((current) => ({ ...current, default: e.target.value }))}>
@@ -973,12 +885,12 @@ export function ModelManager() {
                     <input type="checkbox" className="mt-0.5" checked={models.allowCrossGroupSwitch} onChange={(e) => updateModels((current) => ({ ...current, allowCrossGroupSwitch: e.target.checked }))} />
                     <span>允许会话中跨分组切换模型</span>
                   </label>
-                </CardContent>
+                </CardContent></fieldset>
               </Card>
 
               <UtilityModelSettings groups={models.groups} readOnly={platformReadOnly} settings={titleSettings} onDirty={() => setSavedAt(null)} />
 
-              <CodexSubscriptionCard readOnly={platformReadOnly} />
+              <CodexSubscriptionCard readOnly={accountReadOnly} />
 
               <Card className="h-fit">
                 <CardHeader className="pb-3">
@@ -988,7 +900,7 @@ export function ModelManager() {
                     <DescriptionTip description="用于 memory.index 的 OpenAI-compatible /v1/embeddings 调用。" />
                   </CardTitle>
                 </CardHeader>
-                <CardContent>
+                <fieldset disabled={platformReadOnly || saving} className="m-0 min-w-0 border-0 p-0"><CardContent>
                   {!memoryIndex ? (
                     <div className="rounded-md border border-dashed bg-muted/20 p-4">
                       <p className="text-sm text-muted-foreground">当前 config.json 未配置 memory.index。</p>
@@ -1048,7 +960,7 @@ export function ModelManager() {
                       </div>
                     </div>
                   )}
-                </CardContent>
+                </CardContent></fieldset>
               </Card>
             </>
           )}
@@ -1062,7 +974,7 @@ export function ModelManager() {
                 </div>
                 <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeGroup(selectedGroup.id)} disabled={platformReadOnly || models.groups.length <= 1}><Trash2 className="size-3.5" />删除分组</Button>
               </CardHeader>
-              <CardContent className="grid gap-3 md:grid-cols-2">
+              <fieldset disabled={platformReadOnly || saving} className="m-0 min-w-0 border-0 p-0"><CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5"><Label>ID</Label><Input value={selectedGroup.id} onChange={(e) => updateGroupId(selectedGroup.id, e.target.value)} /></div>
                 <div className="space-y-1.5"><Label>显示名称</Label><Input value={selectedGroup.name} onChange={(e) => updateGroup(selectedGroup.id, { name: e.target.value })} /></div>
                 <GroupCredentialsFields group={selectedGroup} readOnly={platformReadOnly} hasOpenAiCompatible={selectedGroupHasOpenAiCompatible} onChange={(patch) => updateGroup(selectedGroup.id, patch)} />
@@ -1141,7 +1053,7 @@ export function ModelManager() {
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={selectedGroup.input_modalities?.includes("image") === true} onChange={(e) => updateGroup(selectedGroup.id, { input_modalities: e.target.checked ? ["text", "image"] : ["text"] })} /><span>分组模型支持图片输入<span className="block text-xs text-muted-foreground">只在已验证 provider 协议确实支持视觉时开启；模型可单独覆盖。</span></span></label>
                 <div className="space-y-1.5"><Label>Group extraBody JSON</Label><Textarea className="min-h-28 font-mono text-xs" value={advancedText[selectedGroup.id]?.groupExtraBody ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedGroup.id]: { ...(current[selectedGroup.id] ?? { modelExtraBody: {}, modelThinking: {}, groupExtraBody: "", groupThinking: "" }), groupExtraBody: e.target.value } }))} /></div>
                 <div className="space-y-1.5"><Label>Group thinking JSON</Label><Textarea className="min-h-28 font-mono text-xs" value={advancedText[selectedGroup.id]?.groupThinking ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedGroup.id]: { ...(current[selectedGroup.id] ?? { modelExtraBody: {}, modelThinking: {}, groupExtraBody: "", groupThinking: "" }), groupThinking: e.target.value } }))} /></div>
-              </CardContent>
+              </CardContent></fieldset>
             </Card>
           )}
 
@@ -1156,7 +1068,7 @@ export function ModelManager() {
                 </div>
                 <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => removeModel(selectedModelContext.group.id, selectedModelContext.model.id)} disabled={platformReadOnly || selectedModelContext.group.models.length <= 1}><Trash2 className="size-3.5" />删除模型</Button>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <fieldset disabled={platformReadOnly || saving} className="m-0 min-w-0 border-0 p-0"><CardContent className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="space-y-1.5"><Label>ID</Label><Input value={selectedModelContext.model.id} onChange={(e) => updateModelId(selectedModelContext.group.id, selectedModelContext.model.id, e.target.value)} /></div>
                   <div className="space-y-1.5"><Label>显示名称</Label><Input value={selectedModelContext.model.name} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { name: e.target.value })} /></div>
@@ -1351,7 +1263,7 @@ export function ModelManager() {
                   <div className="space-y-1.5"><Label>Model extraBody JSON</Label><Textarea className="min-h-24 font-mono text-xs" value={advancedText[selectedModelContext.group.id]?.modelExtraBody[selectedModelContext.model.id] ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedModelContext.group.id]: { ...(current[selectedModelContext.group.id] ?? { groupExtraBody: "", groupThinking: "", modelExtraBody: {}, modelThinking: {} }), modelExtraBody: { ...(current[selectedModelContext.group.id]?.modelExtraBody ?? {}), [selectedModelContext.model.id]: e.target.value } } }))} /></div>
                   <div className="space-y-1.5"><Label>Model thinking JSON</Label><Textarea className="min-h-24 font-mono text-xs" value={advancedText[selectedModelContext.group.id]?.modelThinking[selectedModelContext.model.id] ?? ""} onChange={(e) => setAdvancedText((current) => ({ ...current, [selectedModelContext.group.id]: { ...(current[selectedModelContext.group.id] ?? { groupExtraBody: "", groupThinking: "", modelExtraBody: {}, modelThinking: {} }), modelThinking: { ...(current[selectedModelContext.group.id]?.modelThinking ?? {}), [selectedModelContext.model.id]: e.target.value } } }))} /></div>
                 </div>
-              </CardContent>
+              </CardContent></fieldset>
             </Card>
           )}
         </SettingsTwoColumn>

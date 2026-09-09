@@ -135,6 +135,17 @@ const url = process.env.TEST_DATABASE_URL;
     ], current!.version, 'fixture');
     expect((await rig.assembly.assignmentAccess!.listEffectiveResourceIds(TEST_TENANT, MEMBER.sub, 'system_installation'))).toHaveLength(1);
     expect((await rig.assembly.assignmentAccess!.listEffectiveResourceIds(TEST_TENANT, 'unassigned', 'system_installation', 'sales-agent'))).toHaveLength(0);
+    expect(
+      await rig.assembly.assignmentAccess!.listEffectiveSubjectsForInstallation({
+        tenantId: TEST_TENANT,
+        installationId: iid,
+        userIds: [MEMBER.sub, 'unassigned'],
+        agentIds: ['sales-agent', 'other-agent'],
+      }),
+    ).toEqual([
+      expect.objectContaining({ subjectType: 'agent', subjectId: 'sales-agent' }),
+      expect.objectContaining({ subjectType: 'user', subjectId: MEMBER.sub }),
+    ]);
     await rig.request(`${base}/installations/${iid}/disable`, 'org', 'POST');
     expect((await (await rig.request('/api/systems/mine', 'member')).json()).installations[0]?.state).toBe('disabled');
     expect((await (await rig.request('/api/systems/mine', 'unassigned')).json()).installations).toEqual([]);

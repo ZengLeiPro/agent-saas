@@ -7,7 +7,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:2bf69a1477563263084d2f4233dd426daff6ef41629bf6abe33482e0632f4ffe",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
         },
@@ -37,14 +37,14 @@
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
@@ -107,6 +107,10 @@
         {
           "path": "docs/release/工具提示语动态存储迁移审核-20260908.md",
           "digest": "sha256:132148a6935e0c4c748ecc9579e5be2db5530b863bdf35799b382abb25ba8e25"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
         },
         {
           "path": "docs/release/钉钉数字员工身份分代与运行期SQL审核-20260908.md",
@@ -185,6 +189,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:2f4422bc42e1eb6c29beeed6aeb3122ab91f940e5e02ba15b3087d32a5258421",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/app/sessionAutomationConfig.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:4494959391b9cf06342b7372a4c0bce68021178c643d26597ee78e539817376b",
@@ -258,8 +269,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -272,8 +283,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -329,7 +340,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -371,7 +382,7 @@
           "baselineDigest": "sha256:3bf438407040b8164b7a80e8fedceeae63b49a8560efd71c0454877643034ffd",
           "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "身份字段的行映射与校验，无数据库执行。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -974,6 +985,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -1026,8 +1044,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -1040,8 +1058,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1076,7 +1094,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -1533,6 +1551,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -1585,8 +1610,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -1599,8 +1624,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1635,7 +1660,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -2055,6 +2080,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -2107,8 +2139,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -2121,8 +2153,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2157,7 +2189,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -2577,6 +2609,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行；Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -2622,8 +2661,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -2636,8 +2675,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2672,7 +2711,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -3077,6 +3116,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -3122,8 +3168,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -3136,8 +3182,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3172,7 +3218,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -3577,6 +3623,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -3622,8 +3675,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -3636,8 +3689,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3672,7 +3725,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -4100,9 +4153,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:2bf69a1477563263084d2f4233dd426daff6ef41629bf6abe33482e0632f4ffe",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -4185,8 +4238,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -4199,8 +4252,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -4256,7 +4309,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -4298,7 +4351,7 @@
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
           "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "身份字段的行映射与校验，无数据库执行。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -4728,6 +4781,10 @@
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
         },
         {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
           "path": "docs/release/记忆运行修复审核-20260905.md",
           "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
         },
@@ -4886,6 +4943,13 @@
           "reason": "新建Zod配置校验模块，无SQL或初始化副作用。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -4945,8 +5009,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -4959,8 +5023,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4995,7 +5059,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -5415,9 +5479,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:2bf69a1477563263084d2f4233dd426daff6ef41629bf6abe33482e0632f4ffe",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -5479,8 +5543,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -5493,8 +5557,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5529,7 +5593,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -5796,6 +5860,10 @@
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
         },
         {
           "path": "docs/release/记忆运行修复审核-20260905.md",
@@ -5958,9 +6026,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:2bf69a1477563263084d2f4233dd426daff6ef41629bf6abe33482e0632f4ffe",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -6022,8 +6090,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6036,8 +6104,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -6072,7 +6140,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -6341,6 +6409,10 @@
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
         },
         {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
           "path": "docs/release/记忆运行修复审核-20260905.md",
           "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
         },
@@ -6485,6 +6557,13 @@
           "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -6530,8 +6609,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6544,8 +6623,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -6580,7 +6659,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -6946,6 +7025,13 @@
           "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -6991,8 +7077,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7005,8 +7091,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -7041,7 +7127,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -7407,6 +7493,13 @@
           "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -7452,8 +7545,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7466,8 +7559,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -7502,7 +7595,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -7868,6 +7961,13 @@
           "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -7913,8 +8013,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7927,8 +8027,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -7963,7 +8063,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -8322,6 +8422,13 @@
       "baselineSha": "8cd1254e53f27154148a8d9a30916ce4295a3e8a",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -8367,8 +8474,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -8381,8 +8488,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -8417,7 +8524,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -8765,6 +8872,13 @@
       "baselineSha": "99b7496f75467595ac53da16cdf338770846f35b",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -8810,8 +8924,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -8824,8 +8938,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -8860,7 +8974,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -9208,6 +9322,13 @@
       "baselineSha": "e15876744f281f50012148cc0d80a19dd2f22f71",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -9239,8 +9360,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -9253,8 +9374,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -9282,7 +9403,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -9575,6 +9696,13 @@
       "baselineSha": "9aaaaee1d2c1aeee2e2b8bf9cc0aecbdc2583d39",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -9606,8 +9734,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -9620,8 +9748,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -9649,7 +9777,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -9931,6 +10059,13 @@
       "baselineSha": "cf510cca08f1280333b05686b7a0c5f2182353f8",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -9962,8 +10097,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -9976,8 +10111,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -10005,7 +10140,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -10279,6 +10414,13 @@
       "baselineSha": "71885eb2e0fc08a773565660fe3b9016089d27dd",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -10310,8 +10452,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -10324,8 +10466,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -10353,7 +10495,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -10627,6 +10769,13 @@
       "baselineSha": "28ae4428a2e4aa9b4e9865aea570f8b89264aef1",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -10658,8 +10807,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -10672,8 +10821,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -10701,7 +10850,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -10975,6 +11124,13 @@
       "baselineSha": "a0974846d62d4b7893cc93feae8d8ce73d227b05",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -11006,8 +11162,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -11020,8 +11176,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -11049,7 +11205,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -11287,6 +11443,13 @@
       "baselineSha": "bf1fee74b5fa5aac998598d6c522ddaa16a2a3ff",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -11318,8 +11481,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -11332,8 +11495,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -11361,7 +11524,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -11593,6 +11756,13 @@
       "baselineSha": "c0e90279d5db012f6dc13a3d95790321dde7ddc7",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -11624,8 +11794,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -11638,8 +11808,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
@@ -11660,7 +11830,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -11855,6 +12025,13 @@
       "baselineSha": "f06c468e9ef80eaeae8757b0c89b548884c103c8",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -11886,8 +12063,8 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -11900,8 +12077,8 @@
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
@@ -11922,7 +12099,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -12119,9 +12296,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:2bf69a1477563263084d2f4233dd426daff6ef41629bf6abe33482e0632f4ffe",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
           "classification": "expand",
-          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/store.ts",
@@ -12148,15 +12325,15 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP5：在 v43 后严格追加 v44 交付迁移，v1～v43 的版本号、顺序和语句保持不变。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP5：GOVERNANCE_SCHEMA_VERSION 43→44，仅扩展版本清单并导出既有迁移 runner；没有删除、替换或重排旧迁移。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
@@ -12170,7 +12347,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -12267,6 +12444,10 @@
           "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         },
         {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
           "path": "docs/release/钉钉数字员工身份分代与运行期SQL审核-20260908.md",
           "digest": "sha256:df03607b58f22b39d67fad77b012f39dd7b23b97a7f3a1b7437faa42b7e84157"
         },
@@ -12324,6 +12505,13 @@
       "baselineSha": "1e5c9bc0500d2d43f2299c7422ecb631553b3f5b",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -12348,15 +12536,15 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "classification": "expand",
-          "reason": "WP5：在最新 main 的 v43 后严格追加 v44 交付迁移；v1～v43 的版本号、顺序和语句保持不变。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "classification": "expand",
-          "reason": "WP5：GOVERNANCE_SCHEMA_VERSION 43→44，仅扩展版本清单并导出既有迁移 runner；没有删除、替换或重排旧迁移。；本次仅追加 V45 默认接入配置新表与版本号，V1～V44 的语句和顺序不变，不回写历史安装。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
@@ -12370,7 +12558,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -12520,6 +12708,13 @@
       "baselineSha": "9f6131c6a173b20b7395f95453e44545ae5ee200",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -12545,21 +12740,21 @@
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -12690,6 +12885,13 @@
       "baselineSha": "3b8e92291e59fd1feccc4f3db39e7e74ce62898c",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -12715,21 +12917,21 @@
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -12842,6 +13044,13 @@
       "baselineSha": "03237fdcfbf9495c5fc091b583a0dab6a37b86e2",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -12867,21 +13076,21 @@
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -13012,6 +13221,13 @@
       "baselineSha": "6acfd79253c20db2b46f01ddd56570c51f25c8cc",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -13037,21 +13253,21 @@
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -13153,6 +13369,13 @@
       "baselineSha": "d94cc5970d84deacb21ba69d6da120d35fa7658e",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -13178,21 +13401,21 @@
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，V1～V44 语句和执行器不变；新增表 DDL 在 V45 独立文件分类并验证。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
           "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键及默认版本号；无旧表数据变更，旧应用可以忽略新表。真实 PostgreSQL 已验证建表幂等、HTTP 接入和配置 CAS。"
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -13294,6 +13517,13 @@
       "baselineSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -13319,14 +13549,14 @@
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
@@ -13376,6 +13606,13 @@
           "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
           "classification": "no-schema-change",
           "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+        },
+        {
+          "path": "server/src/data/toolDescriptionStore.ts",
+          "baselineDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",
+          "targetDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",
+          "classification": "expand",
+          "reason": "新增工具提示语当前快照表和追加式审计表；仅在 advisory lock 保护的事务内执行幂等 CREATE TABLE IF NOT EXISTS 与单行 INSERT ON CONFLICT DO NOTHING，无既有表修改、回填或删除。运行期更新使用行锁、版本比较和同事务审计。"
         }
       ],
       "evidence": [
@@ -13419,7 +13656,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:2bf69a1477563263084d2f4233dd426daff6ef41629bf6abe33482e0632f4ffe",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
         },
@@ -13449,14 +13686,14 @@
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
           "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。；本批仅按序追加 V46 provider/最高版本 46，V1-V45 与执行器不变，DDL 由 V46 文件单独审核。"
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
@@ -13521,6 +13758,10 @@
           "digest": "sha256:132148a6935e0c4c748ecc9579e5be2db5530b863bdf35799b382abb25ba8e25"
         },
         {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
           "path": "docs/release/钉钉数字员工身份分代与运行期SQL审核-20260908.md",
           "digest": "sha256:df03607b58f22b39d67fad77b012f39dd7b23b97a7f3a1b7437faa42b7e84157"
         },
@@ -13562,6 +13803,13 @@
       "baselineSha": "dbb486cce9803055c6d9ed36bb1a5a747c9b3dab",
       "files": [
         {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
           "path": "server/src/data/agentDwsAccounts/store.ts",
           "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
           "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
@@ -13595,6 +13843,13 @@
           "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
           "classification": "no-schema-change",
           "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
+          "baselineDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
+          "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
+          "classification": "expand",
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
@@ -13637,9 +13892,24 @@
           "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
           "classification": "no-schema-change",
           "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+        },
+        {
+          "path": "server/src/data/toolDescriptionStore.ts",
+          "baselineDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",
+          "targetDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",
+          "classification": "expand",
+          "reason": "新增工具提示语当前快照表和追加式审计表；仅在 advisory lock 保护的事务内执行幂等 CREATE TABLE IF NOT EXISTS 与单行 INSERT ON CONFLICT DO NOTHING，无既有表修改、回填或删除。运行期更新使用行锁、版本比较和同事务审计。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/工具提示语动态存储迁移审核-20260908.md",
+          "digest": "sha256:132148a6935e0c4c748ecc9579e5be2db5530b863bdf35799b382abb25ba8e25"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
         {
           "path": "docs/release/钉钉数字员工身份分代与运行期SQL审核-20260908.md",
           "digest": "sha256:df03607b58f22b39d67fad77b012f39dd7b23b97a7f3a1b7437faa42b7e84157"
@@ -13667,6 +13937,14 @@
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
           "digest": "sha256:0d5215ca7835c0f55b9c2c76a8395cbba15462161fbadd973eb9df9ae1dd5ab3"
+        },
+        {
+          "path": "server/src/data/toolDescriptionStore.pg.test.ts",
+          "digest": "sha256:26400d1185b4fed03211e736e64f503f285f153e1699ea32bfb1d0d1f03bece2"
+        },
+        {
+          "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
+          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
         }
       ]
     }

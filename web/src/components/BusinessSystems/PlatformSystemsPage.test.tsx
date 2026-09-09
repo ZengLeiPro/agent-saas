@@ -21,11 +21,13 @@ beforeEach(() => {
   vi.mocked(kyAppRequest).mockImplementation(async (path) => {
     if (path === '/systems/demo')
       return {
-        definition: { systemId: 'demo', name: '演示系统', version: 1 },
+        definition: { systemId: 'demo', name: '演示系统', status: 'published', version: 1 },
         versions: [],
+        metrics: { capabilityCount: 0, externalWriteCapabilityCount: 0 },
         allowedActions: [],
       } as never;
     if (path === '/systems') return { systems: [] } as never;
+    if (path === '/systems/demo/connection-options') return { organizations: [] } as never;
     if (path === '/deliveries')
       return {
         executions: [
@@ -42,19 +44,19 @@ describe('业务系统统一入口', () => {
   it('同页管理版本和组织接入，只显示本系统记录，切换页签保留接入进度', async () => {
     render(<PlatformSystemsPage systemId="demo" />);
     await screen.findByText('演示系统');
-    expect(screen.getByRole('tab', { name: '版本管理' }).getAttribute('aria-selected')).toBe(
+    expect(screen.getByRole('tab', { name: '系统配置' }).getAttribute('aria-selected')).toBe(
       'true',
     );
     fireEvent.mouseDown(screen.getByRole('tab', { name: '组织接入' }), {
       button: 0,
       ctrlKey: false,
     });
-    await screen.findByText('demo · tenant-a · running');
-    expect(screen.queryByText('other · other-tenant · running')).toBeNull();
+    await screen.findByText('组织 tenant-a · 处理中');
+    expect(screen.queryByText('组织 other-tenant · 处理中')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '查看进度' }));
     await screen.findByRole('button', { name: '刷新进度' });
     expect(new URLSearchParams(location.search).get('execution')).toBe('run-demo');
-    fireEvent.mouseDown(screen.getByRole('tab', { name: '版本管理' }), {
+    fireEvent.mouseDown(screen.getByRole('tab', { name: '系统配置' }), {
       button: 0,
       ctrlKey: false,
     });
@@ -64,7 +66,7 @@ describe('业务系统统一入口', () => {
     });
     expect(screen.getByRole('button', { name: '返回组织接入' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '返回组织接入' }));
-    await screen.findByText('demo · tenant-a · running');
+    await screen.findByText('组织 tenant-a · 处理中');
     expect(new URLSearchParams(location.search).has('execution')).toBe(false);
   });
   it('旧交付详情链接跳转到所属系统，保留执行标识', async () => {

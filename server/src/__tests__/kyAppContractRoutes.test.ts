@@ -322,9 +322,7 @@ describe('registeredDigest CAS 与实例状态机', () => {
       domainVerification: { recordName: string; recordValue: string };
     };
     expect(createdBody.installation.status).toBe('pending');
-    expect(createdBody.domainVerification.recordName).toBe(
-      '_ky-app-verify.erp.apps.kaiyancn.com',
-    );
+    expect(createdBody.domainVerification.recordName).toBe('_ky-app-verify.erp.apps.kaiyancn.com');
     expect(createdBody.domainVerification.recordValue.length).toBeGreaterThanOrEqual(22);
   });
 
@@ -407,7 +405,7 @@ describe('/api/systems/mine', () => {
     });
 
     harness.setUser(MEMBER);
-    expect(await mine(harness)).toEqual([
+    expect(await mine(harness)).toMatchObject([
       {
         installationId: TEST_IID,
         systemId: TEST_SYSTEM,
@@ -417,6 +415,11 @@ describe('/api/systems/mine', () => {
         state: 'enabled',
         // 4-B-01：白名单必须下发，否则壳侧 `link.open` 永久 fail-closed
         externalLinkHosts: ['docs.example.com', 'help.example.com'],
+        pageStatus: 'available',
+        agentStatus: 'waiting_service',
+        canOpenPage: true,
+        canUseAgent: false,
+        reasonCode: 'ready_required',
       },
     ]);
   });
@@ -438,7 +441,7 @@ describe('/api/systems/mine', () => {
     await harness.request(`${BASE}/installations/${TEST_IID}/disable`, json('POST'));
 
     harness.setUser(MEMBER);
-    expect(await mine(harness)).toEqual([
+    expect(await mine(harness)).toMatchObject([
       {
         installationId: TEST_IID,
         systemId: TEST_SYSTEM,
@@ -447,6 +450,10 @@ describe('/api/systems/mine', () => {
         origin: TEST_ORIGIN,
         state: 'disabled',
         externalLinkHosts: [],
+        pageStatus: 'unavailable',
+        agentStatus: 'disabled',
+        canOpenPage: false,
+        canUseAgent: false,
       },
     ]);
   });
@@ -454,7 +461,15 @@ describe('/api/systems/mine', () => {
   it('停用与下架均不向未授权成员暴露实例', async () => {
     const harness = await rig({ visibleInstallationIds: [] });
     await seedPublishedInstallation(harness);
-    await harness.installations.setStatus({ installationId: TEST_IID, status: 'disabled', actor: { sub: PLATFORM_ADMIN.sub, role: PLATFORM_ADMIN.role, tenantId: PLATFORM_ADMIN.tenantId } });
+    await harness.installations.setStatus({
+      installationId: TEST_IID,
+      status: 'disabled',
+      actor: {
+        sub: PLATFORM_ADMIN.sub,
+        role: PLATFORM_ADMIN.role,
+        tenantId: PLATFORM_ADMIN.tenantId,
+      },
+    });
     harness.setUser(MEMBER);
     expect(await mine(harness)).toEqual([]);
   });

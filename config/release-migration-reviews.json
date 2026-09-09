@@ -84,9 +84,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -388,9 +388,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:3bf438407040b8164b7a80e8fedceeae63b49a8560efd71c0454877643034ffd",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "身份字段的行映射与校验，无数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -584,9 +584,9 @@
         {
           "path": "server/src/runtime/background/backgroundTaskRuntime.ts",
           "baselineDigest": "sha256:1baeb24ddf9ba59ad87d7e90e7b4e9be254cac091e326614849ec501719b4725",
-          "targetDigest": "sha256:a40224990933bea4e8ffd35c1f23286724d7464f62559e9eb1af2b7a55004c11",
+          "targetDigest": "sha256:240d40671112006ca79025461f852d07b41dc5094687ea6f156e6986597fa67a",
           "classification": "no-schema-change",
-          "reason": "后台租约接口增加 workerId/leaseToken，无启动 SQL 差异。"
+          "reason": "仅扩展快速控制重试的 TypeScript 运行时选项以声明原 attempt 可被同事务 supersede；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/runtime/handStore.ts",
@@ -1150,9 +1150,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -1724,9 +1724,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -2261,9 +2261,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -2791,9 +2791,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -3306,9 +3306,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -3821,9 +3821,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -4413,9 +4413,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "身份字段的行映射与校验，无数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -4630,9 +4630,9 @@
         {
           "path": "server/src/runtime/background/backgroundTaskRuntime.ts",
           "baselineDigest": "sha256:79730bb5720b7d6493905f60b9e3ec0a57965aa450068c18a404312f242119b9",
-          "targetDigest": "sha256:a40224990933bea4e8ffd35c1f23286724d7464f62559e9eb1af2b7a55004c11",
+          "targetDigest": "sha256:240d40671112006ca79025461f852d07b41dc5094687ea6f156e6986597fa67a",
           "classification": "no-schema-change",
-          "reason": "后台租约接口增加 workerId/leaseToken，无启动 SQL 差异。"
+          "reason": "仅扩展快速控制重试的 TypeScript 运行时选项以声明原 attempt 可被同事务 supersede；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/runtime/handStore.ts",
@@ -5171,9 +5171,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -5713,9 +5713,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -6268,9 +6268,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -6795,9 +6795,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -7271,9 +7271,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -7747,9 +7747,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -8223,9 +8223,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -8692,9 +8692,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -9150,9 +9150,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -9587,9 +9587,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -9969,9 +9969,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -10340,9 +10340,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -10703,9 +10703,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -11066,9 +11066,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -11429,9 +11429,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -11756,9 +11756,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -12070,9 +12070,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -12347,9 +12347,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -12596,9 +12596,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -12815,9 +12815,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -13019,9 +13019,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -13204,9 +13204,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -13371,9 +13371,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -13556,9 +13556,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -13712,9 +13712,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -13868,9 +13868,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -14013,9 +14013,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -14170,9 +14170,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
@@ -14327,9 +14327,9 @@
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
           "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
-          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "targetDigest": "sha256:56dfb4eb4499813e3166137551e63362a539544d6431f15efff75f8dc34fee82",
           "classification": "no-schema-change",
-          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+          "reason": "仅把 WorkOrder control command 的 inbox、阶段和 attempt 编号映射为受校验的运行时 JSON；无 SQL、DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",

@@ -14,6 +14,9 @@ export interface OperationProof {
   sandboxUid?: string;
 }
 
+type StatePatch = Partial<Pick<OwnershipRecord,
+  'resource' | 'outcome' | 'phase' | 'phaseDeadlineAt' | 'sandboxUid' | 'reasonCode'>>;
+
 export class OwnedOperation {
   readonly controller = new AbortController();
   readonly startedMonotonic = performance.now();
@@ -21,11 +24,32 @@ export class OwnedOperation {
   dispatched = false;
   durable = false;
   private transition: Promise<unknown> = Promise.resolve();
+  private acknowledged: OwnershipRecord;
+  private uncertain = false;
+  private callerOutcome: OperationOutcome = 'pending';
 
-  constructor(readonly registry: OwnedOperations, public record: OwnershipRecord) {}
+  constructor(readonly registry: OwnedOperations, public record: OwnershipRecord) {
+    this.acknowledged = structuredClone(record);
+  }
+
+  acceptReservation(record: OwnershipRecord): void {
+    this.acknowledged = structuredClone(record);
+    this.record = structuredClone(record);
+    this.durable = true;
+  }
+
+  /** Synchronous local fence; it remains sticky after any late transport completion. */
+  markUncertain(reasonCode: string): void {
+    this.uncertain = true;
+    this.durable = false;
+    this.record = { ...this.record, resource: 'unknown', reasonCode };
+  }
 
   async phase<T>(name: string, work: () => Promise<T>, timeoutMs: number, options: { ignoreCancellation?: boolean } = {}): Promise<T> {
     await this.update({ phase: name, phaseDeadlineAt: new Date(Date.now() + timeoutMs).toISOString() });
+    if (!options.ignoreCancellation && this.controller.signal.aborted) {
+      throw new OwnedWaitEndedError('wait_cancelled', name);
+    }
     const pending = work();
     try {
       return await waitForOwned(pending, {
@@ -33,8 +57,8 @@ export class OwnedOperation {
       });
     } catch (error) {
       if (error instanceof OwnedWaitEndedError) {
-        // The underlying work is still observed by waitForOwned and is not
-        // evicted from its leader map. A late completion does not clear this owner.
+        // The owner promise remains observed, not evicted or interpreted as stopped.
+        this.markUncertain(error.code);
         await this.unknown(error.code).catch(() => undefined);
       }
       throw error;
@@ -43,37 +67,39 @@ export class OwnedOperation {
 
   async dispatch(sandboxUid: string): Promise<void> {
     if (this.controller.signal.aborted) throw new OwnedWaitEndedError('wait_cancelled', 'dispatch');
+    if (this.uncertain) throw new OwnershipBlockedError(this.record.operationId);
     await this.update({ resource: 'running', sandboxUid, phase: 'dispatch' });
+    if (this.controller.signal.aborted) throw new OwnedWaitEndedError('wait_cancelled', 'dispatch');
     this.dispatched = true;
   }
 
   async unknown(reasonCode: string): Promise<void> {
-    const outcome = this.record.outcome === 'pending' ? 'failed' : this.record.outcome;
-    // Set the local blocker synchronously even if persistence itself is unavailable.
-    this.record = { ...this.record, resource: 'unknown', outcome, reasonCode };
-    await this.update({ resource: 'unknown', outcome, reasonCode });
+    this.markUncertain(reasonCode);
+    if (this.callerOutcome === 'pending') this.callerOutcome = this.controller.signal.aborted ? 'cancelled' : 'failed';
+    await this.persist({ resource: 'unknown', outcome: this.callerOutcome, reasonCode });
   }
 
   async complete(outcome: Exclude<OperationOutcome, 'pending'>, proof: OperationProof, resource: 'stopped' | 'not_started' | 'background_owned' = 'stopped'): Promise<void> {
     if (proof.attemptId !== this.record.attemptId
       || (this.record.sandboxUid && proof.sandboxUid !== this.record.sandboxUid)
-      || (proof.kind === 'never_dispatched' && this.dispatched)
+      || (proof.kind === 'never_dispatched' && (this.dispatched || this.uncertain))
       || (resource === 'background_owned' && proof.kind !== 'background_inventory')) {
       throw new OwnershipBlockedError(this.record.operationId);
     }
-    // Outcome is immutable once the caller has settled; late receipts only repair
-    // ownership. Background handoff is durable only after this CAS succeeds.
-    const settledOutcome = this.record.outcome === 'pending' ? outcome : this.record.outcome;
-    await this.update({ resource, outcome: settledOutcome, phase: resource, phaseDeadlineAt: undefined });
+    // A cancel request is not a settled outcome. A final already observed can win.
+    // Once a caller outcome settles, a late receipt changes only resource ownership.
+    if (this.callerOutcome === 'pending') this.callerOutcome = outcome;
+    await this.persist({ resource, outcome: this.callerOutcome, phase: resource, phaseDeadlineAt: undefined }, true);
     this.registry.compact();
   }
 
   requestCancel(): { requested: boolean; resource: ResourceOwnership } {
     if (ownershipIsTerminal(this.record)) return { requested: false, resource: this.record.resource };
+    if (this.controller.signal.aborted) return { requested: true, resource: this.record.resource };
     this.controller.abort();
-    if (this.record.outcome === 'pending') this.record.outcome = 'cancelled';
-    void this.update({ resource: 'stop_requested', outcome: this.record.outcome, reasonCode: 'cancel_requested' })
-      .catch(() => { this.record.resource = 'unknown'; });
+    if (!this.uncertain) this.record = { ...this.record, resource: 'stop_requested' };
+    void this.update({ resource: 'stop_requested', reasonCode: 'cancel_requested' })
+      .catch(() => this.markUncertain('cancel_persistence_unknown'));
     return { requested: true, resource: this.record.resource };
   }
 
@@ -83,25 +109,45 @@ export class OwnedOperation {
     finally { this.waiters -= 1; }
   }
 
-  async update(patch: Partial<Pick<OwnershipRecord, 'resource' | 'outcome' | 'phase' | 'phaseDeadlineAt' | 'sandboxUid' | 'reasonCode'>>): Promise<void> {
+  async update(patch: StatePatch): Promise<void> {
+    if (patch.resource === 'stopped' || patch.resource === 'not_started' || patch.resource === 'background_owned') {
+      throw new OwnershipBlockedError(this.record.operationId);
+    }
+    await this.persist(patch);
+  }
+
+  private async persist(patch: StatePatch, proved = false): Promise<void> {
+    let waitExpired = false;
     const task = this.transition.then(async () => {
-      const previous = this.record;
-      const next: OwnershipRecord = { ...previous, ...patch, revision: previous.revision + 1, updatedAt: new Date().toISOString() };
-      if (this.registry.journal) {
-        try {
-          this.record = await this.registry.journal.update(next, previous.revision);
-          this.durable = true;
-        } catch (error) {
-          this.durable = false;
-          this.record = { ...previous, resource: 'unknown', reasonCode: 'persistence_unknown' };
-          throw error;
-        }
-      } else {
-        this.record = next;
+      const previous = this.acknowledged;
+      if (ownershipIsTerminal(previous) && !proved) return;
+      const resource = this.uncertain && !proved ? 'unknown' : patch.resource ?? this.record.resource;
+      const next: OwnershipRecord = {
+        ...previous, ...patch, resource, outcome: this.callerOutcome,
+        revision: previous.revision + 1, updatedAt: new Date().toISOString(),
+      };
+      try {
+        const committed = this.registry.journal
+          ? await this.registry.journal.update(next, previous.revision) : next;
+        this.acknowledged = structuredClone(committed);
+        if (proved && !waitExpired) this.uncertain = false;
+        this.record = this.uncertain
+          ? { ...committed, resource: 'unknown', reasonCode: this.record.reasonCode ?? 'persistence_unknown' }
+          : committed;
+        this.durable = Boolean(this.registry.journal) && !waitExpired && !this.uncertain;
+      } catch (error) {
+        this.markUncertain('persistence_unknown');
+        throw error;
       }
     });
     this.transition = task.catch(() => undefined);
-    await waitForOwned(task, { phase: 'ownership_persist', timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs });
+    try {
+      await waitForOwned(task, { phase: 'ownership_persist', timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs });
+    } catch (error) {
+      waitExpired = true;
+      this.markUncertain('persistence_unknown');
+      throw error;
+    }
   }
 }
 
@@ -128,12 +174,13 @@ export class OwnedOperations {
     this.owners.set(record.operationId, operation);
     if (this.journal) {
       try {
-        operation.record = await waitForOwned(this.journal.reserve(record, conflict), { phase: 'ownership_reserve', timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs });
-        operation.durable = true;
+        const reserved = await waitForOwned(this.journal.reserve(record, conflict), {
+          phase: 'ownership_reserve', timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs,
+        });
+        operation.acceptReservation(reserved);
       } catch (error) {
-        // A timed-out CAS may have committed. Never discard the corresponding local owner.
-        operation.record.resource = 'unknown';
-        operation.record.reasonCode = 'reservation_unknown';
+        // A timed-out CAS may have committed. Never discard its local owner.
+        operation.markUncertain('reservation_unknown');
         throw error;
       }
     }
@@ -158,8 +205,14 @@ export class OwnedOperations {
   records(): OwnershipRecord[] { return [...this.owners.values()].map((owner) => structuredClone(owner.record)); }
 
   drainBlockers(): number {
-    return [...this.owners.values()].filter((owner) => !ownershipIsTerminal(owner.record)
+    const local = [...this.owners.values()].filter((owner) => !ownershipIsTerminal(owner.record)
       && !(owner.record.resource === 'background_owned' && owner.durable)).length;
+    if (!this.journal) return local;
+    const persisted = this.journal.snapshot();
+    if (!persisted.available) return local + 1;
+    const foreign = persisted.records.filter((record) => !this.owners.has(record.operationId)
+      && !ownershipIsTerminal(record) && record.resource !== 'background_owned').length;
+    return local + foreign;
   }
 
   snapshot() {

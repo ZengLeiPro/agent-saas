@@ -4,7 +4,6 @@ import { authFetch } from '@/lib/authFetch';
 import {
   applySessionAgentTargetIdentity,
   needsSessionAgentTargetSync,
-  parseSessionAgentTargetIdentity,
   SESSION_BINDING_SYNC_FAILED,
 } from '@/lib/sessionAgentTargetIdentity';
 
@@ -43,7 +42,8 @@ export function useSessionAgentTargetSync(
     const seen = new Set<string>();
     const queue: string[] = [];
     const controllers = new Set<AbortController>();
-    const isCurrent = () => !disposed && identityKeyRef.current === identityKey;
+    // No scope-free reads before identity hydration or after logout.
+    const isCurrent = () => identityKey !== 'anonymous' && !disposed && identityKeyRef.current === identityKey;
 
     async function hydrate(sessionId: string, controller: AbortController): Promise<void> {
       const { signal } = controller;
@@ -57,6 +57,8 @@ export function useSessionAgentTargetSync(
           const response = await authFetch(`/api/sessions/${encodeURIComponent(sessionId)}?limit=1`, { signal });
           if (!isCurrent() || signal.aborted) return;
           if (response.ok) {
+            // Validation is needed only on reconciliation, not on the startup render path.
+            const { parseSessionAgentTargetIdentity } = await import('@/lib/sessionAgentTargetIdentityParser');
             const fields = parseSessionAgentTargetIdentity(await response.json(), sessionId, identity?.tenantId);
             if (!isCurrent() || signal.aborted) return;
             if (fields) {

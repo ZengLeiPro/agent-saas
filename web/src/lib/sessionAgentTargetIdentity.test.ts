@@ -4,10 +4,10 @@ import {
   applySessionAgentTargetIdentity,
   definedSessionAgentTargetFields,
   needsSessionAgentTargetSync,
-  parseSessionAgentTargetIdentity,
   sessionAgentTargetPresentation,
   SESSION_BINDING_SYNC_FAILED,
 } from './sessionAgentTargetIdentity';
+import { parseSessionAgentTargetIdentity } from './sessionAgentTargetIdentityParser';
 
 const personal = { kind: 'personal', tenantId: 't1' } as const;
 const expert = { kind: 'org-agent', tenantId: 't1', orgAgentId: 'expert-1' } as const;

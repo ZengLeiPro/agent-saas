@@ -29,6 +29,8 @@ export interface GoogleWorkspaceRouterOptions {
 }
 
 const googleOAuthStartSchema = nativeOAuthStartBindingSchema.optional();
+const GOOGLE_WORKSPACE_REVOKE_METHOD =
+  '可在能力中心的连接器详情中经影响预览撤销；撤销后新 Run 立即不可用';
 
 export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOptions): Router {
   const router = Router();
@@ -154,7 +156,7 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
           throw error;
         }
       }
-      res.json(started);
+      res.json({ ...started, revokeMethod: GOOGLE_WORKSPACE_REVOKE_METHOD });
     } catch (error) {
       res.status(503).json({ error: error instanceof Error ? error.message : 'Google Workspace OAuth 启动失败' });
     }

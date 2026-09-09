@@ -380,7 +380,7 @@ export class GoogleWorkspaceOAuthService {
       purpose: '仅在本人获指派且组织已授权的 Agent Run 中调用 Google Workspace 内容、通信与自动化能力',
       riskLevel: 'high',
       dataDestination: '请求数据发送至 Google Workspace API；运行结果进入当前 Agent Run',
-      revokeMethod: '可在能力中心的连接器详情中经影响预览撤销；撤销后新 Run 立即不可用',
+      revokeMethod: '可在连接与授权页经影响预览撤销；撤销后新 Run 立即不可用',
     };
   }
 

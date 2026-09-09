@@ -19,6 +19,8 @@ export type AgentTargetUnavailableReasonCode =
   | 'org_agent_deleted'
   | 'tenant_mismatch'
   | 'legacy_binding_unproven'
+  /** Client-side unresolved identity; never evidence of a historical binding failure. */
+  | 'session_binding_pending'
   | 'no_available_target'
   | 'target_catalog_unavailable';
 
@@ -90,7 +92,7 @@ function parseUnavailableReason(value: unknown): AgentTargetUnavailableReason | 
   const message = nonEmptyString(record.message, 500);
   const validCodes: AgentTargetUnavailableReasonCode[] = [
     'personal_agent_disabled', 'org_agent_unassigned', 'org_agent_disabled', 'org_agent_deleted',
-    'tenant_mismatch', 'legacy_binding_unproven', 'no_available_target', 'target_catalog_unavailable',
+    'tenant_mismatch', 'legacy_binding_unproven', 'session_binding_pending', 'no_available_target', 'target_catalog_unavailable',
   ];
   if (!code || !validCodes.includes(code) || !message || typeof record.contactAdmin !== 'boolean') return undefined;
   return { code, message, contactAdmin: record.contactAdmin };

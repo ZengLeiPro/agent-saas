@@ -1,5 +1,6 @@
 import type { ChatSessionIndexItem } from '@/types/sidebar';
 import { sourceDisplayText } from '@/types/sidebar';
+import { sessionAgentTargetPresentation } from '@/lib/sessionAgentTargetIdentity';
 
 export function MobileSessionMetadata({
   session,
@@ -8,11 +9,10 @@ export function MobileSessionMetadata({
   session: ChatSessionIndexItem;
   isAdmin: boolean;
 }) {
-  const agentLabel = !session.agentTarget
-    ? '绑定不可验证'
-    : session.agentTarget.kind === 'org-agent'
-      ? session.orgAgentName || '企业专家'
-      : null;
+  const identity = sessionAgentTargetPresentation(session);
+  const agentLabel = session.agentTarget?.kind === 'personal' && !identity.unavailableReason
+    ? null
+    : identity.label;
 
   return (
     <div className="mt-1 text-xs text-muted-foreground/60">

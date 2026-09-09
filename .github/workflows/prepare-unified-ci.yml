@@ -4,9 +4,9 @@ on:
     branches: [refactor/unified-ci-20260910]
     paths:
       - .github/scripts/prepare-unified-ci.py
+      - .github/scripts/finalize-unified-ci.py
       - .github/workflows/prepare-unified-ci.yml
-# Temporary branch-only editing/verification. No environments or production credentials.
-# Only creates an unreferenced Git tree; branch commits and the PR are made separately.
+# Temporary isolated editing/verification; never uses deployment environments or credentials.
 permissions:
   contents: write
 jobs:
@@ -20,14 +20,18 @@ jobs:
           persist-credentials: false
       - name: Prepare reviewed workflow edits
         id: apply
-        run: python3 .github/scripts/prepare-unified-ci.py
+        run: |
+          python3 .github/scripts/prepare-unified-ci.py
+          python3 .github/scripts/finalize-unified-ci.py
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.1'
           package-manager-cache: false
       - name: Dependency-free regression tests
+        id: basic
         continue-on-error: true
-        run: node --test scripts/release/unified-ci*.test.mjs
+        run: node --test scripts/release/unified-ci*.test.mjs > "$RUNNER_TEMP/basic.log" 2>&1; status=$?; tail -20 "$RUNNER_TEMP/basic.log"; exit "$status"
+        shell: bash {0}
       - uses: ./.github/actions/setup-pnpm
       - name: Install repository dependencies when available
         id: dependencies
@@ -38,30 +42,49 @@ jobs:
         if: steps.dependencies.outcome == 'success'
         run: pnpm exec prettier --write scripts/ci-acs-plan.mjs scripts/release/unified-ci*.mjs docs/unified-ci.md
       - name: Existing and new workflow contracts
+        id: contracts
         if: steps.dependencies.outcome == 'success'
         continue-on-error: true
-        run: >-
-          node --test scripts/release/unified-ci*.test.mjs
-          scripts/release/staging-release-evidence-workflow.test.mjs
-          scripts/release/staging-workflow.test.mjs
-          scripts/release/promotion-workflow.test.mjs
-          scripts/pr-preflight-contract.test.mjs
+        shell: bash {0}
+        run: |
+          node --test scripts/release/unified-ci*.test.mjs \
+            scripts/release/staging-release-evidence-workflow.test.mjs \
+            scripts/release/staging-workflow.test.mjs scripts/release/promotion-workflow.test.mjs \
+            scripts/pr-preflight-contract.test.mjs scripts/release/classify-components.test.mjs \
+            > "$RUNNER_TEMP/contracts.log" 2>&1
+          status=$?
+          grep -A 25 '^not ok' "$RUNNER_TEMP/contracts.log" || true
+          tail -15 "$RUNNER_TEMP/contracts.log"
+          exit "$status"
       - name: ACS deployment and classification regression
+        id: acs
         if: steps.dependencies.outcome == 'success'
         continue-on-error: true
         run: pnpm -F server exec vitest run src/__tests__/acsDeployWorkflowContract.test.ts
       - name: ACS operational script regressions
+        id: operational
         continue-on-error: true
         run: python3 -m unittest scripts/test_acs_operational_scripts.py scripts/test_acr_webhook_redelivery.py
-      - name: Lint changed source
+      - name: Lint changed source and check repository ratchets
+        id: lint
         if: steps.dependencies.outcome == 'success'
         continue-on-error: true
-        run: pnpm exec eslint scripts/ci-acs-plan.mjs scripts/release/unified-ci*.mjs scripts/release/staging-release-evidence-workflow.test.mjs server/src/__tests__/acsDeployWorkflowContract.test.ts
-      - name: Publish reviewable tree without updating any branch
+        run: |
+          pnpm exec eslint scripts/ci-acs-plan.mjs scripts/release/unified-ci*.mjs scripts/release/staging-release-evidence-workflow.test.mjs server/src/__tests__/acsDeployWorkflowContract.test.ts scripts/release/classify-components.mjs scripts/pr-preflight-contract.test.mjs
+          pnpm check:ratchets
+      - name: Export reviewed blobs without changing any branch
         if: always() && steps.apply.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git diff --check
-          git diff --stat 30cacdc2e05a993f9a47a79c6dc035deffeb9171
-          python3 .github/scripts/prepare-unified-ci.py publish-tree
+          python3 .github/scripts/finalize-unified-ci.py export-blobs
+      - name: Report actual validation outcomes
+        if: always()
+        env:
+          RESULTS: basic=${{ steps.basic.outcome }} contracts=${{ steps.contracts.outcome }} acs=${{ steps.acs.outcome }} operational=${{ steps.operational.outcome }} lint=${{ steps.lint.outcome }}
+        run: |
+          echo "VALIDATION_RESULTS=$RESULTS"
+          for result in $RESULTS; do
+            test "${result#*=}" = success || exit 1
+          done

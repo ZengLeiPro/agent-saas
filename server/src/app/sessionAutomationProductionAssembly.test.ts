@@ -25,7 +25,7 @@ describe('Session Automation production assembly', () => {
 
     expect(runtime.match(/createSessionAutomationFlagSource\(config\)/g)).toHaveLength(1);
     expect(runtime).toContain('flagSource: sessionAutomationFlagSource');
-    expect(runtime).toContain('sessionAutomationFlagSource.attachRefresh(sharedConfigRefresher.refreshIfChanged)');
+    expect(runtime).toContain('sessionAutomationFlagSource.attachRefresh(refreshPublishedConfig)');
     expect(runtime).toContain('sessionAutomationFlagSource.executionEnabled,sessionAutomationStore.tablePrefix,pgRunStore.runsTable)');
     expect(factory).toContain('new SessionAutomationCommandService(store, options.flagSource)');
     expect(factory).toContain('new SessionAutomationTools(options.store, options.flagSource, evaluator)');
@@ -38,5 +38,17 @@ describe('Session Automation production assembly', () => {
     expect(factory).not.toContain('executionEnabled: () => false');
     expect(runtime).not.toContain("()=>config.sessionAutomation?.executionEnabled===true");
     expect(runtime).not.toContain('executionEnabled: () => config.sessionAutomation?.executionEnabled === true');
+  });
+  it('requires successful refresh and publication identity admission on both callback paths', () => {
+    const runtime = readFileSync(new URL('./runtime.ts', import.meta.url), 'utf-8');
+    const start = runtime.indexOf('const refreshPublishedConfig =');
+    const end = runtime.indexOf('sessionAutomationFlagSource.attachRefresh(refreshPublishedConfig)', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const callback = runtime.slice(start, end);
+    expect(callback).toContain('sharedConfigRefresher.refreshIfChanged(force)');
+    expect(callback).toMatch(/refreshed\.then\(\(ok\)\s*=>\s*ok\s*&&\s*configIdentityAssembly\.isExecutionAllowed\(\)\)/);
+    expect(callback).toMatch(/:\s*refreshed\s*&&\s*configIdentityAssembly\.isExecutionAllowed\(\)/);
+    expect(runtime).not.toContain('sessionAutomationFlagSource.attachRefresh(sharedConfigRefresher.refreshIfChanged)');
   });
 });

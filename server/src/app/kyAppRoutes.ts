@@ -33,6 +33,7 @@ import { createKyAppJwksHandler, createKyAppKeysRouter } from '../kyapp/routes/k
 import { createKyAppMineRouter } from '../kyapp/routes/mine.js';
 import { createKyAppShellEventsRouter } from '../kyapp/routes/shellEvents.js';
 import { createKyAppSystemsRouter } from '../kyapp/routes/systems.js';
+import { sendKyAppError } from '../kyapp/routes/support.js';
 import type { KyAppToolRegistrationDryRun } from '../kyapp/systems/publishGate.js';
 import { createKyAppToolRegistrationDryRun } from '../kyapp/gateway/registrationDryRun.js';
 import { serverLogger } from '../utils/logger.js';
@@ -48,6 +49,20 @@ export function registerKyAppAvailabilityRoute(app: Express, enabled: boolean): 
     res.setHeader('Cache-Control', 'no-store');
     res.json({ enabled });
   });
+  if (!enabled) {
+    // Keep disabled API reads out of the SPA fallback. Do not fabricate usage
+    // data or require organization admins to call the platform-only probe.
+    app.use(KY_APP_CONTRACT_BASE_PATH, (req, res) => {
+      res.setHeader('Cache-Control', 'no-store');
+      if (!req.user) return sendKyAppError(req, res, 'unauthorized', '需要登录');
+      sendKyAppError(
+        req,
+        res,
+        'unavailable',
+        '业务系统接入功能尚未启用或服务依赖未就绪，请联系平台管理员。',
+      );
+    });
+  }
 }
 
 export interface RegisterKyAppRoutesOptions {

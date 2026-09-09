@@ -195,6 +195,7 @@ vi.mock('../auth/middleware.js', () => ({
 }));
 
 import { activeOffboardingWriteFence, registerRoutes } from '../app/routes.js';
+import { requirePlatformAdmin } from '../auth/middleware.js';
 
 describe('registerRoutes', () => {
   beforeEach(() => {
@@ -362,9 +363,15 @@ describe('registerRoutes', () => {
     //   + Context Plane 管理路由 = 48
     //   + 有效配置状态管理路由 = 49
     //   + 套餐额度（provider-quota）平台管理 = 50
+    //   + 移动端遥测路由 = 51
+    //   + kyApp 未启用时的结构化 API 错误兜底 = 52
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(51);
+    expect(app.use).toHaveBeenCalledTimes(52);
+    expect(app.use).toHaveBeenCalledWith('/api/app-contract/v1', expect.any(Function));
+    expect(app.get).toHaveBeenCalledWith(
+      '/api/app-contract/v1/availability', requirePlatformAdmin, expect.any(Function),
+    );
     expect(app.use).toHaveBeenCalledWith('/api/admin/config-status', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api', mocked.contextCitationsRouter);
     expect(app.use).toHaveBeenCalledWith(

@@ -13947,6 +13947,155 @@
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
         }
       ]
+    },
+    {
+      "baselineSha": "02c38729ca549234f6c47ac2bed327941b6985e1",
+      "files": [
+        {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
+          "targetDigest": "sha256:3e7a382adb206bc52f730371e3f916586cffa9db265afcceda28607cff9241fa",
+          "classification": "expand",
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
+          "path": "server/src/data/agentDwsAccounts/store.ts",
+          "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
+          "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
+          "classification": "no-schema-change",
+          "reason": "复用既有 event_policy_json 与 identity_updated_at 保存授权意图、身份 epoch 和可恢复 cleanup saga；均为运行期 SELECT/UPDATE，无启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/data/agentDwsMessages/store.ts",
+          "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
+          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "classification": "no-schema-change",
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+        },
+        {
+          "path": "server/src/data/agentDwsMessages/types.ts",
+          "baselineDigest": "sha256:ef9925bd775254757216de406c799e9ad319abf3ef47e89cb359003c47b4d928",
+          "targetDigest": "sha256:bbe8140e2fb0c3f25461f0660aed2c22fcdf9600470c9779cf940f64e4298879",
+          "classification": "no-schema-change",
+          "reason": "仅扩展消息身份、请求者快照与恢复状态的 TypeScript 类型；无 SQL 或数据库执行。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
+          "baselineDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
+          "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
+          "classification": "expand",
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:7920a89c4ccc3bc1dc8973c84dda685a176b306c59abe18acc1ab4e5b8a88232",
+          "classification": "expand",
+          "reason": "V46 只新增 nullable retired_at、logical_conversation_id 与查询索引；保留旧唯一约束和 delivery 外键，不执行动态 SQL、约束替换或数据回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/bindingIdentityStore.ts",
+          "baselineDigest": "sha256:68f676fa41e06b1a9df425e51257f098129cc3408bf3e5d03464b6d1cd50417c",
+          "targetDigest": "sha256:16991dc66cce4470261c6725da345dfb8dbb835f0b364fd4fbb4236c7cdfd645",
+          "classification": "no-schema-change",
+          "reason": "运行期事务先核验已独立发布的 delivery ON UPDATE CASCADE 外键，再归档旧 generation；合同缺失整体回滚。本文件无 DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/deliveryClaims.ts",
+          "baselineDigest": "sha256:5a5296ebdfdcd169bf9a7a67cd93883b6563e4a67d5b107afdc7b337f45ddf48",
+          "targetDigest": "sha256:efbc87380edcf81e75e1f89751cc6509021f1435b1f190d42e5c82bdf8eab00f",
+          "classification": "no-schema-change",
+          "reason": "在既有 delivery/inbox 表上执行 claim、unknown reconcile 与终态重试运行期 SQL；无新增 DDL 或启动回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/store.ts",
+          "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
+          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "classification": "no-schema-change",
+          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/storeMappers.ts",
+          "baselineDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
+          "targetDigest": "sha256:0d39b5c5c1141d96730d712ce35c9bd7e2bd7daf7a00dddd05f0688c655910ce",
+          "classification": "no-schema-change",
+          "reason": "仅映射 logical conversation 与 retired generation 运行时字段并校验 JSON；无 SQL 或数据库执行。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
+          "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
+          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "classification": "no-schema-change",
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+        },
+        {
+          "path": "server/src/data/toolDescriptionStore.ts",
+          "baselineDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",
+          "targetDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",
+          "classification": "expand",
+          "reason": "新增工具提示语当前快照表和追加式审计表；仅在 advisory lock 保护的事务内执行幂等 CREATE TABLE IF NOT EXISTS 与单行 INSERT ON CONFLICT DO NOTHING，无既有表修改、回填或删除。运行期更新使用行锁、版本比较和同事务审计。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/工具提示语动态存储迁移审核-20260908.md",
+          "digest": "sha256:132148a6935e0c4c748ecc9579e5be2db5530b863bdf35799b382abb25ba8e25"
+        },
+        {
+          "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
+          "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
+          "path": "docs/release/钉钉数字员工身份分代与运行期SQL审核-20260908.md",
+          "digest": "sha256:df03607b58f22b39d67fad77b012f39dd7b23b97a7f3a1b7437faa42b7e84157"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsAccountRebind.pg.test.ts",
+          "digest": "sha256:06a6366a1846dc298ea0fd0f734d2c99ce840d9c55f4e6bdef6be3b7b4cdbc5f"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsIdentityCleanupSaga.test.ts",
+          "digest": "sha256:e504fdcfafa06f53d6f2ca5921f50a91656b6635f6819b97177ac71adf05b688"
+        },
+        {
+          "path": "server/src/__tests__/dwsDeliveryRecovery.pg.test.ts",
+          "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
+        },
+        {
+          "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
+          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+        },
+        {
+          "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
+          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+        },
+        {
+          "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
+          "digest": "sha256:0d5215ca7835c0f55b9c2c76a8395cbba15462161fbadd973eb9df9ae1dd5ab3"
+        },
+        {
+          "path": "server/src/data/toolDescriptionStore.pg.test.ts",
+          "digest": "sha256:26400d1185b4fed03211e736e64f503f285f153e1699ea32bfb1d0d1f03bece2"
+        },
+        {
+          "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
+          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        }
+      ]
     }
   ]
 }

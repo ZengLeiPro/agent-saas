@@ -70,7 +70,6 @@ export default function SettingsScreen() {
       "session-organization": false,
       "appearance-layout": true,
       "my-permissions": isV1RouteAllowed("settings/my-permissions", v1Profile),
-      connections: isV1RouteAllowed("capabilities/connectors", v1Profile),
       // 文件与存储：与会话列表「文件」pill 共用口径（租户开关 ∩ V1 allowlist）
       "files-storage": isFilesEntryVisible({
         filesEnabled: tenantFeatures.filesEnabled,

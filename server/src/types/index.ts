@@ -361,6 +361,17 @@ export interface ChannelContext {
     allowedSkillIds: string[];
     allowedSourceIds: string[];
     dwsResourceIds: string[];
+    /** 本轮已治理群上下文；后台委派会将其固化到 WorkOrder，恢复时不重新读取。 */
+    sharedContext?: {
+      instructions: string;
+      memories: Array<{
+        memoryId: string;
+        scope: 'agent' | 'conversation' | 'task_checkpoint';
+        content: Record<string, unknown>;
+        policyRevision: number;
+        version: number;
+      }>;
+    };
     contextEnabled: boolean;
     taskVisibility: 'conversation' | 'requester_only';
     actorRole?: 'member' | 'org_admin';

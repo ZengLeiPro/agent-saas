@@ -148,6 +148,46 @@ const url = process.env.TEST_DATABASE_URL;
     );
     expect(result.installations.map((item) => item.installationId)).toEqual(['two']);
   });
+  it('返回组织中文名，并以已启用、版本一致和运行健康判定接入完成', async () => {
+    const named = new KyAppManagementQueries(pool, store, prefix, `${prefix}_usage`, (tenantId) =>
+      tenantId === 'target' ? '目标组织' : undefined,
+    );
+    const publishedDigest = (await store.getDefinition('demo'))?.publishedDigest;
+    expect(publishedDigest).toEqual(expect.any(String));
+    try {
+      await pool.query(
+        `UPDATE ${store.installationsTable} SET status='enabled',registered_digest=$1 WHERE installation_id='one'`,
+        [publishedDigest],
+      );
+      await pool.query(
+        `INSERT INTO ${prefix}_ky_app_installation_runtime
+          (installation_id,live_status,ready_status,manifest_digest)
+         VALUES ('one','ok','ok',$1)`,
+        [publishedDigest],
+      );
+      expect(await named.connectionsForSystem('demo')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            tenantId: 'target',
+            tenantName: '目标组织',
+            installationId: 'one',
+            ready: true,
+          }),
+        ]),
+      );
+      expect(
+        (await named.installations({ tenantId: 'target', limit: 10 }, PLATFORM_ADMIN))
+          .installations,
+      ).toEqual(expect.arrayContaining([expect.objectContaining({ tenantName: '目标组织' })]));
+    } finally {
+      await pool.query(
+        `DELETE FROM ${prefix}_ky_app_installation_runtime WHERE installation_id='one'`,
+      );
+      await pool.query(
+        `UPDATE ${store.installationsTable} SET status='pending',registered_digest=NULL WHERE installation_id='one'`,
+      );
+    }
+  });
   it('无事件表时异常筛选安全返回空集合', async () => {
     const withoutEvents = new KyAppManagementQueries(pool, store, prefix);
     expect(

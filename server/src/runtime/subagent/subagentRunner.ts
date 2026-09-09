@@ -67,6 +67,11 @@ import { createLogger } from '../../utils/logger.js';
 import { addTimestampPrefix } from '../../utils/timestamp.js';
 import type { SubagentTypeDefinition } from './agentTypes.js';
 import {
+  executionContextInstructions,
+  executionContextSessionSnapshot,
+  type OrgAgentEffectiveExecutionContext,
+} from '../background/orgAgentExecutionContext.js';
+import {
   applyAgentRuntimeProfile,
   assertAgentProfileExecutionTarget,
   filterAgentProfileSkills,
@@ -167,6 +172,8 @@ export interface RunSubagentParams {
   agentType: SubagentTypeDefinition;
   /** Background queue pins its Profile on the reservation session before execution. */
   profileSourceSession?: RuntimeSessionRecord;
+  /** WorkOrder 固化的员工执行上下文；存在时优先于长期父 session 快照。 */
+  orgAgentExecutionContext?: OrgAgentEffectiveExecutionContext;
   request: {
     description: string;
     prompt: string;
@@ -205,6 +212,8 @@ export interface RunSubagentParams {
  */
 export async function runSubagent(params: RunSubagentParams): Promise<SubagentOutcome> {
   const { config, parentContext, agentType, request } = params;
+  const effectiveOrgAgentSnapshot = params.orgAgentExecutionContext
+    ? executionContextSessionSnapshot(params.orgAgentExecutionContext) : undefined;
   const limiter = params.limiter ?? sharedSubagentLimiter;
   const hardTimeoutMs = params.hardTimeoutMs ?? SUBAGENT_HARD_TIMEOUT_MS;
 
@@ -216,6 +225,14 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
 
   const sessionCatalog = resolveSessionCatalog(config);
   const parentSession = await sessionCatalog.get(parentSessionId).catch(() => null);
+  const workerChild = parentContext.executionRole === 'worker'
+    || Boolean(params.orgAgentExecutionContext)
+    || Boolean(params.profileSourceSession?.executionRole === 'worker'
+      && params.profileSourceSession.orgAgentId
+      && params.profileSourceSession.orgAgentSnapshot)
+    || Boolean(parentSession?.executionRole === 'dispatcher'
+      && parentSession.orgAgentId
+      && parentSession.orgAgentSnapshot?.runtime.executionMode === 'dispatcher');
   const identity = parentContext.channelContext.sessionOwner ?? parentContext.channelContext.user;
   const tenantCandidates = [
     parentSession?.tenantId,
@@ -239,14 +256,19 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       existingSession: params.profileSourceSession ?? null,
       bindingKey,
     });
-    if (parentSession?.orgAgentSnapshot) {
+    if (params.orgAgentExecutionContext?.model.profileConfig) {
+      boundProfile = { ...boundProfile, version: { ...boundProfile.version,
+        config: params.orgAgentExecutionContext.model.profileConfig } };
+    }
+    const workerOrgAgentSnapshot = effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot;
+    if (workerOrgAgentSnapshot) {
       boundProfile = {
         ...boundProfile,
         version: {
           ...boundProfile.version,
           config: mergeOrgAgentWorkerRuntimePolicy(
             boundProfile.version.config,
-            parentSession.orgAgentSnapshot.runtime,
+            workerOrgAgentSnapshot.runtime,
           ),
         },
       };
@@ -257,12 +279,13 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   // ── 闸门 1：模型白名单（关键不变量 3：显式传父 tenantId，不能沿用 dispatch 的单参调用） ──
   // Billing 在 childRunId 落库后按实际用量执行门禁；旧余额快照
   // 无法识别父 run 自身预占，会误拒绝合法子 Agent，因此不在派生前重复检查。
-  const configuredWorkerModel = parentSession?.orgAgentSnapshot?.runtime.workerModel;
-  const requestedRef = boundProfile?.version.config.model.strategy === 'fixed'
+  const configuredWorkerModel = (effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot)?.runtime.workerModel;
+  const requestedRef = params.orgAgentExecutionContext?.model.modelRef
+    ?? (boundProfile?.version.config.model.strategy === 'fixed'
     ? boundProfile.version.config.model.modelRef
     : configuredWorkerModel?.strategy === 'fixed'
       ? configuredWorkerModel.modelRef
-      : request.model?.trim() || undefined;
+      : request.model?.trim() || undefined);
   const inheritedRef = parentSession?.modelRef;
   const refToResolve = requestedRef ?? inheritedRef;
   let model: string | undefined;
@@ -343,8 +366,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       userRole: parentSession?.userRole ?? identity?.role,
       tenantId,
       ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
-      ...(parentSession?.orgAgentSnapshot ? { orgAgentSnapshot: parentSession.orgAgentSnapshot } : {}),
-      ...(parentSession?.orgAgentId ? { executionRole: 'worker' as const } : {}),
+      ...((effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot)
+        ? { orgAgentSnapshot: effectiveOrgAgentSnapshot ?? parentSession!.orgAgentSnapshot } : {}),
+      ...(workerChild ? { executionRole: 'worker' as const } : {}),
       channel: parentContext.channelContext.channel,
       cwd: parentWorkspace.root,
       modelRef: refToResolve ?? model,
@@ -388,9 +412,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         description: request.description,
         ...(childAutomationFence ? { automationFence: childAutomationFence } : {}),
         ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
-        ...(parentSession?.orgAgentId ? { executionRole: 'worker' } : {}),
-        ...(parentSession?.orgAgentSnapshot?.runtime.executionMode
-          ? { executionMode: parentSession.orgAgentSnapshot.runtime.executionMode }
+        ...(workerChild ? { executionRole: 'worker' } : {}),
+        ...((effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot)?.runtime.executionMode
+          ? { executionMode: (effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot)!.runtime.executionMode }
           : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
@@ -504,9 +528,11 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       systemPrompt: config.getSystemPrompt?.(`subagent.${agentType.id}`),
       profileSystemInstructions: boundProfile?.version.config.context.systemInstructions,
       memoryReadOnly: childRecord.memoryPolicyVersion === 'v2',
-      ...(parentSession?.orgAgentSnapshot ? {
-        orgAgentName: parentSession.orgAgentSnapshot.name,
-        orgAgentInstructions: parentSession.orgAgentSnapshot.instructions,
+      ...((effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot) ? {
+        orgAgentName: (effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot)!.name,
+        orgAgentInstructions: params.orgAgentExecutionContext
+          ? executionContextInstructions(params.orgAgentExecutionContext)
+          : parentSession!.orgAgentSnapshot!.instructions,
       } : {}),
       companyInfo: request.includeCompanyInfo
         && agentType.allowCompanyInfo
@@ -593,6 +619,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       ...(childRuntimeIsolationRequirement
         ? { runtimeIsolationRequirement: childRuntimeIsolationRequirement }
         : {}),
+      ...(parentContext.orgAgentTaskLineage ? { orgAgentTaskLineage: parentContext.orgAgentTaskLineage } : {}),
+      ...(parentContext.orgAgentTaskAuthority ? { orgAgentTaskAuthority: parentContext.orgAgentTaskAuthority } : {}),
       ...(childRecord.executionRole === 'worker' ? {
         executionRole: 'worker' as const,
         // ensureRuntimeHandRegistered 对 runtimeIsolationRequirement 已做证据校验；

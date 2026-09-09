@@ -124,6 +124,7 @@ export interface RawRuntimeRunDispatchConfig {
     channel: NonNullable<ChannelContext['orgAgentChannel']>;
     requester: UserIdentity;
   }) => Promise<{ allowed: boolean; reason?: string }>;
+  resolveOrgAgentRequesterById?: (userId: string) => UserIdentity | undefined;
   agentCwd: string;
   uploadManager?: Pick<UploadManager, 'resolveAttachments'>;
   /**

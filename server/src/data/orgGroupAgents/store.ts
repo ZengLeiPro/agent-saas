@@ -22,7 +22,7 @@ import {
 } from './types.js';
 import {
   mapBinding, mapDelivery, mapMemory, mapWorkAttempt, mapWorkConversation, mapWorkOrder,
-  requiredRow, validateDestination, validateEffectiveConfig, validatePolicy,
+  requiredRow, validateDestination,
 } from './storeMappers.js';
 import {
   cancelUnstartedDeliveryIntentsForInbox,
@@ -47,6 +47,8 @@ import {
 import { getStoredWorkConversation, listStoredWorkConversations } from './workConversationQueries.js';
 import { listStoredWorkAttempts, loadStoredGroupWorkspace } from './groupWorkspaceQueries.js';
 import {
+  completeControlCommand as completeStoredControlCommand,
+  failControlCommand as failStoredControlCommand,
   getWorkOrder as selectWorkOrder,
   getWorkOrderByShortId as selectWorkOrderByShortId,
   pauseWorkOrder as pauseStoredWorkOrder,
@@ -56,6 +58,10 @@ import {
 import { changeStoredMemoryStatus, promoteStoredMemory } from './memoryLifecycle.js';
 import {
   ensureIdentityBoundShadowBinding,
+  getCurrentIdentityBinding,
+  getIdentityBindingById,
+  listCurrentIdentityBindings,
+  updateCurrentIdentityBinding,
   type EnsureIdentityBoundShadowBindingInput,
 } from './bindingIdentityStore.js';
 
@@ -96,7 +102,9 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   async ensureShadowBinding(
     input: EnsureIdentityBoundShadowBindingInput,
   ): Promise<OrgAgentChannelBinding> {
-    return await ensureIdentityBoundShadowBinding(this.pool, this.bindingsTable, input);
+    return await ensureIdentityBoundShadowBinding(
+      this.pool, this.bindingsTable, this.accountsTable, this.deliveriesTable, input,
+    );
   }
 
   async getBinding(
@@ -104,36 +112,18 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     accountId: string,
     conversationId: string,
   ): Promise<OrgAgentChannelBinding | null> {
-    assertTexts(tenantId, accountId, conversationId);
-    const result = await this.pool.query(
-      `SELECT * FROM ${this.bindingsTable}
-      WHERE tenant_id=$1 AND account_id=$2 AND conversation_id=$3`,
-      [tenantId, accountId, conversationId],
-    );
-    return result.rows[0] ? mapBinding(result.rows[0] as Record<string, unknown>) : null;
+    return getCurrentIdentityBinding(this.pool, this.bindingsTable, tenantId, accountId, conversationId);
   }
 
   async getBindingById(
     tenantId: string,
     bindingId: string,
   ): Promise<OrgAgentChannelBinding | null> {
-    assertTexts(tenantId, bindingId);
-    const result = await this.pool.query(
-      `SELECT * FROM ${this.bindingsTable}
-      WHERE tenant_id=$1 AND binding_id=$2`,
-      [tenantId, bindingId],
-    );
-    return result.rows[0] ? mapBinding(result.rows[0] as Record<string, unknown>) : null;
+    return getIdentityBindingById(this.pool, this.bindingsTable, tenantId, bindingId);
   }
 
   async listBindings(tenantId: string, accountId: string): Promise<OrgAgentChannelBinding[]> {
-    assertTexts(tenantId, accountId);
-    const result = await this.pool.query(
-      `SELECT * FROM ${this.bindingsTable}
-      WHERE tenant_id=$1 AND account_id=$2 ORDER BY updated_at DESC,binding_id`,
-      [tenantId, accountId],
-    );
-    return result.rows.map((row) => mapBinding(row as Record<string, unknown>));
+    return listCurrentIdentityBindings(this.pool, this.bindingsTable, tenantId, accountId);
   }
 
   async updateBinding(input: {
@@ -145,30 +135,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     policy: OrgAgentChannelPolicy;
     effectiveConfig: OrgAgentEffectiveConfig;
   }): Promise<OrgAgentChannelBinding> {
-    assertTexts(input.tenantId, input.accountId, input.conversationId);
-    if (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 1)
-      throw new Error('ORG_AGENT_BINDING_INVALID');
-    const policy = validatePolicy({ ...input.policy, enabled: input.enabled });
-    const config = validateEffectiveConfig(input.effectiveConfig);
-    const result = await this.pool.query(
-      `UPDATE ${this.bindingsTable}
-      SET enabled=$4,activation_state=CASE WHEN $4 THEN 'active' ELSE 'disabled' END,
-          policy_json=$5::jsonb,effective_config_json=$6::jsonb,
-          revision=revision+1,updated_at=NOW()
-      WHERE tenant_id=$1 AND account_id=$2 AND conversation_id=$3 AND revision=$7
-      RETURNING *`,
-      [
-        input.tenantId,
-        input.accountId,
-        input.conversationId,
-        input.enabled,
-        JSON.stringify(policy),
-        JSON.stringify(config),
-        input.expectedRevision,
-      ],
-    );
-    if (!result.rows[0]) throw new Error('ORG_AGENT_BINDING_VERSION_CONFLICT');
-    return mapBinding(result.rows[0] as Record<string, unknown>);
+    return updateCurrentIdentityBinding(this.pool, this.bindingsTable, input);
   }
 
   async getOrCreateWorkConversation(input: {
@@ -521,7 +488,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     outcome: 'confirmed_sent' | 'confirmed_not_sent' | 'indeterminate';
   }): Promise<DwsDeliveryIntent> {
     assertTexts(input.tenantId, input.deliveryId, input.actorId, input.reason);
-    return reconcileUnknownDelivery(this.pool, this.deliveriesTable, input);
+    return reconcileUnknownDelivery(this.pool, {
+      deliveries: this.deliveriesTable,
+      inbox: this.inboxTable,
+    }, input);
   }
 
   async createWorkOrder(input: {
@@ -824,8 +794,16 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     tenantId: string;
     workOrderId: string;
     expectedVersion: number;
+    control?: OrgAgentWorkOrderControl;
+    pauseContext?: {
+      resultEnvelope: OrgAgentResultEnvelope;
+      checkpoint: Record<string, unknown>;
+    };
+    controlLease?: import('./types.js').OrgAgentControlInboxReceipt;
   }): Promise<OrgAgentWorkOrder> {
-    return await pauseStoredWorkOrder(this.pool, this.workOrdersTable, this.attemptsTable, input);
+    return await pauseStoredWorkOrder(
+      this.pool, this.workOrdersTable, this.attemptsTable, this.inboxTable, input,
+    );
   }
 
   async queueWorkOrderAttempt(input: {
@@ -834,9 +812,32 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     expectedVersion: number;
     control?: OrgAgentWorkOrderControl;
     supersedePendingCompletion?: boolean;
+    supersedeActiveAttempt?: boolean;
+    supersedeContext?: {
+      resultEnvelope: OrgAgentResultEnvelope;
+      checkpoint: Record<string, unknown>;
+    };
+    controlLease?: import('./types.js').OrgAgentControlInboxReceipt;
   }): Promise<OrgAgentWorkOrder> {
     return await queueStoredWorkOrderAttempt(
-      this.pool, this.workOrdersTable, this.deliveriesTable, input,
+      this.pool, this.workOrdersTable, this.deliveriesTable, this.attemptsTable,
+      this.inboxTable, input,
+    );
+  }
+
+  async completeControlCommand(
+    input: Parameters<OrgGroupAgentStore['completeControlCommand']>[0],
+  ): Promise<OrgAgentWorkOrder> {
+    return await completeStoredControlCommand(
+      this.pool, this.workOrdersTable, this.inboxTable, input,
+    );
+  }
+
+  async failControlCommand(
+    input: Parameters<OrgGroupAgentStore['failControlCommand']>[0],
+  ): Promise<OrgAgentWorkOrder> {
+    return await failStoredControlCommand(
+      this.pool, this.workOrdersTable, this.inboxTable, input,
     );
   }
 

@@ -63,6 +63,7 @@ server/src/runtime/imageBlobStore.ts
 server/src/runtime/inProcessTransport.ts
 server/src/runtime/invocationCorrelation.ts
 server/src/runtime/networkPolicy.ts
+server/src/runtime/orgAgentWorkerCapability.ts
 server/src/runtime/runtimeIsolationEvidence.ts
 server/src/runtime/workspaceIdentity.ts
 server/src/security/trustedFile.ts

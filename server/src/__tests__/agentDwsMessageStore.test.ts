@@ -115,7 +115,9 @@ describe('PgAgentDwsMessageStore', () => {
     expect(sql).toContain('lease_fence=inbox.lease_fence+1');
     expect(sql).toContain("WHEN inbox.state='reply_pending' THEN 'reply_pending'");
     expect(sql).not.toContain("inbox.payload_json->>'schemaVersion'='1'");
-    expect(sql).toContain('attempt=inbox.attempt+1');
+    expect(sql).toContain("inbox.payload_json->>'fastControlPhase'='prepared'");
+    expect(sql).toContain('LEAST(inbox.attempt+1,inbox.max_attempts)');
+    expect(sql).toContain('ELSE inbox.attempt+1');
     expect(clientQuery.mock.calls.at(-1)?.[0]).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });
@@ -505,7 +507,7 @@ describe('PgAgentDwsMessageStore', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
-  it('fail 到达 maxAttempts 转 dead_letter，否则指数/受控 retry，错误脱敏至 500 字且保留响应', async () => {
+  it('已有持久正文的 fail 到达 maxAttempts 转 dead_letter，否则指数/受控 retry', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [inboxRow({
       state: 'dead_letter', attempt: 8, max_attempts: 8, lease_owner: null,
       lease_fence: 9, lease_expires_at: null, next_attempt_at: null,
@@ -521,7 +523,7 @@ describe('PgAgentDwsMessageStore', () => {
       state: 'dead_letter', responseText: 'durable response', completedAt: NOW,
     });
     const sql = String(query.mock.calls[0]?.[0]);
-    expect(sql).toContain("attempt>=max_attempts THEN 'dead_letter'");
+    expect(sql).toContain("WHEN attempt>=max_attempts THEN 'dead_letter'");
     expect(sql).toContain("WHEN response_text IS NOT NULL THEN 'reply_pending'");
     expect(sql).toContain("ELSE 'retry_wait'");
     expect(sql).toContain('POWER(2,LEAST(attempt-1,8))');
@@ -529,5 +531,28 @@ describe('PgAgentDwsMessageStore', () => {
     const persistedError = String(query.mock.calls[0]?.[1]?.[3]);
     expect(persistedError).not.toContain('private-token');
     expect(persistedError.length).toBeLessThanOrEqual(500);
+  });
+
+  it('业务执行重试耗尽时持久化用户可见失败正文，下一次只进入回复恢复', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [inboxRow({
+      state: 'reply_pending', attempt: 8, max_attempts: 8, lease_owner: null,
+      lease_fence: 9, lease_expires_at: null, next_attempt_at: null,
+      response_text: '这次处理未能完成，请稍后重试；如持续出现，请联系管理员查看运行记录。',
+      payload_json: { normalized: true, replyKind: 'normal', disposition: 'execution_failed' },
+      last_error: 'runtime failed', completed_at: null,
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never);
+
+    await expect(store.fail(
+      'adwsi-1', 'worker-1', 9, new Error('runtime failed'),
+    )).resolves.toMatchObject({
+      state: 'reply_pending', replyKind: 'normal', disposition: 'execution_failed',
+      responseText: expect.stringContaining('这次处理未能完成'),
+    });
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("COALESCE(payload_json->>'disposition','')<>'execution_failed'");
+    expect(sql).toContain("THEN 'reply_pending'");
+    expect(sql).toContain("'replyKind','normal','disposition','execution_failed'");
   });
 });

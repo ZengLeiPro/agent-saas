@@ -25,7 +25,7 @@ export function mapBinding(row: Record<string, unknown>): OrgAgentChannelBinding
     tenantId: String(row.tenant_id),
     accountId: String(row.account_id),
     agentId: String(row.agent_id),
-    conversationId: String(row.conversation_id),
+    conversationId: String(row.logical_conversation_id ?? row.conversation_id),
     channelKind: row.channel_kind as 'group' | 'direct',
     activationState: row.activation_state as 'shadow' | 'active' | 'disabled',
     enabled: row.enabled === true,
@@ -155,10 +155,30 @@ function validateWorkOrderControl(value: Record<string, unknown>): OrgAgentWorkO
     return [{ text: row.text, actorOpenId: row.actorOpenId, createdAt: row.createdAt,
       kind: row.kind as 'supplement' | 'review' }];
   }) : [];
+  const rawCommand = value.command && typeof value.command === 'object' && !Array.isArray(value.command)
+    ? value.command as Record<string, unknown>
+    : undefined;
+  const command = rawCommand
+    && typeof rawCommand.inboxId === 'string'
+    && ['amend', 'pause', 'resume', 'review', 'reassign'].includes(String(rawCommand.action))
+    && ['prepared', 'completed', 'failed'].includes(String(rawCommand.phase))
+    && Number.isSafeInteger(rawCommand.sourceAttemptNo)
+    && Number(rawCommand.sourceAttemptNo) >= 0
+    ? {
+        inboxId: rawCommand.inboxId,
+        action: rawCommand.action as 'amend' | 'pause' | 'resume' | 'review' | 'reassign',
+        phase: rawCommand.phase as 'prepared' | 'completed' | 'failed',
+        sourceAttemptNo: Number(rawCommand.sourceAttemptNo),
+        ...(Number.isSafeInteger(rawCommand.targetAttemptNo) && Number(rawCommand.targetAttemptNo) >= 1
+          ? { targetAttemptNo: Number(rawCommand.targetAttemptNo) } : {}),
+        ...(typeof rawCommand.error === 'string' ? { error: rawCommand.error } : {}),
+      }
+    : undefined;
   return {
     revision: Number.isSafeInteger(value.revision) && Number(value.revision) >= 1 ? Number(value.revision) : 1,
     supplements,
     workerType: value.workerType === 'explore' ? 'explore' : 'general',
+    ...(command ? { command } : {}),
   };
 }
 

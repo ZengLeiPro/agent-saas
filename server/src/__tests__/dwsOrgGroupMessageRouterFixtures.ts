@@ -16,6 +16,7 @@ import type {
 } from '../data/orgGroupAgents/index.js';
 import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { DwsRequesterResolution } from '../dws/requesterIdentityResolver.js';
+import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 
 export const now = '2026-08-14T00:00:00.000Z';
 const injectedNowMs = Date.parse(now) + 60_000;
@@ -28,6 +29,8 @@ export interface DwsOrgGroupRouterHarnessOptions {
   claimed?: AgentDwsInboxRecord;
   /** Claims and current authorization decisions returned across runOnce calls. */
   claimedSequence?: AgentDwsInboxRecord[];
+  controlClaimed?: AgentDwsInboxRecord;
+  backgroundTasks?: Pick<BackgroundTaskRuntime, 'get' | 'cancel' | 'controlWorkOrder'>;
   authorizationSequence?: Array<{ allowed: boolean; reason?: string }>;
   triggerRoles?: Array<'member' | 'org_admin'>;
   governanceRole?: 'member' | 'org_admin' | null;
@@ -44,6 +47,7 @@ export interface DwsOrgGroupRouterHarnessOptions {
   /** Simulates a process failure before any provider transport can start. */
   failFirstDeliveryClaim?: boolean;
   systemInstructions?: string;
+  serviceSessionId?: string;
   existingRun?: Record<string, unknown>;
   memoryPolicy?: {
     readAgent: boolean;
@@ -63,7 +67,7 @@ export function createBinding(options: DwsOrgGroupRouterHarnessOptions): OrgAgen
     activationState: 'active',
     enabled: true,
     conversationSpaceId: 'space-a',
-    serviceSessionId: 'service-session-a',
+    serviceSessionId: options.serviceSessionId ?? 'service-session-a',
     workspaceId: 'ws_tenant-a__agent_agent-a',
     accountIdentity: {
       profileId: 'corp-a:agent-self', corpId: 'corp-a', dingtalkUserId: 'agent-self',
@@ -231,8 +235,10 @@ export function workOrder(overrides: Record<string, unknown> = {}): Record<strin
 export function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
   const claimed = options.claimed ?? { ...item, content: options.content ?? item.content };
   const claimedQueue = [...(options.claimedSequence ?? [claimed])];
+  const controlClaimedQueue = options.controlClaimed ? [options.controlClaimed] : [];
   const messageStore = {
     claimNext: vi.fn(async () => claimedQueue.shift() ?? null),
+    claimNextControl: vi.fn(async () => controlClaimedQueue.shift() ?? null),
     renewLease: vi.fn().mockResolvedValue(true),
     getOrCreateBinding: vi.fn(),
     markDispatchStarted: vi
@@ -551,6 +557,7 @@ export function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
       ? { resolveRequesterOutcome: vi.fn().mockResolvedValue(options.requesterOutcome) }
       : {}),
     authorizeRequester,
+    ...(options.backgroundTasks ? { backgroundTasks: options.backgroundTasks } : {}),
     authorizeCompletionRequester: vi
       .fn()
       .mockResolvedValue(options.completionRequesterAuthorized ?? true),

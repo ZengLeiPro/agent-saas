@@ -7,11 +7,18 @@ import type {
 } from '../data/agentDwsMessages/index.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { UserIdentity } from '../types/index.js';
+import type { DwsDeliveryIntent } from '../data/orgGroupAgents/index.js';
 import type { SharedGroupContext } from './orgAgentSharedGroupContext.js';
+import type { ChannelContext } from '../types/index.js';
 import { inboxMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
+import {
+  finalizeReplyDelivery,
+  type OrgAgentVisibleReplyService,
+} from './orgAgentVisibleReply.js';
 
 const MAX_SYSTEM_CONTEXT_FIELD = 500;
+const MAX_GROUP_INSTRUCTIONS = 20_000;
 const DWS_REPLY_IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1_000;
 
 export function isV1InboxWithoutIdentity(item: AgentDwsInboxRecord): boolean {
@@ -49,7 +56,7 @@ export function buildSystemContext(
           `本轮调用者身份可信度：${shared.externalActor.kind === 'service_event' ? 'service' : shared.externalActor.assurance}。只能调用本群 effective config 明确开放的工具。`,
           ...(shared.binding.effectiveConfig.instructions.system.trim()
             ? [
-                `当前群管理员指令：${bounded(shared.binding.effectiveConfig.instructions.system.trim(), 8_000)}`,
+                `当前群管理员指令：${boundedStructured(shared.binding.effectiveConfig.instructions.system, MAX_GROUP_INSTRUCTIONS)}`,
               ]
             : []),
           '这是组织共享会话。禁止读取请求者个人记忆、个人连接器或其他群内容；未映射身份只能处理本群允许的组织共享信息。',
@@ -71,6 +78,103 @@ export function buildSystemContext(
       ? ['当前钉钉接入只会收到群内 @ 消息；未 @ 的续话不会送达，请在需要时如实说明该限制。']
       : []),
   ].join('\n');
+}
+
+export function buildOrgAgentSharedContext(
+  shared: SharedGroupContext,
+): NonNullable<NonNullable<ChannelContext['orgAgentChannel']>['sharedContext']> {
+  return { instructions: shared.binding.effectiveConfig.instructions.system,
+    memories: shared.memories.map((memory) => ({ memoryId: memory.memoryId,
+      scope: memory.memoryScope, content: memory.content,
+      policyRevision: memory.policyRevision, version: memory.version })) };
+}
+
+export function requesterIdentitySnapshot(
+  requester: UserIdentity | null | undefined,
+): (UserIdentity & { tenantId: string }) | undefined {
+  if (!requester?.tenantId) return undefined;
+  return { id: requester.id, username: requester.username, role: requester.role,
+    tenantId: requester.tenantId,
+    ...(requester.dingtalkStaffId ? { dingtalkStaffId: requester.dingtalkStaffId } : {}) };
+}
+
+export async function authorizeDirectDelivery(input: {
+  delivery: DwsDeliveryIntent;
+  account: AgentDwsAccountRecord;
+  messageStore: AgentDwsMessageStore;
+  resolveRequester: Parameters<typeof authorizeCurrentDwsRequester>[0]['resolveRequester'];
+  resolveRequesterOutcome?: Parameters<typeof authorizeCurrentDwsRequester>[0]['resolveRequesterOutcome'];
+  authorizeRequester: Parameters<typeof authorizeCurrentDwsRequester>[0]['authorizeRequester'];
+}): Promise<{ allowed: boolean; reason?: string }> {
+  const { delivery, account } = input;
+  if (!delivery.inboxId || !delivery.destination.peerOpenId)
+    return { allowed: false, reason: 'REQUESTER_IDENTITY_MISSING' };
+  const item = await input.messageStore.getById(delivery.tenantId, delivery.inboxId);
+  const snapshot = item?.payload.requesterIdentity;
+  if (!item || item.accountId !== delivery.accountId
+    || item.conversationId !== delivery.conversationId
+    || item.senderOpenDingtalkId !== delivery.destination.peerOpenId
+    || !snapshot || typeof snapshot !== 'object')
+    return { allowed: false, reason: 'REQUESTER_IDENTITY_MISSING' };
+  const expected = snapshot as Record<string, unknown>;
+  if (typeof expected.id !== 'string' || typeof expected.username !== 'string'
+    || (expected.role !== 'admin' && expected.role !== 'user')
+    || typeof expected.tenantId !== 'string' || expected.tenantId !== delivery.tenantId
+    || !item.sessionId || !item.runId)
+    return { allowed: false, reason: 'REQUESTER_IDENTITY_MISSING' };
+  return authorizeCurrentDwsRequester({
+    account, expectedRequester: { id: expected.id, username: expected.username,
+      role: expected.role, tenantId: expected.tenantId,
+      ...(typeof expected.dingtalkStaffId === 'string'
+        ? { dingtalkStaffId: expected.dingtalkStaffId } : {}) },
+    senderOpenDingtalkId: item.senderOpenDingtalkId,
+    ...(typeof item.payload.senderName === 'string' ? { senderName: item.payload.senderName } : {}),
+    sessionId: item.sessionId, runId: item.runId,
+    resolveRequester: input.resolveRequester,
+    ...(input.resolveRequesterOutcome ? { resolveRequesterOutcome: input.resolveRequesterOutcome } : {}),
+    authorizeRequester: input.authorizeRequester,
+  });
+}
+
+export async function rejectDwsAccess(input: {
+  account: AgentDwsAccountRecord;
+  item: AgentDwsInboxRecord;
+  reason: string;
+  requester?: UserIdentity;
+  owner: string;
+  messageStore: AgentDwsMessageStore;
+  visibleReply: OrgAgentVisibleReplyService;
+  audit: (event: { account: AgentDwsAccountRecord; eventId: string;
+    requester?: UserIdentity; reason: string }) => Promise<void>;
+  now?: () => number;
+  warn?: (message: string) => void;
+}): Promise<void> {
+  const { account, item, reason } = input;
+  await input.audit({ account, eventId: item.eventId,
+    ...(input.requester ? { requester: input.requester } : {}), reason });
+  if (item.state === 'reply_pending' && item.replyKind !== 'access_rejection') {
+    await input.visibleReply.replacePendingWithAccessRejection(
+      account, item, rejectionMessage(reason), reason,
+    );
+    input.warn?.(`Agent DWS pending normal reply reconciled account=${item.accountId} event=${item.eventId} reason=${reason}`);
+    return;
+  }
+  const saved = item.state === 'reply_pending' ? item
+    : await input.messageStore.saveRejectionResult(
+      item.inboxId, input.owner, item.leaseFence, rejectionMessage(reason), reason,
+    );
+  const responseText = saved.responseText ?? rejectionMessage(reason);
+  const reasonCode = saved.rejectionReasonCode ?? reason;
+  const replyAttempt = await input.messageStore.markReplyAttemptStarted(
+    item.inboxId, input.owner, item.leaseFence,
+  );
+  assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'rejection reply', input.now?.() ?? Date.now());
+  const delivery = await input.visibleReply.send(
+    account, item, responseText, undefined, 'access_rejection', 'rejected',
+  );
+  if (!(await finalizeReplyDelivery(input.messageStore, input.owner, item, delivery))) return;
+  await input.messageStore.reject(item.inboxId, input.owner, item.leaseFence, reasonCode);
+  input.warn?.(`Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reasonCode}`);
 }
 
 export function serviceIdentity(account: AgentDwsAccountRecord): UserIdentity {
@@ -164,6 +268,19 @@ export function boundedPositive(value: number | undefined, fallback: number): nu
 
 function bounded(value: string, maxLength = MAX_SYSTEM_CONTEXT_FIELD): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+/** 管理员规则需要保留段落、列表和代码结构；旧数据超限时必须显式标记，不能静默丢规则。 */
+function boundedStructured(value: string, maxLength: number): string {
+  const normalized = value.replace(/\r\n?/g, '\n').trim();
+  if (normalized.length <= maxLength) return normalized;
+  const marker = '\n[管理员指令超出当前 20000 字符运行预算，超出部分未注入；请在后台拆分为知识资料后重新发布]';
+  let cut = Math.max(0, maxLength - marker.length);
+  const lastCodeUnit = normalized.charCodeAt(cut - 1);
+  const nextCodeUnit = normalized.charCodeAt(cut);
+  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff
+    && nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) cut -= 1;
+  return `${normalized.slice(0, cut)}${marker}`;
 }
 
 export function boundedExternalId(value: unknown, maxLength: number): value is string {

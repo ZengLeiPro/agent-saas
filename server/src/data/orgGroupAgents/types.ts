@@ -201,6 +201,23 @@ export interface OrgAgentWorkOrderControl {
     kind: 'supplement' | 'review';
   }>;
   workerType: 'general' | 'explore';
+  command?: OrgAgentWorkOrderControlCommand;
+}
+
+export interface OrgAgentWorkOrderControlCommand {
+  inboxId: string;
+  action: 'amend' | 'pause' | 'resume' | 'review' | 'reassign';
+  phase: 'prepared' | 'completed' | 'failed';
+  sourceAttemptNo: number;
+  targetAttemptNo?: number;
+  error?: string;
+}
+
+export interface OrgAgentControlInboxReceipt {
+  inboxId: string;
+  leaseOwner: string;
+  leaseFence: number;
+  responseText: string;
 }
 
 export interface OrgAgentWorkAttempt {
@@ -450,6 +467,12 @@ export interface OrgGroupAgentStore {
     tenantId: string;
     workOrderId: string;
     expectedVersion: number;
+    control?: OrgAgentWorkOrderControl;
+    pauseContext?: {
+      resultEnvelope: OrgAgentResultEnvelope;
+      checkpoint: Record<string, unknown>;
+    };
+    controlLease?: OrgAgentControlInboxReceipt;
   }): Promise<OrgAgentWorkOrder>;
   queueWorkOrderAttempt(input: {
     tenantId: string;
@@ -457,6 +480,23 @@ export interface OrgGroupAgentStore {
     expectedVersion: number;
     control?: OrgAgentWorkOrderControl;
     supersedePendingCompletion?: boolean;
+    supersedeActiveAttempt?: boolean;
+    supersedeContext?: {
+      resultEnvelope: OrgAgentResultEnvelope;
+      checkpoint: Record<string, unknown>;
+    };
+    controlLease?: OrgAgentControlInboxReceipt;
+  }): Promise<OrgAgentWorkOrder>;
+  completeControlCommand(input: {
+    tenantId: string;
+    workOrderId: string;
+    inboxReceipt: OrgAgentControlInboxReceipt;
+  }): Promise<OrgAgentWorkOrder>;
+  failControlCommand(input: {
+    tenantId: string;
+    workOrderId: string;
+    inboxReceipt: OrgAgentControlInboxReceipt;
+    error: string;
   }): Promise<OrgAgentWorkOrder>;
   reopenWorkOrder(input: {
     tenantId: string;

@@ -29,15 +29,25 @@ describe('业务系统使用签名批量预览计算人数', () => {
     await updateResourceAssignment(
       'system_installation',
       'iid-1',
-      { ...command, previewId: 'signed', baselineDigest: 'baseline', expiresAt: 'future' },
+      {
+        ...command,
+        previewId: 'signed',
+        baselineDigest: 'baseline',
+        expiresAt: 'future',
+        impact: { before: 2, after: 1 },
+        changes: [{ ignored: true }],
+        changeId: 'preview-only',
+      },
       'tenant-a',
     );
     expect(governanceAccessApi.updateAssignmentBatch).toHaveBeenCalledWith(
-      expect.objectContaining({
+      {
         previewId: 'signed',
         baselineDigest: 'baseline',
+        expiresAt: 'future',
+        reason: '业务系统访问范围调整',
         changes: [{ resourceType: 'system_installation', resourceId: 'iid-1', ...command }],
-      }),
+      },
       'tenant-a',
     );
     expect(loadMySystems).toHaveBeenCalledWith({ force: true });

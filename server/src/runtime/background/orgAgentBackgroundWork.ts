@@ -13,6 +13,7 @@ import { resolveAgentCwd, resolveAgentMountSubPath } from '../../workspace/resol
 import {
   deriveOrgAgentSharedView,
   deriveOrgAgentTaskWorkspace,
+  type OrgAgentWorkerTaskLineage,
   type OrgAgentTaskWorkspaceLayout,
 } from '../orgAgentTaskWorkspace.js';
 import {
@@ -23,6 +24,7 @@ import {
 } from '../orgAgentArtifactPublisher.js';
 import { runtimeRunController } from '../runController.js';
 import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtimeIsolationEvidence.js';
+import type { OrgAgentWorkerTaskAuthority } from '../orgAgentWorkerCapability.js';
 import type { RunRecord, RunStatus } from '../runStore.js';
 import {
   createEventStoreForSession,
@@ -31,14 +33,43 @@ import {
 } from '../rawRuntimeRunDispatch.js';
 import { createRuntimeSessionRecord } from '../sessionCatalog.js';
 import type { BackgroundAgentRequest } from './backgroundTaskRuntime.js';
-import { parseStoredResult, type StoredBackgroundResult } from './backgroundTaskFormatting.js';
+import {
+  failedBackgroundResult as failedResult,
+  parseStoredResult,
+  terminalBackgroundResult as terminalResult,
+  type StoredBackgroundResult,
+} from './backgroundTaskFormatting.js';
 import { parseBackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 import { markBackgroundTaskTerminal } from './backgroundTaskTerminal.js';
+import { withWorkOrderContinuationPrompt } from './orgAgentContinuationPrompt.js';
+import { controlCommandCompletionUnsettled, failPreparedOrgAgentControlCommand } from './orgAgentControlCommandSettlement.js';
 import {
   buildOrgAgentContinuation,
   buildPausedAttemptContext,
   verifyOrgAgentContinuationArtifacts,
 } from './orgAgentContinuation.js';
+import {
+  createOrgAgentEffectiveExecutionContext,
+  parseOrgAgentEffectiveExecutionContext,
+  type OrgAgentEffectiveExecutionContext,
+} from './orgAgentExecutionContext.js';
+import { stopPreparedOrgAgentAttempt } from './orgAgentPreparedAttempt.js';
+import type { OrgAgentRecord } from '../../data/orgAgents/types.js';
+import type { BoundAgentRuntimeProfile } from '../agentProfiles.js';
+
+function snapshotNumber(value: Record<string, unknown>, key: string): number | undefined {
+  const raw = value[key];
+  return typeof raw === 'number' && Number.isSafeInteger(raw) ? raw : undefined;
+}
+function snapshotStrings(value: Record<string, unknown>, key: string): string[] {
+  const candidate = value[key];
+  if (!Array.isArray(candidate) || candidate.some(item => typeof item !== 'string' || !item.trim())) return [];
+  const result = candidate.map(item => (item as string).trim());
+  return new Set(result).size === result.length ? result : [];
+}
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every(value => b.includes(value));
+}
 
 export async function prepareOrgAgentBackgroundWork(input: {
   config: RawRuntimeRunDispatchConfig;
@@ -47,6 +78,9 @@ export async function prepareOrgAgentBackgroundWork(input: {
   parentRunId: string;
   toolCallId: string;
   taskId: string;
+  agent: OrgAgentRecord;
+  modelRef: string;
+  profile?: BoundAgentRuntimeProfile;
 }): Promise<{ taskLayout?: OrgAgentTaskWorkspaceLayout; workOrder?: OrgAgentWorkOrder }> {
   const orgChannel = input.context.channelContext.orgAgentChannel;
   if (!orgChannel) return {};
@@ -116,6 +150,16 @@ export async function prepareOrgAgentBackgroundWork(input: {
             dwsResourceIds: orgChannel.dwsResourceIds,
             contextEnabled: orgChannel.contextEnabled,
             effectiveConfig: bindingSnapshot!.effectiveConfig,
+            executionContext: createOrgAgentEffectiveExecutionContext({
+              agent: input.agent,
+              binding: bindingSnapshot!,
+              channel: orgChannel,
+              systemContext: input.context.channelContext.systemContext,
+              modelRef: input.modelRef,
+              profile: input.profile,
+              goal: input.request.prompt,
+              acceptance: [input.request.description, '产出须满足组织群任务结果与工件契约'],
+            }),
           },
           cancelPolicy: {
             mode: orgChannel.taskVisibility === 'conversation' && orgChannel.externalActorAssurance === 'mapped'
@@ -131,10 +175,13 @@ export async function prepareOrgAgentBackgroundWork(input: {
 export class OrgAgentBackgroundWorkCoordinator {
   constructor(private readonly config: RawRuntimeRunDispatchConfig) {}
 
-  async markRunning(record: RunRecord): Promise<void> {
+  async markRunning(record: RunRecord): Promise<OrgAgentWorkerTaskLineage | undefined> {
     const metadata = parseBackgroundTaskMetadata(record);
-    if (!metadata?.workOrderId || !metadata.orgAgentChannel || !this.config.orgGroupAgentStore)
-      return;
+    if (!metadata?.orgAgentChannel) return undefined;
+    if (!metadata.workOrderId || !this.config.orgGroupAgentStore)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_INCOMPLETE');
+    const queuedLineage = await this.resolveTaskLineage(record, metadata, false);
+    await this.loadExecutionContext(queuedLineage);
     const tenantId = metadata.orgAgentChannel.agentPrincipal.tenantId;
     const attempt = await this.config.orgGroupAgentStore.transitionWorkAttempt({
       tenantId,
@@ -158,6 +205,124 @@ export class OrgAgentBackgroundWorkCoordinator {
       )
         throw new Error('ORG_AGENT_WORK_ATTEMPT_START_CONFLICT');
     }
+    return this.resolveTaskLineage(record, metadata, true);
+  }
+
+  createLiveTaskAuthority(
+    lineage: OrgAgentWorkerTaskLineage,
+    channel?: NonNullable<ToolCallContext['channelContext']['orgAgentChannel']>,
+  ): OrgAgentWorkerTaskAuthority {
+    const store = this.config.orgGroupAgentStore;
+    if (!store) throw new Error('ORG_AGENT_CONTEXT_LINEAGE_STORE_UNAVAILABLE');
+    return { taskRunId: lineage.taskRunId, taskSessionId: lineage.taskSessionId,
+      attemptId: lineage.attemptId, assertCurrent: async (toolName?: string) => {
+        if (!this.config.orgAgentChannelPolicyEvaluator
+          || !this.config.authorizeOrgAgentRequesterLive
+          || !this.config.resolveOrgAgentRequesterById)
+          throw new Error('ORG_AGENT_WORKER_LIVE_AUTHORITY_DEPENDENCY_MISSING');
+        const work = await store.getWorkOrder(lineage.tenantId, lineage.workOrderId);
+        const attempt = (await store.listWorkAttempts(lineage.tenantId, lineage.workOrderId))
+          .find(item => item.attemptNo === work?.currentAttemptNo);
+        const binding = await store.getBindingById(lineage.tenantId, lineage.bindingId);
+        const agent = this.config.orgAgentStore?.get(lineage.agentId);
+        if (!work || !attempt || work.state !== 'running' || attempt.status !== 'running'
+          || work.tenantId !== lineage.tenantId || work.agentId !== lineage.agentId
+          || work.bindingId !== lineage.bindingId || work.workConversationId !== lineage.workConversationId
+          || work.currentAttemptNo !== lineage.attemptNo || attempt.attemptNo !== lineage.attemptNo
+          || attempt.attemptId !== lineage.attemptId || attempt.runtimeRunId !== lineage.taskRunId
+          || attempt.taskWorkspaceId !== lineage.taskWorkspaceId
+          || attempt.sandboxScopeId !== lineage.sandboxScopeId
+          || !agent || !agent.enabled || agent.tenantId !== lineage.tenantId
+          || !binding || !binding.enabled || binding.activationState !== 'active'
+          || !binding.policy.enabled || binding.policy.liveDeny
+          || binding.accountId !== lineage.accountId || binding.agentId !== lineage.agentId)
+          throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE');
+        {
+          const decision = await this.config.orgAgentChannelPolicyEvaluator({ tenantId: lineage.tenantId,
+            bindingId: lineage.bindingId, accountId: lineage.accountId, agentId: lineage.agentId,
+            conversationId: lineage.channelConversationId, toolName: toolName ?? 'OrgAgentWorker' });
+          if (!decision.allowed) throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_REVOKED');
+        }
+        if (channel?.externalActor.kind === 'external_user' && channel.externalActor.mappedUserId) {
+          const requester = this.config.resolveOrgAgentRequesterById(channel.externalActor.mappedUserId);
+          if (!requester || requester.id !== channel.externalActor.mappedUserId
+            || requester.tenantId !== lineage.tenantId)
+            throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_REVOKED');
+          const decision = await this.config.authorizeOrgAgentRequesterLive({ channel,
+            requester });
+          if (!decision.allowed) throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_REVOKED');
+        } else throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_REVOKED');
+      } };
+  }
+
+  async loadExecutionContext(
+    lineage: OrgAgentWorkerTaskLineage,
+  ): Promise<OrgAgentEffectiveExecutionContext> {
+    const work = await this.config.orgGroupAgentStore?.getWorkOrder(lineage.tenantId, lineage.workOrderId);
+    if (!work || work.currentAttemptNo !== lineage.attemptNo) {
+      throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE');
+    }
+    return parseOrgAgentEffectiveExecutionContext(work.policySnapshot);
+  }
+
+  private async resolveTaskLineage(record: RunRecord, metadata: NonNullable<ReturnType<typeof parseBackgroundTaskMetadata>>,
+    requireRunning: boolean): Promise<OrgAgentWorkerTaskLineage> {
+    const store = this.config.orgGroupAgentStore, channel = metadata.orgAgentChannel;
+    if (!store || !channel || !metadata.workOrderId || !metadata.attemptId || !metadata.attemptNo
+      || !metadata.sandboxScopeId || !metadata.sharedReadOnlySubPath || !metadata.runtimeIsolationRequirement)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_INCOMPLETE');
+    const tenantId = channel.agentPrincipal.tenantId, requirement = metadata.runtimeIsolationRequirement;
+    if (record.tenantId !== tenantId || record.workspaceId !== metadata.workspaceId
+      || requirement.tenantId !== tenantId || requirement.taskId !== metadata.workOrderId
+      || requirement.runId !== record.runId || requirement.sessionId !== record.sessionId
+      || requirement.workspaceId !== metadata.workspaceId
+      || requirement.policyDigest !== RUNTIME_ISOLATION_POLICY_DIGEST)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_RUNTIME_MISMATCH');
+    const work = await store.getWorkOrder(tenantId, metadata.workOrderId);
+    const attempt = (await store.listWorkAttempts(tenantId, metadata.workOrderId))
+      .find(item => item.attemptNo === work?.currentAttemptNo);
+    const validWork = requireRunning ? work?.state === 'running' : work?.state === 'queued' || work?.state === 'running';
+    const validAttempt = requireRunning ? attempt?.status === 'running' : attempt?.status === 'queued' || attempt?.status === 'running';
+    if (!work || !attempt || !validWork || !validAttempt || attempt.runtimeRunId !== record.runId
+      || attempt.attemptId !== metadata.attemptId || attempt.attemptNo !== metadata.attemptNo
+      || work.currentAttemptNo !== metadata.attemptNo || work.tenantId !== tenantId
+      || work.agentId !== channel.agentId || work.bindingId !== channel.bindingId
+      || work.workConversationId !== channel.workConversationId)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_ATTEMPT_MISMATCH');
+    const [binding, conversation] = await Promise.all([
+      store.getBindingById(tenantId, work.bindingId), store.getWorkConversation(tenantId, work.workConversationId),
+    ]);
+    if (!binding || !conversation || binding.tenantId !== tenantId || binding.agentId !== work.agentId
+      || binding.accountId !== channel.accountId || binding.workspaceId !== channel.agentPrincipal.workspaceId
+      || binding.conversationSpaceId !== channel.conversationSpaceId
+      || binding.conversationId !== channel.channelPrincipal.conversationId
+      || conversation.tenantId !== tenantId || conversation.bindingId !== binding.bindingId
+      || conversation.workConversationId !== work.workConversationId)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_CHANNEL_MISMATCH');
+    const policyRevision = snapshotNumber(work.policySnapshot, 'revision');
+    const allowedSourceIds = snapshotStrings(work.policySnapshot, 'allowedSourceIds');
+    if (policyRevision !== channel.policyRevision || !sameStrings(allowedSourceIds, channel.allowedSourceIds))
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_POLICY_MISMATCH');
+    const agentRoot = resolveAgentCwd(this.config.agentCwd, tenantId, work.agentId);
+    const agentMountSubPath = resolveAgentMountSubPath(this.config.agentCwd, tenantId, work.agentId);
+    const shared = deriveOrgAgentSharedView({ agentRoot, agentMountSubPath,
+      bindingId: binding.bindingId, workConversationId: conversation.workConversationId });
+    const expected = deriveOrgAgentTaskWorkspace({ agentWorkspaceId: binding.workspaceId, agentRoot,
+      agentMountSubPath, sharedReadOnlySubPath: attempt.sharedReadOnlySubPath,
+      taskId: attempt.runtimeRunId, attemptNo: attempt.attemptNo });
+    if (metadata.workspaceId !== expected.taskWorkspaceId || metadata.cwd !== expected.taskRoot
+      || metadata.sandboxScopeId !== expected.sandboxScopeId || metadata.sharedReadOnlySubPath !== shared.mountSubPath
+      || attempt.taskWorkspaceId !== expected.taskWorkspaceId || attempt.sandboxScopeId !== expected.sandboxScopeId
+      || attempt.mountSubPath !== expected.mountSubPath || attempt.sharedReadOnlySubPath !== shared.mountSubPath
+      || attempt.attemptId !== expected.attemptId)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_WORKSPACE_MISMATCH');
+    return { kind: 'org_agent_task', tenantId, agentId: work.agentId, accountId: binding.accountId,
+      ownerWorkspaceId: binding.workspaceId, bindingId: binding.bindingId,
+      conversationSpaceId: binding.conversationSpaceId, workConversationId: conversation.workConversationId,
+      channelConversationId: binding.conversationId, policyRevision, workOrderId: work.workOrderId,
+      taskRunId: record.runId, taskSessionId: record.sessionId, attemptId: attempt.attemptId,
+      attemptNo: attempt.attemptNo, currentAttemptNo: work.currentAttemptNo,
+      taskWorkspaceId: attempt.taskWorkspaceId, sandboxScopeId: attempt.sandboxScopeId, allowedSourceIds };
   }
 
   async syncTerminal(
@@ -410,6 +575,8 @@ export class OrgAgentBackgroundWorkCoordinator {
       allowPendingArtifacts?: boolean;
       control?: OrgAgentWorkOrderControl;
       supersedePendingCompletion?: boolean;
+      supersedeActiveAttempt?: boolean;
+      inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
     } = {},
   ): Promise<RunRecord> {
     const store = this.config.orgGroupAgentStore;
@@ -419,7 +586,13 @@ export class OrgAgentBackgroundWorkCoordinator {
     const work = await store.getWorkOrder(tenantId, workOrderId);
     if (!work) throw new Error('ORG_AGENT_WORK_ORDER_MISSING');
     const attempts = await store.listWorkAttempts(tenantId, workOrderId);
-    const previousAttempt = attempts.at(-1);
+    const command = options.inboxReceipt
+      && work.control.command?.inboxId === options.inboxReceipt.inboxId
+      && work.control.command.phase === 'prepared'
+      ? work.control.command
+      : undefined;
+    const sourceAttemptNo = command?.sourceAttemptNo ?? work.currentAttemptNo;
+    const previousAttempt = attempts.find(item => item.attemptNo === sourceAttemptNo);
     if (previousAttempt?.status === 'completed' && previousAttempt.publishState === 'pending'
       && options.allowPendingArtifacts !== true)
       throw new Error('ORG_AGENT_ARTIFACT_PUBLISH_REQUIRED_BEFORE_RETRY');
@@ -451,11 +624,6 @@ export class OrgAgentBackgroundWorkCoordinator {
         : undefined;
     const basePrompt =
       earliestBasePrompt ?? earliestPrompt ?? metadata.basePrompt ?? metadata.prompt;
-    const continuation = buildOrgAgentContinuation({
-      work,
-      attempt: previousAttempt,
-      allowPendingArtifacts: options.allowPendingArtifacts === true,
-    });
     const catalog = resolveSessionCatalog(this.config);
     const previousSession = await catalog.get(previous.sessionId);
     if (!previousSession) throw new Error('ORG_AGENT_WORK_ORDER_SESSION_MISSING');
@@ -481,7 +649,7 @@ export class OrgAgentBackgroundWorkCoordinator {
     ) {
       throw new Error('ORG_AGENT_WORK_ORDER_IDENTITY_MISMATCH');
     }
-    const nextAttemptNo = work.currentAttemptNo + 1;
+    const nextAttemptNo = command?.targetAttemptNo ?? work.currentAttemptNo + 1;
     const digest = createHash('sha256').update(`${workOrderId}:${nextAttemptNo}`).digest('hex');
     const taskId = `bg-retry-${digest.slice(0, 32)}`;
     const sessionId = `sub-bg-retry-${digest.slice(0, 32)}`;
@@ -513,12 +681,29 @@ export class OrgAgentBackgroundWorkCoordinator {
       attemptNo: nextAttemptNo,
     });
       await mkdir(join(layout.taskRoot, 'artifacts'), { recursive: true });
-    const queuedWork = await store.queueWorkOrderAttempt({
+    const queuedWork = command ? work : await store.queueWorkOrderAttempt({
       tenantId, workOrderId, expectedVersion,
       ...(options.control ? { control: options.control } : {}),
       ...(options.supersedePendingCompletion ? { supersedePendingCompletion: true } : {}),
+      ...(options.supersedeActiveAttempt ? { supersedeActiveAttempt: true } : {}),
+      ...(options.supersedeActiveAttempt ? {
+        supersedeContext: buildPausedAttemptContext(previous.runId, metadata.cwd),
+      } : {}),
+      ...(options.inboxReceipt ? { controlLease: options.inboxReceipt } : {}),
     });
+    let currentRun: RunRecord;
     try {
+      if (options.supersedeActiveAttempt || (command && sourceAttemptNo < nextAttemptNo))
+        await stopPreparedOrgAgentAttempt(this.config, tenantId, workOrderId, sourceAttemptNo);
+      const continuationAttempt = (options.supersedeActiveAttempt || command)
+        ? (await store.listWorkAttempts(tenantId, workOrderId))
+          .find(item => item.attemptNo === sourceAttemptNo)
+        : previousAttempt;
+      const continuation = buildOrgAgentContinuation({
+        work: queuedWork,
+        attempt: continuationAttempt,
+        allowPendingArtifacts: options.allowPendingArtifacts === true,
+      });
       await catalog.upsert(
         createRuntimeSessionRecord({
           sessionId,
@@ -554,7 +739,20 @@ export class OrgAgentBackgroundWorkCoordinator {
         mountSubPath: layout.mountSubPath,
         sharedReadOnlySubPath: layout.sharedReadOnlySubPath,
       });
-      await runStore.upsertPending({
+      const loadedTarget = await runStore.get(taskId);
+      const existingTarget = loadedTarget?.runId === taskId ? loadedTarget : null;
+      const existingMetadata = existingTarget ? parseBackgroundTaskMetadata(existingTarget) : null;
+      if (existingTarget && (
+        existingMetadata?.workOrderId !== workOrderId
+        || existingMetadata.attemptNo !== nextAttemptNo
+        || existingMetadata.attemptId !== layout.attemptId
+      )) throw new Error('ORG_AGENT_WORK_ORDER_RETRY_RUN_IDEMPOTENCY_CONFLICT');
+      if (existingTarget?.metadata.backgroundTaskReady === true || (
+        existingTarget && existingTarget.status !== 'pending'
+      )) {
+        currentRun = existingTarget;
+      } else {
+        await runStore.upsertPending({
         runId: taskId,
         sessionId,
         userId: previous.userId,
@@ -594,41 +792,59 @@ export class OrgAgentBackgroundWorkCoordinator {
           backgroundFinishedAt: null,
           lifecycleFinishedAt: null,
         },
-      });
-      const activate = runStore.activateStagedOrgAgentBackgroundTask;
-      if (!activate) throw new Error('ORG_AGENT_STAGED_ACTIVATION_UNAVAILABLE');
-      const activated = await activate.call(runStore, taskId, 'background_agent_retry_started', {
-        backgroundTaskReady: true, backgroundStartedAt: new Date().toISOString(),
-      });
-      if (!activated) throw new Error('ORG_AGENT_WORK_ORDER_RETRY_ACTIVATION_FAILED');
-      return activated;
+        });
+        const activate = runStore.activateStagedOrgAgentBackgroundTask;
+        if (!activate) throw new Error('ORG_AGENT_STAGED_ACTIVATION_UNAVAILABLE');
+        const activated = await activate.call(runStore, taskId, 'background_agent_retry_started', {
+          backgroundTaskReady: true, backgroundStartedAt: new Date().toISOString(),
+        });
+        const activeRun = activated ?? await runStore.get(taskId);
+        if (!activeRun?.metadata.backgroundTaskReady)
+          throw new Error('ORG_AGENT_WORK_ORDER_RETRY_ACTIVATION_FAILED');
+        currentRun = activeRun;
+      }
     } catch (error) {
-      await this.failSetup(
-        tenantId,
-        workOrderId,
-        taskId,
-        layout.taskRoot,
-        error,
-        nextAttemptNo,
-      );
+      let cleanupError: unknown;
+      try {
+        await this.failSetup(tenantId, workOrderId, taskId, layout.taskRoot, error, nextAttemptNo);
+      } catch (failedCleanup) { cleanupError = failedCleanup; }
+      if (options.inboxReceipt)
+        await failPreparedOrgAgentControlCommand({
+          store, tenantId, workOrderId, inboxReceipt: options.inboxReceipt, operationError: cleanupError ?? error,
+        });
       throw error;
     }
+    if (options.inboxReceipt)
+      await store.completeControlCommand({ tenantId, workOrderId, inboxReceipt: options.inboxReceipt }).catch(error => { throw controlCommandCompletionUnsettled(error); });
+    return currentRun;
   }
 
   async pause(
     tenantId: string,
     workOrderId: string,
     expectedVersion: number,
+    inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt,
   ): Promise<RunRecord | null> {
     const store = this.config.orgGroupAgentStore;
     const runStore = this.config.runStore;
     if (!store || !runStore) throw new Error('ORG_AGENT_WORK_ORDER_STORE_UNAVAILABLE');
     const work = await store.getWorkOrder(tenantId, workOrderId);
     if (!work) throw new Error('ORG_AGENT_WORK_ORDER_MISSING');
+    const prepared = inboxReceipt
+      && work.control.command?.inboxId === inboxReceipt.inboxId
+      && work.control.command.action === 'pause'
+      && work.control.command.phase === 'prepared'
+      ? work.control.command
+      : undefined;
+    if (inboxReceipt && work.control.command?.inboxId === inboxReceipt.inboxId
+      && work.control.command.phase === 'failed')
+      throw new Error(work.control.command.error ?? 'ORG_AGENT_CONTROL_COMMAND_FAILED');
     const attempt = (await store.listWorkAttempts(tenantId, workOrderId))
-      .find(item => item.attemptNo === work.currentAttemptNo);
+      .find(item => item.attemptNo === (prepared?.sourceAttemptNo ?? work.currentAttemptNo));
     const task = attempt ? await runStore.get(attempt.runtimeRunId) : null;
-    if (task && isRunTerminal(task.status)) {
+    if (task && isRunTerminal(task.status)
+      && !(prepared && task.status === 'cancelled'
+        && task.metadata.orgAgentAttemptSuperseded === true)) {
       const state = task.status === 'completed' ? 'completed'
         : task.status === 'cancelled' ? 'cancelled' : 'failed';
       await this.syncTerminal(
@@ -638,47 +854,46 @@ export class OrgAgentBackgroundWorkCoordinator {
       );
       throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_TERMINAL_RACE');
     }
-    if (task && !isRunTerminal(task.status)) {
-      const taskMetadata = parseBackgroundTaskMetadata(task);
-      if (!taskMetadata?.workOrderId || taskMetadata.workOrderId !== workOrderId)
-        throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_SCOPE_INVALID');
-      const taskSession = await resolveSessionCatalog(this.config).get(task.sessionId);
-      if (!taskSession) throw new Error(`后台任务 session 不存在：${task.sessionId}`);
-      const stopped = await markBackgroundTaskTerminal(
-        runStore,
-        createEventStoreForSession(this.config, taskSession),
-        task,
-        'cancelled',
-        '组织群任务已暂停',
-        {
-          backgroundResult: failedResult('cancelled', '组织群任务已暂停，恢复时会创建新 attempt'),
-          wakeState: 'pending',
-          backgroundFinishedAt: new Date().toISOString(),
-          orgAgentAttemptSuperseded: true,
-          orgAgentPauseAttemptNo: work.currentAttemptNo,
+    const taskMetadata = task && !isRunTerminal(task.status)
+      ? parseBackgroundTaskMetadata(task)
+      : null;
+    if (task && !isRunTerminal(task.status)
+      && (!taskMetadata?.workOrderId || taskMetadata.workOrderId !== workOrderId))
+      throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_SCOPE_INVALID');
+    if (!prepared) {
+      const control = inboxReceipt ? {
+        ...work.control,
+        command: {
+          inboxId: inboxReceipt.inboxId,
+          action: 'pause' as const,
+          phase: 'prepared' as const,
+          sourceAttemptNo: work.currentAttemptNo,
         },
-      );
-      if (!stopped) {
-        const current = await runStore.get(task.runId);
-        if (!current || current.status !== 'cancelled' || current.metadata.orgAgentAttemptSuperseded !== true)
-          throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_RUN_CONFLICT');
-      }
-      const pausedContext = buildPausedAttemptContext(task.runId, taskMetadata.cwd);
-      const pausedAttempt = await store.transitionWorkAttempt({
-        tenantId,
-        runtimeRunId: task.runId,
-        status: 'cancelled',
-        resultEnvelope: pausedContext.resultEnvelope,
-        checkpoint: pausedContext.checkpoint,
-        publishState: 'rejected',
-        failure: 'superseded_by_work_order_pause',
+      } : undefined;
+      if (!inboxReceipt && task && !isRunTerminal(task.status))
+        await stopPreparedOrgAgentAttempt(this.config, tenantId, workOrderId, work.currentAttemptNo);
+      await store.pauseWorkOrder({
+        tenantId, workOrderId, expectedVersion, ...(control ? { control } : {}),
+        ...(task && taskMetadata
+          ? { pauseContext: buildPausedAttemptContext(task.runId, taskMetadata.cwd) } : {}),
+        ...(inboxReceipt ? { controlLease: inboxReceipt } : {}),
       });
-      if (!pausedAttempt || pausedAttempt.workOrderId !== workOrderId)
-        throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_CHECKPOINT_FAILED');
-      runtimeRunController.abort(task.runId);
-      await resolveSessionCatalog(this.config).markStatus(task.sessionId, 'error').catch(() => undefined);
     }
-    await store.pauseWorkOrder({ tenantId, workOrderId, expectedVersion });
+    if (inboxReceipt) {
+      try {
+        await stopPreparedOrgAgentAttempt(
+          this.config, tenantId, workOrderId,
+          prepared?.sourceAttemptNo ?? work.currentAttemptNo,
+        );
+      } catch (error) {
+        await failPreparedOrgAgentControlCommand({
+          store, tenantId, workOrderId, inboxReceipt, operationError: error,
+        });
+        throw error;
+      }
+      await store.completeControlCommand({ tenantId, workOrderId, inboxReceipt })
+        .catch(error => { throw controlCommandCompletionUnsettled(error); });
+    }
     return task;
   }
 
@@ -743,26 +958,6 @@ export class OrgAgentBackgroundWorkCoordinator {
   }
 }
 
-function withWorkOrderContinuationPrompt(
-  basePrompt: string,
-  work: OrgAgentWorkOrder,
-  previousAttemptPrompt: string,
-): string {
-  const controlPrompt = withWorkOrderControlPrompt(work);
-  return `${basePrompt}\n\n${previousAttemptPrompt}${controlPrompt}`;
-}
-
-function withWorkOrderControlPrompt(work: OrgAgentWorkOrder): string {
-  if (work.control.supplements.length === 0) return '';
-  const additions = work.control.supplements
-    .map(
-      (item, index) =>
-        `${index + 1}. [${item.kind === 'review' ? '复核要求' : '补充要求'}] ${item.text}`,
-    )
-    .join('\n');
-  return `\n\n<work-order-continuation revision="${work.control.revision}">\n${additions}\n</work-order-continuation>`;
-}
-
 export function isOrgTaskVisible(task: RunRecord, context: ToolCallContext): boolean {
   const caller = context.channelContext.orgAgentChannel;
   const owner = parseBackgroundTaskMetadata(task)?.orgAgentChannel;
@@ -792,33 +987,6 @@ export function isOrgTaskVisible(task: RunRecord, context: ToolCallContext): boo
     caller.externalActor.corpId === creator.corpId &&
     caller.externalActor.openId === creator.openId
   );
-}
-
-function failedResult(status: 'failed' | 'cancelled', message: string): StoredBackgroundResult {
-  return {
-    status,
-    text: '',
-    errorMessage: message,
-    totalTokens: 0,
-    toolUseCount: 0,
-    turnCount: 0,
-    durationMs: 0,
-  };
-}
-
-function terminalResult(
-  status: 'completed' | 'failed' | 'cancelled',
-  message: string,
-): StoredBackgroundResult {
-  return {
-    status,
-    text: status === 'completed' ? message : '',
-    ...(status === 'completed' ? {} : { errorMessage: message }),
-    totalTokens: 0,
-    toolUseCount: 0,
-    turnCount: 0,
-    durationMs: 0,
-  };
 }
 
 function isRunTerminal(status: RunStatus): boolean {

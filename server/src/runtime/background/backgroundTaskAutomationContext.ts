@@ -4,6 +4,8 @@ import type { RuntimeSessionRecord } from '../sessionCatalog.js';
 import { deriveChildAutomationFence } from '../subagent/subagentRunner.js';
 import type { RunContext } from '../types.js';
 import type { BackgroundAgentTaskMetadata } from './backgroundTaskMetadata.js';
+import type { OrgAgentWorkerTaskLineage } from '../orgAgentTaskWorkspace.js';
+import type { OrgAgentWorkerTaskAuthority } from '../orgAgentWorkerCapability.js';
 
 export function deriveBackgroundTaskAutomationFence(
   parentFence: ToolCallContext['automationFence'],
@@ -36,6 +38,8 @@ export function buildBackgroundTaskParentContext(input: {
   channelContext: ToolCallContext['channelContext'];
   env: ToolCallContext['env'];
   runtimeIsolationRequirement: ToolCallContext['runtimeIsolationRequirement'];
+  orgAgentTaskLineage?: OrgAgentWorkerTaskLineage;
+  orgAgentTaskAuthority?: OrgAgentWorkerTaskAuthority;
   signal: AbortSignal;
 }): ToolCallContext {
   const { record, metadata, taskSession } = input;
@@ -63,6 +67,9 @@ export function buildBackgroundTaskParentContext(input: {
     runId: record.runId,
     toolCallId: metadata.parentToolCallId,
     ...(input.runtimeIsolationRequirement ? { runtimeIsolationRequirement: input.runtimeIsolationRequirement } : {}),
+    ...(input.orgAgentTaskLineage ? { orgAgentTaskLineage: input.orgAgentTaskLineage,
+      executionRole: 'worker' as const, runtimeIsolationAttested: true } : {}),
+    ...(input.orgAgentTaskAuthority ? { orgAgentTaskAuthority: input.orgAgentTaskAuthority } : {}),
     ...(metadata.automationFence ? { automationFence: metadata.automationFence } : {}),
     signal: input.signal,
   };

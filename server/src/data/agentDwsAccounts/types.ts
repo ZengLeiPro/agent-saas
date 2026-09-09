@@ -1,5 +1,11 @@
 export type AgentDwsAccountStatus = 'draft' | 'authorizing' | 'active' | 'paused' | 'error';
 export type AgentDwsRuntimeStatus = 'stopped' | 'starting' | 'ready' | 'error';
+export type AgentDwsAuthorizationMode = 'reauthorize' | 'replace_identity';
+export interface AgentDwsIdentityCleanupPending {
+  previous: { profileId: string; corpId: string; dingtalkUserId: string; identityUpdatedAt: string };
+  streamStopped: boolean;
+  contextInvalidated: boolean;
+}
 
 export type AgentDwsEventKind = 'at_me' | 'all_direct';
 export type AgentDwsContextPolicyMode = 'none' | 'selected' | 'all';
@@ -50,6 +56,8 @@ export interface AgentDwsAccountRecord {
   profileId?: string;
   status: AgentDwsAccountStatus;
   runtimeStatus: AgentDwsRuntimeStatus;
+  /** Snapshot at record read time; absent in legacy/in-memory callers means unknown. */
+  runtimeLeaseActive?: boolean;
   eventKinds: AgentDwsEventKind[];
   /** Optional only for compatibility with callers holding a pre-policy snapshot. */
   contextPolicy?: AgentDwsContextPolicy;
@@ -60,6 +68,12 @@ export interface AgentDwsAccountRecord {
   createdBy: string;
   /** Advances only when the authenticated DingTalk identity changes. */
   identityUpdatedAt?: string;
+  authorizationIntent?: {
+    mode: AgentDwsAuthorizationMode;
+    expectedProfileId?: string;
+    expectedIdentityUpdatedAt?: string;
+  };
+  identityCleanupPending?: AgentDwsIdentityCleanupPending;
   updatedAt: string;
   updatedBy: string;
 }

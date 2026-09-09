@@ -28,6 +28,7 @@ import type { UserIdentity } from '../types/index.js';
 import type { Logger } from '../utils/logger.js';
 import { governancePersonaForUser } from '../governance/subject/platformIdentity.js';
 import { createOrgAgentRuntimeCapabilityProbe } from './orgAgentRuntimeCapability.js';
+import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 
 export type ConnectorServerRemoteResolver = (principal: DwsWorkspacePrincipal) => Promise<{
   baseUrl: string;
@@ -118,6 +119,7 @@ export async function createAgentDwsRuntime(options: {
   orgAgentStore: Pick<OrgAgentStore, 'get'>;
   runPreflightService: Pick<RunPreflightService, 'preflight'>;
   governanceAuditStore: GovernanceAuditStore;
+  backgroundTasks?: Pick<BackgroundTaskRuntime, 'get' | 'cancel' | 'controlWorkOrder'>;
   resolveServerRemote: ConnectorServerRemoteResolver;
   remoteAvailable: boolean;
   enableWorker: boolean;
@@ -247,6 +249,7 @@ export async function createAgentDwsRuntime(options: {
         }),
         ...(options.pgRunStore ? { runStore: options.pgRunStore } : {}),
         eventStore: options.pgEventStore,
+        ...(options.backgroundTasks ? { backgroundTasks: options.backgroundTasks } : {}),
         logger: options.logger.child('AgentDwsMessageRouter'),
       })
     : undefined;
@@ -276,7 +279,11 @@ export async function createAgentDwsRuntime(options: {
       agentCwd: options.agentCwd,
       resolveServerRemote: options.resolveServerRemote,
     }),
-    onBeforeAccountIdentityChange: async account => {
+    stopPreviousIdentity: async account => {
+      // 账号 CAS 已提交后再停止旧流，避免 CAS 冲突留下 active 旧身份但 stream/context 被清空。
+      await eventGateway.stopAccount(account.accountId);
+    },
+    invalidatePreviousIdentityContext: async account => {
       await contextRuntime?.invalidateAccountIdentity(account);
     },
     onConnected: async account => {
@@ -290,6 +297,12 @@ export async function createAgentDwsRuntime(options: {
     },
     logger: options.logger.child('AgentDwsAuthFlow'),
   });
+  await authFlowService.recoverPendingIdentityCleanup().catch(error => {
+    options.logger.warn(
+      `Agent DWS identity cleanup recovery deferred: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+  authFlowService.startIdentityCleanupRecovery();
   // Approval recovery rechecks the current DWS account identity before resuming side effects.
   const approvalService = options.messageStore && options.orgGroupAgentStore
     && options.pgRunStore && options.runtimeScheduler

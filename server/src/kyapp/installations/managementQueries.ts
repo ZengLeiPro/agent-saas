@@ -27,6 +27,7 @@ export class KyAppManagementQueries {
     private readonly systems: PgKyAppSystemStore,
     tablePrefix?: string,
     private readonly eventsTable?: string,
+    private readonly resolveTenantName?: (tenantId: string) => string | undefined,
   ) {
     this.prefix = governanceTablePrefix(tablePrefix);
   }
@@ -74,17 +75,28 @@ export class KyAppManagementQueries {
   }
   async connectionsForSystem(systemId: string) {
     const result = await this.pool.query(
-      `SELECT i.tenant_id,i.installation_id,i.status,e.execution_id
+      `SELECT i.tenant_id,i.installation_id,i.status,e.execution_id,
+        COALESCE(i.status='enabled' AND i.registered_digest IS NOT NULL
+          AND i.registered_digest=d.published_digest AND r.live_status='ok'
+          AND r.ready_status='ok' AND r.manifest_digest=i.registered_digest,FALSE) AS ready
       FROM ${this.systems.installationsTable} i
-      LEFT JOIN ${this.prefix}_ky_app_onboard_executions e USING (tenant_id,system_id,installation_id)
+      JOIN ${this.systems.definitionsTable} d USING(system_id)
+      LEFT JOIN ${this.prefix}_ky_app_installation_runtime r USING(installation_id)
+      LEFT JOIN LATERAL (
+        SELECT execution_id FROM ${this.prefix}_ky_app_onboard_executions
+        WHERE tenant_id=i.tenant_id AND system_id=i.system_id AND installation_id=i.installation_id
+        ORDER BY updated_at DESC,execution_id LIMIT 1
+      ) e ON true
       WHERE i.system_id=$1`,
       [systemId],
     );
     return result.rows.map((row) => ({
       tenantId: String(row.tenant_id),
+      tenantName: this.resolveTenantName?.(String(row.tenant_id)) ?? String(row.tenant_id),
       installationId: String(row.installation_id),
       status: String(row.status),
       executionId: row.execution_id ? String(row.execution_id) : null,
+      ready: row.ready === true,
     }));
   }
   async systemDetail(systemId: string, _actor: string) {
@@ -117,6 +129,7 @@ export class KyAppManagementQueries {
     return result.rows.map((row) => ({
       executionId: row.execution_id,
       tenantId: row.tenant_id,
+      tenantName: this.resolveTenantName?.(String(row.tenant_id)) ?? String(row.tenant_id),
       systemId: row.system_id,
       installationId: row.installation_id,
       status: row.status,
@@ -275,6 +288,7 @@ export class KyAppManagementQueries {
       installations: rows.map((row) => ({
         installationId: String(row.installation_id),
         tenantId: String(row.tenant_id),
+        tenantName: this.resolveTenantName?.(String(row.tenant_id)) ?? String(row.tenant_id),
         systemId: String(row.system_id),
         systemName: String(row.name),
         icon: row.icon ?? null,

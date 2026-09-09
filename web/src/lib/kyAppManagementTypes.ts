@@ -50,6 +50,7 @@ export interface OnboardRequest {
 export interface OnboardExecution {
   executionId: string;
   tenantId: string;
+  tenantName?: string;
   systemId: string;
   installationId: string;
   request: OnboardRequest;

@@ -374,7 +374,9 @@ describePg('DWS V34 PostgreSQL 跨版本兼容', () => {
       VALUES ('legacy-changed','tenant-a','inbox-v1','event-changed','chatbot_message','conv-changed',
         'changed','{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'pending',0,
         NOW()-INTERVAL '1 minute',NOW())`);
-    await accountStore.markAuthorizing('tenant-a', 'inbox-v1', 13, 'admin:reauthorize');
+    await accountStore.markAuthorizing(
+      'tenant-a', 'inbox-v1', 13, 'admin:reauthorize', 'replace_identity',
+    );
     const reauthorized = await accountStore.markAuthorized('tenant-a', 'inbox-v1', 14, {
       profileId: 'corp-v2:user-v2', corpId: 'corp-v2', dingtalkUserId: 'user-v2',
     }, 'admin:reauthorize');

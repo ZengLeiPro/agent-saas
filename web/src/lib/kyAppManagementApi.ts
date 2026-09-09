@@ -55,6 +55,7 @@ export interface SystemDefinition {
 export interface InstallationItem {
   installationId: string;
   tenantId: string;
+  tenantName?: string;
   systemId: string;
   systemName: string;
   status: string;

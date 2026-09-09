@@ -70,7 +70,7 @@ const workspace = {
       effectiveConfigComputation: {
         publishedAgent: {
           skillIds: ['skill-1', 'skill-2'],
-          knowledgeSkillIds: [],
+          knowledgeSkillIds: ['knowledge-skill-1'],
           sourceIds: ['source-1', 'source-2'],
           executionMode: 'dispatcher',
           enabled: true,
@@ -86,6 +86,39 @@ const workspace = {
           liveDeny: true,
           accountStatus: 'active',
         },
+      },
+      readiness: {
+        status: 'blocked',
+        checks: [{
+          code: 'binding.live_deny', severity: 'blocking',
+          message: '当前群已开启立即阻断', fixTarget: 'group_binding',
+        }],
+      },
+      effectiveConfigPreview: {
+        version: 1,
+        layers: [
+          { source: 'published', label: '当前发布值', available: true,
+            summaries: ['可用技能 3 项'] },
+          { source: 'channel', label: '渠道上限', available: true,
+            summaries: ['可用工具 3 项'] },
+          { source: 'conversation', label: '会话已保存值', available: true,
+            summaries: ['已保存技能 1 项', '完成后回复原会话'] },
+        ],
+        effective: {
+          label: '当前生效范围', status: 'available', unavailableReasons: [],
+          instructionsConfigured: true, contextEnabled: true,
+          frontdesk: { status: 'available', skillCount: 1, toolCount: 1, sourceCount: 1 },
+          worker: { status: 'task_compile_required', skillCount: 1, sourceCount: 1,
+            dwsResourceCount: 0 },
+          completion: '回复原会话', taskVisibility: '群内可见',
+        },
+        warnings: [{
+          code: 'conversation.skills_narrowed', severity: 'info',
+          message: '会话使用的技能少于当前发布值',
+        }, {
+          code: 'conversation.full_snapshot', severity: 'info',
+          message: '当前会话按完整配置快照生效；预览不表示未填写项会自动恢复继承',
+        }],
       },
     },
   ],
@@ -167,6 +200,46 @@ describe('GroupAgentWorkspacePanel', () => {
           return jsonResponse({ status: 'queued' }, 202);
         return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
       });
+  });
+
+  it('用人话展示群就绪阻断项', async () => {
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByText('尚未就绪')).toBeTruthy();
+    expect(screen.getByText(/当前群已开启立即阻断；请检查群配置/)).toBeTruthy();
+  });
+
+  it('分层展示生效来源、收窄和完整快照提示，不 dump JSON', async () => {
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByRole('region', { name: '生效配置预览' })).toBeTruthy();
+    expect(screen.getByText('当前发布值')).toBeTruthy();
+    expect(screen.getByText('渠道上限')).toBeTruthy();
+    expect(screen.getByText('会话已保存值')).toBeTruthy();
+    expect(screen.getByText('当前生效范围')).toBeTruthy();
+    expect(screen.getByText('前台可用')).toBeTruthy();
+    expect(screen.getByText(/Worker（任务创建时确认）/)).toBeTruthy();
+    expect(screen.getByText(/前台：技能 1 项、工具 1 项、知识源 1 个/)).toBeTruthy();
+    expect(screen.getByText(
+      /Worker（任务创建时确认）：技能 1 项、知识源 1 个、钉钉资源 0 个/,
+    )).toBeTruthy();
+    expect(screen.getByText(/范围说明：会话使用的技能少于当前发布值/)).toBeTruthy();
+    expect(screen.getByText(/不表示未填写项会自动恢复继承/)).toBeTruthy();
+    expect(screen.queryByText(/"published"/)).toBeNull();
+  });
+
+  it('把仅作为知识发布的技能纳入群能力目录', async () => {
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByText('knowledge-skill-1')).toBeTruthy();
+  });
+
+  it('群指令输入与后端运行预算一致且明确提示长资料处理方式', async () => {
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    const input = await screen.findByLabelText('群 Agent 指令');
+    expect(input.getAttribute('maxlength')).toBe('20000');
+    expect(screen.getByText(/更长资料请配置为知识源/)).toBeTruthy();
   });
 
   it('active 账号可从 Personal Stream 已观测群创建 shadow binding', async () => {
@@ -418,6 +491,7 @@ describe('GroupAgentWorkspacePanel', () => {
   it('空能力目录与不可用知识源目录展示明确限制并保留既有值', async () => {
     const emptyWorkspace = structuredClone(workspace);
     emptyWorkspace.bindings[0].effectiveConfigComputation.publishedAgent.skillIds = [];
+    emptyWorkspace.bindings[0].effectiveConfigComputation.publishedAgent.knowledgeSkillIds = [];
     emptyWorkspace.bindings[0].effectiveConfigComputation.channelCeiling.toolNames = [];
     emptyWorkspace.bindings[0].effectiveConfigComputation.channelCeiling.contextDirectoryAvailable = false;
     vi.mocked(authFetch).mockImplementation(async (path, init) => {

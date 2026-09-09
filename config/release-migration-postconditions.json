@@ -70,6 +70,20 @@
           "params": ["$tablePrefix"]
         }
       ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:7920a89c4ccc3bc1dc8973c84dda685a176b306c59abe18acc1ab4e5b8a88232",
+      "checks": [
+        {
+          "id": "org-group-binding-generation-v46",
+          "configPath": "runtimeEventStore",
+          "description": "binding 身份分代可空列、旧 writer 唯一约束和查询索引完整有效",
+          "sql": "WITH b AS (SELECT to_regclass($1 || '_org_agent_channel_bindings') AS oid), cols AS (SELECT count(*)=2 AS ok FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 || '_org_agent_channel_bindings' AND column_name IN ('retired_at','logical_conversation_id') AND is_nullable='YES' AND ((column_name='retired_at' AND data_type='timestamp with time zone') OR (column_name='logical_conversation_id' AND data_type='text'))), old_unique AS (SELECT EXISTS (SELECT 1 FROM pg_constraint,b WHERE conrelid=b.oid AND contype='u' AND pg_get_constraintdef(pg_constraint.oid)='UNIQUE (account_id, conversation_id)') AS ok), generation_idx AS (SELECT EXISTS (SELECT 1 FROM pg_index,b WHERE indrelid=b.oid AND indexrelid=to_regclass($1 || '_org_agent_channel_bindings_identity_generation_idx') AND indisvalid AND indisready) AS ok) SELECT cols.ok AND old_unique.ok AND generation_idx.ok AS ok FROM cols,old_unique,generation_idx",
+          "params": ["$tablePrefix"]
+        }
+      ]
     }
   ]
 }

@@ -54,6 +54,12 @@ export function createOrgAgentChannelPolicyRuntimeOptions(
       orgAgentChannelPolicyEvaluator: createOrgAgentChannelPolicyEvaluator(store, accountStore, agentStore),
     } : {}),
     ...(agentStore && userStore && membershipStore && assignmentStore ? {
+      resolveOrgAgentRequesterById: (userId: string) => {
+        const user = userStore.findById(userId);
+        return !user || user.disabled ? undefined : { id: user.id, username: user.username,
+          role: user.role, tenantId: user.tenantId, realName: user.realName,
+          dingtalkStaffId: user.dingtalkStaffId };
+      },
       authorizeOrgAgentRequesterLive: async (input: Parameters<
         NonNullable<import('../runtime/rawRuntimeRunDispatchTypes.js').RawRuntimeRunDispatchConfig[
           'authorizeOrgAgentRequesterLive'

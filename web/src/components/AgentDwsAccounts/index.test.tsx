@@ -34,6 +34,15 @@ const account: AgentDwsAccount = {
   revision: 1,
   createdAt: "2026-08-13T00:00:00.000Z",
   updatedAt: "2026-08-13T00:00:00.000Z",
+  readiness: {
+    status: "blocked",
+    checks: [{
+      code: "account.authorization",
+      severity: "blocking",
+      message: "成员账号尚未完成有效授权",
+      fixTarget: "account_authorization",
+    }],
+  },
 };
 
 const awaitingSession: AgentDwsAuthSession = {
@@ -128,6 +137,8 @@ describe("AgentDwsAccountsPage", () => {
     expect(await screen.findByText("销售助手")).toBeTruthy();
     expect(screen.getByText("sa***01")).toBeTruthy();
     expect(screen.getByText("@我的消息、全部单聊")).toBeTruthy();
+    expect(screen.getByText("尚未就绪")).toBeTruthy();
+    expect(screen.getByText(/成员账号尚未完成有效授权；请检查账号授权/)).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "发起 OAuth" }));
 
@@ -136,6 +147,50 @@ describe("AgentDwsAccountsPage", () => {
     expect(authorizationLink.getAttribute("href")).toBe(awaitingSession.authorizationUrl);
     const authorizeCall = vi.mocked(authFetch).mock.calls.find((call) => String(call[0]).includes("/authorize?"));
     expect(authorizeCall?.[0]).toBe("/api/agent-dws-accounts/adws-1/authorize?tenantId=tenant-a");
-    expect(JSON.parse(String(authorizeCall?.[1]?.body))).toEqual({ expectedRevision: 1 });
+    expect(JSON.parse(String(authorizeCall?.[1]?.body))).toEqual({
+      expectedRevision: 1,
+      mode: "reauthorize",
+    });
+  });
+
+  it("换绑成员明确提示旧身份隔离风险，并提交 replace_identity 意图", async () => {
+    const active = {
+      ...account,
+      profileId: "corp-a:old-user",
+      corpId: "corp-a",
+      dingtalkUserId: "old-user",
+      status: "active" as const,
+      runtimeStatus: "ready" as const,
+      identityUpdatedAt: "2026-09-08T00:00:00.000Z",
+      revision: 4,
+    };
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (path === "/api/agent-dws-accounts?tenantId=tenant-a") {
+        return jsonResponse({ accounts: [active] });
+      }
+      if (path === "/api/org-agents?tenantId=tenant-a") {
+        return jsonResponse([{ id: "agent-sales", name: "销售助手" }]);
+      }
+      if (String(path).includes("/authorize?") && init?.method === "POST") {
+        return jsonResponse({
+          account: { ...active, status: "authorizing", revision: 5 },
+          session: awaitingSession,
+        }, 202);
+      }
+      return jsonResponse({ error: "unexpected request" }, 500);
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<AgentDwsAccountsPage tenantId="tenant-a" />);
+
+    await user.click(await screen.findByRole("button", { name: "换绑成员" }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("旧身份的群绑定、消息和待投递结果"));
+    const authorizeCall = vi.mocked(authFetch).mock.calls.find((call) =>
+      String(call[0]).includes("/authorize?"));
+    expect(JSON.parse(String(authorizeCall?.[1]?.body))).toEqual({
+      expectedRevision: 4,
+      mode: "replace_identity",
+    });
   });
 });

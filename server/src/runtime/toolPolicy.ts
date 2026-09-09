@@ -1,6 +1,6 @@
 import type { ToolDescriptor } from '../agent/toolRuntime.js';
 import { decideSharedGroupDwsAction } from '../dws/sharedGroupBusinessPolicy.js';
-import { isAttestedOrgAgentWorkerTaskTool } from './orgAgentWorkerCapability.js';
+import { isAttestedOrgAgentWorkerTaskContext, isAttestedOrgAgentWorkerTaskTool } from './orgAgentWorkerCapability.js';
 import type { RunContext, ToolPolicy, ToolPolicyDecision } from './types.js';
 
 const INTERACTIVE_PERMISSION_TOOLS = new Set([
@@ -67,6 +67,8 @@ export class DefaultToolPolicy implements ToolPolicy {
         channel: channelPolicy,
         resourceAllowlist: channelPolicy.dwsResourceIds,
         ...(_context.executionRole ? { executionRole: _context.executionRole } : {}),
+        ...(_context.executionRole === 'worker'
+          ? { workerTaskAuthorized: isAttestedOrgAgentWorkerTaskContext(_context) } : {}),
       });
       if (!decision.allowed) return { type: 'deny', reason: decision.reason };
       return decision.requiresHumanApproval

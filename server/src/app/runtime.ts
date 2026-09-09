@@ -2743,7 +2743,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
     enableWorker: enableSchedulerWorker, isExecutionEnabled: isRuntimeExecutionEnabled, logger: serverLogger,
-    isRuntimeWorkerV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready,
+    isRuntimeWorkerV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready, backgroundTasks: rawRuntimeConfig.backgroundTasks,
   });
   if (feishuConnectionStore && userStore && resolvedFeishuConnector && feishuConnectorScopes) {
     feishuTokenBroker = new FeishuTokenBroker({

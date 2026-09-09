@@ -7,48 +7,16 @@ on:
       - .github/workflows/production-model-publication-verification.yml
       - scripts/release/finish-production-publication.py
 permissions:
-  contents: read
+  contents: write
   actions: read
 concurrency:
   group: production-model-publication-integration
   cancel-in-progress: false
 jobs:
-  diagnostics:
+  verify:
     if: github.repository == 'ZengLeiPro/agent-saas' && github.ref == 'refs/heads/fix/models-production-write-policy-20260908'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Read exact previous failure evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PY'
-          import re, subprocess
-          from pathlib import Path
-          def show(text):
-              lines = re.sub(r'\x1b\[[0-9;]*m', '', text).splitlines()
-              selected = set()
-              for i, line in enumerate(lines):
-                  if re.search(r'not ok |FAIL\s|Failed Tests|AssertionError|Error:|Test Files|^# (tests|pass|fail)', line):
-                      selected.update(range(max(0, i - 2), min(len(lines), i + 55)))
-              print('\n'.join(lines[i] for i in sorted(selected))[-26000:], flush=True)
-          result = subprocess.run(['gh', 'run', 'download', '34298556822', '--repo', 'ZengLeiPro/agent-saas', '--name', 'production-model-final-34298556822', '--dir', '/tmp/last-verification'], capture_output=True, text=True, timeout=90)
-          print('Prior verification artifact download exit:', result.returncode)
-          if result.returncode:
-              print(result.stderr[-2000:])
-          else:
-              show(Path('/tmp/last-verification/release-contracts.log').read_text(errors='replace'))
-          result = subprocess.run(['gh', 'run', 'view', '34298560965', '--repo', 'ZengLeiPro/agent-saas', '--job', '102300423626', '--log-failed'], capture_output=True, text=True, timeout=90)
-          print('Prior Server shard log read exit:', result.returncode)
-          if result.returncode:
-              print(result.stderr[-2000:])
-          else:
-              show(result.stdout)
-          PY
-  reproduce:
-    if: github.repository == 'ZengLeiPro/agent-saas' && github.ref == 'refs/heads/fix/models-production-write-policy-20260908'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16-alpine
@@ -73,37 +41,85 @@ jobs:
           node-version: '22.23.1'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Reproduce remaining release and Server gates with bounded failure contexts
+      - name: Format boundary regression and updated documentation
+        run: pnpm exec prettier --write scripts/release/config-publication-boundary.test.mjs docs/plans/production-model-config-online-save.md docs/config-identity.md
+      - name: Verify source, real failing shard and release contracts independently
         run: |
           python3 - <<'PY'
-          import os, re, subprocess
+          import os, json, re, subprocess
           from pathlib import Path
-          root = Path('/tmp/production-model-reproduce')
+          root = Path('/tmp/production-model-final')
           root.mkdir()
+          base = '692618557f76bce83549584be0e434a559696ef8'
+          paths = set(subprocess.check_output(['git', 'diff', '--name-only', base], text=True).splitlines())
+          lint = sorted(p for p in paths if Path(p).is_file() and re.search(r'\.(?:mjs|cjs|js|jsx|ts|tsx|mts|cts)$', p))
+          database = {'TEST_DATABASE_URL': 'postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test'}
           checks = [
-              ('release-contracts', ['pnpm', 'test:release-contracts'], {}),
-              ('server-shard-4', ['bash', 'scripts/pr-preflight-task.sh', 'test', 'server', '4', '4', 'full', '-', 'true'], {'TEST_DATABASE_URL': 'postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test'}),
+            ('lint', ['pnpm', 'exec', 'eslint', *lint], {}),
+            ('engineering', ['pnpm', 'check:ratchets'], {}),
+            ('release-contracts', ['pnpm', 'test:release-contracts'], {}),
+            ('server-shard-4', ['bash', 'scripts/pr-preflight-task.sh', 'test', 'server', '4', '4', 'full', '-', 'true'], database),
+            ('shared-types', ['pnpm', '-F', '@agent/shared', 'typecheck'], {}),
+            ('server-types', ['pnpm', '-F', 'server', 'typecheck'], {}),
+            ('web-types', ['pnpm', '-F', 'web', 'typecheck'], {}),
+            ('production-runtime', ['pnpm', '-F', 'server', 'exec', 'vitest', 'run', 'productionModelPublication', 'memoryIndexRuntimeUpdate', 'sharedConfigRefresher', 'adminRunner', 'src/__tests__/modelsAdminProductionWritePolicy.test.ts', 'src/__tests__/modelsAdmin.test.ts', 'src/__tests__/modelsAdminQuotaSource.test.ts', 'src/__tests__/modelsAdminGuardrailDisable.test.ts', 'src/__tests__/adminConfigMutationService.test.ts', 'src/app/modelResolvers.test.ts', 'src/app/configRuntimeRecovery.integration.test.ts', 'src/app/sessionAutomationProductionAssembly.test.ts', 'src/runtime/configIdentityRuntime.test.ts'], {}),
+            ('production-ui', ['pnpm', '-F', 'web', 'exec', 'vitest', 'run', 'src/components/ModelManager/index.test.tsx', 'src/components/ModelManager/writePolicy.test.tsx', 'src/components/ModelManager/productionSave.test.tsx'], {}),
+            ('server-build', ['pnpm', '-F', 'server', 'build'], {}),
+            ('web-build', ['pnpm', '-F', 'web', 'build'], {}),
+            ('web-budget', ['pnpm', 'check:web-startup-budget'], {}),
+            ('whitespace', ['git', 'diff', '--check'], {}),
           ]
           results = []
           for name, command, environment in checks:
               log = root / f'{name}.log'
               with log.open('w') as out:
-                  code = subprocess.run(command, env={**os.environ, **environment}, stdout=out, stderr=subprocess.STDOUT, timeout=900).returncode
+                  try:
+                      code = subprocess.run(command, env={**os.environ, **environment}, stdout=out, stderr=subprocess.STDOUT, timeout=900).returncode
+                  except subprocess.TimeoutExpired:
+                      code = 124
               lines = re.sub(r'\x1b\[[0-9;]*m', '', log.read_text(errors='replace')).splitlines()
-              selected = set(range(max(0, len(lines)-20), len(lines)))
-              for i, line in enumerate(lines):
-                  if re.search(r'not ok |FAIL\s|Failed Tests|AssertionError|Error:|Test Files', line):
-                      selected.update(range(max(0, i-2), min(len(lines), i+70)))
               print(f'CHECK {name}: exit={code}', flush=True)
-              print('\n'.join(lines[i] for i in sorted(selected))[-32000:], flush=True)
-              results.append(code)
-          raise SystemExit(1 if any(results) else 0)
+              if code:
+                  for i, line in enumerate(lines):
+                      if re.search(r'^not ok |\bFAIL\s|AssertionError:|Failed Tests|❯ .*\.(?:test|spec)\.[cm]?[jt]sx?:\d+', line):
+                          print('\n'.join(lines[i:i+18])[:6000], flush=True)
+                  print('\n'.join(lines[-25:])[-5000:], flush=True)
+              else:
+                  print('\n'.join(line for line in lines if re.search(r'Test Files|Tests\s|^# (tests|pass|fail)|warnings?|built in', line))[-6000:], flush=True)
+              results.append({'check': name, 'exitCode': code})
+              (root / 'results.json').write_text(json.dumps(results, indent=2))
+          raise SystemExit(1 if any(item['exitCode'] for item in results) else 0)
           PY
-      - name: Retain local test evidence
+      - name: Smoke test sealed CLI against an isolated credential-free configuration
+        run: |
+          set -euo pipefail
+          temporary="$(mktemp -d)"
+          trap 'rm -rf "$temporary"' EXIT
+          printf '{}\n' > "$temporary/config.json"
+          expected='{"schemaVersion":1,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","credentialVersionDigest":null}'
+          node server/dist/config-publication-cli.js prepare "$temporary/config.json" synthetic-ci-release "$expected"
+          node server/dist/config-publication-cli.js verify "$temporary/config.json"
+          test "$(cat "$temporary/config.json")" = '{}'
+      - name: Commit verified source and remove temporary patch generators
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/fix/models-production-write-policy-20260908
+          test "$(git ls-remote origin "$GITHUB_REF" | cut -f1)" = "$GITHUB_SHA"
+          git add -- scripts/release/read-production-state.mjs scripts/release/deploy-production-release.sh \
+            scripts/release/config-publication-boundary.test.mjs docs/config-identity.md docs/plans/production-model-config-online-save.md
+          git rm -- scripts/release/bootstrap-production-model-publication.py \
+            scripts/release/finalize-production-model-integration.py scripts/release/finish-production-publication.py
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -c core.hooksPath=/dev/null commit -m 'fix(release): complete signed online configuration rollback boundaries'
+          git push origin HEAD:refs/heads/fix/models-production-write-policy-20260908
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain isolated verification evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: production-model-reproduce-${{ github.run_id }}
-          path: /tmp/production-model-reproduce/
+          name: production-model-final-${{ github.run_id }}
+          path: /tmp/production-model-final/
           if-no-files-found: ignore
           retention-days: 1

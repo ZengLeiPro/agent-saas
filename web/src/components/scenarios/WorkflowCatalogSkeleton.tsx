@@ -1,10 +1,11 @@
 import { cn } from '@/lib/utils';
 import { CAPABILITY_SURFACE } from '@/components/CapabilityCenter/CatalogUi';
+import { WORKFLOW_CATALOG_GRID_CLASS } from './workflowCatalogLayout';
 
 export function WorkflowCatalogSkeleton() {
   return (
     <div
-      className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+      className={WORKFLOW_CATALOG_GRID_CLASS}
       aria-label="正在加载 AI 同事工作流"
       aria-busy="true"
     >

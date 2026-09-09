@@ -28,7 +28,7 @@ test('Release Evidence is the first isolated stage of manual Staging RC deployme
   assert.doesNotMatch(workflow, /workflow_run:/u);
   assert.match(
     workflow,
-    /prepare-evidence:[\s\S]*environment: production[\s\S]*build-deploy-verify:[\s\S]*needs: prepare-evidence[\s\S]*environment: staging/u,
+    /prepare-evidence:[\s\S]*environment: production[\s\S]*build-deploy-verify:[\s\S]*needs: \[prepare-evidence, prepare-acs\][\s\S]*environment: staging/u,
   );
   assert.ok(workflow.indexOf('prepare-evidence:') < workflow.indexOf('build-deploy-verify:'));
   assert.match(workflow, /prepare-evidence:[\s\S]*FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true/u);

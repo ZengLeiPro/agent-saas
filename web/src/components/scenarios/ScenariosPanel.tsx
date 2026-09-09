@@ -36,6 +36,7 @@ import { useScenarioFilters } from "./useScenarioFilters";
 import { friendlyIndustry } from "./friendlyMappings";
 import { OUTCOME_ICON } from "./outcomeIcons";
 import { WorkflowCatalogSkeleton } from "./WorkflowCatalogSkeleton";
+import { WORKFLOW_CATALOG_GRID_CLASS } from "./workflowCatalogLayout";
 import {
   filterWorkflowScenarios,
   isHookScenario,
@@ -527,7 +528,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
       ) : (
         <div
           key={`${filters.activeOutcome}-${filters.activeRole}-${filters.activeIndustry}-${filters.activeVertical}-${filters.activeBusinessModel}-${filters.activeMaturity}`}
-          className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
+          className={WORKFLOW_CATALOG_GRID_CLASS}
           data-testid="workflow-catalog"
         >
           {scenarios.map((scenario, index) => (
@@ -709,7 +710,7 @@ function LegacyScenariosPanel({
             : "该岗位暂无任务模板"}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div className={WORKFLOW_CATALOG_GRID_CLASS}>
           {scenarios.map((scenario) => (
             <ScenarioCard key={scenario.id} scenario={scenario} onTry={handleTry} onOpenDetail={setDetail} />
           ))}

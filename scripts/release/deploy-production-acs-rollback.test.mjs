@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -133,3 +133,106 @@ for (const [label, failure, requiredLaterActions] of [
     assert.equal(value.log.includes(backupRemoval(value)), false);
   });
 }
+
+// Execute the actual production snapshot and EXIT dispatcher after the function
+// owning all rollback locals has returned. The old test-only entry point supplied
+// globals and could not catch the production scope regression.
+async function runAfterScopeExit(
+  t,
+  { mutated = false, committed = false, failure = '', cancelFailure = false } = {},
+) {
+  const value = await fixture();
+  t.after(() => rm(value.root, { recursive: true, force: true }));
+  const source = await readFile(SCRIPT, 'utf8');
+  const deployStart = source.indexOf('deploy_acs() {');
+  const snapshotStart = source.indexOf('  DEPLOY_ACS_ROLLBACK_COMMITTED=false', deployStart);
+  const snapshotEnd = source.indexOf('  arm_deploy_rollback cleanup_acs_failure', snapshotStart);
+  assert.ok(snapshotStart > deployStart && snapshotEnd > snapshotStart);
+  const prefix = source.slice(0, source.indexOf('\nAPP_COLOR_ROOT='));
+  const lifecycle = source.slice(
+    source.indexOf('# BEGIN deploy rollback cleanup lifecycle'),
+    source.indexOf('# END deploy rollback cleanup lifecycle'),
+  );
+  const names = [
+    'previous',
+    'rollback_root',
+    'unit_path',
+    'had_previous_identity',
+    'had_previous_unit',
+  ];
+  const env = {
+    ...process.env,
+    ...value.environment,
+    ROLLBACK_RUNTIME_VERIFY: 'false',
+    ROLLBACK_FAIL_MATCH: failure,
+  };
+  for (const name of names) {
+    env['FIXTURE_' + name] = env[name];
+    delete env[name];
+  }
+  delete env.acs_committed;
+  delete env.acs_mutation_started;
+  const shell = `${prefix}
+${lifecycle}
+mark_rollback_attempted() { :; }
+emit_rollback_attempted_sentinel() { :; }
+cancel_acs_deployment_drain() { return ${cancelFailure ? 1 : 0}; }
+setup() {
+  local acs_committed=false acs_mutation_started=false
+${names.map((name) => `  local ${name}="$FIXTURE_${name}"`).join('\n')}
+${source.slice(snapshotStart, snapshotEnd)}
+  arm_deploy_rollback cleanup_acs_failure
+  DEPLOY_ACS_ROLLBACK_MUTATION_STARTED=${mutated}
+  DEPLOY_ACS_ROLLBACK_COMMITTED=${committed}
+}
+setup
+# Fail only after locals have disappeared, exactly as in the real EXIT path.
+exit ${mutated ? 20 : 75}
+`;
+  const result = spawnSync('bash', ['-c', shell], { encoding: 'utf8', env });
+  const log = await readFile(value.log, 'utf8').catch(() => '');
+  assert.doesNotMatch(result.stderr, /unbound variable/u);
+  return { ...value, result, log };
+}
+
+test('ACS pre-cutover rejection survives scope exit without restarting healthy production', async (t) => {
+  const value = await runAfterScopeExit(t);
+  assert.equal(value.result.status, 75, value.result.stderr);
+  assert.doesNotMatch(value.log, /systemctl|cp |ln /u);
+  assert.ok(value.log.includes(backupRemoval(value)));
+});
+
+test('ACS post-mutation failure restores every snapshot boundary after scope exit', async (t) => {
+  const value = await runAfterScopeExit(t, { mutated: true });
+  assert.equal(value.result.status, 20, value.result.stderr);
+  for (const action of [
+    'ln -sfn',
+    'acs-orchestrator.env',
+    'acs-release-identity.json',
+    'acs-orchestrator.service',
+    'systemctl daemon-reload',
+    'systemctl restart',
+  ]) {
+    assert.ok(value.log.includes(action), action);
+  }
+  assert.ok(value.log.includes(backupRemoval(value)));
+});
+
+test('ACS failed recovery after scope exit returns 70 and retains the snapshot', async (t) => {
+  const value = await runAfterScopeExit(t, { mutated: true, failure: 'systemctl daemon-reload' });
+  assert.equal(value.result.status, 70, value.result.stderr);
+  assert.match(value.log, /systemctl restart/u);
+  assert.equal(value.log.includes(backupRemoval(value)), false);
+});
+
+test('ACS drain cancellation failure retains evidence even before component mutation', async (t) => {
+  const value = await runAfterScopeExit(t, { cancelFailure: true });
+  assert.equal(value.result.status, 70, value.result.stderr);
+  assert.equal(value.log.includes(backupRemoval(value)), false);
+});
+
+test('ACS committed state prevents rollback even after deployment locals disappear', async (t) => {
+  const value = await runAfterScopeExit(t, { mutated: true, committed: true });
+  assert.equal(value.result.status, 20, value.result.stderr);
+  assert.doesNotMatch(value.log, /systemctl|cp |ln /u);
+});

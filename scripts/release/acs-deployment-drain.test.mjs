@@ -59,13 +59,16 @@ systemctl() {
       else echo 42; fi ;;
     *--property=ExecMainPID*) [ "$CASE" = foreignexit ] && echo 43 || echo 42 ;;
     *--property=ActiveState*)
-      if [ "$CASE" = exitbetweenreads ] || [ "$CASE" = deactivating ]; then
+      if [ "$CASE" = exitbetweenreads ] || [ "$CASE" = deactivating ] || [ "$CASE" = legacybusy ]; then
         if [ -e "$TEST_ROOT/transition-observed" ]; then echo inactive
         else touch "$TEST_ROOT/transition-observed"; [ "$CASE" = deactivating ] && echo deactivating || echo active; fi
-      else case "$CASE" in timeout|pidchange) echo active ;; forced|killed) echo failed ;; *) echo inactive ;; esac; fi ;;
-    *--property=ExecMainStatus*) case "$CASE" in forced) echo 1 ;; killed) echo 9 ;; *) echo 0 ;; esac ;;
+      elif [ "$CASE" = legacyforced ]; then
+        count=$(cat "$TEST_ROOT/legacy-polls" 2>/dev/null || echo 0)
+        if [ "$count" -lt 8 ]; then echo $((count + 1)) > "$TEST_ROOT/legacy-polls"; echo active; else echo failed; fi
+      else case "$CASE" in timeout|pidchange) echo active ;; forced|legacyearlyforced|killed) echo failed ;; *) echo inactive ;; esac; fi ;;
+    *--property=ExecMainStatus*) case "$CASE" in forced|legacyforced|legacyearlyforced) echo 1 ;; killed) echo 9 ;; *) echo 0 ;; esac ;;
     *--property=ExecMainCode*) [ "$CASE" != killed ] && echo 1 || echo 2 ;;
-    *--property=Result*) case "$CASE" in forced) echo exit-code ;; killed) echo signal ;; *) echo success ;; esac ;;
+    *--property=Result*) case "$CASE" in forced|legacyforced|legacyearlyforced) echo exit-code ;; killed) echo signal ;; *) echo success ;; esac ;;
     daemon-reload|'start acs') return 0 ;;
     *) return 1 ;;
   esac
@@ -80,11 +83,17 @@ kill() {
 }
 curl() {
   local protocol=1 inflight=0 state=idle draining=false
-  case "$CASE" in legacybusy) protocol=0; inflight=1 ;; legacyquiet) protocol=0 ;; esac
+  case "$CASE" in
+    legacybusy|legacyforced|legacyearlyforced) protocol=0; inflight=3 ;;
+    legacyquiet) protocol=0 ;;
+    legacydraining) protocol=0; draining=true ;;
+    legacyinvalid) protocol=0; inflight=null ;;
+    unknownprotocol) protocol=2 ;;
+  esac
   if [ -e "$TEST_ROOT/signalled" ] && [ ! -e "$TEST_ROOT/cancelled" ]; then state=timed_out; draining=false; fi
-  printf '{"inflight":%s,"draining":%s,"deploymentDrain":{"protocolVersion":%s,"pid":42,"state":"%s"}}' "$inflight" "$draining" "$protocol" "$state"
+  printf '{"inflight":%s,"draining":%s,"lifecycle":{"drainDeadlineMs":120000},"deploymentDrain":{"protocolVersion":%s,"pid":42,"state":"%s"}}' "$inflight" "$draining" "$protocol" "$state"
 }
-sleep() { :; }
+sleep() { echo 'wait tick' >> "$TEST_ROOT/events"; SECONDS=$((SECONDS + 15)); }
 `;
 
 for (const scenario of [
@@ -97,6 +106,11 @@ for (const scenario of [
   'killed',
   'missingproof',
   'legacybusy',
+  'legacyforced',
+  'legacyearlyforced',
+  'legacydraining',
+  'legacyinvalid',
+  'unknownprotocol',
   'timeout',
   'pidchange',
 ]) {
@@ -121,22 +135,44 @@ for (const scenario of [
         encoding: 'utf8',
         env: { ...env, DRAIN_HELPER: helper },
       });
-      const success = ['clean', 'legacyquiet', 'exitbetweenreads', 'deactivating'].includes(
-        scenario,
-      );
+      const success = [
+        'clean',
+        'legacyquiet',
+        'legacybusy',
+        'legacyforced',
+        'exitbetweenreads',
+        'deactivating',
+      ].includes(scenario);
       assert.equal(result.status === 0, success, result.stderr);
       const proofPath = join(root, 'acs-drain-123-2.json');
       if (success) {
         const proof = JSON.parse(await readFile(proofPath, 'utf8'));
         assert.equal(proof.pid, 42);
-        assert.equal(proof.exitStatus, 0);
+        assert.equal(proof.exitStatus, scenario === 'legacyforced' ? 1 : 0);
+        assert.equal(
+          proof.state,
+          scenario === 'legacyforced' ? 'forced_legacy_cutover' : 'completed',
+        );
         const events = await readFile(join(root, 'events'), 'utf8');
         assert.ok(events.indexOf('daemon-reload') < events.indexOf('kill -USR2'));
       } else await assert.rejects(readFile(proofPath), { code: 'ENOENT' });
       if (scenario === 'legacybusy') {
+        assert.match(result.stderr, /stopping admission and waiting for accepted work/u);
+        assert.match(await readFile(join(root, 'events'), 'utf8'), /kill -USR2 42/u);
+        assert.match(await readFile(join(root, 'events'), 'utf8'), /wait tick/u);
+        assert.match(result.stderr, /Waiting for ACS drain/u);
+      }
+      if (['legacydraining', 'legacyinvalid'].includes(scenario)) {
         assert.equal(result.status, 75);
         assert.doesNotMatch(await readFile(join(root, 'events'), 'utf8'), /kill|daemon-reload/u);
       }
+      if (scenario === 'legacyforced') {
+        assert.match(result.stderr, /audited one-time compatibility cutover/u);
+      }
+      assert.doesNotMatch(
+        await readFile(join(root, 'events'), 'utf8'),
+        /restart|kill -KILL|kill -TERM/u,
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -45,7 +45,7 @@ export function ProviderPlanExpiryEditor({
   const [error, setError] = useState<string | null>(null);
   const state = snapshot.planExpiry;
   const expiry = state?.endTime ?? snapshot.plan?.endTime;
-  const label = expiry ? `套餐到期 ${displayTime(expiry)}` : '设置套餐到期';
+  const label = expiry ? `到期 ${displayTime(expiry)}` : '设置到期';
 
   async function save(clear = false) {
     const endTime = clear ? null : fromBeijingInput(value);
@@ -65,7 +65,7 @@ export function ProviderPlanExpiryEditor({
     }
   }
 
-  if (!state?.editable) return expiry ? <span>{label}</span> : null;
+  if (!state?.editable) return expiry ? <span className="whitespace-nowrap text-xs font-normal tabular-nums text-muted-foreground">{label}</span> : null;
   return (
     <Dialog
       open={open}
@@ -75,7 +75,7 @@ export function ProviderPlanExpiryEditor({
     >
       <button
         type="button"
-        className="inline-flex items-center gap-3 rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex items-center gap-3 rounded-md text-xs font-normal tabular-nums text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={`编辑 ${snapshot.accountLabel} 套餐到期时间`}
         title={`${state.manualEndTime ? '手动设置' : '编辑套餐到期'} · 北京时间`}
         onClick={() => {
@@ -84,7 +84,7 @@ export function ProviderPlanExpiryEditor({
           setOpen(true);
         }}
       >
-        {label}
+        <span className="whitespace-nowrap">{label}</span>
         <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-accent">
           <Pencil className="size-3.5" />
         </span>

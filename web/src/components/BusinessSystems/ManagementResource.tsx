@@ -8,6 +8,10 @@ export function useManagementResource<T>(path: string) {
   const [state, setState] = useState<{ path: string; data?: T; error?: string }>({ path: '' });
   useEffect(() => {
     const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+      setState({ path, error: '请求超时，请重试。' });
+    }, 30_000);
     kyAppRequest<T>(path, { signal: controller.signal })
       .then((data) => {
         if (!controller.signal.aborted) setState({ path, data });
@@ -15,10 +19,15 @@ export function useManagementResource<T>(path: string) {
       .catch((error) => {
         if (!controller.signal.aborted)
           setState({ path, error: error instanceof Error ? error.message : '读取失败' });
-      });
-    return () => controller.abort();
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
   }, [path, revision]);
   return {
+    loading: state.path !== path,
     data: state.path === path ? state.data : undefined,
     error: state.path === path ? state.error : undefined,
     reload: () => {

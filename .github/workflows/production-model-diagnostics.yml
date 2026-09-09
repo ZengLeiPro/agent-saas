@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
-      - name: Print exact Server failure titles and stack locations
+      - name: Identify the failing test and assertion without large source diffs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -25,9 +25,11 @@ jobs:
               raise SystemExit(result.returncode)
           text = re.sub(r'(?:\x1b|\^\[)\[[0-9;]*m', '', result.stdout)
           lines = text.splitlines()
+          selected = set()
           for i, line in enumerate(lines):
-              if 'FAIL ' in line or 'AssertionError:' in line or 'Failed Tests' in line:
-                  print('\n'.join(lines[i:i+12])[:4000])
-              elif re.search(r'❯ .*\.(?:test|spec)\.[cm]?[jt]sx?:\d+|Test Files|Tests\s+\d+ failed', line):
-                  print(line[:1000])
+              if re.search(r'\bFAIL\s|Failed Tests', line):
+                  selected.update(range(max(0, i - 1), min(len(lines), i + 18)))
+              if re.search(r'❯\s+src/|Test Files|Tests\s+[0-9]+ failed', line):
+                  selected.add(i)
+          print('\n'.join(lines[i][:700] for i in sorted(selected))[:16000])
           PY

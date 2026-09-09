@@ -162,7 +162,7 @@ export function createKyAppSnapshotSource(options: KyAppSnapshotSourceOptions): 
       baseUrl: installation.baseUrl,
       path: ME_PATH,
       method: 'GET',
-      headers: { Authorization: `Bearer ${token}`, 'X-KY-Request-Id': requestId },
+      headers: { Authorization: `Bearer ${token}` },
       requestId,
     });
     if (result.status !== 200) {

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Activity, RefreshCw, Stethoscope } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { installationPath, kyAppPost, KyAppManagementError } from '@/lib/kyAppManagementApi';
 import { useManagementResource, ResourceState } from './ManagementResource';
@@ -50,31 +51,47 @@ export function InstallationRuntime({
     }
   }
   return (
-    <section className="space-y-3">
-      <h3 className="font-medium">服务检查</h3>
+    <section className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
+      <div className="flex items-center gap-2">
+        <div className="flex size-9 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+          <Activity className="h-5 w-5" />
+        </div>
+        <div>
+          <h3 className="font-medium">服务健康</h3>
+          <p className="text-xs text-muted-foreground">检查页面、Agent 服务与版本状态</p>
+        </div>
+      </div>
       {!resource.data ? (
         <ResourceState error={resource.error} retry={resource.reload} />
       ) : !resource.data.runtime ? (
         <p>尚未收到运行状态报告</p>
       ) : (
-        <dl className="grid grid-cols-2 gap-2 text-sm">
-          <dt>页面服务</dt>
-          <dd>{businessStatusLabel(resource.data.runtime.liveStatus)}</dd>
-          <dt>Agent 服务</dt>
-          <dd>{businessStatusLabel(resource.data.runtime.readyStatus)}</dd>
-          <dt>版本一致</dt>
-          <dd>{resource.data.digestConsistent ? '是' : '否'}</dd>
-          <dt>实际版本</dt>
-          <dd>{shortDigest(resource.data.runtime.manifestDigest)}</dd>
+        <dl className="grid gap-3 text-sm sm:grid-cols-4">
+          <RuntimeValue
+            label="页面服务"
+            value={businessStatusLabel(resource.data.runtime.liveStatus)}
+          />
+          <RuntimeValue
+            label="Agent 服务"
+            value={businessStatusLabel(resource.data.runtime.readyStatus)}
+          />
+          <RuntimeValue label="版本一致" value={resource.data.digestConsistent ? '是' : '否'} />
+          <RuntimeValue
+            label="实际版本"
+            value={shortDigest(resource.data.runtime.manifestDigest)}
+            mono
+          />
         </dl>
       )}
       <div className="flex gap-2">
         {canDiagnose && (
           <Button disabled={busy} onClick={() => void diagnose()}>
+            <Stethoscope className="h-4 w-4" />
             {busy ? '诊断中…' : '一键诊断'}
           </Button>
         )}
         <Button variant="outline" onClick={resource.reload}>
+          <RefreshCw className="h-4 w-4" />
           刷新运行状态
         </Button>
       </div>
@@ -103,6 +120,23 @@ export function InstallationRuntime({
         />
       )}
     </section>
+  );
+}
+
+function RuntimeValue({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="rounded-lg bg-muted/40 p-3">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className={`mt-1 font-medium ${mono ? 'font-mono' : ''}`}>{value}</dd>
+    </div>
   );
 }
 export function InstallationReadPanel({

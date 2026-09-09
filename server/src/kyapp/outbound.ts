@@ -42,7 +42,7 @@ export interface KyAppOutboundRequest {
   /** 以 `/` 开头的绝对路径，例如 `/ky/v1/events`。 */
   path: string;
   method: 'GET' | 'POST';
-  /** SAT 等请求头；`X-KY-Request-Id` 由调用方给出。 */
+  /** SAT 等额外请求头；`X-KY-Request-Id` 由出站层根据 requestId 统一注入。 */
   headers?: Readonly<Record<string, string>>;
   /** JSON 请求体；给出即自动带 `Content-Type: application/json`。 */
   jsonBody?: unknown;
@@ -159,15 +159,22 @@ export function createKyAppOutbound(options: KyAppOutboundOptions): KyAppOutboun
       const target = await resolveTarget(input.baseUrl, input.path);
       const headers: Record<string, string> = {
         accept: 'application/json',
-        'x-ky-request-id': input.requestId,
         ...(input.headers ?? {}),
       };
+      // Header 名称大小写不敏感。调用方若以另一种大小写重复传入，Node 会把两个值
+      // 合并成逗号分隔的单个请求头，导致业务系统无法与 SAT rid 做严格相等校验。
+      for (const name of Object.keys(headers)) {
+        if (name.toLowerCase() === 'x-ky-request-id') delete headers[name];
+      }
+      headers['x-ky-request-id'] = input.requestId;
       if (input.jsonBody !== undefined) headers['content-type'] = 'application/json';
 
       const controller = new AbortController();
       // 调用方超时只能收紧：manifest 声明的能力超时不得放宽实例级 15 s 硬上限。
       const effectiveTimeoutMs =
-        input.timeoutMs === undefined ? timeoutMs : Math.min(timeoutMs, Math.max(1, input.timeoutMs));
+        input.timeoutMs === undefined
+          ? timeoutMs
+          : Math.min(timeoutMs, Math.max(1, input.timeoutMs));
       const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
       const onExternalAbort = () => controller.abort();
       if (input.signal) {

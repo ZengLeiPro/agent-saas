@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { installationPath, kyAppPost, KyAppManagementError } from '@/lib/kyAppManagementApi';
 import { useManagementResource, ResourceState } from './ManagementResource';
+import { businessStatusLabel, formatBusinessSystemTime, shortDigest } from './presentation';
 interface DiagnosticReport {
   passed: boolean;
   checkedAt: string;
@@ -10,9 +11,11 @@ interface DiagnosticReport {
 export function InstallationRuntime({
   installationId,
   canDiagnose,
+  compact = false,
 }: {
   installationId: string;
   canDiagnose: boolean;
+  compact?: boolean;
 }) {
   const resource = useManagementResource<{
     runtime: {
@@ -48,21 +51,21 @@ export function InstallationRuntime({
   }
   return (
     <section className="space-y-3">
-      <h3 className="font-medium">运行状态</h3>
+      <h3 className="font-medium">服务检查</h3>
       {!resource.data ? (
         <ResourceState error={resource.error} retry={resource.reload} />
       ) : !resource.data.runtime ? (
         <p>尚未收到运行状态报告</p>
       ) : (
         <dl className="grid grid-cols-2 gap-2 text-sm">
-          <dt>存活状态</dt>
-          <dd>{resource.data.runtime.liveStatus}</dd>
-          <dt>就绪状态</dt>
-          <dd>{resource.data.runtime.readyStatus}</dd>
+          <dt>页面服务</dt>
+          <dd>{businessStatusLabel(resource.data.runtime.liveStatus)}</dd>
+          <dt>Agent 服务</dt>
+          <dd>{businessStatusLabel(resource.data.runtime.readyStatus)}</dd>
           <dt>版本一致</dt>
           <dd>{resource.data.digestConsistent ? '是' : '否'}</dd>
           <dt>实际版本</dt>
-          <dd className="break-all">{resource.data.runtime.manifestDigest ?? '未上报'}</dd>
+          <dd>{shortDigest(resource.data.runtime.manifestDigest)}</dd>
         </dl>
       )}
       <div className="flex gap-2">
@@ -79,23 +82,26 @@ export function InstallationRuntime({
       {report && (
         <div>
           <p>
-            {report.passed ? '诊断通过' : '诊断未通过'} · {report.checkedAt}
+            {report.passed ? '诊断通过' : '诊断未通过'} ·{' '}
+            {formatBusinessSystemTime(report.checkedAt)}
           </p>
           <ul>
             {report.checks.map((check) => (
               <li className="border-b py-2 text-sm" key={check.id}>
-                <strong>{check.label}</strong> · {check.status}
+                <strong>{check.label}</strong> · {businessStatusLabel(check.status)}
                 <p>{check.detail}</p>
               </li>
             ))}
           </ul>
         </div>
       )}
-      <InstallationReadPanel
-        installationId={installationId}
-        suffix="signals"
-        title="最近 24 小时异常信号"
-      />
+      {!compact && (
+        <InstallationReadPanel
+          installationId={installationId}
+          suffix="signals"
+          title="最近 24 小时异常信号"
+        />
+      )}
     </section>
   );
 }

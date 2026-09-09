@@ -27,6 +27,8 @@ import type { KyAppCredentialManager } from '../installations/credentials.js';
 import type { KyAppInstallationService } from '../installations/service.js';
 import type { PgKyAppInstallationRuntimeStore } from '../installations/runtimeStore.js';
 import type { PgKyAppSystemStore } from '../systems/store.js';
+import type { InstallationAccessOverviewService } from '../installations/accessOverview.js';
+import { installationReadiness } from '../installations/readiness.js';
 import { canManageTenant, governanceActorOf, sendKyAppError, sendKyAppFailure } from './support.js';
 
 const idSchema = z
@@ -61,6 +63,7 @@ export interface KyAppInstallationRoutesOptions {
   installations: KyAppInstallationService;
   credentials: KyAppCredentialManager;
   runtimeStore: PgKyAppInstallationRuntimeStore;
+  accessOverview?: InstallationAccessOverviewService;
 }
 
 export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesOptions): Router {
@@ -77,6 +80,8 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
           systemId: z.string().optional(),
           status: z.enum(['pending', 'enabled', 'disabled', 'deleted']).optional(),
           signal: z.enum(['outcome_unknown', 'rate_limited', 'upstream_unavailable']).optional(),
+          query: z.string().trim().max(100).optional(),
+          businessStatus: z.enum(['action_required', 'ready', 'disabled']).optional(),
           cursor: z.string().max(1024).optional(),
           limit: z.coerce.number().int().min(1).max(100).default(50),
         })
@@ -332,6 +337,80 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
     }
   });
 
+  router.get('/installations/:iid/access-overview', async (req, res) => {
+    const iid = idSchema.safeParse(req.params.iid);
+    const query = z
+      .object({
+        kind: z.enum(['user', 'agent']).default('user'),
+        cursor: z.string().max(1024).optional(),
+        query: z.string().max(100).optional(),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+      })
+      .safeParse(req.query);
+    if (!iid.success || !query.success)
+      return sendKyAppError(req, res, 'invalid_input', '查询参数非法');
+    if (query.data.cursor) {
+      try {
+        const cursor = JSON.parse(Buffer.from(query.data.cursor, 'base64url').toString()) as {
+          id?: unknown;
+        };
+        if (typeof cursor.id !== 'string') throw new Error('invalid cursor');
+      } catch {
+        return sendKyAppError(req, res, 'invalid_input', '分页游标非法');
+      }
+    }
+    if (!req.user) return sendKyAppError(req, res, 'unauthorized', '需要登录');
+    if (!options.accessOverview)
+      return sendKyAppError(req, res, 'unavailable', '有效授权清单不可用');
+    try {
+      const installation = await options.installations.require(iid.data);
+      if (!canManageTenant(req.user, installation.tenantId)) {
+        return sendKyAppError(req, res, 'forbidden', '需要平台管理员或本组织管理员权限');
+      }
+      const version = installation.registeredDigest
+        ? await options.systems.getVersion(installation.systemId, installation.registeredDigest)
+        : null;
+      const capabilities = (version?.manifest as { capabilities?: unknown } | undefined)
+        ?.capabilities;
+      res.json(
+        await options.accessOverview.read({
+          tenantId: installation.tenantId,
+          installationId: iid.data,
+          systemId: installation.systemId,
+          registeredDigest: installation.registeredDigest,
+          capabilityIds: Array.isArray(capabilities)
+            ? capabilities
+                .map((item) =>
+                  typeof item === 'object' && item !== null && typeof item.id === 'string'
+                    ? item.id
+                    : null,
+                )
+                .filter((item): item is string => item !== null)
+            : [],
+          ...query.data,
+        }),
+      );
+    } catch (error) {
+      sendKyAppFailure(req, res, error);
+    }
+  });
+
+  router.get('/installations/:iid/activity', async (req, res) => {
+    const iid = idSchema.safeParse(req.params.iid);
+    if (!iid.success) return sendKyAppError(req, res, 'invalid_input', 'iid 非法');
+    if (!req.user) return sendKyAppError(req, res, 'unauthorized', '需要登录');
+    if (!options.management) return sendKyAppError(req, res, 'unavailable', '调用情况不可用');
+    try {
+      const installation = await options.installations.require(iid.data);
+      if (!canManageTenant(req.user, installation.tenantId)) {
+        return sendKyAppError(req, res, 'forbidden', '需要平台管理员或本组织管理员权限');
+      }
+      res.json(await options.management.installationActivity(installation.tenantId, iid.data));
+    } catch (error) {
+      sendKyAppFailure(req, res, error);
+    }
+  });
+
   router.get('/installations/:iid/management', async (req, res) => {
     const iid = idSchema.safeParse(req.params.iid);
     if (!iid.success) return sendKyAppError(req, res, 'invalid_input', 'iid 非法');
@@ -342,10 +421,17 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
         return sendKyAppError(req, res, 'forbidden', '需要平台管理员或本组织管理员权限');
       }
       const definition = await options.systems.getDefinition(installation.systemId);
-      const version = installation.registeredDigest
-        ? await options.systems.getVersion(installation.systemId, installation.registeredDigest)
-        : null;
-      const summary = await options.management?.installationSummary(iid.data);
+      const version =
+        installation.registeredDigest || definition?.publishedDigest
+          ? await options.systems.getVersion(
+              installation.systemId,
+              installation.registeredDigest ?? definition!.publishedDigest!,
+            )
+          : null;
+      const [summary, runtime] = await Promise.all([
+        options.management?.installationSummary(iid.data),
+        options.runtimeStore.get(iid.data),
+      ]);
       res.json({
         installation: {
           installationId: installation.installationId,
@@ -372,6 +458,13 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
             }
           : null,
         ...summary,
+        readiness: installationReadiness({
+          installation,
+          definitionStatus: definition?.status ?? null,
+          publishedDigest: definition?.publishedDigest ?? null,
+          runtime,
+          assignmentConfigured: summary?.assignmentSummary.configured ?? false,
+        }),
         upgrade: {
           currentDigest: installation.registeredDigest,
           publishedDigest: definition?.publishedDigest ?? null,

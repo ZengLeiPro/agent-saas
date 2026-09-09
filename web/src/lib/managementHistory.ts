@@ -26,7 +26,10 @@ export function readPersonalSettingsHistoryState(
 export function settingsHistoryState(
   navigation?: PersonalSettingsHistoryState,
 ): Record<string, unknown> {
-  return navigation ? { [SETTINGS_HISTORY_KEY]: navigation } : {};
+  return {
+    ...analysisHistoryStateForNavigation('replace'),
+    ...(navigation ? { [SETTINGS_HISTORY_KEY]: navigation } : {}),
+  };
 }
 
 /** 设置中的详情、页签和筛选与侧栏共享来源；只按实际 push 累计返回层数。 */

@@ -210,6 +210,14 @@ describe('AppToolSnapshotService', () => {
     expect(snapshot.degraded).toBe(true);
   });
 
+  it('/me 成功但没有授权能力时不注入 app__ 工具', async () => {
+    const harness = makeHarness();
+    harness.state.enabled = [];
+    const snapshot = await harness.service.get(SESSION);
+    expect(snapshot.entries).toEqual([]);
+    expect(snapshot.degraded).toBe(false);
+  });
+
   it('安装目录读取失败：首个 run 降级，后续 run 沿用既有快照', async () => {
     const harness = makeHarness();
     harness.state.listThrows = true;

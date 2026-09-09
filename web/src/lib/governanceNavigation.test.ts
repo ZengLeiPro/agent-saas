@@ -32,7 +32,7 @@ describe("governance navigation registry", () => {
       "overview", "members", "agents", "governance", "settings",
     ]);
     expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(28);
-    expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(29);
+    expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(28);
     expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(9);
   });
 
@@ -141,6 +141,7 @@ describe("legacy URL canonical adapters", () => {
   it.each([
     ["/tenant-admin", "organization.overview.overview", "/tenant-admin/overview"],
     ["/tenant-admin/usage?org=acme&usageRange=90d", "organization.governance.usage", "/tenant-admin/governance/usage?org=acme&usageRange=90d"],
+    ["/tenant-admin/governance/business-system-usage?org=acme", "organization.governance.usage", "/tenant-admin/governance/usage?org=acme"],
     ["/tenant-admin/qa?org=acme", "organization.governance.qa", "/tenant-admin/governance/qa?org=acme"],
     ["/tenant-admin/audit?org=acme", "organization.governance.audit", "/tenant-admin/governance/audit?org=acme"],
     ["/tenant-admin/settings/users?org=acme", "organization.members.accounts", "/tenant-admin/members/accounts?org=acme"],

@@ -1,16 +1,35 @@
-import { previewResourceAssignment, updateResourceAssignment, AssignmentImpact } from '@/components/BusinessSystems/installationAssignmentApi';
+import {
+  previewResourceAssignment,
+  updateResourceAssignment,
+  AssignmentImpact,
+} from '@/components/BusinessSystems/installationAssignmentApi';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegistry';
-import { governanceAccessApi, governanceApiErrorMessage, governanceResourcesApi } from '@agent/shared/lib/governanceApi';
+import {
+  governanceAccessApi,
+  governanceApiErrorMessage,
+  governanceResourcesApi,
+} from '@agent/shared/lib/governanceApi';
 
 type EntitlementResourceType =
-  'model' | 'tool' | 'agent_template' | 'skill' | 'connector' | 'environment_template' | 'integrated_system';
+  | 'model'
+  | 'tool'
+  | 'agent_template'
+  | 'skill'
+  | 'connector'
+  | 'environment_template'
+  | 'integrated_system';
 type AssignmentResourceType =
-  'skill' | 'credential' | 'environment_template' | 'connector' | 'dws_delegation' | 'system_installation';
+  | 'skill'
+  | 'credential'
+  | 'environment_template'
+  | 'connector'
+  | 'dws_delegation'
+  | 'system_installation';
 type AssigneeType = 'everyone' | 'user' | 'directory_group' | 'agent';
 type AssignmentEffect = 'allow' | 'deny';
 
@@ -91,7 +110,9 @@ function MutationReceipt({ receipt }: { receipt: Receipt | null }) {
       <div>changeId：{receipt.changeId}</div>
       <div>auditId：{receipt.auditId}</div>
       {receipt.projectionStatus ? (
-        <div>投影：{receipt.projectionStatus === 'pending' ? '等待中' : receipt.projectionStatus}</div>
+        <div>
+          投影：{receipt.projectionStatus === 'pending' ? '等待中' : receipt.projectionStatus}
+        </div>
       ) : null}
     </div>
   );
@@ -224,14 +245,24 @@ export function OrganizationEntitlementScopeEditor({
   useSettingsDirtyEntry({
     id: `organization-entitlement:${tenantId}:${resourceType}`,
     label: title,
-    dirty: Boolean(scope && (mode !== scope.mode || JSON.stringify(draftIds) !== JSON.stringify(baselineIds))),
+    dirty: Boolean(
+      scope && (mode !== scope.mode || JSON.stringify(draftIds) !== JSON.stringify(baselineIds)),
+    ),
     save: async () => {
-      if (!preview) { setError('请先生成签名预览，再保存并离开。'); throw new Error('Entitlement preview required'); }
-      if (!await commit()) throw new Error('Entitlement commit failed');
+      if (!preview) {
+        setError('请先生成签名预览，再保存并离开。');
+        throw new Error('Entitlement preview required');
+      }
+      if (!(await commit())) throw new Error('Entitlement commit failed');
     },
     discard: () => {
-      if (scope) { setMode(scope.mode); setSelected(scope.resourceIds); }
-      setPreview(null); setReceipt(null); setError(null);
+      if (scope) {
+        setMode(scope.mode);
+        setSelected(scope.resourceIds);
+      }
+      setPreview(null);
+      setReceipt(null);
+      setError(null);
     },
     draft: { mode, resourceIds: draftIds },
   });
@@ -335,11 +366,7 @@ export function OrganizationEntitlementScopeEditor({
             </div>
           ) : null}
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => void runPreview()}
-            >
+            <Button variant="outline" disabled={busy} onClick={() => void runPreview()}>
               {previewLabel}
             </Button>
             {preview ? (
@@ -361,7 +388,7 @@ export function OrganizationEntitlementScopeEditor({
                 ? `v${preview.impact.currentVersion} → v${preview.impact.nextVersion} · `
                 : ''}
               <AssignmentImpact preview={preview} />
-          签名预览有效至 {new Date(preview.expiresAt).toLocaleString()}
+              签名预览有效至 {new Date(preview.expiresAt).toLocaleString()}
             </div>
           ) : null}
         </>
@@ -483,12 +510,7 @@ export function OrganizationResourceAssignmentEditor({
     setReceipt(null);
     try {
       setPreview(
-        await previewResourceAssignment<PreviewToken>(
-          resourceType,
-          resourceId,
-          command,
-          tenantId,
-        ),
+        await previewResourceAssignment<PreviewToken>(resourceType, resourceId, command, tenantId),
       );
     } catch (cause) {
       setError(errorText(cause, '资源指派预览失败'));
@@ -524,22 +546,32 @@ export function OrganizationResourceAssignmentEditor({
     }
   };
 
-  const baselineRules = baseline?.assignments.map((rule) => ({
-    assigneeType: rule.assigneeType,
-    ...(rule.assigneeType === 'everyone' ? {} : { assigneeId: rule.assigneeId }),
-    effect: rule.effect,
-  })) ?? [];
+  const baselineRules =
+    baseline?.assignments.map((rule) => ({
+      assigneeType: rule.assigneeType,
+      ...(rule.assigneeType === 'everyone' ? {} : { assigneeId: rule.assigneeId }),
+      effect: rule.effect,
+    })) ?? [];
   useSettingsDirtyEntry({
     id: `organization-assignment:${tenantId}:${resourceType}:${resourceId}`,
     label: `${resourceId} 资源授权`,
     dirty: Boolean(baseline && JSON.stringify(normalizedRules) !== JSON.stringify(baselineRules)),
     save: async () => {
-      if (!preview) { setError('请先生成签名预览，再保存并离开。'); throw new Error('Assignment preview required'); }
-      if (!await commit()) throw new Error('Assignment commit failed');
+      if (!preview) {
+        setError('请先生成签名预览，再保存并离开。');
+        throw new Error('Assignment preview required');
+      }
+      if (!(await commit())) throw new Error('Assignment commit failed');
     },
     discard: () => {
-      setRules(baseline?.assignments.map(({ assignmentId: _assignmentId, origin: _origin, ...rule }) => rule) ?? []);
-      setPreview(null); setReceipt(null); setError(null);
+      setRules(
+        baseline?.assignments.map(
+          ({ assignmentId: _assignmentId, origin: _origin, ...rule }) => rule,
+        ) ?? [],
+      );
+      setPreview(null);
+      setReceipt(null);
+      setError(null);
     },
     draft: { assignments: normalizedRules },
   });
@@ -626,7 +658,9 @@ export function OrganizationResourceAssignmentEditor({
       })}
       {!rules.length ? (
         <div className="text-sm text-muted-foreground">
-          {resourceType === 'system_installation' ? '尚未授权任何成员或 Agent。' : '尚未设置直接指派；运行时将按上级范围和默认策略解析。'}
+          {resourceType === 'system_installation'
+            ? '尚未授权任何成员或 Agent。'
+            : '尚未设置直接指派；运行时将按上级范围和默认策略解析。'}
         </div>
       ) : null}
       <Button size="sm" variant="outline" onClick={addRule}>
@@ -671,16 +705,20 @@ export function OrganizationAssignmentManager({
   resourceType,
   title,
   items,
+  initialResourceId,
 }: {
   tenantId: string;
   resourceType: AssignmentResourceType;
   title: string;
   items: Array<{ resourceId: string; label: string }>;
+  initialResourceId?: string;
 }) {
-  const [resourceId, setResourceId] = useState('');
+  const [resourceId, setResourceId] = useState(initialResourceId ?? '');
   useEffect(() => {
-    setResourceId((current) => (items.some((item) => item.resourceId === current) ? current : ''));
-  }, [items]);
+    setResourceId((current) =>
+      items.some((item) => item.resourceId === current) ? current : (initialResourceId ?? ''),
+    );
+  }, [initialResourceId, items]);
   return (
     <section className="space-y-3 rounded-xl border bg-card p-4">
       <div>

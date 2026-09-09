@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   OrganizationEntitlementScopeEditor,
+  OrganizationAssignmentManager,
   OrganizationResourceAssignmentEditor,
 } from './ResourceAccessEditors';
 import { SettingsDirtyBoundary } from '@/components/PersonalSettings/dirtyRegistry';
@@ -108,18 +109,29 @@ describe('ResourceAccessEditors', () => {
   });
 
   it('旧目录资源默认保留，可逐项移除或一次清理后执行预览', async () => {
-    mocks.getEntitlements.mockResolvedValueOnce({
-      scopes: [{
-        resourceType: 'model', mode: 'selected',
-        resourceIds: ['group/model-a', 'retired/model-x', 'retired/model-y'],
-        source: 'governance', version: 4,
-      }],
-    }).mockResolvedValue({
-      scopes: [{
-        resourceType: 'model', mode: 'selected', resourceIds: ['group/model-a'],
-        source: 'governance', version: 5,
-      }],
-    });
+    mocks.getEntitlements
+      .mockResolvedValueOnce({
+        scopes: [
+          {
+            resourceType: 'model',
+            mode: 'selected',
+            resourceIds: ['group/model-a', 'retired/model-x', 'retired/model-y'],
+            source: 'governance',
+            version: 4,
+          },
+        ],
+      })
+      .mockResolvedValue({
+        scopes: [
+          {
+            resourceType: 'model',
+            mode: 'selected',
+            resourceIds: ['group/model-a'],
+            source: 'governance',
+            version: 5,
+          },
+        ],
+      });
     mocks.listCatalog.mockResolvedValue({
       resourceType: 'model',
       items: [{ resourceId: 'group/model-a', label: '模型 A', version: 1 }],
@@ -132,19 +144,33 @@ describe('ResourceAccessEditors', () => {
     });
     mocks.updateScope.mockResolvedValue({ changeId: 'change-cleanup', auditId: 'audit-cleanup' });
 
-    render(<OrganizationEntitlementScopeEditor
-      tenantId="tenant-a" resourceType="model" title="模型可用范围" description="测试"
-    />);
+    render(
+      <OrganizationEntitlementScopeEditor
+        tenantId="tenant-a"
+        resourceType="model"
+        title="模型可用范围"
+        description="测试"
+      />,
+    );
     expect(await screen.findByText('已退出目录')).toBeTruthy();
-    expect((screen.getByRole('checkbox', { name: '历史资源 retired/model-x' }) as HTMLInputElement).checked).toBe(true);
+    expect(
+      (screen.getByRole('checkbox', { name: '历史资源 retired/model-x' }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: '移除旧资源 retired/model-x' }));
     fireEvent.click(screen.getByRole('button', { name: '清理全部旧引用' }));
     fireEvent.click(screen.getByRole('button', { name: '预览范围变更' }));
-    await waitFor(() => expect(mocks.previewScope).toHaveBeenCalledWith('model', {
-      expectedVersion: 4,
-      mode: 'selected',
-      resourceIds: ['group/model-a'],
-    }, 'tenant-a'));
+    await waitFor(() =>
+      expect(mocks.previewScope).toHaveBeenCalledWith(
+        'model',
+        {
+          expectedVersion: 4,
+          mode: 'selected',
+          resourceIds: ['group/model-a'],
+        },
+        'tenant-a',
+      ),
+    );
     fireEvent.click(screen.getByRole('button', { name: '确认提交' }));
     expect(await screen.findByText('changeId：change-cleanup')).toBeTruthy();
     await waitFor(() => expect(screen.queryByText('已退出目录')).toBeNull());
@@ -196,9 +222,27 @@ describe('ResourceAccessEditors', () => {
     );
   });
 
+  it('只有一个业务资源时自动选中并直接展示授权编辑器', async () => {
+    mocks.getAssignment.mockResolvedValue({ version: 3, assignments: [] });
+    render(
+      <OrganizationAssignmentManager
+        tenantId="tenant-a"
+        resourceType="system_installation"
+        title="业务系统授权"
+        items={[{ resourceId: 'iid-1', label: '测试系统' }]}
+        initialResourceId="iid-1"
+      />,
+    );
+
+    expect(await screen.findByText('Assignment v3')).toBeTruthy();
+    expect((screen.getByLabelText('业务系统授权资源') as HTMLSelectElement).value).toBe('iid-1');
+  });
+
   it('Entitlement 草稿切换页面前触发统一 dirty guard', async () => {
     mocks.getEntitlements.mockResolvedValue({
-      scopes: [{ resourceType: 'tool', mode: 'all', resourceIds: [], source: 'governance', version: 1 }],
+      scopes: [
+        { resourceType: 'tool', mode: 'all', resourceIds: [], source: 'governance', version: 1 },
+      ],
     });
     mocks.listCatalog.mockResolvedValue({
       resourceType: 'tool',
@@ -206,12 +250,25 @@ describe('ResourceAccessEditors', () => {
     });
     const navigated = vi.fn();
     render(
-      <SettingsDirtyBoundary>{(controller) => <>
-        <OrganizationEntitlementScopeEditor tenantId="tenant-a" resourceType="tool" title="工具可用范围" description="测试" />
-        <button type="button" onClick={() => controller.requestNavigation(navigated)}>切换页面</button>
-      </>}</SettingsDirtyBoundary>,
+      <SettingsDirtyBoundary>
+        {(controller) => (
+          <>
+            <OrganizationEntitlementScopeEditor
+              tenantId="tenant-a"
+              resourceType="tool"
+              title="工具可用范围"
+              description="测试"
+            />
+            <button type="button" onClick={() => controller.requestNavigation(navigated)}>
+              切换页面
+            </button>
+          </>
+        )}
+      </SettingsDirtyBoundary>,
     );
-    fireEvent.change(await screen.findByLabelText('工具可用范围模式'), { target: { value: 'selected' } });
+    fireEvent.change(await screen.findByLabelText('工具可用范围模式'), {
+      target: { value: 'selected' },
+    });
     fireEvent.click(screen.getByRole('button', { name: '切换页面' }));
     expect(await screen.findByText('有未保存的更改')).toBeTruthy();
     expect(navigated).not.toHaveBeenCalled();

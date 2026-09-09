@@ -139,7 +139,7 @@ describe('read 链（safeToRetry:true）', () => {
     expect(result.attempts).toBe(1);
     expect(requests[0]!.path).toBe('/ky/v1/capabilities/order.search');
     expect(requests[0]!.headers?.['X-KY-Idempotency-Key']).toBe('lc-fixed');
-    expect(requests[0]!.headers?.['X-KY-Request-Id']).toBe('rid-fixed');
+    expect(requests[0]!.requestId).toBe('rid-fixed');
     expect(satClaims[0]).toMatchObject({
       act: 'agent',
       cap: 'order.search',

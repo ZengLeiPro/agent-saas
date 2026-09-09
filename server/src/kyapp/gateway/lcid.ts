@@ -291,7 +291,6 @@ export class AppLogicalCallRunner {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
-        'X-KY-Request-Id': input.requestId,
         // §4.3：必带且必须等于 claim lcid，否则对方 400 invalid_input。
         'X-KY-Idempotency-Key': input.lcid,
       },
@@ -452,7 +451,6 @@ export class AppLogicalCallRunner {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,
-            'X-KY-Request-Id': input.requestId,
           },
           requestId: input.requestId,
           ...this.attemptBudget(input.entry, input.deadline),

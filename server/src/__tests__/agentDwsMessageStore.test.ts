@@ -115,7 +115,9 @@ describe('PgAgentDwsMessageStore', () => {
     expect(sql).toContain('lease_fence=inbox.lease_fence+1');
     expect(sql).toContain("WHEN inbox.state='reply_pending' THEN 'reply_pending'");
     expect(sql).not.toContain("inbox.payload_json->>'schemaVersion'='1'");
-    expect(sql).toContain('attempt=inbox.attempt+1');
+    expect(sql).toContain("inbox.payload_json->>'fastControlPhase'='prepared'");
+    expect(sql).toContain('LEAST(inbox.attempt+1,inbox.max_attempts)');
+    expect(sql).toContain('ELSE inbox.attempt+1');
     expect(clientQuery.mock.calls.at(-1)?.[0]).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });

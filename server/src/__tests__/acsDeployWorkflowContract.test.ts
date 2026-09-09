@@ -256,19 +256,17 @@ const classificationCases = [
 ] as const;
 
 describe('ACS deployment and classifier contract', () => {
-  it('为所有 main PR 提供固定名称且不读取生产 secret 的 ACS Impact Gate', () => {
-    expect(workflow).toContain('pull_request:\n    branches: [main]');
-    expect(workflow).toContain('acs-impact-gate:');
-    expect(workflow).toContain('name: ACS Impact Gate');
-    expect(workflow).toContain("if: github.event_name == 'pull_request'");
-    expect(workflow).toContain("if: github.event_name != 'pull_request'");
-    expect(workflow).toContain('result: \\`not_required\\`');
-
-    const gateStart = workflow.indexOf('  acs-impact-gate:');
-    const changesStart = workflow.indexOf('  changes:', gateStart);
-    const gate = workflow.slice(gateStart, changesStart);
+  it('统一 CI 为 main PR 提供固定名称且不读取生产 secret 的 ACS Impact Gate', () => {
+    expect(ciWorkflow).toContain('pull_request:\n    branches: [main]');
+    expect(ciWorkflow).toContain('name: ACS Impact Gate');
+    const gateStart = ciWorkflow.indexOf('  acs-impact-gate:');
+    const gate = ciWorkflow.slice(gateStart, ciWorkflow.indexOf('  preflight_checks:', gateStart));
+    expect(gate).toContain('needs: ci_plan');
+    expect(gate).toContain('if: ${{ !cancelled() }}');
+    expect(gate).toContain('not_required');
     expect(gate).not.toContain('secrets.');
     expect(gate).not.toContain('workflow_dispatch');
+    expect(workflow).not.toContain('  acs-impact-gate:');
   });
 
   it('对普通 UI、ACS 源码、managed unit 和 Workflow 给出稳定分类', () => {
@@ -301,15 +299,14 @@ describe('ACS deployment and classifier contract', () => {
     });
   });
 
-  it('让所有 main push 进入 changes job，并由 classifier 独占路径分类', () => {
-    const pushStart = workflow.indexOf('  push:');
-    const dispatchStart = workflow.indexOf('  workflow_dispatch:', pushStart);
-
-    expect(pushStart).toBeGreaterThan(-1);
-    expect(dispatchStart).toBeGreaterThan(pushStart);
-    const pushTrigger = workflow.slice(pushStart, dispatchStart);
-    expect(pushTrigger).toContain('branches: [main]');
-    expect(pushTrigger).not.toContain('paths:');
+  it('统一 CI 接收全部 main push，ACS 发布入口仅保留手动触发', () => {
+    const triggers = ciWorkflow.slice(ciWorkflow.indexOf('on:'), ciWorkflow.indexOf('concurrency:'));
+    expect(triggers).toContain('push:\n    branches: [main]');
+    expect(triggers).not.toContain('paths:');
+    const manualTriggers = workflow.slice(0, workflow.indexOf('jobs:'));
+    expect(manualTriggers).toContain('workflow_dispatch:');
+    expect(manualTriggers).not.toContain('  push:');
+    expect(manualTriggers).not.toContain('  pull_request:');
   });
 
   it.each(classificationCases)(
@@ -338,7 +335,7 @@ describe('ACS deployment and classifier contract', () => {
     }
   });
 
-  it('在 required、contract 与 publish gate 中执行完整 Server、Staging 与 Production lifecycle 契约', () => {
+  it('在统一 CI 与人工部署中保留完整 Server、Staging 与 Production lifecycle 契约', () => {
     const serverContracts = [
       'acsDeployWorkflowContract',
       'dwsAuthFlow',
@@ -358,24 +355,24 @@ describe('ACS deployment and classifier contract', () => {
       'webChannelPersistentInteractionRecovery',
     ];
     expect(
-      workflow.match(/- name: 测试服务端 ACS 生命周期与准入契约/gu),
-    ).toHaveLength(3);
+      (ciWorkflow + workflow).match(/- name: 测试服务端 ACS 生命周期与准入契约/gu),
+    ).toHaveLength(2);
     for (const contract of serverContracts) {
       expect(
-        workflow.match(new RegExp(`src/__tests__/${contract}\\.test\\.ts`, 'gu')),
-      ).toHaveLength(3);
+        (ciWorkflow + workflow).match(new RegExp(`src/__tests__/${contract}\\.test\\.ts`, 'gu')),
+      ).toHaveLength(2);
     }
     for (const contract of [
       'src/context/sync/dwsContextRuntime.test.ts',
       'src/dws/businessToolProvider.test.ts',
       'src/dws/requesterIdentityResolver.test.ts',
     ])
-      expect(workflow.split(contract)).toHaveLength(4);
+      expect((ciWorkflow + workflow).split(contract)).toHaveLength(3);
     expect(
-      workflow.match(/- name: 测试 ACS 测试及生产环境生命周期门禁/gu),
-    ).toHaveLength(3);
-    expect(workflow.match(/scripts\/release\/staging-workflow\.test\.mjs/gu)).toHaveLength(3);
-    expect(workflow.match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(3);
+      (ciWorkflow + workflow).match(/- name: 测试 ACS 测试及生产环境生命周期门禁/gu),
+    ).toHaveLength(2);
+    expect((ciWorkflow + workflow).match(/scripts\/release\/staging-workflow\.test\.mjs/gu)).toHaveLength(2);
+    expect((ciWorkflow + workflow).match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(2);
   });
 
   it('由 PostgreSQL 快速合约与 Server coverage 双重验证 sandboxScopeActivity', () => {

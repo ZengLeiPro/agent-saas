@@ -189,7 +189,7 @@ test('push main 与 dispatch 始终全量分片并收集覆盖率', () => {
 });
 
 test('CI 并行任务、分片矩阵与 Build & Check 汇总门禁完整连接', () => {
-  assert.deepEqual(parse(workflow).jobs.build.needs, ['ci_plan', 'preflight_checks', 'migration_reviews', 'tests', 'postgres_contracts', 'web_production', 'mobile_router_export', 'mobile_contract', 'release_packages', 'writer_bundle', 'browser_smoke']);
+  assert.deepEqual(parse(workflow).jobs.build.needs, ['ci_plan', 'acs-impact-gate', 'preflight_checks', 'migration_reviews', 'tests', 'postgres_contracts', 'web_production', 'mobile_router_export', 'mobile_contract', 'release_packages', 'writer_bundle', 'browser_smoke']);
   for (const marker of [
     'name: 预检 / 规划',
     'node scripts/ci-plan.mjs',
@@ -230,7 +230,7 @@ test('CI 并行任务、分片矩阵与 Build & Check 汇总门禁完整连接',
   }
   assert.match(workflow, /matrix\.workspace == 'server'.*postgres:16-alpine/u);
   assert.match(workflow, /COVERAGE_REPORT_MODE: ci/u);
-  assert.match(workflow, /build:\s+[\s\S]*?if: \$\{\{ !cancelled\(\) \}\}/u);
+  assert.match(workflow, /build:\s+[\s\S]*?if: \$\{\{ always\(\) \}\}/u);
   // affected 模式依赖 base commit 在本地历史里。
   const tests = workflow.slice(
     workflow.indexOf('\n  tests:\n'),
@@ -404,7 +404,7 @@ test('coverage rejects a missing or stale-attempt shard before writing a partial
 test('Build & Check executes fail-closed result admission independently of optional coverage', () => {
   const jobs = parse(workflow).jobs;
   const build = jobs.build;
-  assert.equal(build.if, '${{ !cancelled() }}');
+  assert.equal(build.if, '${{ always() }}');
   assert.ok(!build.needs.includes('coverage_reports'));
   assert.deepEqual(jobs.coverage_reports.needs, ['ci_plan', 'tests']);
   assert.equal(build.steps.length, 1, 'required aggregation must not reinstall dependencies');

@@ -380,23 +380,33 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('publish=false', classified.stdout)
         self.assertIn('contract_check=true', classified.stdout)
 
-    def test_all_main_pushes_reach_classifier_without_path_filter(self):
-        push_start = self.workflow.index('  push:')
-        dispatch_start = self.workflow.index('  workflow_dispatch:', push_start)
-        push_trigger = self.workflow[push_start:dispatch_start]
+    def test_all_main_pushes_reach_unified_ci_without_path_filter(self):
+        ci = (REPO_ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+        push_start = ci.index('  push:')
+        dispatch_start = ci.index('  workflow_dispatch:', push_start)
+        push_trigger = ci[push_start:dispatch_start]
         self.assertIn('branches: [main]', push_trigger)
         self.assertNotIn('paths:', push_trigger)
+        manual_trigger = self.workflow[:self.workflow.index('jobs:')]
+        self.assertNotIn('  push:', manual_trigger)
+        self.assertNotIn('  pull_request:', manual_trigger)
 
-    def test_mixed_changes_run_publish_and_contract_gates(self):
-        self.assertIn(
-            "if: needs.changes.outputs.contract_check == 'true'",
-            self.workflow,
+    def test_mixed_changes_run_one_union_acs_gate(self):
+        ci = (REPO_ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+        self.assertEqual(ci.count('    name: ACS Impact Gate'), 1)
+        self.assertIn("if: needs.ci_plan.outputs.acs_required == 'true'", ci)
+        self.assertNotIn('  contract-check:', self.workflow)
+        command = (
+            "import { planAcsCi } from './scripts/ci-acs-plan.mjs'; "
+            "const plan = planAcsCi('pull_request', "
+            "['acs-orchestrator/src/config.ts', 'server/src/dws/authFlow.ts']); "
+            "if (plan.required !== true) process.exit(1);"
         )
-        self.assertNotIn(
-            "if: needs.changes.outputs.publish != 'true' && "
-            "needs.changes.outputs.contract_check == 'true'",
-            self.workflow,
+        checked = subprocess.run(
+            ['node', '--input-type=module', '-e', command],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=False,
         )
+        self.assertEqual(checked.returncode, 0, checked.stderr)
 
     def test_browser_smoke_helper_is_sealed_and_triggers_publish(self):
         self.assertIn(

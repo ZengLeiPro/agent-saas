@@ -1,5 +1,5 @@
 # ============================================================================
-# APP CI: parallel checks/tests/artifact validation; manual compatibility publishing is Web-only
+# Unified CI: parallel App + ACS checks; legacy manual compatibility publishing remains Web-only
 # ============================================================================
 # 触发:
 #   - pull_request: affected 门禁——只跑受影响工作区、import 图与源码资源 guard 合并选择测试、不收集覆盖率
@@ -9,7 +9,7 @@
 #     Server/API/Runtime Worker 必须走 RC + Production Promotion，禁止跨 job 非原子发布。
 # ============================================================================
 
-name: APP CI
+name: CI
 
 on:
   push:
@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
+      acs_required: ${{ steps.acs.outputs.required }}
       mode: ${{ steps.plan.outputs.mode }}
       coverage: ${{ steps.plan.outputs.coverage }}
       postgres: ${{ steps.plan.outputs.postgres }}
@@ -77,6 +78,111 @@ jobs:
           --head "${{ github.event.pull_request.head.sha }}"
           --output "$GITHUB_OUTPUT"
           --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: 规划 ACS 专项检查
+        id: acs
+        run: >-
+          node scripts/ci-acs-plan.mjs
+          --event "${{ github.event_name }}"
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+          --output "$GITHUB_OUTPUT"
+          --summary "$GITHUB_STEP_SUMMARY"
+
+  # Stable required check; an intentional PR no-op succeeds, but a failed plan never does.
+  acs-impact-gate:
+    name: ACS Impact Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: ci_plan
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+    steps:
+      - name: 校验 ACS 执行计划
+        env:
+          CI_PLAN_RESULT: ${{ needs.ci_plan.result }}
+          ACS_REQUIRED: ${{ needs.ci_plan.outputs.acs_required }}
+        run: |
+          set -euo pipefail
+          case "$CI_PLAN_RESULT:$ACS_REQUIRED" in
+            success:true|success:false) ;;
+            *) echo '::error::ACS CI plan is missing or unsuccessful'; exit 1 ;;
+          esac
+          if [ "$ACS_REQUIRED" = false ]; then
+            echo 'ACS Impact Gate: not_required (verified PR plan)' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 检出代码
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 配置 pnpm
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        uses: ./.github/actions/setup-pnpm
+
+      - name: 配置 Node.js
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: 检查服务端与编排器类型
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        run: |
+          pnpm -F server typecheck
+          pnpm -F acs-orchestrator typecheck
+
+      - name: 测试编排器
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        run: pnpm -F acs-orchestrator test
+
+      - name: 测试服务端 ACS 生命周期与准入契约
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        run: >-
+          pnpm -F server exec vitest run
+          src/__tests__/acsDeployWorkflowContract.test.ts
+          src/__tests__/dwsAuthFlow.test.ts
+          src/__tests__/dwsKeepalive.test.ts
+          src/__tests__/dwsPersonalEventGateway.test.ts
+          src/__tests__/dwsPersonalMessageSender.test.ts
+          src/__tests__/executionDispatchValidation.test.ts
+          src/__tests__/feishuConnector.test.ts
+          src/__tests__/runtimeHandProvisionRace.test.ts
+          src/__tests__/runtimeTombstoneAdmission.test.ts
+          src/__tests__/runtimeWakeSessionRestore.test.ts
+          src/__tests__/sandboxLifecycleService.test.ts
+          src/__tests__/sandboxRunAdmissionFence.test.ts
+          src/__tests__/sandboxWorkloadDescriptor.test.ts
+          src/__tests__/sandboxWarmup.test.ts
+          src/__tests__/serverRemoteConfig.test.ts
+          src/__tests__/sessionCatalog.test.ts
+          src/__tests__/taskboardExecution.test.ts
+          src/__tests__/webChannelPersistentInteractionRecovery.test.ts
+          src/context/sync/dwsContextRuntime.test.ts
+          src/dws/businessToolProvider.test.ts
+          src/dws/requesterIdentityResolver.test.ts
+
+      - name: 测试 ACS 测试及生产环境生命周期门禁
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        run: >-
+          node --test
+          scripts/release/staging-workflow.test.mjs
+          scripts/release/promotion-workflow.test.mjs
+
+      - name: 测试 ACS 运维脚本
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        run: >-
+          python3 -m unittest
+          scripts/test_acs_operational_scripts.py
+          scripts/test_acr_webhook_redelivery.py
 
   preflight_checks:
     name: 预检 / 静态检查
@@ -491,7 +597,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  # 保留仓库 Ruleset 使用的唯一 required check 名称。任一并行门禁失败或取消，
+  # 保留仓库 Ruleset 使用的 required check 名称；Build & Check 汇总 App 与 ACS。任一并行门禁失败或取消，
   # 本汇总 Job 都会明确失败；计划跳过的门禁只在计划说明跳过时才被接受。
   coverage_reports:
     name: 覆盖率汇总
@@ -571,6 +677,7 @@ jobs:
     needs:
       [
         ci_plan,
+        acs-impact-gate,
         preflight_checks,
         migration_reviews,
         tests,
@@ -582,7 +689,7 @@ jobs:
         writer_bundle,
         browser_smoke,
       ]
-    if: ${{ !cancelled() }}
+    if: ${{ always() }}
 
     permissions:
       contents: read
@@ -591,6 +698,7 @@ jobs:
       - name: 校验并行预检结果
         if: always()
         env:
+          ACS_IMPACT_GATE_RESULT: ${{ needs.acs-impact-gate.result }}
           CI_PLAN_RESULT: ${{ needs.ci_plan.result }}
           PREFLIGHT_CHECKS_RESULT: ${{ needs.preflight_checks.result }}
           MIGRATION_REVIEWS_RESULT: ${{ needs.migration_reviews.result }}
@@ -613,6 +721,7 @@ jobs:
           # 格式 name=result=planned；planned=false 的门禁允许 skipped，其余必须 success。
           for gate in \
             "ci_plan=$CI_PLAN_RESULT=true" \
+            "acs_impact_gate=$ACS_IMPACT_GATE_RESULT=true" \
             "preflight_checks=$PREFLIGHT_CHECKS_RESULT=true" \
             "migration_reviews=$MIGRATION_REVIEWS_RESULT=true" \
             "release_packages=$RELEASE_PACKAGES_RESULT=$PLAN_RELEASE_PACKAGES" \

@@ -1,9 +1,37 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { governanceAccessApi } from '@agent/shared/lib/governanceApi';
 import { installationPath } from '@/lib/kyAppManagementApi';
 import { businessStatusLabel } from './presentation';
+import { previewResourceAssignment, updateResourceAssignment } from './installationAssignmentApi';
 import { ResourceState, useManagementResource } from './ManagementResource';
+
+interface AssignmentRule {
+  assigneeType: 'everyone' | 'user' | 'directory_group' | 'agent';
+  assigneeId?: string;
+  effect: 'allow' | 'deny';
+}
+
+interface AssignmentSet {
+  version: number;
+  assignments: Array<AssignmentRule & { assignmentId?: string; origin?: string }>;
+}
+
+interface AssignmentPreview {
+  previewId: string;
+  baselineDigest: string;
+  expiresAt: string;
+  impact?: { addedUserCount?: number; removedUserCount?: number; effectiveUserCount?: number };
+}
 
 interface AccessOverview {
   summary: {
@@ -18,6 +46,7 @@ interface AccessOverview {
     userId: string;
     displayName: string;
     username: string;
+    authorized: boolean;
     departmentNames: string[];
     accessSources: string[];
     personalAuthorizationStatus: string;
@@ -28,22 +57,104 @@ interface AccessOverview {
   nextCursor: string | null;
 }
 
-export function InstallationAccessOverview({ installationId }: { installationId: string }) {
+export function buildMemberAccessRules(
+  assignments: AssignmentSet['assignments'],
+  userId: string,
+  authorize: boolean,
+): AssignmentRule[] {
+  const rules = assignments
+    .filter((rule) => !(rule.assigneeType === 'user' && rule.assigneeId === userId))
+    .map(({ assigneeType, assigneeId, effect }) => ({
+      assigneeType,
+      ...(assigneeType === 'everyone' ? {} : { assigneeId }),
+      effect,
+    }));
+  rules.push({ assigneeType: 'user', assigneeId: userId, effect: authorize ? 'allow' : 'deny' });
+  return rules;
+}
+
+export function InstallationAccessOverview({
+  installationId,
+  tenantId,
+}: {
+  installationId: string;
+  tenantId: string;
+}) {
   const [kind, setKind] = useState<'user' | 'agent'>('user');
   const [query, setQuery] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
   const [cursor, setCursor] = useState('');
   const [cursorHistory, setCursorHistory] = useState<string[]>([]);
+  const [pendingUser, setPendingUser] = useState<AccessOverview['users'][number] | null>(null);
+  const [preview, setPreview] = useState<AssignmentPreview | null>(null);
+  const [command, setCommand] = useState<{
+    expectedVersion: number;
+    assignments: AssignmentRule[];
+  } | null>(null);
+  const [busyUserId, setBusyUserId] = useState('');
+  const [mutationError, setMutationError] = useState('');
   const resource = useManagementResource<AccessOverview>(
     `${installationPath(installationId, '/access-overview')}?${new URLSearchParams({ kind, ...(appliedQuery ? { query: appliedQuery } : {}), ...(cursor ? { cursor } : {}) })}`,
   );
+
+  async function prepareMemberChange(user: AccessOverview['users'][number]) {
+    if (busyUserId) return;
+    setBusyUserId(user.userId);
+    setMutationError('');
+    try {
+      const baseline = await governanceAccessApi.getAssignment<AssignmentSet>(
+        'system_installation',
+        installationId,
+        tenantId,
+      );
+      const nextCommand = {
+        expectedVersion: baseline.version,
+        assignments: buildMemberAccessRules(baseline.assignments, user.userId, !user.authorized),
+      };
+      const nextPreview = await previewResourceAssignment<AssignmentPreview>(
+        'system_installation',
+        installationId,
+        nextCommand,
+        tenantId,
+      );
+      setCommand(nextCommand);
+      setPreview(nextPreview);
+      setPendingUser(user);
+    } catch (cause) {
+      setMutationError(cause instanceof Error ? cause.message : '无法预览成员授权变更');
+    } finally {
+      setBusyUserId('');
+    }
+  }
+
+  async function commitMemberChange() {
+    if (!pendingUser || !preview || !command || busyUserId) return;
+    setBusyUserId(pendingUser.userId);
+    setMutationError('');
+    try {
+      await updateResourceAssignment(
+        'system_installation',
+        installationId,
+        { ...command, ...preview },
+        tenantId,
+      );
+      setPendingUser(null);
+      setPreview(null);
+      setCommand(null);
+      resource.reload();
+    } catch (cause) {
+      setMutationError(cause instanceof Error ? cause.message : '成员授权变更失败');
+    } finally {
+      setBusyUserId('');
+    }
+  }
   return (
     <section className="space-y-3 rounded border p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="font-medium">有效授权清单</h3>
+          <h3 className="font-medium">成员授权</h3>
           <p className="text-xs text-muted-foreground">
-            展示规则计算后的最终结果，不包含被排除的成员或智能体。
+            查看组织成员当前状态，并可逐行授权或取消授权。
           </p>
         </div>
         <div className="flex gap-2" role="tablist" aria-label="授权对象">
@@ -113,9 +224,8 @@ export function InstallationAccessOverview({ installationId }: { installationId:
                     <tr>
                       <th>用户</th>
                       <th>所属部门</th>
-                      <th>获得权限的原因</th>
                       <th>个人授权</th>
-                      <th>Agent 能力</th>
+                      <th className="text-right">操作</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -126,9 +236,26 @@ export function InstallationAccessOverview({ installationId }: { installationId:
                           <div className="text-xs text-muted-foreground">{item.username}</div>
                         </td>
                         <td>{item.departmentNames.join('、') || '未分组'}</td>
-                        <td>{item.accessSources.map(businessStatusLabel).join('、')}</td>
-                        <td>{businessStatusLabel(item.personalAuthorizationStatus)}</td>
-                        <td>{businessStatusLabel(item.agentCapabilityStatus)}</td>
+                        <td>
+                          {item.authorized
+                            ? businessStatusLabel(item.personalAuthorizationStatus)
+                            : '—'}
+                        </td>
+                        <td className="py-2 text-right">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={item.authorized ? 'outline' : 'default'}
+                            disabled={Boolean(busyUserId)}
+                            onClick={() => void prepareMemberChange(item)}
+                          >
+                            {busyUserId === item.userId
+                              ? '处理中…'
+                              : item.authorized
+                                ? '取消授权'
+                                : '授权'}
+                          </Button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -176,8 +303,58 @@ export function InstallationAccessOverview({ installationId }: { installationId:
               下一页
             </Button>
           </div>
+          {mutationError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {mutationError}
+            </p>
+          ) : null}
         </>
       )}
+      <Dialog
+        open={Boolean(pendingUser && preview)}
+        onOpenChange={(open) => {
+          if (!open && !busyUserId) {
+            setPendingUser(null);
+            setPreview(null);
+            setCommand(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{pendingUser?.authorized ? '取消成员授权' : '授权成员'}</DialogTitle>
+            <DialogDescription>
+              {pendingUser?.authorized
+                ? `确认取消“${pendingUser.displayName}”访问该业务系统的权限？`
+                : `确认授权“${pendingUser?.displayName ?? ''}”访问该业务系统？`}
+            </DialogDescription>
+          </DialogHeader>
+          {preview?.impact ? (
+            <p className="text-sm text-muted-foreground">
+              变更后预计授权 {preview.impact.effectiveUserCount ?? 0} 人，新增{' '}
+              {preview.impact.addedUserCount ?? 0} 人，移除 {preview.impact.removedUserCount ?? 0}{' '}
+              人。
+            </p>
+          ) : null}
+          {mutationError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {mutationError}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={Boolean(busyUserId)}
+              onClick={() => setPendingUser(null)}
+            >
+              取消
+            </Button>
+            <Button disabled={Boolean(busyUserId)} onClick={() => void commitMemberChange()}>
+              {busyUserId ? '提交中…' : '确认'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

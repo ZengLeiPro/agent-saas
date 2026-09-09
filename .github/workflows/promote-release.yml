@@ -277,7 +277,7 @@ jobs:
           remote="/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
-            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
+            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \
             scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
             "$RUNNER_TEMP/manifest.json" "$ECS_USER@$ECS_HOST:$remote/"
@@ -451,7 +451,7 @@ jobs:
             scripts/release/acs-deployment-drain.sh \
             scripts/release/verify-installed-release.mjs \
             scripts/release/read-live-production-components.mjs scripts/release/read-production-state.mjs \
-            scripts/release/read-runtime-identity.mjs scripts/release/verify-promotion-phase-state.mjs \
+            scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/verify-promotion-phase-state.mjs \
             scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
             scripts/release/artifact-lib.mjs scripts/release/reuse-promotion-artifacts.mjs \
             "$upload_root/"
@@ -1268,7 +1268,7 @@ jobs:
           checkpoint_remote="/tmp/release-checkpoint-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$checkpoint_remote'"
           scp -i ~/.ssh/production_key scripts/release/read-production-state.mjs \
-            scripts/release/read-runtime-identity.mjs scripts/release/artifact-lib.mjs \
+            scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/artifact-lib.mjs \
             scripts/release/production-checkpoint.mjs scripts/release/save-production-checkpoint.sh \
             "$RUNNER_TEMP/manifest.json" "$ECS_USER@$ECS_HOST:$checkpoint_remote/"
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" \

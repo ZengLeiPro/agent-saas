@@ -13,6 +13,42 @@ export interface ApiSessionGroup {
   updatedAt: number;
 }
 
+export type SmartGroupingScope = "ungrouped" | "all";
+
+export interface SmartGroupingPlan {
+  scope: SmartGroupingScope;
+  fingerprint: string;
+  groups: Array<{ name: string; sessionIds: string[] }>;
+  ungroupedSessionIds: string[];
+  sessions: Array<{ sessionId: string; title: string }>;
+  truncated: boolean;
+}
+
+export async function generateSmartGroupingPlan(scope: SmartGroupingScope): Promise<SmartGroupingPlan> {
+  const res = await authFetch("/api/groups/smart-plan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope }),
+  });
+  const data = await res.json().catch(() => ({})) as SmartGroupingPlan & { error?: string };
+  if (!res.ok) throw new Error(data.error || "智能分组生成失败");
+  return data;
+}
+
+export async function applySmartGroupingPlan(plan: SmartGroupingPlan): Promise<void> {
+  const res = await authFetch("/api/groups/smart-apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fingerprint: plan.fingerprint,
+      targetSessionIds: plan.sessions.map(session => session.sessionId),
+      groups: plan.groups,
+    }),
+  });
+  const data = await res.json().catch(() => ({})) as { error?: string };
+  if (!res.ok) throw new Error(data.error || "智能分组应用失败");
+}
+
 /**
  * 平台内部记忆轮询分组不属于用户会话目录。
  * systemKind 是 cron job 的真源，但分组接口只携带名称；后缀兼容规则与服务端

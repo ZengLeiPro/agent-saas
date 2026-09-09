@@ -377,7 +377,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createModelsAdminRouter({
         processCwd,
         config,
-        configMutationService,
+        configMutationService: runtime.productionModelMutationService ?? configMutationService,
         secretVault: runtime.secretVault,
         requireRevision: true, ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
         ...(runtime.validateSharedConfigCandidate ? { validateConfigReload: runtime.validateSharedConfigCandidate } : {}),
@@ -664,7 +664,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       groupStore: runtime.groupStore,
       agentCwd: runtime.agentCwd,
       userStore: runtime.userStore,
-      agentStore: runtime.agentStore,
+      agentStore: runtime.agentStore, titleGeneratorConfigs: runtime.titleGeneratorConfigs, titleModelAdapterFactory: runtime.titleModelAdapterFactory, refreshSharedConfig: runtime.refreshSharedConfig, getSessionGroupingSystemPrompt: () => runtime.systemPromptRegistry.get('utility.sessionGrouping'), tokenUsageStore: runtime.tokenUsageStore, billingService: runtime.billingService,
       loginLogFilePath,
       broadcastToUser: webChannel
         ? (userId, data) => webChannel.getWsServer()?.broadcastToUser(userId, data)

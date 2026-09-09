@@ -1,4 +1,4 @@
-export { GroupStore } from './store.js';
+export { GroupStore, SmartGroupingConflictError } from './store.js';
 export { migrateCronGroups } from './migrate.js';
 export type {
   SessionGroup,

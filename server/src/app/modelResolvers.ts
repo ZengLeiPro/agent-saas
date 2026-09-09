@@ -1,3 +1,4 @@
+import type { MemoryIndexRuntimeTransaction } from './memoryIndexRuntimeUpdate.js';
 /**
  * 模型解析器工厂。
  *
@@ -67,6 +68,8 @@ export function createModelResolvers(params: {
   prepareSttUpdate?: (
     next: AppConfig['stt'],
   ) => SttRuntimeUpdateCommit | Promise<SttRuntimeUpdateCommit>;
+  isConfigAdmissionAllowed?: () => boolean;
+  prepareMemoryIndexUpdate?: (next: NonNullable<AppConfig['memory']>['index']) => Promise<MemoryIndexRuntimeTransaction>;
   prepareMemoryPollingUpdate?: (
     next: NonNullable<AppConfig['memory']>['polling'],
   ) => () => void;
@@ -105,6 +108,7 @@ export function createModelResolvers(params: {
       getGuardrailModelConfigs: params.getGuardrailModelConfigs,
     },
     prepareSystemPromptOverridesUpdate: params.prepareSystemPromptOverridesUpdate,
+    prepareMemoryIndexUpdate: params.prepareMemoryIndexUpdate,
     ...(params.prepareToolControlsUpdate
       ? { prepareToolControlsUpdate: params.prepareToolControlsUpdate }
       : {}),
@@ -156,6 +160,7 @@ export function createModelResolvers(params: {
 
   // 同步 resolver 每次强制 stat；无法等待异步 prepare 时拒绝本次解析，避免旧密钥/权限。
   const refreshForSyncResolution = (): boolean => {
+    if (params.isConfigAdmissionAllowed?.() === false) return false;
     const outcome = sharedConfigRefresher.refreshIfChanged(true);
     if (outcome instanceof Promise) {
       void outcome.catch((error) => logger?.warn(`[Models] 异步配置刷新失败：${String(error)}`));

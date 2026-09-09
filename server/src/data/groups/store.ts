@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { open, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -29,6 +29,8 @@ interface LocalLock {
   handle: Awaited<ReturnType<typeof open>>;
   token: string;
 }
+
+export class SmartGroupingConflictError extends Error {}
 
 const DEFAULT_LOCK_TIMEOUT_MS = 10_000;
 const DEFAULT_LOCK_RETRY_MS = 20;
@@ -176,6 +178,19 @@ export class GroupStore {
     return this.groups.find(g => g.kind === 'cron' && g.cronJobId === cronJobId);
   }
 
+  private fingerprintForUser(userId: string): string {
+    const snapshot = this.groups
+      .filter(group => group.userId === userId)
+      .map(group => ({ id: group.id, name: group.name, kind: group.kind, sessionIds: [...group.sessionIds].sort() }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    return createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+  }
+
+  getUserSnapshotFingerprint(userId: string): string {
+    this.refreshForRead();
+    return this.fingerprintForUser(userId);
+  }
+
   // --- Mutations ---
 
   async create(input: CreateGroupInput): Promise<SessionGroup> {
@@ -195,6 +210,65 @@ export class GroupStore {
         return group;
       });
       return { changed: results.length > 0, value: results };
+    });
+  }
+
+  /** 智能分组确认后的单次原子写入；永不改变 cron/taskboard 分组。 */
+  async applySmartGrouping(input: {
+    userId: string;
+    expectedFingerprint: string;
+    targetSessionIds: string[];
+    groups: Array<{ name: string; sessionIds: string[] }>;
+  }): Promise<SessionGroup[]> {
+    return this.mutate(() => {
+      if (this.fingerprintForUser(input.userId) !== input.expectedFingerprint) {
+        throw new SmartGroupingConflictError('会话分组已发生变化，请重新生成方案');
+      }
+      const targets = new Set(input.targetSessionIds);
+      const protectedIds = new Set(this.groups
+        .filter(group => group.userId === input.userId && group.kind !== 'manual')
+        .flatMap(group => group.sessionIds));
+      for (const sessionId of targets) {
+        if (protectedIds.has(sessionId)) throw new Error(`系统分组会话不可调整：${sessionId}`);
+      }
+      const assigned = new Set<string>();
+      for (const proposal of input.groups) {
+        if (!proposal.name.trim()) throw new Error('智能分组名称不能为空');
+        for (const sessionId of proposal.sessionIds) {
+          if (!targets.has(sessionId)) throw new Error(`方案包含非目标会话：${sessionId}`);
+          if (assigned.has(sessionId)) throw new Error(`方案重复分配会话：${sessionId}`);
+          assigned.add(sessionId);
+        }
+      }
+
+      const now = Date.now();
+      for (const group of this.groups) {
+        if (group.userId !== input.userId || group.kind !== 'manual') continue;
+        const next = group.sessionIds.filter(sessionId => !targets.has(sessionId));
+        if (next.length !== group.sessionIds.length) {
+          group.sessionIds = next;
+          group.updatedAt = now;
+        }
+      }
+
+      const changedGroups: SessionGroup[] = [];
+      for (const proposal of input.groups) {
+        const normalizedName = proposal.name.trim();
+        let group = this.groups.find(candidate => candidate.userId === input.userId
+          && candidate.kind === 'manual'
+          && candidate.name.localeCompare(normalizedName, undefined, { sensitivity: 'accent' }) === 0);
+        if (!group) {
+          group = this.buildGroup({ userId: input.userId, name: normalizedName, kind: 'manual' });
+          this.groups.push(group);
+        }
+        const existing = new Set(group.sessionIds);
+        for (const sessionId of proposal.sessionIds) {
+          if (!existing.has(sessionId)) group.sessionIds.push(sessionId);
+        }
+        group.updatedAt = now;
+        changedGroups.push(group);
+      }
+      return { changed: targets.size > 0, value: changedGroups };
     });
   }
 

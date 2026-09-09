@@ -1,3 +1,4 @@
+import type { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
 import type { AppConfig } from '../types/index.js';
 import type { AuthEpochAuthority } from '../auth/authEpochAuthority.js';
 import type {
@@ -281,6 +282,7 @@ export interface AppRuntime {
   /** 标题 utility 专用 adapter factory；Codex 固定 HTTP/SSE，不复用主会话 WebSocket pool。 */
   titleModelAdapterFactory?: TitleModelAdapterFactory;
   /** 从磁盘加载并应用共享配置；force 绕过节流并重新确认内容指纹。 */
+  productionModelMutationService?: AdminConfigMutationService;
   refreshSharedConfig: (force?: boolean) => boolean | Promise<boolean>;
   /** Voice 安全入口每次重读共享配置，并强制重新解析当前 STT SecretRef。 */
   refreshVoiceTranscriptionConfig: () => Promise<boolean>;

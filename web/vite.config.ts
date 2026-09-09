@@ -44,6 +44,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      "@agent/shared/configWritePolicy": fileURLToPath(new URL("../shared/src/configWritePolicy.ts", import.meta.url)),
       // Runtime schemas use exact subpaths so the shared root barrel stays out of the overview chunk.
       "@": fileURLToPath(new URL("./src", import.meta.url)),
       "@agent/shared/lib/governanceApi": fileURLToPath(new URL("../shared/src/lib/governanceApi.ts", import.meta.url)),

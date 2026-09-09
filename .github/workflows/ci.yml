@@ -1196,6 +1196,7 @@ jobs:
             scripts/release/read-live-production-components.mjs
             scripts/release/read-production-state.mjs
             scripts/release/read-runtime-identity.mjs
+            scripts/release/config-publication.mjs
             scripts/release/verify-installed-release.mjs
             scripts/release/write-live-production-identity.mjs
             "$RUNNER_TEMP/runtime-identity.before.json"
@@ -1346,6 +1347,7 @@ jobs:
             scripts/release/artifact-lib.mjs
             scripts/release/read-production-state.mjs
             scripts/release/read-runtime-identity.mjs
+            scripts/release/config-publication.mjs
           )
           payload_stage="$RUNNER_TEMP/production-proof-payload"
           payload_archive="$RUNNER_TEMP/production-proof-payload.tgz"

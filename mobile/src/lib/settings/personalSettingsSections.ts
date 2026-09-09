@@ -1,5 +1,5 @@
 /**
- * 个人设置 8 分区注册表 —— 与 Web `web/src/lib/unifiedSettingsRegistry.ts`
+ * 个人设置 9 分区注册表 —— 与 Web `web/src/lib/unifiedSettingsRegistry.ts`
  * 的 `scope: "personal"` 条目同名、同序、同 ID、同分组。
  *
  * 约定：
@@ -28,6 +28,7 @@ export type PersonalSettingsSectionId =
   | 'account-security'
   | 'my-agent'
   | 'chat-model'
+  | 'session-organization'
   | 'appearance-layout'
   | 'my-permissions'
   | 'connections'
@@ -36,11 +37,11 @@ export type PersonalSettingsSectionId =
 
 /** 与 Web `PERSONAL_SETTINGS_ICONS` 的键一致。 */
 export type PersonalSettingsIconKey =
-  'user' | 'bot' | 'message-square' | 'palette' | 'admin' | 'link' | 'hard-drive' | 'trash';
+  'user' | 'bot' | 'message-square' | 'sparkles' | 'palette' | 'admin' | 'link' | 'hard-drive' | 'trash';
 
 /** 移动端落点：Stack 路由 pattern（与 V1 能力清单同一书写法）或页内浮层。 */
 export type PersonalSettingsTarget =
-  { kind: 'route'; route: string } | { kind: 'sheet'; sheet: 'trash' };
+  { kind: 'route'; route: string } | { kind: 'sheet'; sheet: 'trash' } | { kind: 'unavailable' };
 
 export interface PersonalSettingsSection {
   id: PersonalSettingsSectionId;
@@ -76,6 +77,15 @@ export const PERSONAL_SETTINGS_SECTIONS: readonly PersonalSettingsSection[] = [
     group: 'preferences',
     iconKey: 'message-square',
     target: { kind: 'route', route: 'settings/chat-model' },
+  },
+  {
+    id: 'session-organization',
+    label: '会话智能整理',
+    description: '配置自动标题与智能分组偏好。',
+    group: 'preferences',
+    iconKey: 'sparkles',
+    // 本期仅交付 Web；保留注册表占位以维持跨端 ID 契约，设置主页明确隐藏。
+    target: { kind: 'unavailable' },
   },
   {
     id: 'appearance-layout',

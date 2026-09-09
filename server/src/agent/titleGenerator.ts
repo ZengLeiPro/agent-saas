@@ -17,6 +17,8 @@ import type { ModelProviderOptions } from '../types/index.js';
 import type { ModelAdapter, RunContext } from '../runtime/types.js';
 import { createLogger } from '../utils/logger.js';
 
+export { appendUserPromptAddition } from './userPromptComposition.js';
+
 const titleLogger = createLogger('Title');
 
 /**
@@ -163,6 +165,7 @@ async function generateTitleViaResponses(input: {
   systemPrompt: string;
   userPrompt: string;
   signal: AbortSignal;
+  maxOutputTokens?: number;
 }): Promise<TitleProviderResult> {
   const response = await fetch(`${input.baseURL.replace(/\/+$/, '')}/responses`, {
     method: 'POST',
@@ -174,7 +177,7 @@ async function generateTitleViaResponses(input: {
       model: input.model,
       instructions: input.systemPrompt,
       input: input.userPrompt,
-      max_output_tokens: RESPONSES_TITLE_MAX_OUTPUT_TOKENS,
+      max_output_tokens: input.maxOutputTokens ?? RESPONSES_TITLE_MAX_OUTPUT_TOKENS,
       store: false,
       stream: false,
     }),
@@ -207,6 +210,7 @@ interface TitleModelAdapterInput {
   userPrompt: string;
   signal: AbortSignal;
   authorizeModelTurn?: () => Promise<void>;
+  maxOutputTokens?: number;
 }
 
 const codexTitleInFlight = new WeakMap<TitleModelAdapterFactory, Set<string>>();
@@ -268,7 +272,7 @@ async function generateTitleViaModelAdapter(input: TitleModelAdapterInput): Prom
     ],
     tools: [],
     toolChoice: 'none',
-    maxOutputTokens: RESPONSES_TITLE_MAX_OUTPUT_TOKENS,
+    maxOutputTokens: input.maxOutputTokens ?? RESPONSES_TITLE_MAX_OUTPUT_TOKENS,
     signal: input.signal,
   }, context)) {
     if (event.type === 'text_delta') raw += event.content;
@@ -445,6 +449,99 @@ export async function generateTitle(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * 标题模型链上的通用无工具文本调用。智能分组复用同一套连接、协议、计费回调和
+ * fallback 语义，但保留完整输出供结构化解析，不执行标题截断。
+ */
+export async function generateUtilityTextWithFallback(
+  userPrompt: string,
+  configs: TitleGeneratorConfig[],
+  options: TitleGenerationOptions & { maxOutputTokens?: number } = {},
+): Promise<string | null> {
+  for (const config of configs) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 45_000);
+    const apiKey = config.connection?.apiKey || process.env.OPENAI_API_KEY;
+    const baseURL = config.connection?.baseUrl || process.env.OPENAI_BASE_URL;
+    const isCodexSubscription = config.protocol === 'responses'
+      && config.responsesTransport === 'codex_subscription';
+    let authorizationCallbackFailed = false;
+    let usageCallbackFailed = false;
+    try {
+      if (isCodexSubscription && (!options.modelAdapterFactory || !options.runtimeContext)) continue;
+      if (!isCodexSubscription && !apiKey) continue;
+      if (config.protocol === 'responses' && !isCodexSubscription && !baseURL) continue;
+      if (!isCodexSubscription && options.beforeModelCall) {
+        try { await options.beforeModelCall(config.model); }
+        catch (error) { authorizationCallbackFailed = true; throw error; }
+      }
+
+      let result: TitleProviderResult;
+      if (isCodexSubscription) {
+        result = await runCodexTitleOperation({
+          config,
+          factory: options.modelAdapterFactory!,
+          runtimeContext: options.runtimeContext!,
+          systemPrompt: options.systemPrompt ?? TITLE_SYSTEM_PROMPT,
+          userPrompt,
+          signal: controller.signal,
+          maxOutputTokens: options.maxOutputTokens ?? 2048,
+          authorizeModelTurn: options.beforeModelCall
+            ? async () => {
+                try { await options.beforeModelCall!(config.model); }
+                catch (error) { authorizationCallbackFailed = true; throw error; }
+              }
+            : undefined,
+        });
+      } else if (config.protocol === 'responses') {
+        result = await generateTitleViaResponses({
+          apiKey: apiKey!, baseURL: baseURL!, model: config.model,
+          systemPrompt: options.systemPrompt ?? TITLE_SYSTEM_PROMPT,
+          userPrompt, signal: controller.signal,
+          maxOutputTokens: options.maxOutputTokens ?? 2048,
+        });
+      } else {
+        const client = new OpenAI({ apiKey: apiKey!, maxRetries: 0, ...(baseURL ? { baseURL } : {}) });
+        const response = await client.chat.completions.create({
+          model: config.model,
+          messages: [
+            { role: 'system', content: options.systemPrompt ?? TITLE_SYSTEM_PROMPT },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.1,
+          max_tokens: options.maxOutputTokens ?? 2048,
+          n: 1,
+        }, { signal: controller.signal });
+        const usage = response.usage;
+        result = {
+          raw: response.choices[0]?.message?.content ?? '',
+          finishReason: response.choices[0]?.finish_reason ?? 'unknown',
+          responseId: response.id ?? 'n/a',
+          ...(usage ? { usage: {
+            inputTokens: usage.prompt_tokens ?? 0,
+            outputTokens: usage.completion_tokens ?? 0,
+            cacheReadInputTokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
+            cacheCreationInputTokens: 0,
+            apiRequestCount: 1,
+          } } : {}),
+        };
+      }
+      if (result.usage) {
+        try { await options.onUsage?.(config.model, result.usage); }
+        catch (error) { usageCallbackFailed = true; throw error; }
+      }
+      if (result.errorMessage) throw new Error(result.errorMessage);
+      if (result.raw.trim()) return result.raw.trim();
+    } catch (error) {
+      if (authorizationCallbackFailed || usageCallbackFailed) throw error;
+      titleLogger.warn(`Utility generation failed (model=${config.model}): ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return null;
 }
 
 /**

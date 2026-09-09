@@ -39,6 +39,8 @@ import {
 import { resolveUserCwd } from "../workspace/resolver.js";
 import { TTLCache } from "../utils/cache.js";
 import {
+  TITLE_SYSTEM_PROMPT,
+  appendUserPromptAddition,
   extractTitleContext,
   generateTitleWithFallback,
   type TitleGeneratorConfig, type TitleModelAdapterFactory,
@@ -2423,11 +2425,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }
   });
 
-  /**
-   * POST /api/sessions/:sessionId/auto-title
-   *
-   * 从 transcript 提取首条用户消息和助手回复，调用 AI 生成标题
-   */
+  /** POST /api/sessions/:sessionId/auto-title：从 transcript 提取上下文并调用 AI 生成标题。 */
   router.post(
     "/sessions/:sessionId/auto-title",
     async (req: Request, res: Response) => {
@@ -2503,11 +2501,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           : undefined;
         let title: string | null;
         try {
+          const titleSystemPrompt = appendUserPromptAddition(options.getTitleSystemPrompt?.() ?? TITLE_SYSTEM_PROMPT, req.user ? options.userStore?.findById(req.user.sub)?.preferences?.titlePromptAddition : undefined, 'title');
           title = await generateTitleWithFallback(
             userMessages[0], assistantReplies[0] || "", options.titleGeneratorConfigs,
             userMessages[1], assistantReplies[1],
             {
-              systemPrompt: options.getTitleSystemPrompt?.(),
+              systemPrompt: titleSystemPrompt,
               modelAdapterFactory: options.titleModelAdapterFactory,
               runtimeContext: { sessionId, tenantId: req.user?.tenantId, cwd: userCwd },
               beforeModelCall: () => utilityBilling?.beforeModelCall(),

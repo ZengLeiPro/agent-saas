@@ -47,6 +47,8 @@ import {
 import { getStoredWorkConversation, listStoredWorkConversations } from './workConversationQueries.js';
 import { listStoredWorkAttempts, loadStoredGroupWorkspace } from './groupWorkspaceQueries.js';
 import {
+  completeControlCommand as completeStoredControlCommand,
+  failControlCommand as failStoredControlCommand,
   getWorkOrder as selectWorkOrder,
   getWorkOrderByShortId as selectWorkOrderByShortId,
   pauseWorkOrder as pauseStoredWorkOrder,
@@ -792,7 +794,12 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     tenantId: string;
     workOrderId: string;
     expectedVersion: number;
-    inboxReceipt?: import('./types.js').OrgAgentControlInboxReceipt;
+    control?: OrgAgentWorkOrderControl;
+    pauseContext?: {
+      resultEnvelope: OrgAgentResultEnvelope;
+      checkpoint: Record<string, unknown>;
+    };
+    controlLease?: import('./types.js').OrgAgentControlInboxReceipt;
   }): Promise<OrgAgentWorkOrder> {
     return await pauseStoredWorkOrder(
       this.pool, this.workOrdersTable, this.attemptsTable, this.inboxTable, input,
@@ -805,10 +812,32 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     expectedVersion: number;
     control?: OrgAgentWorkOrderControl;
     supersedePendingCompletion?: boolean;
-    inboxReceipt?: import('./types.js').OrgAgentControlInboxReceipt;
+    supersedeActiveAttempt?: boolean;
+    supersedeContext?: {
+      resultEnvelope: OrgAgentResultEnvelope;
+      checkpoint: Record<string, unknown>;
+    };
+    controlLease?: import('./types.js').OrgAgentControlInboxReceipt;
   }): Promise<OrgAgentWorkOrder> {
     return await queueStoredWorkOrderAttempt(
-      this.pool, this.workOrdersTable, this.deliveriesTable, this.inboxTable, input,
+      this.pool, this.workOrdersTable, this.deliveriesTable, this.attemptsTable,
+      this.inboxTable, input,
+    );
+  }
+
+  async completeControlCommand(
+    input: Parameters<OrgGroupAgentStore['completeControlCommand']>[0],
+  ): Promise<OrgAgentWorkOrder> {
+    return await completeStoredControlCommand(
+      this.pool, this.workOrdersTable, this.inboxTable, input,
+    );
+  }
+
+  async failControlCommand(
+    input: Parameters<OrgGroupAgentStore['failControlCommand']>[0],
+  ): Promise<OrgAgentWorkOrder> {
+    return await failStoredControlCommand(
+      this.pool, this.workOrdersTable, this.inboxTable, input,
     );
   }
 

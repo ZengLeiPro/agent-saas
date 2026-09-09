@@ -155,10 +155,30 @@ function validateWorkOrderControl(value: Record<string, unknown>): OrgAgentWorkO
     return [{ text: row.text, actorOpenId: row.actorOpenId, createdAt: row.createdAt,
       kind: row.kind as 'supplement' | 'review' }];
   }) : [];
+  const rawCommand = value.command && typeof value.command === 'object' && !Array.isArray(value.command)
+    ? value.command as Record<string, unknown>
+    : undefined;
+  const command = rawCommand
+    && typeof rawCommand.inboxId === 'string'
+    && ['amend', 'pause', 'resume', 'review', 'reassign'].includes(String(rawCommand.action))
+    && ['prepared', 'completed', 'failed'].includes(String(rawCommand.phase))
+    && Number.isSafeInteger(rawCommand.sourceAttemptNo)
+    && Number(rawCommand.sourceAttemptNo) >= 0
+    ? {
+        inboxId: rawCommand.inboxId,
+        action: rawCommand.action as 'amend' | 'pause' | 'resume' | 'review' | 'reassign',
+        phase: rawCommand.phase as 'prepared' | 'completed' | 'failed',
+        sourceAttemptNo: Number(rawCommand.sourceAttemptNo),
+        ...(Number.isSafeInteger(rawCommand.targetAttemptNo) && Number(rawCommand.targetAttemptNo) >= 1
+          ? { targetAttemptNo: Number(rawCommand.targetAttemptNo) } : {}),
+        ...(typeof rawCommand.error === 'string' ? { error: rawCommand.error } : {}),
+      }
+    : undefined;
   return {
     revision: Number.isSafeInteger(value.revision) && Number(value.revision) >= 1 ? Number(value.revision) : 1,
     supplements,
     workerType: value.workerType === 'explore' ? 'explore' : 'general',
+    ...(command ? { command } : {}),
   };
 }
 

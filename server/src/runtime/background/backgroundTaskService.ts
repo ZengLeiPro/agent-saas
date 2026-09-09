@@ -756,6 +756,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       allowPendingArtifacts?: boolean;
       control?: import('../../data/orgGroupAgents/index.js').OrgAgentWorkOrderControl;
       supersedePendingCompletion?: boolean;
+      supersedeActiveAttempt?: boolean;
       inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
     },
   ): Promise<RunRecord> {

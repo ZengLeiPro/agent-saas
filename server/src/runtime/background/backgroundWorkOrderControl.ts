@@ -19,6 +19,18 @@ export async function controlOrgAgentWorkOrder(
   if (!task || !metadata?.workOrderId || !metadata.orgAgentChannel)
     throw new Error('ORG_AGENT_WORK_ORDER_NOT_FOUND');
   let work = await authorizeOrgAgentWorkOrderMutation(config, context, metadata.workOrderId);
+  const durable = request.durableResult;
+  const priorCommand = durable && work.control.command?.inboxId === durable.inboxId
+    ? work.control.command
+    : undefined;
+  if (durable && work.control.command?.phase === 'prepared'
+    && work.control.command.inboxId !== durable.inboxId)
+    throw new Error('ORG_AGENT_CONTROL_COMMAND_BUSY');
+  if (priorCommand && priorCommand.action !== request.action)
+    throw new Error('ORG_AGENT_CONTROL_COMMAND_IDEMPOTENCY_CONFLICT');
+  if (priorCommand?.phase === 'failed')
+    throw new Error(priorCommand.error ?? 'ORG_AGENT_CONTROL_COMMAND_FAILED');
+  if (priorCommand?.phase === 'completed') return { task, workOrder: work };
   if (request.action === 'pause') {
     const pausedTask = await orgWork.pause(
       work.tenantId, work.workOrderId, work.version, request.durableResult,
@@ -27,7 +39,18 @@ export async function controlOrgAgentWorkOrder(
     return { task: pausedTask, workOrder: work };
   }
   if (request.action === 'resume') {
+    const resumeControl = priorCommand ? work.control : durable ? {
+      ...work.control,
+      command: {
+        inboxId: durable.inboxId,
+        action: 'resume' as const,
+        phase: 'prepared' as const,
+        sourceAttemptNo: work.currentAttemptNo,
+        targetAttemptNo: work.currentAttemptNo + 1,
+      },
+    } : undefined;
     const resumed = await orgWork.retry(work.tenantId, work.workOrderId, work.version, {
+      ...(resumeControl ? { control: resumeControl } : {}),
       ...(request.durableResult ? { inboxReceipt: request.durableResult } : {}),
     });
     work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
@@ -35,7 +58,7 @@ export async function controlOrgAgentWorkOrder(
   }
   if (request.action === 'review' && !['completed', 'failed', 'cancelled'].includes(work.state))
     throw new Error('ORG_AGENT_WORK_ORDER_REVIEW_REQUIRES_TERMINAL');
-  const nextControl = {
+  const nextControl = priorCommand ? work.control : {
     ...work.control,
     revision: work.control.revision + 1,
     ...(request.action === 'reassign' ? { workerType: request.workerType! } : {}),
@@ -55,18 +78,32 @@ export async function controlOrgAgentWorkOrder(
           ],
         }
       : {}),
+    ...(durable ? {
+      command: {
+        inboxId: durable.inboxId,
+        action: request.action,
+        phase: 'prepared' as const,
+        sourceAttemptNo: work.currentAttemptNo,
+        targetAttemptNo: work.currentAttemptNo + 1,
+      },
+    } : {}),
   };
   if (
     (request.action === 'amend' || request.action === 'reassign') &&
     ['queued', 'running', 'waiting_input'].includes(work.state)
   ) {
-    await orgWork.pause(work.tenantId, work.workOrderId, work.version);
-    work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
+    if (!durable) {
+      await orgWork.pause(work.tenantId, work.workOrderId, work.version);
+      work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
+    }
   }
   const resumed = await orgWork.retry(work.tenantId, work.workOrderId, work.version, {
     allowPendingArtifacts: true,
     control: nextControl,
     supersedePendingCompletion: true,
+    ...(durable && !priorCommand
+      && ['queued', 'running', 'waiting_input'].includes(work.state)
+      ? { supersedeActiveAttempt: true } : {}),
     ...(request.durableResult ? { inboxReceipt: request.durableResult } : {}),
   });
   work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;

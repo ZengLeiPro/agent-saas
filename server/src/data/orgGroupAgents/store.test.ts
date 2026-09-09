@@ -138,7 +138,7 @@ describe('PgOrgGroupAgentStore work attempt identity', () => {
     });
     const { pool, query, release } = queueStore(['pending'], updated);
 
-    await expect(queueWorkOrderAttempt(pool as never, 'work_orders', 'deliveries', 'inbox', {
+    await expect(queueWorkOrderAttempt(pool as never, 'work_orders', 'deliveries', 'attempts', 'inbox', {
       tenantId: 'tenant-a', workOrderId: 'work-a', expectedVersion: 3,
       control: nextControl, supersedePendingCompletion: true,
     })).resolves.toMatchObject({
@@ -158,7 +158,7 @@ describe('PgOrgGroupAgentStore work attempt identity', () => {
   it.each(['sending', 'unknown'])('blocks continuation when completion delivery is %s', async (deliveryState) => {
     const { pool, query, release } = queueStore([deliveryState]);
 
-    await expect(queueWorkOrderAttempt(pool as never, 'work_orders', 'deliveries', 'inbox', {
+    await expect(queueWorkOrderAttempt(pool as never, 'work_orders', 'deliveries', 'attempts', 'inbox', {
       tenantId: 'tenant-a', workOrderId: 'work-a', expectedVersion: 3,
       supersedePendingCompletion: true,
     })).rejects.toThrow('ORG_AGENT_WORK_ORDER_COMPLETION_UNCERTAIN');
@@ -174,7 +174,7 @@ describe('PgOrgGroupAgentStore work attempt identity', () => {
     const nextControl = { revision: 2, workerType: 'general' as const, supplements: [] };
     const { pool, query } = queueStore(['pending']);
 
-    await expect(queueWorkOrderAttempt(pool as never, 'work_orders', 'deliveries', 'inbox', {
+    await expect(queueWorkOrderAttempt(pool as never, 'work_orders', 'deliveries', 'attempts', 'inbox', {
       tenantId: 'tenant-a', workOrderId: 'work-a', expectedVersion: 3, control: nextControl,
     })).rejects.toThrow('ORG_AGENT_WORK_ORDER_RESUME_CONFLICT');
 

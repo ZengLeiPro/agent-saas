@@ -93,7 +93,7 @@ describePg('Agent DWS fast control claim lane', () => {
       .toBe(contextual.record.inboxId);
   });
 
-  it('WorkOrder 变更与控制回执同事务提交，重领只复用结果', async () => {
+  it('先固化 prepared 再单独提交成功回执，重领只复用结果', async () => {
     const currentAccount = await pool.query(`SELECT agent_id,profile_id,corp_id,
       dingtalk_user_id,identity_updated_at FROM ${prefix}_agent_dws_accounts
       WHERE tenant_id='tenant-a' AND account_id='account-a'`);
@@ -137,7 +137,25 @@ describePg('Agent DWS fast control claim lane', () => {
     const responseText = `任务 ${work.shortId} 已暂停，当前状态：paused`;
     await orgStore.pauseWorkOrder({
       tenantId: 'tenant-a', workOrderId: work.workOrderId, expectedVersion: work.version,
-      inboxReceipt: {
+      control: { ...work.control, command: {
+        inboxId: claim.inboxId, action: 'pause', phase: 'prepared',
+        sourceAttemptNo: work.currentAttemptNo,
+      } },
+      controlLease: {
+        inboxId: claim.inboxId, leaseOwner: 'control-worker',
+        leaseFence: claim.leaseFence, responseText,
+      },
+    });
+    const preparedInbox = await store.getById('tenant-a', claim.inboxId);
+    expect(preparedInbox).toMatchObject({
+      state: 'processing',
+      payload: expect.objectContaining({
+        fastControlWorkOrderId: work.workOrderId, fastControlPhase: 'prepared',
+      }),
+    });
+    expect(preparedInbox?.responseText).toBeUndefined();
+    await orgStore.completeControlCommand({
+      tenantId: 'tenant-a', workOrderId: work.workOrderId, inboxReceipt: {
         inboxId: claim.inboxId, leaseOwner: 'control-worker',
         leaseFence: claim.leaseFence, responseText,
       },
@@ -189,7 +207,11 @@ describePg('Agent DWS fast control claim lane', () => {
       SET lease_expires_at=NOW()-INTERVAL '1 second' WHERE inbox_id=$1`, [claim.inboxId]);
     await expect(orgStore.pauseWorkOrder({
       tenantId: 'tenant-a', workOrderId: work.workOrderId, expectedVersion: work.version,
-      inboxReceipt: {
+      control: { ...work.control, command: {
+        inboxId: claim.inboxId, action: 'pause', phase: 'prepared',
+        sourceAttemptNo: work.currentAttemptNo,
+      } },
+      controlLease: {
         inboxId: claim.inboxId, leaseOwner: 'stale-worker', leaseFence: claim.leaseFence,
         responseText: '不应提交',
       },
@@ -198,5 +220,31 @@ describePg('Agent DWS fast control claim lane', () => {
       state: 'queued', version: work.version,
     });
     expect((await store.getById('tenant-a', claim.inboxId))?.responseText).toBeUndefined();
+
+    const reclaimed = (await store.claimNextControl('current-worker', 60_000))!;
+    await orgStore.pauseWorkOrder({
+      tenantId: 'tenant-a', workOrderId: work.workOrderId, expectedVersion: work.version,
+      control: { ...work.control, command: {
+        inboxId: reclaimed.inboxId, action: 'pause', phase: 'prepared',
+        sourceAttemptNo: work.currentAttemptNo,
+      } },
+      controlLease: {
+        inboxId: reclaimed.inboxId, leaseOwner: 'current-worker',
+        leaseFence: reclaimed.leaseFence, responseText: '失败',
+      },
+    });
+    await pool.query(`UPDATE ${prefix}_agent_dws_event_inbox
+      SET lease_expires_at=NOW()-INTERVAL '1 second' WHERE inbox_id=$1`, [reclaimed.inboxId]);
+    await expect(orgStore.failControlCommand({
+      tenantId: 'tenant-a', workOrderId: work.workOrderId,
+      inboxReceipt: {
+        inboxId: reclaimed.inboxId, leaseOwner: 'current-worker',
+        leaseFence: reclaimed.leaseFence,
+        responseText: '失败',
+      },
+      error: 'INJECTED_SETUP_FAILURE',
+    })).rejects.toThrow('ORG_AGENT_FAST_CONTROL_LEASE_LOST');
+    expect((await orgStore.getWorkOrder('tenant-a', work.workOrderId))?.control.command)
+      .toMatchObject({ phase: 'prepared' });
   });
 });

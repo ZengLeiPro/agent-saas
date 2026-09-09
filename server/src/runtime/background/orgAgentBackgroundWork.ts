@@ -33,9 +33,15 @@ import {
 } from '../rawRuntimeRunDispatch.js';
 import { createRuntimeSessionRecord } from '../sessionCatalog.js';
 import type { BackgroundAgentRequest } from './backgroundTaskRuntime.js';
-import { parseStoredResult, type StoredBackgroundResult } from './backgroundTaskFormatting.js';
+import {
+  failedBackgroundResult as failedResult,
+  parseStoredResult,
+  terminalBackgroundResult as terminalResult,
+  type StoredBackgroundResult,
+} from './backgroundTaskFormatting.js';
 import { parseBackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 import { markBackgroundTaskTerminal } from './backgroundTaskTerminal.js';
+import { withWorkOrderContinuationPrompt } from './orgAgentContinuationPrompt.js';
 import {
   buildOrgAgentContinuation,
   buildPausedAttemptContext,
@@ -46,6 +52,7 @@ import {
   parseOrgAgentEffectiveExecutionContext,
   type OrgAgentEffectiveExecutionContext,
 } from './orgAgentExecutionContext.js';
+import { stopPreparedOrgAgentAttempt } from './orgAgentPreparedAttempt.js';
 import type { OrgAgentRecord } from '../../data/orgAgents/types.js';
 import type { BoundAgentRuntimeProfile } from '../agentProfiles.js';
 
@@ -567,6 +574,7 @@ export class OrgAgentBackgroundWorkCoordinator {
       allowPendingArtifacts?: boolean;
       control?: OrgAgentWorkOrderControl;
       supersedePendingCompletion?: boolean;
+      supersedeActiveAttempt?: boolean;
       inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
     } = {},
   ): Promise<RunRecord> {
@@ -577,7 +585,13 @@ export class OrgAgentBackgroundWorkCoordinator {
     const work = await store.getWorkOrder(tenantId, workOrderId);
     if (!work) throw new Error('ORG_AGENT_WORK_ORDER_MISSING');
     const attempts = await store.listWorkAttempts(tenantId, workOrderId);
-    const previousAttempt = attempts.at(-1);
+    const command = options.inboxReceipt
+      && work.control.command?.inboxId === options.inboxReceipt.inboxId
+      && work.control.command.phase === 'prepared'
+      ? work.control.command
+      : undefined;
+    const sourceAttemptNo = command?.sourceAttemptNo ?? work.currentAttemptNo;
+    const previousAttempt = attempts.find(item => item.attemptNo === sourceAttemptNo);
     if (previousAttempt?.status === 'completed' && previousAttempt.publishState === 'pending'
       && options.allowPendingArtifacts !== true)
       throw new Error('ORG_AGENT_ARTIFACT_PUBLISH_REQUIRED_BEFORE_RETRY');
@@ -609,11 +623,6 @@ export class OrgAgentBackgroundWorkCoordinator {
         : undefined;
     const basePrompt =
       earliestBasePrompt ?? earliestPrompt ?? metadata.basePrompt ?? metadata.prompt;
-    const continuation = buildOrgAgentContinuation({
-      work,
-      attempt: previousAttempt,
-      allowPendingArtifacts: options.allowPendingArtifacts === true,
-    });
     const catalog = resolveSessionCatalog(this.config);
     const previousSession = await catalog.get(previous.sessionId);
     if (!previousSession) throw new Error('ORG_AGENT_WORK_ORDER_SESSION_MISSING');
@@ -639,7 +648,7 @@ export class OrgAgentBackgroundWorkCoordinator {
     ) {
       throw new Error('ORG_AGENT_WORK_ORDER_IDENTITY_MISMATCH');
     }
-    const nextAttemptNo = work.currentAttemptNo + 1;
+    const nextAttemptNo = command?.targetAttemptNo ?? work.currentAttemptNo + 1;
     const digest = createHash('sha256').update(`${workOrderId}:${nextAttemptNo}`).digest('hex');
     const taskId = `bg-retry-${digest.slice(0, 32)}`;
     const sessionId = `sub-bg-retry-${digest.slice(0, 32)}`;
@@ -671,13 +680,29 @@ export class OrgAgentBackgroundWorkCoordinator {
       attemptNo: nextAttemptNo,
     });
       await mkdir(join(layout.taskRoot, 'artifacts'), { recursive: true });
-    const queuedWork = await store.queueWorkOrderAttempt({
+    const queuedWork = command ? work : await store.queueWorkOrderAttempt({
       tenantId, workOrderId, expectedVersion,
       ...(options.control ? { control: options.control } : {}),
       ...(options.supersedePendingCompletion ? { supersedePendingCompletion: true } : {}),
-      ...(options.inboxReceipt ? { inboxReceipt: options.inboxReceipt } : {}),
+      ...(options.supersedeActiveAttempt ? { supersedeActiveAttempt: true } : {}),
+      ...(options.supersedeActiveAttempt ? {
+        supersedeContext: buildPausedAttemptContext(previous.runId, metadata.cwd),
+      } : {}),
+      ...(options.inboxReceipt ? { controlLease: options.inboxReceipt } : {}),
     });
+    let currentRun: RunRecord;
     try {
+      if (options.supersedeActiveAttempt || (command && sourceAttemptNo < nextAttemptNo))
+        await stopPreparedOrgAgentAttempt(this.config, tenantId, workOrderId, sourceAttemptNo);
+      const continuationAttempt = (options.supersedeActiveAttempt || command)
+        ? (await store.listWorkAttempts(tenantId, workOrderId))
+          .find(item => item.attemptNo === sourceAttemptNo)
+        : previousAttempt;
+      const continuation = buildOrgAgentContinuation({
+        work: queuedWork,
+        attempt: continuationAttempt,
+        allowPendingArtifacts: options.allowPendingArtifacts === true,
+      });
       await catalog.upsert(
         createRuntimeSessionRecord({
           sessionId,
@@ -713,7 +738,20 @@ export class OrgAgentBackgroundWorkCoordinator {
         mountSubPath: layout.mountSubPath,
         sharedReadOnlySubPath: layout.sharedReadOnlySubPath,
       });
-      await runStore.upsertPending({
+      const loadedTarget = await runStore.get(taskId);
+      const existingTarget = loadedTarget?.runId === taskId ? loadedTarget : null;
+      const existingMetadata = existingTarget ? parseBackgroundTaskMetadata(existingTarget) : null;
+      if (existingTarget && (
+        existingMetadata?.workOrderId !== workOrderId
+        || existingMetadata.attemptNo !== nextAttemptNo
+        || existingMetadata.attemptId !== layout.attemptId
+      )) throw new Error('ORG_AGENT_WORK_ORDER_RETRY_RUN_IDEMPOTENCY_CONFLICT');
+      if (existingTarget?.metadata.backgroundTaskReady === true || (
+        existingTarget && existingTarget.status !== 'pending'
+      )) {
+        currentRun = existingTarget;
+      } else {
+        await runStore.upsertPending({
         runId: taskId,
         sessionId,
         userId: previous.userId,
@@ -753,14 +791,17 @@ export class OrgAgentBackgroundWorkCoordinator {
           backgroundFinishedAt: null,
           lifecycleFinishedAt: null,
         },
-      });
-      const activate = runStore.activateStagedOrgAgentBackgroundTask;
-      if (!activate) throw new Error('ORG_AGENT_STAGED_ACTIVATION_UNAVAILABLE');
-      const activated = await activate.call(runStore, taskId, 'background_agent_retry_started', {
-        backgroundTaskReady: true, backgroundStartedAt: new Date().toISOString(),
-      });
-      if (!activated) throw new Error('ORG_AGENT_WORK_ORDER_RETRY_ACTIVATION_FAILED');
-      return activated;
+        });
+        const activate = runStore.activateStagedOrgAgentBackgroundTask;
+        if (!activate) throw new Error('ORG_AGENT_STAGED_ACTIVATION_UNAVAILABLE');
+        const activated = await activate.call(runStore, taskId, 'background_agent_retry_started', {
+          backgroundTaskReady: true, backgroundStartedAt: new Date().toISOString(),
+        });
+        const activeRun = activated ?? await runStore.get(taskId);
+        if (!activeRun?.metadata.backgroundTaskReady)
+          throw new Error('ORG_AGENT_WORK_ORDER_RETRY_ACTIVATION_FAILED');
+        currentRun = activeRun;
+      }
     } catch (error) {
       await this.failSetup(
         tenantId,
@@ -770,8 +811,18 @@ export class OrgAgentBackgroundWorkCoordinator {
         error,
         nextAttemptNo,
       );
+      if (options.inboxReceipt)
+        await store.failControlCommand({
+          tenantId,
+          workOrderId,
+          inboxReceipt: options.inboxReceipt,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => undefined);
       throw error;
     }
+    if (options.inboxReceipt)
+      await store.completeControlCommand({ tenantId, workOrderId, inboxReceipt: options.inboxReceipt });
+    return currentRun;
   }
 
   async pause(
@@ -785,10 +836,21 @@ export class OrgAgentBackgroundWorkCoordinator {
     if (!store || !runStore) throw new Error('ORG_AGENT_WORK_ORDER_STORE_UNAVAILABLE');
     const work = await store.getWorkOrder(tenantId, workOrderId);
     if (!work) throw new Error('ORG_AGENT_WORK_ORDER_MISSING');
+    const prepared = inboxReceipt
+      && work.control.command?.inboxId === inboxReceipt.inboxId
+      && work.control.command.action === 'pause'
+      && work.control.command.phase === 'prepared'
+      ? work.control.command
+      : undefined;
+    if (inboxReceipt && work.control.command?.inboxId === inboxReceipt.inboxId
+      && work.control.command.phase === 'failed')
+      throw new Error(work.control.command.error ?? 'ORG_AGENT_CONTROL_COMMAND_FAILED');
     const attempt = (await store.listWorkAttempts(tenantId, workOrderId))
-      .find(item => item.attemptNo === work.currentAttemptNo);
+      .find(item => item.attemptNo === (prepared?.sourceAttemptNo ?? work.currentAttemptNo));
     const task = attempt ? await runStore.get(attempt.runtimeRunId) : null;
-    if (task && isRunTerminal(task.status)) {
+    if (task && isRunTerminal(task.status)
+      && !(prepared && task.status === 'cancelled'
+        && task.metadata.orgAgentAttemptSuperseded === true)) {
       const state = task.status === 'completed' ? 'completed'
         : task.status === 'cancelled' ? 'cancelled' : 'failed';
       await this.syncTerminal(
@@ -798,49 +860,40 @@ export class OrgAgentBackgroundWorkCoordinator {
       );
       throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_TERMINAL_RACE');
     }
-    if (task && !isRunTerminal(task.status)) {
-      const taskMetadata = parseBackgroundTaskMetadata(task);
-      if (!taskMetadata?.workOrderId || taskMetadata.workOrderId !== workOrderId)
-        throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_SCOPE_INVALID');
-      const taskSession = await resolveSessionCatalog(this.config).get(task.sessionId);
-      if (!taskSession) throw new Error(`后台任务 session 不存在：${task.sessionId}`);
-      const stopped = await markBackgroundTaskTerminal(
-        runStore,
-        createEventStoreForSession(this.config, taskSession),
-        task,
-        'cancelled',
-        '组织群任务已暂停',
-        {
-          backgroundResult: failedResult('cancelled', '组织群任务已暂停，恢复时会创建新 attempt'),
-          wakeState: 'pending',
-          backgroundFinishedAt: new Date().toISOString(),
-          orgAgentAttemptSuperseded: true,
-          orgAgentPauseAttemptNo: work.currentAttemptNo,
+    const taskMetadata = task && !isRunTerminal(task.status)
+      ? parseBackgroundTaskMetadata(task)
+      : null;
+    if (task && !isRunTerminal(task.status)
+      && (!taskMetadata?.workOrderId || taskMetadata.workOrderId !== workOrderId))
+      throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_SCOPE_INVALID');
+    if (!prepared) {
+      const control = inboxReceipt ? {
+        ...work.control,
+        command: {
+          inboxId: inboxReceipt.inboxId,
+          action: 'pause' as const,
+          phase: 'prepared' as const,
+          sourceAttemptNo: work.currentAttemptNo,
         },
-      );
-      if (!stopped) {
-        const current = await runStore.get(task.runId);
-        if (!current || current.status !== 'cancelled' || current.metadata.orgAgentAttemptSuperseded !== true)
-          throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_RUN_CONFLICT');
-      }
-      const pausedContext = buildPausedAttemptContext(task.runId, taskMetadata.cwd);
-      const pausedAttempt = await store.transitionWorkAttempt({
-        tenantId,
-        runtimeRunId: task.runId,
-        status: 'cancelled',
-        resultEnvelope: pausedContext.resultEnvelope,
-        checkpoint: pausedContext.checkpoint,
-        publishState: 'rejected',
-        failure: 'superseded_by_work_order_pause',
+      } : undefined;
+      if (!inboxReceipt && task && !isRunTerminal(task.status))
+        await stopPreparedOrgAgentAttempt(this.config, tenantId, workOrderId, work.currentAttemptNo);
+      await store.pauseWorkOrder({
+        tenantId, workOrderId, expectedVersion, ...(control ? { control } : {}),
+        ...(task && taskMetadata
+          ? { pauseContext: buildPausedAttemptContext(task.runId, taskMetadata.cwd) } : {}),
+        ...(inboxReceipt ? { controlLease: inboxReceipt } : {}),
       });
-      if (!pausedAttempt || pausedAttempt.workOrderId !== workOrderId)
-        throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_CHECKPOINT_FAILED');
-      runtimeRunController.abort(task.runId);
-      await resolveSessionCatalog(this.config).markStatus(task.sessionId, 'error').catch(() => undefined);
     }
-    await store.pauseWorkOrder({
-      tenantId, workOrderId, expectedVersion, ...(inboxReceipt ? { inboxReceipt } : {}),
-    });
+    if (inboxReceipt) {
+      await stopPreparedOrgAgentAttempt(
+        this.config,
+        tenantId,
+        workOrderId,
+        prepared?.sourceAttemptNo ?? work.currentAttemptNo,
+      );
+      await store.completeControlCommand({ tenantId, workOrderId, inboxReceipt });
+    }
     return task;
   }
 
@@ -905,26 +958,6 @@ export class OrgAgentBackgroundWorkCoordinator {
   }
 }
 
-function withWorkOrderContinuationPrompt(
-  basePrompt: string,
-  work: OrgAgentWorkOrder,
-  previousAttemptPrompt: string,
-): string {
-  const controlPrompt = withWorkOrderControlPrompt(work);
-  return `${basePrompt}\n\n${previousAttemptPrompt}${controlPrompt}`;
-}
-
-function withWorkOrderControlPrompt(work: OrgAgentWorkOrder): string {
-  if (work.control.supplements.length === 0) return '';
-  const additions = work.control.supplements
-    .map(
-      (item, index) =>
-        `${index + 1}. [${item.kind === 'review' ? '复核要求' : '补充要求'}] ${item.text}`,
-    )
-    .join('\n');
-  return `\n\n<work-order-continuation revision="${work.control.revision}">\n${additions}\n</work-order-continuation>`;
-}
-
 export function isOrgTaskVisible(task: RunRecord, context: ToolCallContext): boolean {
   const caller = context.channelContext.orgAgentChannel;
   const owner = parseBackgroundTaskMetadata(task)?.orgAgentChannel;
@@ -954,33 +987,6 @@ export function isOrgTaskVisible(task: RunRecord, context: ToolCallContext): boo
     caller.externalActor.corpId === creator.corpId &&
     caller.externalActor.openId === creator.openId
   );
-}
-
-function failedResult(status: 'failed' | 'cancelled', message: string): StoredBackgroundResult {
-  return {
-    status,
-    text: '',
-    errorMessage: message,
-    totalTokens: 0,
-    toolUseCount: 0,
-    turnCount: 0,
-    durationMs: 0,
-  };
-}
-
-function terminalResult(
-  status: 'completed' | 'failed' | 'cancelled',
-  message: string,
-): StoredBackgroundResult {
-  return {
-    status,
-    text: status === 'completed' ? message : '',
-    ...(status === 'completed' ? {} : { errorMessage: message }),
-    totalTokens: 0,
-    toolUseCount: 0,
-    turnCount: 0,
-    durationMs: 0,
-  };
 }
 
 function isRunTerminal(status: RunStatus): boolean {

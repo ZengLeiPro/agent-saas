@@ -37,9 +37,7 @@ import {
 } from './orgAgentExecutionContext.testFixtures.js';
 
 const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 function previousRun(sharedReadOnlySubPath: string): RunRecord {
   return {
     runId: 'run-1',
@@ -608,7 +606,8 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
         workOrderId: 'work-1', tenantId: 'tenant-1', state: 'completed', currentAttemptNo: 1,
       }),
       listWorkAttempts: vi.fn().mockResolvedValue([{
-        attemptId: 'attempt-1', runtimeRunId: 'run-1', status: 'completed', publishState: 'pending',
+        attemptId: 'attempt-1', attemptNo: 1, runtimeRunId: 'run-1', status: 'completed',
+        publishState: 'pending',
       }]),
       reopenWorkOrder: vi.fn(),
     } as unknown as OrgGroupAgentStore;
@@ -616,8 +615,7 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
       agentCwd: '/tmp', orgGroupAgentStore: store, runStore: { upsertPending: vi.fn() },
     } as unknown as RawRuntimeRunDispatchConfig);
 
-    await expect(coordinator.retry('tenant-1', 'work-1', 1))
-      .rejects.toThrow('ORG_AGENT_ARTIFACT_PUBLISH_REQUIRED_BEFORE_RETRY');
+    await expect(coordinator.retry('tenant-1', 'work-1', 1)).rejects.toThrow('ORG_AGENT_ARTIFACT_PUBLISH_REQUIRED_BEFORE_RETRY');
     expect(store.reopenWorkOrder).not.toHaveBeenCalled();
   });
 
@@ -729,9 +727,10 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
       expect.objectContaining({ orgAgentAttemptSuperseded: true, orgAgentPauseAttemptNo: 1 }),
       undefined,
     );
-    expect(store.pauseWorkOrder).toHaveBeenCalledWith({
+    expect(store.pauseWorkOrder).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-1', workOrderId: 'work-1', expectedVersion: 3,
-    });
+      pauseContext: expect.objectContaining({ checkpoint: expect.objectContaining({ reason: 'paused_by_operator' }) }),
+    }));
     expect(store.transitionWorkAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeRunId: 'run-1',

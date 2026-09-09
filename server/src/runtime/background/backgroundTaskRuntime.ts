@@ -93,6 +93,7 @@ export interface BackgroundTaskRuntime {
       allowPendingArtifacts?: boolean;
       control?: OrgAgentWorkOrderControl;
       supersedePendingCompletion?: boolean;
+      supersedeActiveAttempt?: boolean;
       inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
     },
   ): Promise<RunRecord>;

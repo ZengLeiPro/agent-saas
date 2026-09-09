@@ -94,6 +94,8 @@ describe('McpOAuthService', () => {
     });
     expect(started.status).toBe('pending');
     expect(started.authorizationUrl).toContain('mcp.notion.com/authorize');
+    expect(started.revokeMethod).toContain('能力中心的连接器详情');
+    expect(started.revokeMethod).not.toContain('连接与授权');
     const pending = store.getUserOAuthConnection('alice', 'notion')!;
     expect(pending.secretRef).toBeTruthy();
     expect(pending.pendingState).toBeTruthy();

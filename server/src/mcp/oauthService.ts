@@ -181,7 +181,7 @@ export class McpOAuthService {
         purpose: `仅在本人获指派且组织已授权的 Agent Run 中调用 ${server.name}`,
         riskLevel: 'high',
         dataDestination: `请求数据发送至 ${new URL(server.config.url).origin}，运行结果进入当前 Agent Run`,
-        revokeMethod: '可在连接与授权页经影响预览撤销；撤销后新 Run 立即不可用',
+        revokeMethod: '可在能力中心的连接器详情中经影响预览撤销；撤销后新 Run 立即不可用',
       };
     } catch (error) {
       await this.markError(username, record, errorMessage(error));

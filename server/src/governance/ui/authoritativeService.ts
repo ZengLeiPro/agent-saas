@@ -387,7 +387,7 @@ export class AuthoritativeGovernanceService {
       const version = record.currentVersionId && this.deps.agents.getVersion
         ? await this.deps.agents.getVersion(record.currentVersionId)
         : null;
-      const displayName = personal ? '个人 Agent' : definitionName(version?.definition) ?? '企业 Agent';
+      const displayName = definitionName(version?.definition) ?? (personal ? '个人 Agent' : '企业 Agent');
       return {
         dto: { type: record.kind, id: record.agentId, tenantId: record.tenantId, displayName, domain: 'agent' },
         access: { type: personal ? 'personal_agent' : 'org_agent', id: record.agentId, ...common, ...(personal ? { ownerUserId: record.ownerUserId } : {}), enabled: record.status === 'enabled' },

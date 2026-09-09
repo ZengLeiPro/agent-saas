@@ -73,6 +73,8 @@ describe('Google Workspace native connector', () => {
     expect(started.requestedScopes).toEqual([...GOOGLE_WORKSPACE_REQUESTED_SCOPES].sort());
     expect(started.requestedScopes).toHaveLength(25);
     expect(authorizationUrl.searchParams.get('include_granted_scopes')).toBe('true');
+    expect(started.revokeMethod).toContain('能力中心的连接器详情');
+    expect(started.revokeMethod).not.toContain('连接与授权');
 
     const finished = await service.finishAuthorization({
       state: started.state,

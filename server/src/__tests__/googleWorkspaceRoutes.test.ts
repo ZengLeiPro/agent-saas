@@ -73,7 +73,10 @@ describe('Google Workspace OAuth callback handoff delivery', () => {
     const test = fixture();
     const response = await request(test.options, '/api/connectors/oauth/callback?state=state-12345678&code=oauth-code');
     expect(response.status).toBe(202);
-    expect(await response.text()).toContain('App 回跳交付暂时失败');
+    const html = await response.text();
+    expect(html).toContain('App 回跳交付暂时失败');
+    expect(html).toContain('能力中心的连接器页面');
+    expect(html).not.toContain('连接与授权');
     expect(test.recordOAuthGrant).toHaveBeenCalledTimes(1);
     expect(test.disconnect).not.toHaveBeenCalled();
     expect(test.complete).toHaveBeenCalledTimes(1);
@@ -155,7 +158,10 @@ describe('Google Workspace OAuth callback handoff delivery', () => {
     test.finishAuthorization.mockRejectedValue(new Error('Google Workspace OAuth state 已过期'));
     const response = await request(test.options, '/api/connectors/oauth/callback?state=state-12345678&code=oauth-code');
     expect(response.status).toBe(400);
-    expect(await response.text()).toContain('返回连接与授权页面刷新状态');
+    const html = await response.text();
+    expect(html).toContain('返回能力中心的连接器页面刷新状态');
+    expect(html).toContain('/capabilities/connectors');
+    expect(html).not.toContain('/settings/connections');
     expect(test.recordOAuthGrant).not.toHaveBeenCalled();
     expect(test.complete).toHaveBeenCalledWith('state-12345678', {
       status: 'failed', errorCode: 'OAUTH_CALLBACK_FAILED',

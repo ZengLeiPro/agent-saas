@@ -20,8 +20,7 @@ const PAYLOAD_SIZE_MARGIN = 128;
 const MAX_LEASE_TTL_MS = 24 * 60 * 60 * 1_000;
 const MAX_RETRY_DELAY_MS = 24 * 60 * 60 * 1_000;
 const PREPARED_CONTROL_RETRY_DELAY_MS = 60_000;
-const PREPARED_FAST_CONTROL_SQL = `(response_text IS NULL
-  AND payload_json->>'fastControlPhase'='prepared'
+const PREPARED_FAST_CONTROL_SQL = `(response_text IS NULL AND payload_json->>'fastControlPhase'='prepared'
   AND NULLIF(payload_json->>'fastControlWorkOrderId','') IS NOT NULL)`;
 const EXPLICIT_CONTROL_PATTERN = '(status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)[[:space:]]+W-[A-F0-9]{12}([[:space:]]+.+)?|W-[A-F0-9]{12}[[:space:]]+(status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)([[:space:]]+.+)?';
 const CONTEXTUAL_CONTROL_PATTERN = '(取消|暂停|恢复)[[:space:]]*(这个|当前)?[[:space:]]*任务|(查看|查询)?[[:space:]]*(这个|当前)?[[:space:]]*任务[[:space:]]*(状态|进度)';
@@ -237,11 +236,9 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
         )
         UPDATE ${this.inboxTable} inbox
         SET state=CASE WHEN inbox.state='reply_pending' THEN 'reply_pending' ELSE 'processing' END,
-            attempt=CASE
-              WHEN inbox.payload_json->>'fastControlPhase'='prepared'
-                THEN LEAST(inbox.attempt+1,inbox.max_attempts)
-              ELSE inbox.attempt+1
-            END,lease_owner=$1,
+            attempt=CASE WHEN inbox.payload_json->>'fastControlPhase'='prepared'
+              THEN LEAST(inbox.attempt+1,inbox.max_attempts) ELSE inbox.attempt+1 END,
+            lease_owner=$1,
             lease_fence=inbox.lease_fence+1,
             lease_expires_at=NOW()+($2::bigint * INTERVAL '1 millisecond'),
             next_attempt_at=NULL,updated_at=NOW()
@@ -599,11 +596,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     `, [inboxId, owner, fence, reasonCode]);
   }
 
-  async markReplyUnknown(
-    inboxId: string,
-    owner: string,
-    fence: number,
-  ): Promise<AgentDwsInboxRecord> {
+  async markReplyUnknown(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord> {
     assertOwnerFence(owner, fence);
     assertTexts(inboxId);
     return await this.updateWithLease(`
@@ -617,13 +610,8 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     `, [inboxId, owner, fence]);
   }
 
-  async fail(
-    inboxId: string,
-    owner: string,
-    fence: number,
-    error: unknown,
-    retryDelayMs?: number,
-  ): Promise<AgentDwsInboxRecord> {
+  async fail(inboxId: string, owner: string, fence: number, error: unknown,
+    retryDelayMs?: number): Promise<AgentDwsInboxRecord> {
     assertOwnerFence(owner, fence);
     assertTexts(inboxId);
     if (retryDelayMs !== undefined && (
@@ -654,8 +642,8 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
             ELSE response_text
           END,
           payload_json=CASE
-            WHEN ${PREPARED_FAST_CONTROL_SQL}
-              THEN payload_json || jsonb_build_object('fastControlRecoveryRequired',true)
+            WHEN ${PREPARED_FAST_CONTROL_SQL} THEN payload_json
+              || jsonb_build_object('fastControlRecoveryRequired',true)
             WHEN attempt>=max_attempts AND response_text IS NULL
               AND COALESCE(payload_json->>'disposition','')<>'execution_failed'
               THEN payload_json || jsonb_build_object(
@@ -679,8 +667,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           next_attempt_at=CASE
             WHEN ${PREPARED_FAST_CONTROL_SQL}
               THEN NOW()+(GREATEST(
-                COALESCE($5::bigint,${PREPARED_CONTROL_RETRY_DELAY_MS}::bigint),
-                ${PREPARED_CONTROL_RETRY_DELAY_MS}::bigint
+                COALESCE($5::bigint,${PREPARED_CONTROL_RETRY_DELAY_MS}::bigint),${PREPARED_CONTROL_RETRY_DELAY_MS}::bigint
               ) * INTERVAL '1 millisecond')
             WHEN attempt>=max_attempts AND response_text IS NULL
               AND COALESCE(payload_json->>'disposition','')<>'execution_failed'

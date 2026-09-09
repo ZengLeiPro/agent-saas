@@ -49,7 +49,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -217,7 +217,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:8c3df94963b1d0f1541df2d1080b4b96df1499a6d50fe69e0ab0b87ba8655418",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -1333,7 +1333,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -1890,7 +1890,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -2431,7 +2431,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -2958,7 +2958,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -3477,7 +3477,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -3996,7 +3996,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -4277,7 +4277,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -5347,7 +5347,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -5914,7 +5914,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -6473,7 +6473,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -6969,7 +6969,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -7449,7 +7449,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -7929,7 +7929,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -8409,7 +8409,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -8875,7 +8875,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -9337,7 +9337,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -9743,7 +9743,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -10122,7 +10122,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -10497,7 +10497,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -10864,7 +10864,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -11231,7 +11231,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -11570,7 +11570,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -11887,7 +11887,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -12184,7 +12184,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -12465,7 +12465,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -12704,7 +12704,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -12927,7 +12927,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -13128,7 +13128,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -13303,7 +13303,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -13488,7 +13488,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -13656,7 +13656,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -13816,7 +13816,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -13962,7 +13962,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -14118,7 +14118,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -14251,7 +14251,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -14412,7 +14412,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
@@ -14566,7 +14566,7 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
+          "targetDigest": "sha256:77fa7f1795bcf715da78d08fbfc9047247d71e9ab362c804d1fcc36741158b33",
           "classification": "no-schema-change",
           "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },

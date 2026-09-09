@@ -68,6 +68,10 @@ if [ -s "$RECEIPT_PATH" ]; then
     attempted|activated) ;;
     *) echo "invalid activation receipt state" >&2; exit 1 ;;
   esac
+  # A rebuilt same-SHA payload may have a transaction-specific immutable target.
+  if [ "$RECEIPT_TARGET" = "$RELEASES_DIR/${RELEASE_ID}.${RUN_ID}" ]; then
+    RELEASE_DIR="$RECEIPT_TARGET"
+  fi
   if [ "$RECEIPT_TARGET" != "$RELEASE_DIR" ]; then
     echo "activation receipt target disagrees with this deployment" >&2
     exit 1
@@ -121,14 +125,36 @@ else
     exit 1
   fi
 
-  if [ ! -d "$RELEASE_DIR" ]; then
-    if [ -e "$STAGING_DIR" ]; then
-      echo "stale recovery staging directory requires manual inspection: $STAGING_DIR"
-      exit 1
+  # Source SHA is not a content identity: compatibility reruns rebuild and stamp
+  # release-identity.json again. Compare the incoming tree before reusing a path.
+  if [ -e "$STAGING_DIR" ] || [ -L "$STAGING_DIR" ]; then
+    echo "stale recovery staging directory requires manual inspection: $STAGING_DIR" >&2
+    exit 1
+  fi
+  mkdir "$STAGING_DIR"
+  tar -xzf "$ARCHIVE" -C "$STAGING_DIR"
+  validate_release "$STAGING_DIR" "staged recovery Web target"
+  if find "$STAGING_DIR" -type l -print -quit | grep -q .; then
+    echo "staged recovery Web must not contain symlinks" >&2
+    exit 1
+  fi
+  if [ -e "$RELEASE_DIR" ] || [ -L "$RELEASE_DIR" ]; then
+    test -d "$RELEASE_DIR" && test ! -L "$RELEASE_DIR"
+    if diff -qr --no-dereference "$STAGING_DIR" "$RELEASE_DIR" >/dev/null; then
+      :
+    else
+      diff_status=$?
+      [ "$diff_status" -eq 1 ] || exit "$diff_status"
+      RELEASE_DIR="$RELEASES_DIR/${RELEASE_ID}.${RUN_ID}"
     fi
-    mkdir "$STAGING_DIR"
-    tar -xzf "$ARCHIVE" -C "$STAGING_DIR"
-    validate_release "$STAGING_DIR" "staged recovery Web target"
+  fi
+  if [ -e "$RELEASE_DIR" ] || [ -L "$RELEASE_DIR" ]; then
+    test -d "$RELEASE_DIR" && test ! -L "$RELEASE_DIR"
+    diff -qr --no-dereference "$STAGING_DIR" "$RELEASE_DIR" >/dev/null || {
+      echo "immutable recovery Web target differs from incoming payload" >&2; exit 1;
+    }
+    rm -rf -- "$STAGING_DIR"
+  else
     mv "$STAGING_DIR" "$RELEASE_DIR"
   fi
   validate_release "$RELEASE_DIR" "recovery Web target"

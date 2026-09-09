@@ -17,6 +17,7 @@ export interface ConnectionOptions extends ConnectionSettingsRecord {
       installationId: string;
       status: string;
       executionId: string | null;
+      ready?: boolean;
     } | null;
   }>;
 }

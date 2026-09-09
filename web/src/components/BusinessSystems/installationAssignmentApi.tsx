@@ -22,10 +22,10 @@ export async function updateResourceAssignment<T>(
 ): Promise<T> {
   if (resourceType !== 'system_installation')
     return governanceAccessApi.updateAssignment<T>(resourceType, resourceId, command, tenantId);
-  const { previewId, baselineDigest, expiresAt, ...change } = command;
+  const { previewId, baselineDigest, expiresAt, expectedVersion, assignments } = command;
   const receipt = await governanceAccessApi.updateAssignmentBatch<T>(
     {
-      changes: [{ resourceType, resourceId, ...change }],
+      changes: [{ resourceType, resourceId, expectedVersion, assignments }],
       reason,
       previewId,
       baselineDigest,

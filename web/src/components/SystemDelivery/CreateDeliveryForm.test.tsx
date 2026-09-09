@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kyAppPost, kyAppRequest } from '@/lib/kyAppManagementApi';
 import { CreateDeliveryForm } from './CreateDeliveryForm';
@@ -34,7 +34,6 @@ function members(id: string) {
   };
 }
 beforeEach(() => {
-  vi.spyOn(window, 'confirm').mockReturnValue(true);
   vi.mocked(kyAppRequest).mockImplementation(async (path) => {
     if (path === '/systems') return { systems: [] } as never;
     if (path === '/systems/demo/connection-options') return structuredClone(options) as never;
@@ -62,6 +61,7 @@ describe('已有组织接入表单', () => {
     expect(screen.queryByLabelText('业务服务地址')).toBeNull();
     fireEvent.change(contact, { target: { value: 'org-a-member' } });
     fireEvent.click(screen.getByRole('button', { name: '确认接入' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认接入' }));
     await waitFor(() => expect(started).toHaveBeenCalled());
     expect(kyAppPost).toHaveBeenCalledWith('/onboard-existing', {
       systemId: 'demo',
@@ -110,6 +110,7 @@ describe('已有组织接入表单', () => {
       expect(screen.queryByRole('option', { name: 'org-a管理员（组织管理员）' })).toBeNull(),
     );
     fireEvent.click(screen.getByRole('button', { name: '确认接入' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认接入' }));
     await waitFor(() =>
       expect(kyAppPost).toHaveBeenCalledWith(
         '/onboard-existing',
@@ -141,6 +142,7 @@ describe('已有组织接入表单', () => {
       target: { value: 'https://custom.apps.kaiyancn.com' },
     });
     fireEvent.click(screen.getByRole('button', { name: '确认接入' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认接入' }));
     await waitFor(() => expect((organization as HTMLSelectElement).disabled).toBe(true));
     expect((screen.getByRole('button', { name: '接入中…' }) as HTMLButtonElement).disabled).toBe(
       true,

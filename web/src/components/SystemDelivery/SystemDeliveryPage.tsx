@@ -4,6 +4,7 @@ import { governanceRoute } from '@/lib/governanceNavigation';
 import { navigateGovernance } from '@/lib/urlSync';
 import { kyAppPost } from '@/lib/kyAppManagementApi';
 import type { OnboardExecution, OnboardResponse } from '@/lib/kyAppManagementTypes';
+import type { ConnectionOptions } from '@/lib/kyAppConnectionTypes';
 import { useManagementResource, ResourceState } from '../BusinessSystems/ManagementResource';
 import { credentialClaimUrl } from '../KyAppCredentialClaim/claimRoute';
 import { CreateDeliveryForm } from './CreateDeliveryForm';
@@ -19,8 +20,6 @@ const stepNames: Record<string, string> = {
   enable: '验证并启用',
   members: '导入成员',
   skills: '技能检查',
-  smoke: '业务验收',
-  delivery_checklist: '交付清单',
 };
 export function SystemDeliveryPage({
   executionId,
@@ -85,28 +84,70 @@ export function SystemDeliveryPage({
 }
 function DeliveryList({ systemId, onOpen }: { systemId?: string; onOpen: (id: string) => void }) {
   const resource = useManagementResource<{
-    executions?: Array<Pick<OnboardExecution, 'executionId' | 'tenantId' | 'systemId' | 'status'>>;
+    executions?: Array<
+      Pick<OnboardExecution, 'executionId' | 'tenantId' | 'tenantName' | 'systemId' | 'status'>
+    >;
   }>('/deliveries');
   if (!resource.data) return <ResourceState error={resource.error} retry={resource.reload} />;
   const executions =
     resource.data.executions?.filter((item) => !systemId || item.systemId === systemId) ?? [];
+  return systemId ? (
+    <SystemDeliveryList systemId={systemId} executions={executions} onOpen={onOpen} />
+  ) : (
+    <DeliveryRows executions={executions} onOpen={onOpen} />
+  );
+}
+
+function SystemDeliveryList({
+  systemId,
+  executions,
+  onOpen,
+}: {
+  systemId: string;
+  executions: Array<
+    Pick<OnboardExecution, 'executionId' | 'tenantId' | 'tenantName' | 'systemId' | 'status'>
+  >;
+  onOpen: (id: string) => void;
+}) {
+  const options = useManagementResource<ConnectionOptions>(
+    `/systems/${encodeURIComponent(systemId)}/connection-options`,
+  );
+  return <DeliveryRows executions={executions} options={options.data} onOpen={onOpen} />;
+}
+
+function DeliveryRows({
+  executions,
+  options,
+  onOpen,
+}: {
+  executions: Array<
+    Pick<OnboardExecution, 'executionId' | 'tenantId' | 'tenantName' | 'systemId' | 'status'>
+  >;
+  options?: ConnectionOptions;
+  onOpen: (id: string) => void;
+}) {
   return (
     <section className="space-y-3">
       <h3 className="font-medium">组织接入记录</h3>
       {!executions.length && <p>暂无组织接入记录</p>}
-      {executions.map((execution) => (
-        <div
-          key={execution.executionId}
-          className="flex items-center justify-between rounded border p-3"
-        >
-          <span>
-            组织 {execution.tenantId} · {businessStatusLabel(execution.status)}
-          </span>
-          <Button variant="outline" onClick={() => onOpen(execution.executionId)}>
-            查看进度
-          </Button>
-        </div>
-      ))}
+      {executions.map((execution) => {
+        const organization = options?.organizations.find((item) => item.id === execution.tenantId);
+        const status = organization?.connection?.ready ? 'completed' : execution.status;
+        return (
+          <div
+            key={execution.executionId}
+            className="flex items-center justify-between rounded-xl border bg-card p-4 shadow-sm"
+          >
+            <span>
+              组织 {organization?.name ?? execution.tenantName ?? execution.tenantId} ·{' '}
+              {businessStatusLabel(status)}
+            </span>
+            <Button variant="outline" onClick={() => onOpen(execution.executionId)}>
+              查看进度
+            </Button>
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -155,6 +196,13 @@ function DeliveryExecution({
   }
   const claim = latest?.claim;
   const ticket = claim?.path.split('/').at(-1);
+  const visibleSteps = execution?.steps.filter(
+    (step) => !['smoke', 'delivery_checklist'].includes(step.id),
+  );
+  const coreCompleted = Boolean(
+    visibleSteps?.length && visibleSteps.every((step) => step.status === 'completed'),
+  );
+  const displayedStatus = coreCompleted ? 'completed' : execution?.status;
   if (execution && expectedSystemId && execution.systemId !== expectedSystemId)
     return <p role="alert">该接入记录不属于当前业务系统，请返回组织接入重新选择。</p>;
   return (
@@ -166,10 +214,11 @@ function DeliveryExecution({
       ) : (
         <>
           <p>
-            组织 {execution.tenantId} · {businessStatusLabel(execution.status)}
+            组织 <OrganizationName systemId={expectedSystemId} tenantId={execution.tenantId} /> ·{' '}
+            {businessStatusLabel(displayedStatus)}
           </p>
           <ol className="space-y-2">
-            {execution.steps.map((step) => (
+            {visibleSteps?.map((step) => (
               <li className="rounded border p-3" key={step.id}>
                 <strong>{stepNames[step.id] ?? '接入步骤'}</strong> ·{' '}
                 {businessStatusLabel(step.status)}
@@ -185,7 +234,7 @@ function DeliveryExecution({
               </li>
             ))}
           </ol>
-          {execution.status === 'waiting_external' && (
+          {execution.status === 'waiting_external' && !coreCompleted && (
             <p>{connectionWaitingMessage(execution.lastErrorCode)}</p>
           )}
           {claim && ticket && (
@@ -212,7 +261,7 @@ function DeliveryExecution({
               </Button>
             </div>
           )}
-          {['waiting_external', 'failed'].includes(execution.status) && (
+          {['waiting_external', 'failed'].includes(execution.status) && !coreCompleted && (
             <Button disabled={busy} onClick={() => void resume()}>
               {busy ? '继续交付中…' : '继续交付'}
             </Button>
@@ -249,7 +298,7 @@ function DeliveryExecution({
               )}
             </div>
           )}
-          {execution.status === 'completed' && (
+          {(execution.status === 'completed' || coreCompleted) && (
             <div className="space-y-3">
               <p>基础交付完成，请在组织业务系统中核对并配置成员与 Agent 授权范围。</p>
               <Button
@@ -273,6 +322,21 @@ function DeliveryExecution({
       )}
     </section>
   );
+}
+
+function OrganizationName({ systemId, tenantId }: { systemId?: string; tenantId: string }) {
+  return systemId ? (
+    <ResolvedOrganizationName systemId={systemId} tenantId={tenantId} />
+  ) : (
+    <>{tenantId}</>
+  );
+}
+
+function ResolvedOrganizationName({ systemId, tenantId }: { systemId: string; tenantId: string }) {
+  const resource = useManagementResource<ConnectionOptions>(
+    `/systems/${encodeURIComponent(systemId)}/connection-options`,
+  );
+  return <>{resource.data?.organizations.find((item) => item.id === tenantId)?.name ?? tenantId}</>;
 }
 
 function connectionWaitingMessage(code: string | null) {

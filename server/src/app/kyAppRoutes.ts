@@ -129,6 +129,9 @@ export function registerKyAppRoutes(
       ? runtime.config.runtimeEventStore.tablePrefix
       : undefined,
     runtime.runtimePgEventStore!.eventsTable,
+    runtime.tenantStore
+      ? (tenantId) => runtime.tenantStore!.findByIdStrict(tenantId)?.name
+      : undefined,
   );
   const accessOverview =
     runtime.userStore && runtime.membershipStore && assembly.assignmentAccess

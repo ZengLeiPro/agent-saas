@@ -66,12 +66,41 @@ test('unpublished file changes cannot be accepted by rollback validation', () =>
   }), /Unpublished/u);
 }));
 
+// These deployment functions embed Node programs in quoted heredocs. A JS loop's
+// closing brace is not the shell function's closing brace; inspect the whole body.
+function shellFunction(source, name) {
+  const lines = source.split('\n');
+  const start = lines.indexOf(`${name}() {`);
+  assert.ok(start >= 0, `Missing shell function ${name}`);
+  let delimiter = null;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (delimiter !== null) {
+      if (line === delimiter) delimiter = null;
+      continue;
+    }
+    const heredoc = /<<'([A-Z_][A-Z0-9_]*)'\s*$/u.exec(line);
+    if (heredoc) {
+      delimiter = heredoc[1];
+    } else if (line === '}') {
+      return lines.slice(start, i + 1).join('\n');
+    }
+  }
+  assert.fail(`Unterminated shell function ${name}`);
+}
+
+test('shell boundary extraction ignores heredoc braces and never borrows a following function', () => {
+  const source = "first() {\n  node <<'NODE'\nfor (;;) {\n}\nconst own = 'inside';\nNODE\n}\nsecond() {\n  productionConfigPath: '/etc/agent-saas/config.json'\n}\n";
+  const block = shellFunction(source, 'first');
+  assert.match(block, /const own = 'inside'/u);
+  assert.doesNotMatch(block, /productionConfigPath/u);
+  assert.throws(() => shellFunction("first() {\n  node <<'NODE'\n}\n", 'first'), /Unterminated/u);
+});
+
 test('both environment-bound rollback validators explicitly select the production authority', () => {
   const source = readFileSync('scripts/release/deploy-production-release.sh', 'utf8');
   for (const functionName of ['validate_worker_release_boundary', 'validate_api_release_boundary_from_env']) {
-    const start = source.indexOf(`${functionName}() {`);
-    assert.ok(start >= 0);
-    const block = source.slice(start, source.indexOf('\n}\n', start));
+    const block = shellFunction(source, functionName);
     assert.match(block, /productionConfigPath: '\/etc\/agent-saas\/config\.json'/u);
   }
 });

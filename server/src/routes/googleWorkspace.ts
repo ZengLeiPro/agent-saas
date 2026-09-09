@@ -47,7 +47,7 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
       next();
     } catch {
       res.status(409).json({
-        error: '旧版 Google Workspace Credential 写入口已封闭，请重新从治理资源页发起连接',
+        error: '旧版 Google Workspace Credential 写入口已封闭，请前往能力中心的连接器页面重新发起连接',
         code: 'MIGRATION_LEGACY_WRITE_SEALED',
       });
     }

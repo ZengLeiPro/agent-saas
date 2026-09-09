@@ -93,6 +93,25 @@ function fixture() {
 }
 
 describe('Google Workspace OAuth callback handoff delivery', () => {
+  it('旧写入口封闭时统一引导到能力中心的连接器页面', async () => {
+    const test = fixture();
+    const assertLegacyWriteAllowed = vi.fn().mockRejectedValue(new Error('sealed'));
+    const response = await request(
+      {
+        ...test.options,
+        legacyWriteGate: { assertLegacyWriteAllowed },
+      },
+      '/api/connectors/google-workspace',
+      { method: 'DELETE' },
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json() as { error: string; code: string };
+    expect(body).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+    expect(body.error).toContain('能力中心的连接器页面');
+    expect(body.error).not.toContain('治理资源页');
+  });
+
   it('授权启动响应只向用户说明能力中心的撤销入口', async () => {
     const test = fixture();
     const response = await request(test.options, '/api/connectors/google-workspace/oauth/start', {

@@ -1,43 +1,30 @@
 {
-  "id": "reader-preparation",
-  "baseSha": "f48833a04db69c5e753e90ebce6fec06fb272bc5",
+  "id": "pre-abort-guards",
+  "baseSha": "194b959f1251df778e30ae193610821ba718c878",
   "files": [
     {
-      "path": "acs-orchestrator/src/sandboxLifecyclePolicy.ts",
+      "path": "acs-orchestrator/src/persistentRunner.ts",
       "replacements": [
         {
-          "before": "      if (snapshot.malformed) return !snapshot.until || Date.parse(snapshot.until) <= nowMs;",
-          "after": "      // A malformed/future ownership record is not evidence that a writer stopped.\n      if (snapshot.malformed) return false;"
-        },
-        {
-          "before": "    .filter((snapshot) => snapshot.malformed\n      && (!snapshot.until || Date.parse(snapshot.until) <= nowMs))",
-          "after": "    // Unknown state requires exact remote reconciliation, not a TTL cleanup.\n    .filter((snapshot) => snapshot.malformed && snapshot.state !== 'unknown'\n      && (!snapshot.until || Date.parse(snapshot.until) <= nowMs))"
+          "before": "  ): AsyncIterable<RunnerOutput> {\n    await this.start();",
+          "after": "  ): AsyncIterable<RunnerOutput> {\n    // A request cancelled before admission must not start even the shared daemon.\n    if (signal.aborted) return;\n    await this.start();"
         }
       ]
     },
     {
-      "path": "acs-orchestrator/src/invocationRestartRecovery.ts",
+      "path": "acs-orchestrator/src/kubectl.ts",
       "replacements": [
         {
-          "before": "    const backgroundCandidates = valid.filter((lease) => lease.state === 'background_pending'\n      || (lease.state === 'executing' && leaseExpired(lease, nowMs)));",
-          "after": "    // Background inventory cannot prove a foreground attempt (including an expired\n    // legacy executing lease) stopped. Preserve those owners for exact reconciliation.\n    const backgroundCandidates = valid.filter((lease) => lease.state === 'background_pending');\n    const unresolvedForeground = valid.some((lease) => lease.state === 'executing');"
+          "before": "  signal: NodeJS.Signals | null;\n}",
+          "after": "  signal: NodeJS.Signals | null;\n  /** Transport observation only; local completion is never remote-stop proof. */\n  remoteState?: 'unknown' | 'not_started';\n}"
         },
         {
-          "before": "    let unresolvedLease = backgroundCandidates.some(",
-          "after": "    let unresolvedLease = unresolvedForeground || malformed.length > 0 || backgroundCandidates.some("
+          "before": "  async run(args: string[], options: { input?: string; timeoutMs?: number } = {}): Promise<KubectlResult> {\n    return await new Promise<KubectlResult>((resolve) => {",
+          "after": "  async run(args: string[], options: { input?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<KubectlResult> {\n    if (options.signal?.aborted) {\n      return { stdout: '', stderr: 'kubectl request aborted before spawn', exitCode: -1, signal: null, remoteState: 'not_started' };\n    }\n    return await new Promise<KubectlResult>((resolve) => {"
         },
         {
-          "before": "        if (malformed.length > 0) {\n          // Unknown ownership is released only after strict inventory succeeds. Refreshing\n          // activity first prevents a no-worker residue from exposing an old TTL edge.\n          if (!active) await input.sandboxManager.touch(sandbox.name, recoveredAt, sandbox.uid);\n          await input.sandboxManager.clearMalformedInvocationLeases(sandbox.name, sandbox.uid, recoveredAt);\n        }",
-          "after": "        if (malformed.length > 0) {\n          // Empty background inventory says nothing about malformed/future foreground\n          // ownership. Keep the exact annotation and report a truthful blocker.\n          input.logger.warn(`invocation_restart_unknown_retained sandbox=${sandbox.name} count=${malformed.length}`);\n        }"
-        }
-      ]
-    },
-    {
-      "path": "acs-orchestrator/src/acsHangRegression.test.ts",
-      "replacements": [
-        {
-          "before": "expect(spawnMock).not.toHaveBeenCalled();",
-          "after": "expect(spawnMock.mock.calls.length).toBe(0);"
+          "before": "  spawn(args: string[], options: { input?: string; signal?: AbortSignal } = {}) {\n    const child = spawn(",
+          "after": "  spawn(args: string[], options: { input?: string; signal?: AbortSignal } = {}) {\n    options.signal?.throwIfAborted();\n    const child = spawn("
         }
       ]
     }

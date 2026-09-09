@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgGovernanceMigrationRunner } from '../data/governance-schema/migrations.js';
 import { PgOrgGroupAgentStore } from '../data/orgGroupAgents/store.js';
+import { installBindingGenerationContract } from './helpers/bindingGenerationContract.js';
 
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
@@ -260,7 +261,7 @@ describePg('组织群 binding 身份分代兼容与历史隔离', () => {
       conversation_id: 'group-generation',
     });
 
-    await installBindingGenerationContract();
+    await installBindingGenerationContract(pool, prefix);
     const current = await store.ensureShadowBinding(rebindInput);
     expect(current.bindingId).not.toBe(enabled.bindingId);
     expect(
@@ -289,26 +290,4 @@ describePg('组织群 binding 身份分代兼容与历史隔离', () => {
     expect(history.memories.map((item) => item.memoryId)).toContain(oldMemory.memoryId);
   });
 
-  async function installBindingGenerationContract(): Promise<void> {
-    const bindings = `${prefix}_org_agent_channel_bindings`;
-    const deliveries = `${prefix}_agent_dws_delivery_intents`;
-    const current = await pool.query<{ conname: string }>(
-      `SELECT conname FROM pg_constraint
-       WHERE conrelid=$1::regclass AND confrelid=$2::regclass AND contype='f'
-         AND pg_get_constraintdef(oid) LIKE
-           'FOREIGN KEY (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)%'`,
-      [deliveries, bindings],
-    );
-    expect(current.rows).toHaveLength(1);
-    const constraint = `"${current.rows[0]!.conname.replaceAll('"', '""')}"`;
-    await pool.query(`ALTER TABLE ${deliveries} DROP CONSTRAINT ${constraint}`);
-    await pool.query(`ALTER TABLE ${deliveries}
-      ADD CONSTRAINT ${deliveries}_binding_generation_fk
-      FOREIGN KEY (tenant_id,binding_id,agent_id,conversation_space_id,account_id,conversation_id)
-      REFERENCES ${bindings}(tenant_id,binding_id,agent_id,conversation_space_id,account_id,conversation_id)
-      ON UPDATE CASCADE NOT VALID`);
-    await pool.query(
-      `ALTER TABLE ${deliveries} VALIDATE CONSTRAINT ${deliveries}_binding_generation_fk`,
-    );
-  }
 });

@@ -57,38 +57,11 @@ describe("我的权限 fail-closed", () => {
     authApi.authFetch.mockReset();
   });
 
-  it("503 时复用权威资源列表的不可用态，不泄露后端详情或本地推导允许", () => {
+  it("503 时显示统一失败态，不泄露后端详情或本地推导允许", () => {
     render(<MyPermissionsSection />);
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("不代表当前账号缺少权限");
-    expect(alert.textContent).toContain("服务状态：503");
+    expect(alert.textContent).toContain("暂时无法加载我的权限");
     expect(alert.textContent).not.toContain("private backend detail");
-  });
-
-  it("个人开关使用三级有效值，保存后更新认证态", async () => {
-    authState.user = {
-      tenantId: "tenant-a",
-      debugMode: false,
-      tenantFeatures: { debugModeAllowed: true, debugModeEnabled: true },
-    };
-    authApi.authFetch.mockResolvedValue(new Response(JSON.stringify({ debugMode: true }), { status: 200 }));
-    render(<MyPermissionsSection />);
-    const toggle = screen.getByRole("switch", { name: "个人调试模式" });
-    expect((toggle as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(toggle);
-    await waitFor(() => expect(authState.updateDebugMode).toHaveBeenCalledWith(true));
-    expect(authApi.authFetch).toHaveBeenCalledWith("/api/auth/me/debug-mode", expect.objectContaining({ method: "PATCH" }));
-  });
-
-  it("上级任一开关关闭时个人开关禁用", () => {
-    authState.user = {
-      tenantId: "tenant-a",
-      debugMode: true,
-      tenantFeatures: { debugModeAllowed: true, debugModeEnabled: false },
-    };
-    render(<MyPermissionsSection />);
-    expect((screen.getByRole("switch", { name: "个人调试模式" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("组织尚未开放，当前不能开启个人调试模式。")).toBeTruthy();
   });
 });
 

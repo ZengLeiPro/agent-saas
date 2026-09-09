@@ -92,6 +92,7 @@ async function rig(input: {
     },
     agents: {
       get: vi.fn(async (id: string) => personalAgentRecords.find(item => item.agentId === id) ?? null),
+      getVersion: vi.fn(async () => null),
       listPersonalByOwner: vi.fn(async (tenantId: string, ownerUserId: string) =>
         personalAgentRecords.filter(item => item.tenantId === tenantId && item.ownerUserId === ownerUserId)),
     },
@@ -102,6 +103,15 @@ async function rig(input: {
         createdAt: now, createdBy: 'admin', updatedAt: now, updatedBy: 'admin',
       })),
       listPersonalByOwner: vi.fn(async () => []),
+      getVersion: vi.fn(async (versionId: string) => ({
+        versionId,
+        skillId: versionId.replace(/^v-/, ''),
+        versionNumber: 1,
+        definition: { name: versionId === 'v-skill-1' ? '周报助手' : '业务技能' },
+        digest: 'digest',
+        publishedAt: now,
+        publishedBy: 'admin',
+      })),
     },
     connectors: { get: vi.fn(async (id: string) => ({
       connectorId: id, name: id === 'github' ? 'GitHub' : id, status: 'published' as const,

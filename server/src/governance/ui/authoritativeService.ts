@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import type { GovernanceAuditStore } from '../../data/governance-audit/types.js';
 import type { GovernanceCredential } from '../../data/credentials/types.js';
 import type { EnvironmentInstance, EnvironmentTemplate, EnvironmentTemplateVersion, ExecutionProvider } from '../../data/environments/types.js';
-import type { GovernedSkillResource } from '../../data/skillGovernance/types.js';
+import type { GovernedSkillResource, GovernedSkillVersion } from '../../data/skillGovernance/types.js';
 import type { ConnectorDefinition } from '../../data/connectorCatalog/types.js';
-import type { ManagedAgentResource } from '../../data/agentResources/types.js';
+import type { ManagedAgentResource, ManagedAgentVersion } from '../../data/agentResources/types.js';
 import type { AssignmentResourceType, ResourceAssignmentSet, UserResourcePreference } from '../../data/assignments/types.js';
 import type { EntitlementResourceScope, TenantEntitlementSet, TenantPolicy } from '../../data/entitlements/types.js';
 import type { TenantMembership, PlatformAdmin } from '../../data/memberships/types.js';
@@ -130,10 +130,12 @@ interface AssignmentReader {
 }
 interface AgentReader {
   get(id: string): Promise<ManagedAgentResource | null>;
+  getVersion?(versionId: string): Promise<ManagedAgentVersion | null>;
   listPersonalByOwner(tenantId: string, ownerUserId: string): Promise<ManagedAgentResource[]>;
 }
 interface SkillReader {
   getResource(id: string): Promise<GovernedSkillResource | null>;
+  getVersion?(versionId: string): Promise<GovernedSkillVersion | null>;
   listPersonalByOwner(tenantId: string, ownerUserId: string): Promise<GovernedSkillResource[]>;
 }
 interface ConnectorReader { get(id: string): Promise<ConnectorDefinition | null> }
@@ -209,6 +211,13 @@ function layer(value: PolicyLayer): EffectiveResourceViewDto['access']['decisive
 }
 function tenantStatus(tenant: { disabled?: boolean } | undefined): 'active' | 'disabled' {
   return tenant?.disabled ? 'disabled' : 'active';
+}
+function definitionName(definition: Record<string, unknown> | undefined): string | undefined {
+  if (!definition) return undefined;
+  const value = typeof definition.name === 'string' ? definition.name.trim()
+    : typeof definition.displayName === 'string' ? definition.displayName.trim()
+      : '';
+  return value || undefined;
 }
 function actionFor(resource: ResolvedResource, requested: string): string {
   const expected = resource.dto.domain === 'agent'
@@ -375,8 +384,12 @@ export class AuthoritativeGovernanceService {
       if (!record) throw new GovernanceUiError(404, 'RESOURCE_NOT_FOUND', 'Agent 不存在');
       if (record.tenantId !== subject.tenantId) throw new GovernanceUiError(403, 'TENANT_SCOPE_DENIED', '禁止跨组织资源评估');
       const personal = record.kind === 'personal_agent';
+      const version = record.currentVersionId && this.deps.agents.getVersion
+        ? await this.deps.agents.getVersion(record.currentVersionId)
+        : null;
+      const displayName = personal ? '个人 Agent' : definitionName(version?.definition) ?? '企业 Agent';
       return {
-        dto: { type: record.kind, id: record.agentId, tenantId: record.tenantId, displayName: record.agentId, domain: 'agent' },
+        dto: { type: record.kind, id: record.agentId, tenantId: record.tenantId, displayName, domain: 'agent' },
         access: { type: personal ? 'personal_agent' : 'org_agent', id: record.agentId, ...common, ...(personal ? { ownerUserId: record.ownerUserId } : {}), enabled: record.status === 'enabled' },
         lifecycle: { state: record.status, blocksNewUse: record.status !== 'enabled', ...(record.status === 'archived' ? { reasonCode: 'RESOURCE_RETIRED' } : {}) },
         context: personal ? {
@@ -391,8 +404,12 @@ export class AuthoritativeGovernanceService {
       const platform = record.scope === 'platform';
       if (!platform && record.tenantId !== subject.tenantId) throw new GovernanceUiError(403, 'TENANT_SCOPE_DENIED', '禁止跨组织资源评估');
       const personal = record.scope === 'personal';
+      const version = record.currentVersionId && this.deps.skills.getVersion
+        ? await this.deps.skills.getVersion(record.currentVersionId)
+        : null;
+      const displayName = definitionName(version?.definition) ?? (personal ? '个人技能' : '技能');
       return {
-        dto: { type: 'skill', id: record.skillId, tenantId: subject.tenantId, displayName: record.skillId, domain: 'skill' },
+        dto: { type: 'skill', id: record.skillId, tenantId: subject.tenantId, displayName, domain: 'skill' },
         access: { type: 'skill', id: record.skillId, ...common, ...(personal ? { ownerUserId: record.ownerUserId } : {}), enabled: record.status === 'published' },
         lifecycle: { state: record.status, blocksNewUse: record.status !== 'published', ...(record.status === 'retired' ? { reasonCode: 'RESOURCE_RETIRED' } : {}) },
         context: {

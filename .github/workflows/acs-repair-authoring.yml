@@ -1,0 +1,42 @@
+# TEMPORARY: author only the explicitly authorized PR branch, never main or a runtime.
+# This aid is removed before the PR becomes ready; CI evidence remains separate.
+name: ACS isolated branch authoring
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/engineering/acs-repair/authoring-plan.json'
+      - 'docs/engineering/acs-repair/authoring.mjs'
+      - '.github/workflows/acs-repair-authoring.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  author:
+    if: github.event.pull_request.head.repo.full_name == 'ZengLeiPro/agent-saas' && github.event.pull_request.head.ref == 'acs-hang-rootfix-20260909'
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: acs-repair-isolated-authoring
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Apply exact reviewed text replacements in isolated checkout
+        run: node docs/engineering/acs-repair/authoring.mjs
+      - name: Push only if the authorized branch has not moved
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          branch=acs-hang-rootfix-20260909
+          actual="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+          test "$actual" = "$EXPECTED_HEAD"
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD

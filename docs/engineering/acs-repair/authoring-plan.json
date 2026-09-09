@@ -1,0 +1,45 @@
+{
+  "id": "reader-preparation",
+  "baseSha": "f48833a04db69c5e753e90ebce6fec06fb272bc5",
+  "files": [
+    {
+      "path": "acs-orchestrator/src/sandboxLifecyclePolicy.ts",
+      "replacements": [
+        {
+          "before": "      if (snapshot.malformed) return !snapshot.until || Date.parse(snapshot.until) <= nowMs;",
+          "after": "      // A malformed/future ownership record is not evidence that a writer stopped.\n      if (snapshot.malformed) return false;"
+        },
+        {
+          "before": "    .filter((snapshot) => snapshot.malformed\n      && (!snapshot.until || Date.parse(snapshot.until) <= nowMs))",
+          "after": "    // Unknown state requires exact remote reconciliation, not a TTL cleanup.\n    .filter((snapshot) => snapshot.malformed && snapshot.state !== 'unknown'\n      && (!snapshot.until || Date.parse(snapshot.until) <= nowMs))"
+        }
+      ]
+    },
+    {
+      "path": "acs-orchestrator/src/invocationRestartRecovery.ts",
+      "replacements": [
+        {
+          "before": "    const backgroundCandidates = valid.filter((lease) => lease.state === 'background_pending'\n      || (lease.state === 'executing' && leaseExpired(lease, nowMs)));",
+          "after": "    // Background inventory cannot prove a foreground attempt (including an expired\n    // legacy executing lease) stopped. Preserve those owners for exact reconciliation.\n    const backgroundCandidates = valid.filter((lease) => lease.state === 'background_pending');\n    const unresolvedForeground = valid.some((lease) => lease.state === 'executing');"
+        },
+        {
+          "before": "    let unresolvedLease = backgroundCandidates.some(",
+          "after": "    let unresolvedLease = unresolvedForeground || malformed.length > 0 || backgroundCandidates.some("
+        },
+        {
+          "before": "        if (malformed.length > 0) {\n          // Unknown ownership is released only after strict inventory succeeds. Refreshing\n          // activity first prevents a no-worker residue from exposing an old TTL edge.\n          if (!active) await input.sandboxManager.touch(sandbox.name, recoveredAt, sandbox.uid);\n          await input.sandboxManager.clearMalformedInvocationLeases(sandbox.name, sandbox.uid, recoveredAt);\n        }",
+          "after": "        if (malformed.length > 0) {\n          // Empty background inventory says nothing about malformed/future foreground\n          // ownership. Keep the exact annotation and report a truthful blocker.\n          input.logger.warn(`invocation_restart_unknown_retained sandbox=${sandbox.name} count=${malformed.length}`);\n        }"
+        }
+      ]
+    },
+    {
+      "path": "acs-orchestrator/src/acsHangRegression.test.ts",
+      "replacements": [
+        {
+          "before": "expect(spawnMock).not.toHaveBeenCalled();",
+          "after": "expect(spawnMock.mock.calls.length).toBe(0);"
+        }
+      ]
+    }
+  ]
+}

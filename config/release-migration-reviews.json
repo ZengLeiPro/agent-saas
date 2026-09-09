@@ -14,9 +14,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
+          "targetDigest": "sha256:98ad3f908d51ba35069b91f463631812ec3635db668b3c14f423d4129e8bc96b",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -56,6 +56,10 @@
         {
           "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
           "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
+          "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
+          "digest": "sha256:b65ff8c5106b497a3f932e7120cab8d9e3e0eaa460fbc76e0d0e4a357cc92218"
         }
       ]
     },
@@ -3425,9 +3429,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
+          "targetDigest": "sha256:98ad3f908d51ba35069b91f463631812ec3635db668b3c14f423d4129e8bc96b",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -4131,6 +4135,10 @@
         {
           "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
           "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
+          "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
+          "digest": "sha256:b65ff8c5106b497a3f932e7120cab8d9e3e0eaa460fbc76e0d0e4a357cc92218"
         }
       ]
     },
@@ -4604,9 +4612,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
+          "targetDigest": "sha256:98ad3f908d51ba35069b91f463631812ec3635db668b3c14f423d4129e8bc96b",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -5023,6 +5031,10 @@
         {
           "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
           "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
+          "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
+          "digest": "sha256:b65ff8c5106b497a3f932e7120cab8d9e3e0eaa460fbc76e0d0e4a357cc92218"
         }
       ]
     },
@@ -5060,9 +5072,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
+          "targetDigest": "sha256:98ad3f908d51ba35069b91f463631812ec3635db668b3c14f423d4129e8bc96b",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -5479,6 +5491,10 @@
         {
           "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
           "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
+          "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
+          "digest": "sha256:b65ff8c5106b497a3f932e7120cab8d9e3e0eaa460fbc76e0d0e4a357cc92218"
         }
       ]
     },
@@ -9769,9 +9785,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
+          "targetDigest": "sha256:98ad3f908d51ba35069b91f463631812ec3635db668b3c14f423d4129e8bc96b",
           "classification": "expand",
-          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。"
+          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -9873,6 +9889,10 @@
         {
           "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
           "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
+          "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
+          "digest": "sha256:b65ff8c5106b497a3f932e7120cab8d9e3e0eaa460fbc76e0d0e4a357cc92218"
         }
       ]
     },
@@ -10345,9 +10365,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
+          "targetDigest": "sha256:98ad3f908d51ba35069b91f463631812ec3635db668b3c14f423d4129e8bc96b",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -10387,6 +10407,10 @@
         {
           "path": "docs/release/生产模型在线发布运行时装配审核-20260909.md",
           "digest": "sha256:308d2c26aba27e66343b22154caad3e645a8d826aa4cb063fd0a93aceec7a232"
+        },
+        {
+          "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
+          "digest": "sha256:b65ff8c5106b497a3f932e7120cab8d9e3e0eaa460fbc76e0d0e4a357cc92218"
         }
       ]
     }

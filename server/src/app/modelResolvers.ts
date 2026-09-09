@@ -39,6 +39,8 @@ export type DefaultModelResolver = (
 export interface ModelResolvers {
   modelResolver: ModelResolver | undefined;
   defaultModelResolver: DefaultModelResolver | undefined;
+  /** 当前已解析 SecretVault 的模型快照，供惰性辅助模型链复用。 */
+  getRuntimeModels: () => AppConfig['models'];
   sharedConfigRefresher: SharedConfigRefresher;
   updateModelsConfig: (models: NonNullable<AppConfig['models']>) => Promise<void>;
 }
@@ -191,5 +193,11 @@ export function createModelResolvers(params: {
       }
     : undefined;
 
-  return { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig };
+  return {
+    modelResolver,
+    defaultModelResolver,
+    getRuntimeModels: () => runtimeModels,
+    sharedConfigRefresher,
+    updateModelsConfig,
+  };
 }

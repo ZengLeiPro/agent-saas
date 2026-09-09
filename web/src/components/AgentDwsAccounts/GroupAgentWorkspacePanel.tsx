@@ -19,6 +19,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { authFetch } from '@/lib/authFetch';
 import { WorkspaceHierarchy } from './GroupAgentWorkspaceHierarchy';
 import { ReadinessSummary } from './ReadinessSummary';
+import { EffectiveConfigPreview } from './EffectiveConfigPreview';
 import {
   GroupAgentApprovalQueue,
   type GroupAgentApproval,
@@ -74,6 +75,7 @@ export interface Binding {
     };
   };
   readiness?: import('@agent/shared/types/agentDwsAccount').AgentDwsReadiness;
+  effectiveConfigPreview?: import('@agent/shared/types/agentDwsAccount').AgentDwsConfigPreview;
 }
 
 export interface WorkOrder {
@@ -608,6 +610,7 @@ function BindingEditor({
         </label>
       </div>
       <ReadinessSummary readiness={binding.readiness} />
+      <EffectiveConfigPreview preview={binding.effectiveConfigPreview} />
       <div>
         <Label htmlFor={`instructions-${binding.bindingId}`}>群 Agent 指令</Label>
         <Textarea

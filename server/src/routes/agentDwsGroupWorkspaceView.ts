@@ -6,6 +6,10 @@ import type {
 } from '../data/orgGroupAgents/index.js';
 import type { OrgAgentStore } from '../data/orgAgents/index.js';
 import { deriveGroupDwsReadiness } from './agentDwsReadiness.js';
+import {
+  buildAgentDwsEffectiveConfigPreview,
+  type AgentDwsEffectiveConfigComputation,
+} from './agentDwsEffectiveConfigPreview.js';
 
 export async function buildGroupWorkspaceView(input: {
   tenantId: string;
@@ -68,6 +72,26 @@ export async function buildGroupWorkspaceView(input: {
   return {
     bindings: input.bindings.map((binding) => {
       const agent = input.agentStore.get(binding.agentId);
+      const computation: AgentDwsEffectiveConfigComputation = {
+        publishedAgent: {
+          skillIds: agent?.allowedSkills ?? [],
+          knowledgeSkillIds: agent?.allowedKnowledge ?? [],
+          sourceIds: input.contextCeiling.publishedSourceIds,
+          executionMode: agent?.runtime?.executionMode ?? 'unavailable',
+          enabled: agent?.enabled === true,
+        },
+        channelCeiling: {
+          toolNames: [...input.frontdeskTools].sort(),
+          contextSourceIds: input.contextCeiling.channelSourceIds,
+          contextDirectoryAvailable: input.contextCeiling.available,
+        },
+        groupNarrowing: binding.effectiveConfig,
+        liveOverrides: {
+          bindingEnabled: binding.enabled && binding.activationState === 'active',
+          liveDeny: binding.policy.liveDeny,
+          accountStatus: input.account.status,
+        },
+      };
       return {
         bindingId: binding.bindingId,
         accountId: binding.accountId,
@@ -87,26 +111,8 @@ export async function buildGroupWorkspaceView(input: {
           contextCeiling: input.contextCeiling,
           channelToolNames: input.frontdeskTools,
         }),
-        effectiveConfigComputation: {
-          publishedAgent: {
-            skillIds: agent?.allowedSkills ?? [],
-            knowledgeSkillIds: agent?.allowedKnowledge ?? [],
-            sourceIds: input.contextCeiling.publishedSourceIds,
-            executionMode: agent?.runtime?.executionMode ?? 'unavailable',
-            enabled: agent?.enabled === true,
-          },
-          channelCeiling: {
-            toolNames: [...input.frontdeskTools].sort(),
-            contextSourceIds: input.contextCeiling.channelSourceIds,
-            contextDirectoryAvailable: input.contextCeiling.available,
-          },
-          groupNarrowing: binding.effectiveConfig,
-          liveOverrides: {
-            bindingEnabled: binding.enabled && binding.activationState === 'active',
-            liveDeny: binding.policy.liveDeny,
-            accountStatus: input.account.status,
-          },
-        },
+        effectiveConfigComputation: computation,
+        effectiveConfigPreview: buildAgentDwsEffectiveConfigPreview(computation, binding),
       };
     }),
     workspaces,

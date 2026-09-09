@@ -50,6 +50,63 @@ export interface AgentDwsReadiness {
   checks: AgentDwsReadinessCheck[];
 }
 
+export type AgentDwsConfigPreviewLayerSource = "published" | "channel" | "conversation";
+export type AgentDwsConfigPreviewWarningCode =
+  | "agent.unavailable"
+  | "agent.not_dispatcher"
+  | "channel.context_unavailable"
+  | "conversation.inactive"
+  | "conversation.live_deny"
+  | "conversation.skills_narrowed"
+  | "conversation.tools_narrowed"
+  | "conversation.sources_narrowed"
+  | "conversation.skills_outside_published"
+  | "conversation.tools_outside_channel"
+  | "conversation.sources_outside_channel"
+  | "conversation.full_snapshot";
+
+export interface AgentDwsConfigPreviewLayer {
+  source: AgentDwsConfigPreviewLayerSource;
+  label: "当前发布值" | "渠道上限" | "会话已保存值";
+  available: boolean;
+  summaries: string[];
+}
+
+export interface AgentDwsConfigPreviewEffective {
+  label: "当前可执行最终值";
+  status: "available" | "unavailable";
+  unavailableReasons: string[];
+  instructionsConfigured: boolean;
+  contextEnabled: boolean;
+  frontdesk: {
+    status: "available" | "unavailable";
+    skillCount: number;
+    toolCount: number;
+    sourceCount: number;
+  };
+  worker: {
+    status: "task_compile_required" | "unavailable";
+    skillCount: number;
+    sourceCount: number;
+    dwsResourceCount: number;
+  };
+  completion: "回复原会话" | "完成后静默";
+  taskVisibility: "群内可见" | "仅发起人可见";
+}
+
+export interface AgentDwsConfigPreviewWarning {
+  code: AgentDwsConfigPreviewWarningCode;
+  severity: "warning" | "info";
+  message: string;
+}
+
+export interface AgentDwsConfigPreview {
+  version: 1;
+  layers: AgentDwsConfigPreviewLayer[];
+  effective: AgentDwsConfigPreviewEffective;
+  warnings: AgentDwsConfigPreviewWarning[];
+}
+
 export interface AgentDwsContextPolicySelection {
   mode: AgentDwsContextPolicyMode;
   conversationIds: string[];

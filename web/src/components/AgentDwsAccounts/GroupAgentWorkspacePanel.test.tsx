@@ -94,6 +94,32 @@ const workspace = {
           message: '当前群已开启立即阻断', fixTarget: 'group_binding',
         }],
       },
+      effectiveConfigPreview: {
+        version: 1,
+        layers: [
+          { source: 'published', label: '当前发布值', available: true,
+            summaries: ['可用技能 3 项'] },
+          { source: 'channel', label: '渠道上限', available: true,
+            summaries: ['可用工具 3 项'] },
+          { source: 'conversation', label: '会话已保存值', available: true,
+            summaries: ['已保存技能 1 项', '完成后回复原会话'] },
+        ],
+        effective: {
+          label: '当前可执行最终值', status: 'available', unavailableReasons: [],
+          instructionsConfigured: true, contextEnabled: true,
+          frontdesk: { status: 'available', skillCount: 1, toolCount: 1, sourceCount: 1 },
+          worker: { status: 'task_compile_required', skillCount: 1, sourceCount: 1,
+            dwsResourceCount: 0 },
+          completion: '回复原会话', taskVisibility: '群内可见',
+        },
+        warnings: [{
+          code: 'conversation.skills_narrowed', severity: 'info',
+          message: '会话使用的技能少于当前发布值',
+        }, {
+          code: 'conversation.full_snapshot', severity: 'info',
+          message: '当前会话按完整配置快照生效；预览不表示未填写项会自动恢复继承',
+        }],
+      },
     },
   ],
   workspaces: [
@@ -181,6 +207,21 @@ describe('GroupAgentWorkspacePanel', () => {
 
     expect(await screen.findByText('尚未就绪')).toBeTruthy();
     expect(screen.getByText(/当前群已开启立即阻断；请检查群配置/)).toBeTruthy();
+  });
+
+  it('分层展示生效来源、收窄和完整快照提示，不 dump JSON', async () => {
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByRole('region', { name: '生效配置预览' })).toBeTruthy();
+    expect(screen.getByText('当前发布值')).toBeTruthy();
+    expect(screen.getByText('渠道上限')).toBeTruthy();
+    expect(screen.getByText('会话已保存值')).toBeTruthy();
+    expect(screen.getByText('当前可执行最终值')).toBeTruthy();
+    expect(screen.getByText(/前台：技能 1 项、工具 1 项、知识源 1 个/)).toBeTruthy();
+    expect(screen.getByText(/Worker：技能 1 项、知识源 1 个、钉钉资源 0 个/)).toBeTruthy();
+    expect(screen.getByText(/范围说明：会话使用的技能少于当前发布值/)).toBeTruthy();
+    expect(screen.getByText(/不表示未填写项会自动恢复继承/)).toBeTruthy();
+    expect(screen.queryByText(/"published"/)).toBeNull();
   });
 
   it('把仅作为知识发布的技能纳入群能力目录', async () => {

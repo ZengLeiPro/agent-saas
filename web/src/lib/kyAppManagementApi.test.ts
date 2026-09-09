@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const authFetch = vi.fn();
 vi.mock('@/lib/authFetch', () => ({ authFetch: (...args: unknown[]) => authFetch(...args) }));
 
-import { KyAppManagementError, kyAppRequest } from './kyAppManagementApi';
+import { KyAppManagementError, kyAppPost, kyAppRequest } from './kyAppManagementApi';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -64,5 +64,31 @@ describe('kyAppRequest response contract', () => {
       code: 'unknown',
       message: '请求失败 (502)',
     });
+  });
+
+  it('使用鉴权请求并传递 abort 与 no-store', async () => {
+    authFetch.mockResolvedValueOnce(new Response(JSON.stringify({ systems: [] })));
+    const signal = new AbortController().signal;
+    expect(await kyAppRequest('/systems', { signal })).toEqual({ systems: [] });
+    expect(authFetch).toHaveBeenCalledWith(
+      '/api/app-contract/v1/systems',
+      expect.objectContaining({ signal, cache: 'no-store' }),
+    );
+  });
+
+  it('保留 POST 冲突码和请求标识', async () => {
+    authFetch.mockResolvedValueOnce(
+      json({ error: { code: 'conflict', message: '基线变化', requestId: 'r1', retryable: false } }, 409),
+    );
+    await expect(kyAppPost('/systems/demo/status')).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+      requestId: 'r1',
+      message: '基线变化',
+    });
+    expect(authFetch).toHaveBeenCalledWith(
+      '/api/app-contract/v1/systems/demo/status',
+      expect.objectContaining({ method: 'POST', body: '{}', cache: 'no-store' }),
+    );
   });
 });

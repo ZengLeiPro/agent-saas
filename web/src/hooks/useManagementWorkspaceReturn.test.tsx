@@ -57,6 +57,14 @@ beforeEach(() => {
 });
 
 describe('头像菜单工作区返回主内容', () => {
+  it('旧连接设置入口 canonical 后保留连接器子标签路径', async () => {
+    window.history.replaceState({}, '', '/settings/connections');
+    const { result } = renderHook(() => useWorkspace('member'));
+
+    await waitFor(() => expect(window.location.pathname).toBe('/capabilities/connectors'));
+    expect(result.current.route.activeTab).toBe('capabilities');
+  });
+
   it.each<Role>(['member', 'org_admin', 'platform_admin'])(
     '%s 直接打开设置时返回主内容而非另一管理页',
     async (role) => {

@@ -27,17 +27,17 @@ export default function NativeOAuthCallback() {
     }
     void consumeNativeOAuthCallback(rawUrl, identity)
       .then(value => setResult(value.status === 'succeeded'
-        ? { ok: true, message: `${value.connectorId} 已完成授权；返回个人设置后会重新校验资源可用性。` }
+        ? { ok: true, message: `${value.connectorId} 已完成授权；返回能力中心后会重新校验连接状态。` }
         : { ok: false, message: `授权未完成：${value.errorCode ?? 'OAUTH_AUTHORIZATION_FAILED'}；可以重新发起授权。` }))
       .catch(error => setResult({ ok: false, message: `${error instanceof Error ? error.message : 'OAuth 安全回跳失败'}；可以重新发起授权。` }));
   }, [identity, rawUrl]);
 
   return <View style={styles.container}>
-    <Stack.Screen options={{ title: '连接与授权' }} />
+    <Stack.Screen options={{ title: '连接器授权' }} />
     {!result ? <><ActivityIndicator /><Text style={styles.message}>正在校验一次性安全回跳…</Text></> : <>
       <Text style={[styles.title, result.ok ? styles.success : styles.error]}>{result.ok ? '授权已校验' : '授权未完成'}</Text>
       <Text style={styles.message}>{result.message}</Text>
-      <Pressable style={styles.button} onPress={() => router.replace('/(tabs)/settings')}><Text style={styles.buttonText}>返回设置</Text></Pressable>
+      <Pressable style={styles.button} onPress={() => router.replace('/capabilities/connectors')}><Text style={styles.buttonText}>返回连接器</Text></Pressable>
     </>}
   </View>;
 }

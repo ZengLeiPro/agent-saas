@@ -29,6 +29,8 @@ export interface GoogleWorkspaceRouterOptions {
 }
 
 const googleOAuthStartSchema = nativeOAuthStartBindingSchema.optional();
+const GOOGLE_WORKSPACE_REVOKE_METHOD =
+  '可在能力中心的连接器详情中经影响预览撤销；撤销后新 Run 立即不可用';
 
 export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOptions): Router {
   const router = Router();
@@ -45,7 +47,7 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
       next();
     } catch {
       res.status(409).json({
-        error: '旧版 Google Workspace Credential 写入口已封闭，请重新从治理资源页发起连接',
+        error: '旧版 Google Workspace Credential 写入口已封闭，请前往能力中心的连接器页面重新发起连接',
         code: 'MIGRATION_LEGACY_WRITE_SEALED',
       });
     }
@@ -154,7 +156,7 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
           throw error;
         }
       }
-      res.json(started);
+      res.json({ ...started, revokeMethod: GOOGLE_WORKSPACE_REVOKE_METHOD });
     } catch (error) {
       res.status(503).json({ error: error instanceof Error ? error.message : 'Google Workspace OAuth 启动失败' });
     }
@@ -245,7 +247,7 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
       } catch {
         return res.status(202).send(oauthResultPage(
           true,
-          'Google Workspace 已连接，但 App 回跳交付暂时失败；请返回 App 的连接与授权页面刷新状态',
+          'Google Workspace 已连接，但 App 回跳交付暂时失败；请返回能力中心的连接器页面刷新状态',
           webBaseUrl,
         ));
       }
@@ -258,7 +260,7 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
       if (nativeRedirect) return res.redirect(302, nativeRedirect);
       res.status(400).send(oauthResultPage(
         false,
-        `${error instanceof Error ? error.message : 'Google Workspace OAuth 失败'}；若授权已在 Google 完成，请返回连接与授权页面刷新状态`,
+        `${error instanceof Error ? error.message : 'Google Workspace OAuth 失败'}；若授权已在 Google 完成，请返回能力中心的连接器页面刷新状态`,
         webBaseUrl,
       ));
     }
@@ -317,7 +319,7 @@ function oauthResultPage(ok: boolean, message: string, webBaseUrl?: string): str
     message: message.slice(0, 1000),
   }).replace(/</g, '\\u003c');
   const targetOrigin = JSON.stringify(webBaseUrl ? new URL(webBaseUrl).origin : 'null');
-  const fallback = JSON.stringify(webBaseUrl ? new URL('/settings/connections', webBaseUrl).toString() : '/settings/connections');
+  const fallback = JSON.stringify(webBaseUrl ? new URL('/capabilities/connectors', webBaseUrl).toString() : '/capabilities/connectors');
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Google Workspace 授权</title></head><body><p>${safeMessage}</p><script>(function(){var opener=window.opener;var target=${targetOrigin};var fallback=${fallback};if(opener&&!opener.closed&&target!=="null"){opener.postMessage(${payload},target);window.setTimeout(function(){window.close();window.setTimeout(function(){location.replace(fallback);},300);},500);return;}location.replace(fallback);})();</script></body></html>`;
 }
 

@@ -16,7 +16,6 @@ export type LegacySettingsSectionId =
   | "all-agents"
   | "memory"
   | "skills"
-  | "mcp"
   | "files"
   | "storage"
   | "data";

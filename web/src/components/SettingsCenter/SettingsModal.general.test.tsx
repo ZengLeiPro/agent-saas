@@ -73,10 +73,10 @@ describe("通用设置", () => {
 
     await waitFor(() => {
       expect(mocks.saveUserPreferences).toHaveBeenCalledWith({
-        authorizationModeEnabled: true,
         defaultModel: "openai/gpt-next",
       });
     });
     expect(mocks.saveUserPreferences.mock.calls[0]?.[0]).not.toHaveProperty("businessStepDisplayMode");
+    expect(mocks.saveUserPreferences.mock.calls[0]?.[0]).not.toHaveProperty("authorizationModeEnabled");
   });
 });

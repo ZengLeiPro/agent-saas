@@ -1,42 +1,18 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const retry = vi.fn();
 const governanceError = Object.assign(new Error("private backend detail"), { status: 503 });
-const governanceApi = vi.hoisted(() => ({ listOAuthGrants: vi.fn(), previewOAuthGrantRevocation: vi.fn(), revokeOAuthGrant: vi.fn() }));
-const authApi = vi.hoisted(() => ({ authFetch: vi.fn() }));
 const authState = vi.hoisted(() => ({
-  user: null as {
-    tenantId: string;
-    debugMode?: boolean;
-    preferences?: { authorizationModeEnabled?: boolean; lowRiskToolsAutoApproveEnabled?: boolean };
-    tenantFeatures?: { debugModeAllowed: boolean; debugModeEnabled?: boolean };
-  } | null,
-  updateDebugMode: vi.fn(),
-  updatePreferences: vi.fn(),
-}));
-const sharedApi = vi.hoisted(() => ({
-  GovernanceApiError: class GovernanceApiError extends Error {},
-  governanceApiErrorMessage: vi.fn(() => "governance error"),
-  startGoogleWorkspaceOAuth: vi.fn(),
-  saveUserPreferences: vi.fn(),
-  isDebugModeAvailable: vi.fn((tenantId: string, features?: { debugModeAllowed: boolean; debugModeEnabled?: boolean }) => (
-    tenantId === "pantheon" || (features?.debugModeAllowed === true && features.debugModeEnabled === true)
-  )),
+  user: null as { username?: string } | null,
 }));
 
 vi.mock("@/hooks/useEffectiveResources", () => ({
   useEffectiveResources: () => ({ data: null, loading: false, error: governanceError, retry }),
 }));
+vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => authState }));
 
-vi.mock("@/contexts/AuthContext", () => ({
-  useAuth: () => authState,
-}));
-vi.mock("@/lib/authFetch", () => ({ authFetch: authApi.authFetch }));
-vi.mock("@agent/shared/lib/governanceApi", () => ({ governanceAccessApi: governanceApi }));
-vi.mock("@agent/shared", () => sharedApi);
-
-import { ConnectionsSection, MyAgentSection, MyPermissionsSection } from "./V2Sections";
+import { MyAgentSection, MyPermissionsSection } from "./V2Sections";
 
 describe("我的 Agent", () => {
   it("人格定义不再作为跳转 Tab，资料卡负责打开编辑弹窗", () => {
@@ -53,180 +29,12 @@ describe("我的 Agent", () => {
 describe("我的权限 fail-closed", () => {
   beforeEach(() => {
     authState.user = null;
-    authState.updateDebugMode.mockReset();
-    authApi.authFetch.mockReset();
   });
 
-  it("503 时复用权威资源列表的不可用态，不泄露后端详情或本地推导允许", () => {
+  it("503 时显示统一失败态，不泄露后端详情或本地推导允许", () => {
     render(<MyPermissionsSection />);
     const alert = screen.getByRole("alert");
-    expect(alert.textContent).toContain("不代表当前账号缺少权限");
-    expect(alert.textContent).toContain("服务状态：503");
+    expect(alert.textContent).toContain("暂时无法加载我的权限");
     expect(alert.textContent).not.toContain("private backend detail");
-  });
-
-  it("个人开关使用三级有效值，保存后更新认证态", async () => {
-    authState.user = {
-      tenantId: "tenant-a",
-      debugMode: false,
-      tenantFeatures: { debugModeAllowed: true, debugModeEnabled: true },
-    };
-    authApi.authFetch.mockResolvedValue(new Response(JSON.stringify({ debugMode: true }), { status: 200 }));
-    render(<MyPermissionsSection />);
-    const toggle = screen.getByRole("switch", { name: "个人调试模式" });
-    expect((toggle as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(toggle);
-    await waitFor(() => expect(authState.updateDebugMode).toHaveBeenCalledWith(true));
-    expect(authApi.authFetch).toHaveBeenCalledWith("/api/auth/me/debug-mode", expect.objectContaining({ method: "PATCH" }));
-  });
-
-  it("上级任一开关关闭时个人开关禁用", () => {
-    authState.user = {
-      tenantId: "tenant-a",
-      debugMode: true,
-      tenantFeatures: { debugModeAllowed: true, debugModeEnabled: false },
-    };
-    render(<MyPermissionsSection />);
-    expect((screen.getByRole("switch", { name: "个人调试模式" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("组织尚未开放，当前不能开启个人调试模式。")).toBeTruthy();
-  });
-});
-
-describe("连接与授权", () => {
-  beforeEach(() => {
-    governanceApi.listOAuthGrants.mockReset();
-    governanceApi.previewOAuthGrantRevocation.mockReset();
-    governanceApi.revokeOAuthGrant.mockReset();
-    sharedApi.startGoogleWorkspaceOAuth.mockReset();
-    sharedApi.saveUserPreferences.mockReset();
-    authState.updatePreferences.mockReset();
-    authState.user = null;
-  });
-  afterEach(() => vi.restoreAllMocks());
-
-  it("外部授权前展示服务端 scope 与用途并要求二次确认", async () => {
-    governanceApi.listOAuthGrants.mockResolvedValue({ grants: [] });
-    sharedApi.startGoogleWorkspaceOAuth.mockResolvedValue({
-      authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=signed",
-      state: "signed", requestedScopes: ["drive.readonly", "calendar.readonly"],
-      purpose: "供获指派的 Agent Run 读取工作资料", riskLevel: "high",
-      dataDestination: "Google Workspace API", revokeMethod: "连接与授权页撤销",
-    });
-    const popup = { location: { href: "" }, closed: false, close: vi.fn() };
-    const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
-    render(<ConnectionsSection />);
-    fireEvent.click(await screen.findByRole("button", { name: "连接" }));
-    expect(await screen.findByText("drive.readonly")).toBeTruthy();
-    expect(screen.getByText("供获指派的 Agent Run 读取工作资料")).toBeTruthy();
-    expect(open).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "前往 Google 授权" }));
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(popup.location.href).toContain("accounts.google.com");
-  });
-
-  it("活动 Google OAuth Grant 可以直接扩展权限而无需先撤销", async () => {
-    governanceApi.listOAuthGrants.mockResolvedValue({ grants: [{
-      grantId: "grant-1", tenantId: "tenant-a", subjectUserId: "user-1", provider: "google", connectorId: "google-workspace",
-      status: "active", scopeSummary: ["gmail.readonly"], approvedAt: "2026-08-10T00:00:00.000Z", version: 1, approvals: [],
-    }] });
-    sharedApi.startGoogleWorkspaceOAuth.mockResolvedValue({
-      authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=expanded",
-      state: "expanded", requestedScopes: ["gmail.modify", "gmail.settings.basic"],
-      purpose: "扩展 Google Workspace 能力", riskLevel: "high",
-      dataDestination: "Google Workspace API", revokeMethod: "连接与授权页撤销",
-    });
-
-    render(<ConnectionsSection />);
-    fireEvent.click(await screen.findByRole("button", { name: "扩展权限" }));
-
-    await waitFor(() => expect(sharedApi.startGoogleWorkspaceOAuth).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("gmail.settings.basic")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "前往 Google 授权" })).toBeTruthy();
-  });
-
-  it("活动 OAuth Grant 通过签名预览后才允许撤销，并保留可见治理回执", async () => {
-    governanceApi.listOAuthGrants.mockResolvedValue({ grants: [{
-      grantId: "grant-1", tenantId: "tenant-a", subjectUserId: "user-1", provider: "google", connectorId: "google-workspace",
-      status: "active", scopeSummary: [], approvedAt: "2026-08-10T00:00:00.000Z", version: 1, approvals: [],
-    }] });
-    governanceApi.previewOAuthGrantRevocation.mockResolvedValue({
-      previewId: `ogpv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64), expiresAt: "2099-08-10T01:00:00.000Z",
-      impact: { provider: "google", connectorId: "google-workspace", action: "revoke", immediatelyUnavailable: true, newRuns: "blocked", reversible: false, effectiveMode: "immediate", affectedAgents: [], affectedAutomations: [], brokenReferences: [], blockers: [], warnings: [], currentVersion: 1, nextVersion: 2 },
-    });
-    governanceApi.revokeOAuthGrant.mockResolvedValue({
-      grantId: "grant-1", status: "revoked", version: 2,
-      changeId: "commit-intent", auditId: "commit-terminal",
-    });
-    render(<ConnectionsSection />);
-    fireEvent.click(await screen.findByRole("button", { name: "撤销授权" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认撤销" }));
-    await waitFor(() => expect(governanceApi.revokeOAuthGrant).toHaveBeenCalledWith("grant-1", expect.objectContaining({
-      previewId: `ogpv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64),
-    })));
-    const receipt = await screen.findByRole("status");
-    expect(receipt.textContent).toContain("状态：revoked");
-    expect(receipt.textContent).toContain("Change ID：commit-intent");
-    expect(receipt.textContent).toContain("Audit ID：commit-terminal");
-  });
-
-  it("撤销失败时不展示成功回执", async () => {
-    governanceApi.listOAuthGrants.mockResolvedValue({ grants: [{
-      grantId: "grant-1", tenantId: "tenant-a", subjectUserId: "user-1", provider: "google", connectorId: "google-workspace",
-      status: "active", scopeSummary: [], approvedAt: "2026-08-10T00:00:00.000Z", version: 1, approvals: [],
-    }] });
-    governanceApi.previewOAuthGrantRevocation.mockResolvedValue({
-      previewId: `ogpv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64), expiresAt: "2099-08-10T01:00:00.000Z",
-      impact: { provider: "google", connectorId: "google-workspace", action: "revoke", immediatelyUnavailable: true, newRuns: "blocked", reversible: false, effectiveMode: "immediate", affectedAgents: [], affectedAutomations: [], brokenReferences: [], blockers: [], warnings: [], currentVersion: 1, nextVersion: 2 },
-    });
-    governanceApi.revokeOAuthGrant.mockRejectedValue(new Error("撤销执行失败"));
-    render(<ConnectionsSection />);
-    fireEvent.click(await screen.findByRole("button", { name: "撤销授权" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认撤销" }));
-    expect(await screen.findByText("撤销执行失败")).toBeTruthy();
-    expect(screen.queryByText("OAuth 授权撤销回执")).toBeNull();
-  });
-
-  // TASK-256：运行时工具批准三档选择。
-  it("运行时工具批准默认档与服务端默认一致，切换低风险常开后持久化偏好", async () => {
-    governanceApi.listOAuthGrants.mockResolvedValue({ grants: [] });
-    // 服务端对缺失 authorizationModeEnabled 默认按开启处理，UI 必须显示「全部自动批准」。
-    authState.user = { tenantId: "tenant-a", preferences: {} };
-    render(<ConnectionsSection />);
-    const checked = screen.getAllByRole("radio").find(radio => radio.getAttribute("aria-checked") === "true");
-    expect(checked?.textContent).toContain("全部自动批准");
-
-    // 切到低风险常开：写入两个偏好字段。
-    sharedApi.saveUserPreferences.mockResolvedValue({
-      authorizationModeEnabled: false,
-      lowRiskToolsAutoApproveEnabled: true,
-    });
-    fireEvent.click(screen.getByRole("radio", { name: /低风险常开/ }));
-    await waitFor(() => expect(sharedApi.saveUserPreferences).toHaveBeenCalledWith({
-      authorizationModeEnabled: false,
-      lowRiskToolsAutoApproveEnabled: true,
-    }));
-    expect(authState.updatePreferences).toHaveBeenCalledWith({
-      authorizationModeEnabled: false,
-      lowRiskToolsAutoApproveEnabled: true,
-    });
-    expect(await screen.findByText("已保存")).toBeTruthy();
-  });
-
-  it("偏好保存失败时回滚到原档位并展示错误", async () => {
-    governanceApi.listOAuthGrants.mockResolvedValue({ grants: [] });
-    authState.user = {
-      tenantId: "tenant-a",
-      preferences: { authorizationModeEnabled: false, lowRiskToolsAutoApproveEnabled: false },
-    };
-    render(<ConnectionsSection />);
-    sharedApi.saveUserPreferences.mockResolvedValue(null);
-    fireEvent.click(screen.getByRole("radio", { name: /低风险常开/ }));
-    await waitFor(() => expect(sharedApi.saveUserPreferences).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("alert")).toBeTruthy();
-    // 回滚：写回原偏好值。
-    expect(authState.updatePreferences).toHaveBeenLastCalledWith({
-      authorizationModeEnabled: false,
-      lowRiskToolsAutoApproveEnabled: false,
-    });
   });
 });

@@ -4,7 +4,7 @@
  * 与 Web 的对齐口径：
  * - 分组标题（个人 / 偏好 / 访问 / 数据）、分区顺序、分区 ID 完全一致，
  *   ID 即将来的深链段（Web `/settings/<id>`，移动端 Stack 路由 `settings/<id>`）；
- * - 「连接与授权」落能力中心连接器 Tab（与 Web 一样，连接管理已并入能力中心）；
+ * - 连接管理统一从能力中心的连接器 Tab 进入，个人设置不再保留独立入口；
  * - 「回收站」在移动端是页内底部面板 `TrashSheet`，没有独立路由。
  *
  * 刻意保留的移动端专属元素：顶部账号卡（E2E `account-username`）、
@@ -70,7 +70,6 @@ export default function SettingsScreen() {
       "session-organization": false,
       "appearance-layout": true,
       "my-permissions": isV1RouteAllowed("settings/my-permissions", v1Profile),
-      connections: isV1RouteAllowed("capabilities/connectors", v1Profile),
       // 文件与存储：与会话列表「文件」pill 共用口径（租户开关 ∩ V1 allowlist）
       "files-storage": isFilesEntryVisible({
         filesEnabled: tenantFeatures.filesEnabled,

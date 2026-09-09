@@ -35,6 +35,7 @@ async function rig(input: {
   assignments?: Record<string, ReturnType<typeof assignmentSet> | null>;
   effective?: Partial<Record<'org_agent' | 'skill' | 'credential' | 'environment_template', string[]>>;
   personalAgents?: string[];
+  personalAgentDefinitionName?: string;
   auditAppend?: ReturnType<typeof vi.fn>;
 } = {}) {
   const jwt = input.jwt ?? { sub: 'user-1', username: 'user-1', tenantId: 'tenant-a', role: 'user' };
@@ -51,6 +52,7 @@ async function rig(input: {
   ]);
   const personalAgentRecords = (input.personalAgents ?? []).map(agentId => ({
     agentId, tenantId: 'tenant-a', kind: 'personal_agent' as const, ownerUserId: 'user-1',
+    currentVersionId: input.personalAgentDefinitionName ? `v-${agentId}` : undefined,
     status: 'enabled' as const, revision: 1, createdAt: now, createdBy: 'system', updatedAt: now, updatedBy: 'system',
   }));
   const credentials = [{
@@ -92,6 +94,15 @@ async function rig(input: {
     },
     agents: {
       get: vi.fn(async (id: string) => personalAgentRecords.find(item => item.agentId === id) ?? null),
+      getVersion: vi.fn(async (versionId: string) => input.personalAgentDefinitionName ? {
+        versionId,
+        agentId: versionId.replace(/^v-/, ''),
+        versionNumber: 1,
+        definition: { name: input.personalAgentDefinitionName },
+        digest: 'digest',
+        publishedAt: now,
+        publishedBy: 'user-1',
+      } : null),
       listPersonalByOwner: vi.fn(async (tenantId: string, ownerUserId: string) =>
         personalAgentRecords.filter(item => item.tenantId === tenantId && item.ownerUserId === ownerUserId)),
     },
@@ -102,6 +113,15 @@ async function rig(input: {
         createdAt: now, createdBy: 'admin', updatedAt: now, updatedBy: 'admin',
       })),
       listPersonalByOwner: vi.fn(async () => []),
+      getVersion: vi.fn(async (versionId: string) => ({
+        versionId,
+        skillId: versionId.replace(/^v-/, ''),
+        versionNumber: 1,
+        definition: { name: versionId === 'v-skill-1' ? '周报助手' : '业务技能' },
+        digest: 'digest',
+        publishedAt: now,
+        publishedBy: 'admin',
+      })),
     },
     connectors: { get: vi.fn(async (id: string) => ({
       connectorId: id, name: id === 'github' ? 'GitHub' : id, status: 'published' as const,
@@ -248,13 +268,16 @@ describe('authoritative governance UI routes', () => {
   });
 
   it('允许的个人 Agent 没有运行依赖索引时 effective list 省略 readiness 而不是 503', async () => {
-    const request = await rig({ personalAgents: ['personal_agent_user-1'] });
+    const request = await rig({
+      personalAgents: ['personal_agent_user-1'],
+      personalAgentDefinitionName: '我的销售助理',
+    });
     const response = await request('/api/me/effective-resources');
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toHaveLength(1);
     expect(body[0]).toMatchObject({
-      resource: { id: 'personal_agent_user-1', domain: 'agent' },
+      resource: { id: 'personal_agent_user-1', displayName: '我的销售助理', domain: 'agent' },
       access: { verdict: 'allow', accessState: 'allowed' },
       primaryResult: { code: 'available' },
     });
@@ -275,6 +298,11 @@ describe('authoritative governance UI routes', () => {
     }));
     expect(preflight.status).toBe(503);
     expect(await preflight.json()).toMatchObject({ code: 'READINESS_UNAVAILABLE' });
+
+    const fallbackRequest = await rig({ personalAgents: ['personal_agent_user-1'] });
+    const fallbackResponse = await fallbackRequest('/api/me/effective-resources');
+    expect(fallbackResponse.status).toBe(200);
+    expect((await fallbackResponse.json())[0].resource.displayName).toBe('个人 Agent');
   });
 
   it('本人治理摘要由服务端 Membership 权威返回 Persona 与桌面续办路径', async () => {

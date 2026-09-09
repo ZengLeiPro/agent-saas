@@ -52,8 +52,8 @@ function readWebPersonalSections(): WebPersonalEntry[] {
 describe('P3-3d 个人设置分区与 Web 对齐', () => {
   const webSections = readWebPersonalSections();
 
-  it('能解析到 Web 的 9 个个人分区（防止解析失效导致空跑）', () => {
-    expect(webSections).toHaveLength(9);
+  it('能解析到 Web 的 8 个个人分区（防止解析失效导致空跑）', () => {
+    expect(webSections).toHaveLength(8);
     expect(webSections[0].id).toBe('account-security');
   });
 
@@ -90,7 +90,7 @@ describe('P3-3d 个人设置分区与 Web 对齐', () => {
 
   it('每个 Stack 路由落点都被 V1 能力清单放行', () => {
     const routes = personalSettingsRoutes();
-    expect(routes.length).toBe(7); // 回收站是页内浮层，没有路由
+    expect(routes.length).toBe(6); // 回收站是页内浮层，没有路由
     for (const route of routes) {
       expect(classifyV1Route(route), route).toBe('allowed');
     }
@@ -106,12 +106,11 @@ describe('P3-3d 个人设置分区与 Web 对齐', () => {
       'session-organization',
       'appearance-layout',
       'my-permissions',
-      'connections',
       'files-storage',
       'trash',
     ]);
 
-    const trimmed = groupPersonalSettingsSections(['my-permissions', 'connections']);
+    const trimmed = groupPersonalSettingsSections(['my-permissions']);
     expect(trimmed.map((view) => view.group)).toEqual(['personal', 'preferences', 'data']);
   });
 });

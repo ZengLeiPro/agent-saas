@@ -12,6 +12,11 @@ import {
 import { assertRuntimeIsolationEvidence } from './runtimeIsolationEvidence.js';
 import type { EventStore } from './types.js';
 
+/** 遗留（无 provisionGeneration）provisioning 记录静置多久后按状态写入收敛。 */
+const GENERATIONLESS_PROVISION_PARK_AFTER_MS = 15 * 60_000;
+/** 同一个无法收敛的 provisioning 记录的告警最小间隔。 */
+const UNPARKABLE_PROVISIONING_WARN_INTERVAL_MS = 60 * 60_000;
+
 /**
  * B4: HandHealthScanner — 周期对 `server-remote` hands 调 `${endpoint}/health`，
  * 失败时把 `status` 从 `ready` 翻成 `unhealthy`，恢复时翻回 `ready`，并写
@@ -91,6 +96,7 @@ export class HandHealthScanner {
   private inFlight = false;
   private reprovisionAttemptsThisScan = 0;
   private readonly recoveryCapacityBlocksThisScan = new Set<string>();
+  private readonly unparkableProvisioningWarnedAt = new Map<string, number>();
 
   constructor(private readonly options: HandHealthScannerOptions) {
     this.intervalMs = options.intervalMs ?? 30_000;
@@ -167,22 +173,24 @@ export class HandHealthScanner {
           const generation = typeof hand.metadata.provisionGeneration === 'string'
             ? hand.metadata.provisionGeneration
             : undefined;
+          const parkMetadataPatch = {
+            provisionFailure: 'tenant remote provision result unknown; manual reconciliation required',
+            provisionResult: 'result_unknown',
+            reconcileRequired: true,
+            provision: {
+              ...parseProvisionMetadata(hand.metadata.provision),
+              lastStatus: 'result_unknown',
+              lastAttemptAt: new Date().toISOString(),
+            },
+          };
           const parked = generation && store.completeProvisionAttempt
-            ? await store.completeProvisionAttempt(hand.handId, generation, 'unhealthy', {
-              provisionFailure: 'tenant remote provision result unknown; manual reconciliation required',
-              provisionResult: 'result_unknown',
-              reconcileRequired: true,
-              provision: {
-                ...parseProvisionMetadata(hand.metadata.provision),
-                lastStatus: 'result_unknown',
-                lastAttemptAt: new Date().toISOString(),
-              },
-            }, requireHandTenantId(hand))
-            : null;
+            ? await store.completeProvisionAttempt(hand.handId, generation, 'unhealthy', parkMetadataPatch, requireHandTenantId(hand))
+            : await this.parkGenerationlessProvisioningHand(hand, parkMetadataPatch);
           if (parked) {
+            this.unparkableProvisioningWarnedAt.delete(hand.handId);
             await this.appendHealthEvent(hand, 'unhealthy', 'tenant_provision_result_unknown');
             flipped += 1;
-          } else {
+          } else if (this.shouldWarnUnparkableProvisioning(hand.handId)) {
             this.options.logger?.warn(
               `HandHealthScanner: tenant provisioning hand could not be atomically parked handId=${hand.handId}; manual reconciliation required`,
             );
@@ -603,6 +611,36 @@ export class HandHealthScanner {
       return tenantToken;
     }
     return this.options.defaultServerRemoteAuthToken;
+  }
+
+  /**
+   * provisionGeneration 早于该字段存在的遗留 hand 没有可 CAS 的 attempt 标识，
+   * completeProvisionAttempt 永远返回 null，记录会无限期停在 provisioning 并每轮告警。
+   * 这类记录不存在需要保护的在途 attempt（attempt 租约远短于此处的静置门槛），
+   * 静置足够久后按普通状态写入收敛为 unhealthy，交给既有的 reconcileRequired 流程。
+   */
+  private async parkGenerationlessProvisioningHand(
+    hand: HandRecord,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<HandRecord | null> {
+    if (typeof hand.metadata.provisionGeneration === 'string') return null;
+    const idleMs = Date.now() - new Date(hand.updatedAt).getTime();
+    if (!Number.isFinite(idleMs) || idleMs < GENERATIONLESS_PROVISION_PARK_AFTER_MS) return null;
+    return await this.options.handStore.updateStatus(
+      hand.handId,
+      'unhealthy',
+      { ...metadataPatch, provisionResult: 'result_unknown_legacy_attempt' },
+      requireHandTenantId(hand),
+    );
+  }
+
+  /** 无法收敛的 provisioning 记录不应每轮刷屏；同一 hand 按固定间隔提醒一次即可。 */
+  private shouldWarnUnparkableProvisioning(handId: string): boolean {
+    const now = Date.now();
+    const lastWarnedAt = this.unparkableProvisioningWarnedAt.get(handId);
+    if (lastWarnedAt !== undefined && now - lastWarnedAt < UNPARKABLE_PROVISIONING_WARN_INTERVAL_MS) return false;
+    this.unparkableProvisioningWarnedAt.set(handId, now);
+    return true;
   }
 
   private async appendHealthEvent(hand: HandRecord, newStatus: HandStatus, detail?: string): Promise<void> {

@@ -1,5 +1,37 @@
 # Production Web recovery 基线审计与修复
 
+## 2026-09-09 根因与收敛：RC Promotion 现已同步冷备并统一 gzip 契约
+
+09-09 现场核实，09-08 的分叉不是偶发：`promote-release.yml` 的 Web phase 此前只写 OSS、
+从不同步 `/opt/agent-saas-web-recovery`，而且用 `aliyun oss cp --recursive` 原样上传 hash
+资源（无 gzip、无 `Content-Encoding`、`text/javascript` 无 charset）；兼容 Web-only 路径
+（`ci.yml`）则先 cmp 冷备、再经 `upload-web-assets-immutable.sh` 以 gzip 上传并同步冷备。
+两条路径每错开一次 Promotion，冷备就落后一版，下一次兼容发布必然在 cmp 门禁失败；而本
+audit 按 `gzip-n9-assets-v1` 契约校验，对 Promotion 发布出的生产会在 `artifact/OSS` 边界
+直接 fail closed（run 34308402524）。
+
+自本节起：
+
+- Promotion 的 hash 资源改走 `upload-web-assets-immutable.sh`（create-only + gzip -n -9 +
+  `charset=utf-8`），readback 对 `assets/*.js|mjs|css` 按同一 gzip 字节 cmp；其余壳文件仍覆盖式上传。
+- OSS 入口验证通过后，同一主机锁内用同一份 `web-assets` 走 `seal-root-staged-payload.sh` →
+  `deploy-recovery-web.sh` 同步冷备，并按 `X-Agent-Saas-Recovery` 头、`index.html` 与
+  `release-identity.json` 字节回读、`state=activated` receipt 验证；未通过不提交
+  `web_committed`。失败由 `cleanup_web_on_exit` 先 `rollback-recovery-web.sh` 再恢复 OSS 入口。
+- 存量：09-09 已把 `oss://agent-saas-web/assets/` 下 3,273 个原样存储的 js/css 对象按同一
+  契约重传为 gzip -n -9（GNU gzip 1.14，与 runner 字节一致；含 36 个 `text/css` 无 charset、
+  被 OSS 动态压缩掩盖的对象），重传前后解压字节逐一核对一致。此后按魔数逐对象核实：
+  14,842 个 js/mjs/css 对象全部为存储 gzip + `charset=utf-8` + immutable Cache-Control。
+
+同日第二次 audit（run 34311098459）暴露另一缺陷：`ossutil cp` 与 `aliyun oss cp` 都会对
+`Content-Encoding: gzip` 对象透明解压再做 CRC64 校验，对任何 gzip 资产必然报 `crc is inconsistent`；
+`upload-web-assets-immutable.sh` 的回读与本脚本的 `read_key` 均踩此坑且此前从未在真实 OSS 上跑过。
+现改为 `scripts/release/get-web-object.mjs`（ali-oss SDK 先 HEAD 再 GET，不带 Accept-Encoding，凭据只读 runner
+私有凭据文件）读取存储原字节；ossutil 只保留 stat。Promotion 的 `aliyun oss cp` 回读只覆盖壳文件，
+assets 由 immutable helper 逐对象回读并校验公开 headers。
+
+本 audit/repair 入口保留为异常兜底（人为改动、磁盘损坏、OSS 漂移），不再是常规发布的一部分。
+
 ## 适用的失败
 
 APP CI 34253411466 attempt 4 在正式上传之前执行 `cmp` 时报告：

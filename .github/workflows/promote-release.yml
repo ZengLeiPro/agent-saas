@@ -87,6 +87,17 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/release/install-aliyun-cli.sh
+          # hash 静态资源沿用兼容发布的 create-only + gzip 契约：SDK 条件写，ossutil 2.1.2 只做 stat/readback。
+          curl -sL https://gosspublic.alicdn.com/ossutil/v2/2.1.2/ossutil-2.1.2-linux-amd64.zip -o /tmp/ossutil.zip
+          unzip -o -q /tmp/ossutil.zip -d /tmp
+          sudo install /tmp/ossutil-2.1.2-linux-amd64/ossutil /usr/local/bin/ossutil
+          ossutil version | grep -F '2.1.2'
+          ossutil cp --help > "$RUNNER_TEMP/ossutil-cp-help.txt"
+          ossutil stat --help > "$RUNNER_TEMP/ossutil-stat-help.txt"
+          grep -Eq -- '(^|[[:space:],])-f([[:space:],]|$)' "$RUNNER_TEMP/ossutil-cp-help.txt"
+          grep -Eq -- '(^|[[:space:],])--region([=[:space:],]|$)' "$RUNNER_TEMP/ossutil-cp-help.txt"
+          grep -Eq -- '(^|[[:space:],])--region([=[:space:],]|$)' "$RUNNER_TEMP/ossutil-stat-help.txt"
+          node scripts/release/put-web-asset-create-only.mjs --self-check
 
       - name: 下载不可变 RC 证据
         id: release_evidence
@@ -713,6 +724,7 @@ jobs:
           web_lock_ready_confirmed=false
           web_backup_ready=false
           web_committed=false
+          recovery_started=false
           web_operation_deadline=0
           web_lock_is_alive() {
             [ -n "$web_lock_pid" ] && kill -0 "$web_lock_pid" 2>/dev/null
@@ -722,6 +734,86 @@ jobs:
               -o ConnectTimeout=5 -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
               -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "$1"
           }
+          # hash 静态资源的 SDK/ossutil 凭据与区域：与兼容发布同一 helper、同一契约。
+          export OSS_REGION="$RELEASE_RECORD_OSS_REGION"
+          export OSS_ACCESS_KEY_ID="$ALIBABACLOUD_ACCESS_KEY_ID" OSS_ACCESS_KEY_SECRET="$ALIBABACLOUD_ACCESS_KEY_SECRET"
+          # ── 冷备（ECS 恢复站）与 OSS 同一事务：快照 → 发布并验证 OSS → 同步冷备并回读 → 提交。
+          #    任一步失败都在同一主机锁内先回滚冷备、再恢复 OSS 入口。helper 通过 export -f 交给
+          #    run_with_web_lock 的子进程执行；子进程 stdin 为 /dev/null，脚本与归档均显式重定向。
+          recovery_web_root=/opt/agent-saas-web-recovery
+          production_staging_root=/run/agent-saas-production-staging
+          recovery_run_id="${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          recovery_remote="$production_staging_root/recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          recovery_release_id="$(jq -r .components.web.sourceSha "$RUNNER_TEMP/manifest.json")"
+          printf '%s' "$recovery_release_id" | grep -Eq '^[a-f0-9]{40}$'
+          export recovery_web_root production_staging_root recovery_run_id recovery_remote recovery_release_id
+          recovery_ssh() {
+            ssh -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "$@"
+          }
+          snapshot_recovery_web() {
+            set -euo pipefail
+            recovery_ssh "set -e; \
+              target=\$(readlink -f '$recovery_web_root/current'); \
+              case \"\$target\" in '$recovery_web_root'/releases/*) ;; \
+                *) echo 'recovery Web current target is not an immutable release' >&2; exit 1 ;; \
+              esac; \
+              for f in manifest.webmanifest release-identity.json index.html sw.js; do \
+                test -s \"\$target/\$f\" || { echo \"recovery Web before target is missing \$f\" >&2; exit 1; }; \
+              done; \
+              jq -e '.schemaVersion == 1 and .environment == \"production\" and .releaseId and .releaseSha and .webDigest' \
+                \"\$target/release-identity.json\" >/dev/null; \
+              printf '%s\\n' \"\$target\"" \
+              > "$RUNNER_TEMP/recovery-web-target.before"
+            test -s "$RUNNER_TEMP/recovery-web-target.before"
+          }
+          publish_recovery_web() {
+            set -euo pipefail
+            local archive="$RUNNER_TEMP/agent-saas-recovery-web-$recovery_run_id.tgz" digest before_q
+            tar -C "$RUNNER_TEMP/web-assets" -czf "$archive" .
+            digest="$(sha256sum "$archive" | cut -d' ' -f1)"
+            recovery_ssh "sudo rm -rf -- '$recovery_remote' && \
+              sudo install -d -m 0700 '$recovery_remote' && \
+              sudo tee '$recovery_remote/recovery-web.tgz' >/dev/null" < "$archive"
+            recovery_ssh "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$production_staging_root' \
+              bash -s -- verify '$digest' '$recovery_remote/recovery-web.tgz' '$recovery_remote'" \
+              < scripts/release/seal-root-staged-payload.sh
+            printf -v before_q '%q' "$(cat "$RUNNER_TEMP/recovery-web-target.before")"
+            recovery_ssh "sudo env RECOVERY_WEB_ROOT='$recovery_web_root' \
+              RECOVERY_WEB_BEFORE_TARGET=$before_q \
+              RELEASE_ID='$recovery_release_id' RUN_ID='$recovery_run_id' \
+              ARCHIVE='$recovery_remote/recovery-web.tgz' bash -s" \
+              < scripts/deploy-recovery-web.sh
+          }
+          verify_recovery_web() {
+            set -euo pipefail
+            local ip
+            ip="$(getent ahostsv4 "$ECS_HOST" | awk 'NR == 1 { print $1 }')"
+            : "${ip:?Cannot resolve ECS_HOST to IPv4}"
+            curl -fsS --resolve "agent.kaiyan.net:443:$ip" -H 'cache-control: no-cache' \
+              -D "$RUNNER_TEMP/recovery-web.headers" -o "$RUNNER_TEMP/recovery-web.index.html" \
+              "https://agent.kaiyan.net/?recovery_probe=$recovery_run_id"
+            grep -Eqi '^x-agent-saas-recovery:[[:space:]]*true' "$RUNNER_TEMP/recovery-web.headers"
+            cmp "$RUNNER_TEMP/web-assets/index.html" "$RUNNER_TEMP/recovery-web.index.html"
+            curl -fsS --resolve "agent.kaiyan.net:443:$ip" -H 'cache-control: no-cache' \
+              -o "$RUNNER_TEMP/recovery-web.release-identity.json" \
+              "https://agent.kaiyan.net/release-identity.json?recovery_probe=$recovery_run_id"
+            cmp "$RUNNER_TEMP/web-assets/release-identity.json" "$RUNNER_TEMP/recovery-web.release-identity.json"
+            recovery_ssh "sudo grep -Fx 'state=activated' \
+              '$recovery_web_root/transactions/$recovery_run_id.activation' >/dev/null && \
+              sudo rm -rf -- '$recovery_remote'"
+            echo "recovery Web endpoint matches the published OSS build"
+          }
+          rollback_recovery_web() {
+            set -euo pipefail
+            local before_q
+            printf -v before_q '%q' "$(cat "$RUNNER_TEMP/recovery-web-target.before")"
+            recovery_ssh "sudo env RECOVERY_WEB_ROOT='$recovery_web_root' \
+              RECOVERY_WEB_BEFORE_TARGET=$before_q RUN_ID='$recovery_run_id' bash -s" \
+              < scripts/rollback-recovery-web.sh
+            recovery_ssh "sudo rm -rf -- '$recovery_remote'"
+          }
+          export -f recovery_ssh snapshot_recovery_web publish_recovery_web verify_recovery_web rollback_recovery_web
           run_with_web_lock() {
             if ! web_lock_is_alive; then
               cat "$web_lock_log" >&2
@@ -788,6 +880,9 @@ jobs:
             if [ "$web_committed" = false ] && [ "$web_backup_ready" = true ]; then
               if web_lock_is_alive; then
                 web_operation_deadline=$((SECONDS + 300))
+                if [ "${recovery_started:-false}" = true ]; then
+                  run_with_web_lock bash -euo pipefail -c rollback_recovery_web || rollback_status=$?
+                fi
                 restore_web_entry || rollback_status=$?
               else
                 echo 'Web lock was lost; refusing an unlocked rollback' >&2
@@ -829,6 +924,8 @@ jobs:
           test "$lock_ready" = true
           web_lock_ready_confirmed=true
           web_operation_deadline=$((SECONDS + 1200))
+          # 任何 OSS/冷备 mutation 之前先快照冷备 current；deploy/rollback-recovery-web.sh 都以它为准。
+          run_with_web_lock bash -euo pipefail -c snapshot_recovery_web
           mkdir -p "$RUNNER_TEMP/web-assets" "$RUNNER_TEMP/web-before"
           tar -xzf "$RUNNER_TEMP/selected/web-assets.tgz" -C "$RUNNER_TEMP/web-assets"
           test -s "$RUNNER_TEMP/web-assets/index.html"
@@ -905,7 +1002,24 @@ jobs:
             printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.succeeded"
           }
           web_backup_ready=true
-          run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-assets/" \
+          # 1) hash 静态资源：与兼容发布同一 create-only + gzip 契约（禁止覆盖既有对象键；
+          #    冷备与 repair-web-recovery.py 的 storageContract 均以该字节为准）。
+          web_oss_credentials="$RUNNER_TEMP/web-oss-sdk-credentials.json"
+          (
+            umask 077
+            jq -n --arg accessKeyId "$ALIBABACLOUD_ACCESS_KEY_ID" \
+              --arg accessKeySecret "$ALIBABACLOUD_ACCESS_KEY_SECRET" \
+              '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$web_oss_credentials"
+          )
+          test -d "$RUNNER_TEMP/web-assets/assets"
+          run_with_web_lock bash scripts/release/upload-web-assets-immutable.sh \
+            "$RUNNER_TEMP/web-assets/assets" "$PRODUCTION_WEB_OSS_URI/assets" "$web_oss_credentials"
+          # 2) 其余壳文件（sw.js、manifest、图标等）保持原有覆盖式上传；入口两键最后写。
+          rm -rf "$RUNNER_TEMP/web-shell"
+          mkdir -p "$RUNNER_TEMP/web-shell"
+          tar -C "$RUNNER_TEMP/web-assets" --exclude=./assets -cf - . | tar -C "$RUNNER_TEMP/web-shell" -xf -
+          test ! -e "$RUNNER_TEMP/web-shell/assets"
+          run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-shell/" \
             "$PRODUCTION_WEB_OSS_URI/" --recursive --force --exclude index.html \
             --exclude release-identity.json --region "$RELEASE_RECORD_OSS_REGION"
           run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-assets/release-identity.json" \
@@ -921,6 +1035,8 @@ jobs:
           export PRODUCTION_WEB_OSS_URI RELEASE_RECORD_OSS_REGION
           # 单对象 CLI 启动约有固定网络开销；保持逐文件字节校验，但与 Staging 一致限为 8 路。
           # 整批仍由一个 run_with_web_lock 监管，锁丢失或总截止时间到达会终止整个进程组。
+          # assets/ 已由 upload-web-assets-immutable.sh 以 SDK GET 逐对象按存储字节回读并校验公开 headers；
+          # aliyun `oss cp` 会对 Content-Encoding: gzip 对象透明解压并因 CRC 不一致失败，故这里只回读壳文件。
           run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '
             source="$1"
             relative="${source#"$WEB_ASSETS_ROOT/"}"
@@ -929,7 +1045,7 @@ jobs:
             aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/$relative" \
               "$target" --region "$RELEASE_RECORD_OSS_REGION"
             cmp "$source" "$target"
-          ' _ < <(find "$WEB_ASSETS_ROOT" -type f -print0)
+          ' _ < <(find "$WEB_ASSETS_ROOT" -type f -not -path "$WEB_ASSETS_ROOT/assets/*" -print0)
           run_with_web_lock curl -fsS --retry 10 -H 'cache-control: no-cache' \
             "https://agent.kaiyan.net/release-identity.json?release=$RELEASE_ID" \
             -o "$RUNNER_TEMP/web-release-identity-readback.json"
@@ -937,6 +1053,11 @@ jobs:
             '.webDigest==$digest' "$RUNNER_TEMP/web-release-identity-readback.json"
           run_with_web_lock node scripts/release/verify-public-web.mjs \
             "$RUNNER_TEMP/web-assets" "https://agent.kaiyan.net" "$RUNNER_TEMP/production-public-web.json"
+          # 3) 冷备：OSS 验证通过后，同一主机锁内把同一份 web-assets 装进 ECS 恢复站并按字节回读；
+          #    未通过前不提交，失败由 cleanup_web_on_exit 先回滚冷备、再恢复 OSS 入口。
+          recovery_started=true
+          run_with_web_lock bash -euo pipefail -c publish_recovery_web
+          run_with_web_lock bash -euo pipefail -c verify_recovery_web
           web_lock_is_alive
           web_committed=true
           release_web_lock

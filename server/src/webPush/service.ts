@@ -26,8 +26,13 @@ export interface WebPushPublicSubscription {
   updatedAt: string;
 }
 
+/** 同一订阅连续失败多少次后判定为死订阅并清理；死订阅不应被无限重投。 */
+export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
+
 export class WebPushService implements PushSender {
   readonly publicKey: string;
+  /** subscriptionId → 连续失败次数；成功或清理后归零。进程内计数即可，死订阅会在几分钟内耗尽预算。 */
+  private readonly consecutiveFailures = new Map<string, number>();
 
   constructor(
     private readonly store: PgWebPushStore,
@@ -78,21 +83,36 @@ export class WebPushService implements PushSender {
           keys: { p256dh: subscription.p256dh, auth: subscription.auth },
         }, payload, { TTL: 3600, urgency: 'normal', timeout: 10_000 });
         await claim.finish('sent');
+        this.consecutiveFailures.delete(subscription.id);
         counters.sent += 1;
       } catch (error) {
         const statusCode = getStatusCode(error);
-        const detail = error instanceof Error ? error.message : String(error);
+        const detail = describePushError(error);
         counters.failed += 1;
+        const failureCount = (this.consecutiveFailures.get(subscription.id) ?? 0) + 1;
+        this.consecutiveFailures.set(subscription.id, failureCount);
+        let invalidated = false;
         try {
           if (statusCode === 404 || statusCode === 410) {
             await claim.invalidate();
+            invalidated = true;
           } else {
             await claim.finish('failed', detail.slice(0, 500));
+            // 推送服务不给状态码的失败（网络层错误、空响应）同样会耗尽订阅寿命：
+            // 连续失败到上限即视为死订阅并清理，否则它会被按分钟无限重投。
+            if (failureCount >= MAX_CONSECUTIVE_PUSH_FAILURES) {
+              await this.store.delete(message, subscription.id);
+              invalidated = true;
+            }
           }
         } catch (storeError) {
           logger.warn(`推送失败后的订阅清理失败 subscription=${subscription.id}: ${String(storeError)}`);
         }
-        logger.warn(`浏览器通知发送失败 subscription=${subscription.id} status=${statusCode ?? 'unknown'}: ${detail}`);
+        if (invalidated) this.consecutiveFailures.delete(subscription.id);
+        logger.warn(
+          `浏览器通知发送失败 subscription=${subscription.id} status=${statusCode ?? 'unknown'}`
+          + ` failures=${failureCount}${invalidated ? ' subscriptionRemoved=true' : ''}: ${detail}`,
+        );
       }
     });
 
@@ -131,6 +151,19 @@ function getStatusCode(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined;
   const value = (error as { statusCode?: unknown }).statusCode;
   return typeof value === 'number' ? value : undefined;
+}
+
+/** web-push 的错误常常 message 为空；退回到 name/code/body，避免只留下一句 "unknown"。 */
+function describePushError(error: unknown): string {
+  if (!error || typeof error !== 'object') return String(error);
+  const candidate = error as { message?: unknown; name?: unknown; code?: unknown; body?: unknown };
+  const parts = [
+    typeof candidate.message === 'string' && candidate.message.trim() ? candidate.message.trim() : undefined,
+    typeof candidate.code === 'string' && candidate.code ? `code=${candidate.code}` : undefined,
+    typeof candidate.body === 'string' && candidate.body.trim() ? `body=${candidate.body.trim()}` : undefined,
+  ].filter(Boolean);
+  if (parts.length > 0) return parts.join(' ');
+  return typeof candidate.name === 'string' && candidate.name ? candidate.name : 'no error detail';
 }
 
 async function forEachConcurrent<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {

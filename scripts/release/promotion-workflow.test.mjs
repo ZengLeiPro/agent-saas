@@ -192,6 +192,54 @@ test('Web rollback marker is written only by the armed restore path', async () =
   assert.ok(web.indexOf('trap cleanup_web_on_exit EXIT') < web.indexOf(markerWrite));
 });
 
+test('Web promotion publishes gzip immutable assets and syncs the cold-standby inside the same lock', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const start = workflow.indexOf('- name: 最后发布 Web 入口并保留旧版哈希资源');
+  const end = workflow.indexOf('- name: 持久化 Web 操作回执', start);
+  const web = workflow.slice(start, end);
+  // hash assets 不再原样递归覆盖上传；与兼容发布共用 create-only + gzip helper，其余壳文件另行上传。
+  assert.doesNotMatch(web, /aliyun --secure oss cp "\$RUNNER_TEMP\/web-assets\/"/u);
+  assert.match(web, /tar -C "\$RUNNER_TEMP\/web-assets" --exclude=\.\/assets -cf - \./u);
+  assert.match(web, /test ! -e "\$RUNNER_TEMP\/web-shell\/assets"/u);
+  assert.match(workflow, /put-web-asset-create-only\.mjs --self-check/u);
+  assert.match(workflow, /ossutil version \| grep -F '2\.1\.2'/u);
+  ordered(web, [
+    'export -f recovery_ssh snapshot_recovery_web publish_recovery_web verify_recovery_web rollback_recovery_web',
+    'trap cleanup_web_on_exit EXIT',
+    'test "$lock_ready" = true',
+    'run_with_web_lock bash -euo pipefail -c snapshot_recovery_web',
+    '# stat 还会读取对象 ACL',
+    'web_backup_ready=true',
+    'run_with_web_lock bash scripts/release/upload-web-assets-immutable.sh',
+    'run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-shell/"',
+    '"$PRODUCTION_WEB_OSS_URI/release-identity.json" --force',
+    '"$PRODUCTION_WEB_OSS_URI/index.html" --force',
+    'verify-public-web.mjs',
+    'recovery_started=true',
+    'run_with_web_lock bash -euo pipefail -c publish_recovery_web',
+    'run_with_web_lock bash -euo pipefail -c verify_recovery_web',
+    'web_committed=true',
+    'release_web_lock',
+  ]);
+  for (const contract of [
+    '/opt/agent-saas-web-recovery',
+    '/run/agent-saas-production-staging',
+    'scripts/release/seal-root-staged-payload.sh',
+    'scripts/deploy-recovery-web.sh',
+    'scripts/rollback-recovery-web.sh',
+    'RECOVERY_WEB_BEFORE_TARGET=$before_q',
+    "grep -Eqi '^x-agent-saas-recovery:[[:space:]]*true'",
+    "grep -Fx 'state=activated'",
+    'cmp "$RUNNER_TEMP/web-assets/index.html" "$RUNNER_TEMP/recovery-web.index.html"',
+    "printf '%s' \"$recovery_release_id\" | grep -Eq '^[a-f0-9]{40}$'",
+  ]) assert.ok(web.includes(contract), contract);
+  // 冷备回滚在 OSS 入口恢复之前，且都受同一把主机锁保护。
+  const cleanup = web.slice(web.indexOf('cleanup_web_on_exit() {'), web.indexOf('trap cleanup_web_on_exit EXIT'));
+  ordered(cleanup, ['web_lock_is_alive', 'rollback_recovery_web', 'restore_web_entry']);
+  assert.ok(web.indexOf('recovery_started=true') > web.indexOf('verify-public-web.mjs'));
+  assert.equal(web.split('recovery_started=true').length - 1, 1);
+});
+
 test('deploy output creates exact run-attempt fallback evidence without swallowing SSH failure', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const deploy = await readFile(deployPath, 'utf8');
@@ -577,8 +625,10 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /web-oss-readback/u);
   assert.match(
     workflow,
-    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '[\s\S]*< <\(find "\$WEB_ASSETS_ROOT" -type f -print0\)/u,
+    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '[\s\S]*< <\(find "\$WEB_ASSETS_ROOT" -type f -not -path "\$WEB_ASSETS_ROOT\/assets\/\*" -print0\)/u,
   );
+  // aliyun `oss cp` gunzips Content-Encoding: gzip objects and fails CRC; assets are read back by the SDK helper.
+  assert.doesNotMatch(workflow, /gzip -n -9 -c "\$source"/u);
   assert.match(workflow, /cmp "\$source" "\$target"/u);
   assert.doesNotMatch(
     workflow,
@@ -711,7 +761,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
     workflow.indexOf('- name: 持久化 Web 操作回执'),
   );
   const parallelReadback = webStep.match(
-    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '\n[\s\S]*?\n\s+' _ < <\(find "\$WEB_ASSETS_ROOT" -type f -print0\)/u,
+    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '\n[\s\S]*?\n\s+' _ < <\(find "\$WEB_ASSETS_ROOT" -type f -not -path "\$WEB_ASSETS_ROOT\/assets\/\*" -print0\)/u,
   )?.[0];
   assert.ok(parallelReadback, 'parallel Web readback must remain inside run_with_web_lock');
   assert.equal(webStep.match(/cleanup_web_on_exit\(\)/gu)?.length, 1);
@@ -951,7 +1001,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   );
   assert.ok(
     workflow.indexOf('test "$lock_ready" = true') <
-      workflow.indexOf('run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-assets/"'),
+      workflow.indexOf('run_with_web_lock bash scripts/release/upload-web-assets-immutable.sh'),
   );
   assert.ok(workflow.indexOf('web_committed=true') < workflow.indexOf('release_web_lock\n'));
   assert.ok(

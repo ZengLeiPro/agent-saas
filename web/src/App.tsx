@@ -75,7 +75,7 @@ function App() {
   const handleVoiceEvent = useCallback(
     (key: string, text: string, voice?: string, speed?: number) => {
       if (ttsPlayer.autoPlay && ttsPlayer.available) {
-        ttsPlayer.play(key, text, voice);
+        ttsPlayer.play(key, text, voice, speed);
       }
     },
     [ttsPlayer.autoPlay, ttsPlayer.available, ttsPlayer.play],
@@ -307,7 +307,7 @@ function App() {
     if (target) startAgentTargetSession(target);
   }, [activeTab, adminSettings, agentTargetCatalog, messages.length, orgAgentsLoading, pendingAgentTarget, sessionId, settingsOpen, startAgentTargetSession]);
 
-  // Web/PWA 生命周期：只在数据确已陈旧时做会话话域静默刷新；传输续接由 WS connected handler 负责。
+  // Web/PWA 生命周期：只在数据确已陈旧时做会话域静默刷新；传输续接由 WS connected handler 负责。
   const onResume = useCallback(() => {
     void refreshSessions();
     // 当前 transcript 由重连后的 connected handler 选择 snapshot 或 cursor replay，

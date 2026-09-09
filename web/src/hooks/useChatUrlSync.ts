@@ -153,6 +153,10 @@ export function useChatUrlSync({
     // 这里不能用 buildUrl 兜底：activeTab 之外没有安装实例与应用内路径，
     // 兜底会把壳路径改写成 `/`，F5 深链与 route.changed 全部失效。
     if (activeTab === 'apps') return;
+    // 能力中心子标签由 useCapabilityNavigation 维护。这里若统一回写
+    // buildUrl('capabilities')，会把旧连接入口刚 canonical 的 connectors
+    // 子路径再次覆盖成默认页。
+    if (activeTab === 'capabilities' && /^\/capabilities\/(templates|experts|skills|connectors)$/.test(window.location.pathname)) return;
     const expectedUrl = buildUrl(activeTab, activeTab === 'chat' ? sessionId : null);
     if (governanceRouteState) {
       const governanceUrl = buildGovernanceUrl(governanceRouteState);

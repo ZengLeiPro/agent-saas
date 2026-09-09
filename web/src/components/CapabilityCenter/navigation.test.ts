@@ -12,6 +12,7 @@ describe("能力中心标签路由", () => {
     expect(capabilityTabFromPath("/capabilities/experts")).toBe("experts");
     expect(capabilityTabFromPath("/capabilities/skills")).toBe("skills");
     expect(capabilityTabFromPath("/capabilities/connectors")).toBe("connectors");
+    expect(capabilityTabFromPath("/settings/connections")).toBe("connectors");
   });
 
   it("未开放个人通用 Agent 时隐藏任务模板并默认进入专家", () => {

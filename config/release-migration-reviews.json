@@ -14552,6 +14552,88 @@
           "digest": "sha256:b65ff8c5106b497a3f932e7120cab8d9e3e0eaa460fbc76e0d0e4a357cc92218"
         }
       ]
+    },
+    {
+      "baselineSha": "6f900cdd113cbc485bfd3455eeb8c021787c38ac",
+      "files": [
+        {
+          "path": "server/src/data/agentDwsAccounts/store.ts",
+          "baselineDigest": "sha256:73381b1b3540765ffb2525fbc50969d4626355fa77d3db7ca0de49b9aa2da3ca",
+          "targetDigest": "sha256:02cb3591db3ab243f103bc2f0df575a4a22a0a9f7a017350e0e5e6f1b0f90e28",
+          "classification": "no-schema-change",
+          "reason": "复用既有 event_policy_json 与 identity_updated_at 保存授权意图、身份 epoch 和可恢复 cleanup saga；均为运行期 SELECT/UPDATE，无启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/data/agentDwsMessages/store.ts",
+          "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
+          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "classification": "no-schema-change",
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "targetDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
+          "classification": "no-schema-change",
+          "reason": "仅按序追加 V46 provider；V1-V45 的内容和顺序不变，DDL 由 V46 文件单独审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "targetDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
+          "classification": "no-schema-change",
+          "reason": "治理最高版本 45 调整为 46；执行器和旧迁移不变，DDL 由 V46 文件单独审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:7920a89c4ccc3bc1dc8973c84dda685a176b306c59abe18acc1ab4e5b8a88232",
+          "classification": "expand",
+          "reason": "V46 只新增 nullable retired_at、logical_conversation_id 与查询索引；保留旧唯一约束和 delivery 外键，不执行动态 SQL、约束替换或数据回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/bindingIdentityStore.ts",
+          "baselineDigest": "sha256:68f676fa41e06b1a9df425e51257f098129cc3408bf3e5d03464b6d1cd50417c",
+          "targetDigest": "sha256:16991dc66cce4470261c6725da345dfb8dbb835f0b364fd4fbb4236c7cdfd645",
+          "classification": "no-schema-change",
+          "reason": "运行期事务先核验已独立发布的 delivery ON UPDATE CASCADE 外键，再归档旧 generation；合同缺失整体回滚。本文件无 DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/deliveryClaims.ts",
+          "baselineDigest": "sha256:5a5296ebdfdcd169bf9a7a67cd93883b6563e4a67d5b107afdc7b337f45ddf48",
+          "targetDigest": "sha256:efbc87380edcf81e75e1f89751cc6509021f1435b1f190d42e5c82bdf8eab00f",
+          "classification": "no-schema-change",
+          "reason": "在既有 delivery/inbox 表上执行 claim、unknown reconcile 与终态重试运行期 SQL；无新增 DDL 或启动回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/store.ts",
+          "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
+          "classification": "no-schema-change",
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
+          "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "classification": "no-schema-change",
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/钉钉数字员工身份分代与运行期SQL审核-20260908.md",
+          "digest": "sha256:df03607b58f22b39d67fad77b012f39dd7b23b97a7f3a1b7437faa42b7e84157"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+        },
+        {
+          "path": "server/src/runtime/background/orgAgentControlCommandRecovery.test.ts",
+          "digest": "sha256:e6e3235f2e2628a1e35b1b052dfd15a4053390a76debe8d9625d505f37561268"
+        }
+      ]
     }
   ]
 }

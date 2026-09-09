@@ -129,12 +129,16 @@
           "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
@@ -859,6 +863,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -868,11 +876,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -1441,6 +1449,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -1450,11 +1462,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -1974,6 +1986,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -1983,11 +1999,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -2503,6 +2519,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -2512,11 +2532,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -3014,6 +3034,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -3023,11 +3047,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -3521,6 +3545,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -3530,11 +3558,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -4028,6 +4056,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -4037,11 +4069,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -4829,6 +4861,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -4838,11 +4874,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -5363,6 +5399,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -5372,11 +5412,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -5910,6 +5950,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -5919,11 +5963,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -6457,6 +6501,10 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -6466,11 +6514,11 @@
         },
         {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -6933,12 +6981,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -7401,12 +7453,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -7869,12 +7925,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -8337,12 +8397,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -8787,12 +8851,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -9237,12 +9305,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -9627,12 +9699,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -9994,12 +10070,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -10357,12 +10437,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -10712,12 +10796,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -11067,12 +11155,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -11394,12 +11486,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
@@ -11699,12 +11795,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -11984,12 +12084,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
@@ -12253,12 +12357,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
@@ -12472,12 +12580,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
@@ -12679,12 +12791,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
@@ -12864,12 +12980,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
@@ -13023,12 +13143,16 @@
           "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
@@ -13200,12 +13324,16 @@
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
@@ -13348,12 +13476,16 @@
           "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
@@ -13492,12 +13624,16 @@
           "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
@@ -13633,12 +13769,16 @@
           "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
@@ -13778,12 +13918,16 @@
           "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
@@ -13927,12 +14071,16 @@
           "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",
@@ -14076,12 +14224,16 @@
           "digest": "sha256:48965353547ee79f6cb0cf7f07214dfb9982707d8d6bf49a567c15f823e83208"
         },
         {
+          "path": "server/src/__tests__/helpers/bindingGenerationContract.ts",
+          "digest": "sha256:37a78eff893b13cf707125bb73937e5f94cd2f11c3d15979c9e97301cd9f4f39"
+        },
+        {
           "path": "server/src/__tests__/orgGroupAgentBindingGeneration.pg.test.ts",
-          "digest": "sha256:c1ee19042949cbaafebb28d6d3743a9951432bb4653102b49dc461940713f20d"
+          "digest": "sha256:5c43b1dd65145af8faee3ab9e440608744cc88824eed73893d0cab5640b9ed6c"
         },
         {
           "path": "server/src/__tests__/orgGroupAgentStore.pg.test.ts",
-          "digest": "sha256:e3ed1d5e216a2889c8392b16db69f59e4139766470dff3e58843da6a9c479509"
+          "digest": "sha256:ace5c4da176a8e71af06c2332c4d9af9f354feef119ef7279ed4fab660f520f2"
         },
         {
           "path": "server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.test.ts",

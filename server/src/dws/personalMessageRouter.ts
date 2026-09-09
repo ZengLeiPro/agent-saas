@@ -66,6 +66,10 @@ import {
 } from './orgAgentVisibleReply.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
+import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
+import {
+  OrgAgentFastControlPump,
+} from './orgAgentFastControl.js';
 
 const DEFAULT_POLL_MS = 1_000;
 const DEFAULT_LEASE_TTL_MS = 120_000;
@@ -157,6 +161,7 @@ export interface AgentDwsMessageRouterOptions {
   sender: DwsPersonalMessageSenderLike;
   runStore?: ExistingRunStore;
   eventStore?: ExistingRunEventStore;
+  backgroundTasks?: Pick<BackgroundTaskRuntime, 'get' | 'cancel' | 'controlWorkOrder'>;
   pollMs?: number;
   leaseTtlMs?: number;
   leaseRenewMs?: number;
@@ -180,6 +185,7 @@ export class AgentDwsMessageRouter {
   private readonly visibleReply: OrgAgentVisibleReplyService;
   private readonly active = new Set<Promise<void>>();
   private readonly activeAborts = new Set<AbortController>();
+  private readonly fastControl?: OrgAgentFastControlPump;
   private timer?: NodeJS.Timeout;
   private retryTimer?: NodeJS.Timeout;
   private pumping = false;
@@ -202,15 +208,34 @@ export class AgentDwsMessageRouter {
       this.leaseTtlMs,
       this.frontReplyDeadlineMs,
     );
+    if (options.backgroundTasks && options.messageStore.claimNextControl) {
+      this.fastControl = new OrgAgentFastControlPump({
+        agentCwd: options.agentCwd, messageStore: options.messageStore,
+        accountStore: options.accountStore, runtime: options.backgroundTasks,
+        visibleReply: this.visibleReply, leaseTtlMs: this.leaseTtlMs,
+        leaseRenewMs: this.leaseRenewMs, sharedOptions: options,
+        resolveRequester: options.resolveRequester,
+        ...(options.resolveRequesterOutcome ? { resolveRequesterOutcome: options.resolveRequesterOutcome } : {}),
+        authorizeRequester: options.authorizeRequester,
+        reject: (account, item, reason, requester, owner) => this.rejectAccess(
+          account, item, reason, requester, owner,
+        ),
+        warn: message => options.logger?.warn(message),
+      });
+    }
     if (this.leaseRenewMs >= this.leaseTtlMs) {
       throw new Error('Agent DWS inbox lease renew interval must be shorter than its TTL');
     }
   }
   start(): void {
     if (this.stopped || this.timer) return;
-    this.timer = setInterval(() => this.scheduleKick(), this.pollMs);
+    this.timer = setInterval(() => {
+      this.scheduleKick();
+      this.fastControl?.kick();
+    }, this.pollMs);
     this.timer.unref?.();
     this.scheduleKick();
+    this.fastControl?.kick();
   }
 
   async stop(): Promise<void> {
@@ -221,6 +246,7 @@ export class AgentDwsMessageRouter {
     this.retryTimer = undefined;
     for (const controller of this.activeAborts) controller.abort();
     await Promise.allSettled([...this.active]);
+    await this.fastControl?.stop();
   }
 
   async ingest(account: AgentDwsAccountRecord, event: DwsPersonalEvent): Promise<boolean> {
@@ -296,7 +322,10 @@ export class AgentDwsMessageRouter {
       event,
       item: result.record,
     });
-    if (result.created) this.scheduleKick();
+    if (result.created) {
+      this.scheduleKick();
+      this.fastControl?.kick();
+    }
     return result.created;
   }
 
@@ -720,12 +749,14 @@ export class AgentDwsMessageRouter {
     item: AgentDwsInboxRecord,
     reason: string,
     requester?: UserIdentity,
+    owner = this.workerId,
   ): Promise<void> {
     await rejectDwsAccess({ account, item, reason, ...(requester ? { requester } : {}),
-      owner: this.workerId, messageStore: this.options.messageStore, visibleReply: this.visibleReply,
+      owner, messageStore: this.options.messageStore, visibleReply: this.visibleReply,
       audit: this.options.auditRequesterRejection, now: this.options.now,
       warn: message => this.options.logger?.warn(message) });
   }
+
   private async recoverOrResumeMissingRun(
     item: AgentDwsInboxRecord,
     sessionId: string,

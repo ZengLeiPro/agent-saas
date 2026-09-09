@@ -19,6 +19,7 @@ const MAX_PAYLOAD_BYTES = 256 * 1024;
 const PAYLOAD_SIZE_MARGIN = 128;
 const MAX_LEASE_TTL_MS = 24 * 60 * 60 * 1_000;
 const MAX_RETRY_DELAY_MS = 24 * 60 * 60 * 1_000;
+const CONTROL_MESSAGE_PATTERN = '^[[:space:]]*((status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)[[:space:]]+W-[A-F0-9]{12}([[:space:]]+.+)?|W-[A-F0-9]{12}[[:space:]]+(status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)([[:space:]]+.+)?)[[:space:]]*$';
 
 type PgPool = pg.Pool;
 
@@ -152,6 +153,18 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
 
   /** Legacy v1 reply rows retain reply_pending so identity reconciliation cannot rerun dispatch. */
   async claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null> {
+    return await this.claimNextMatching(owner, ttlMs, false);
+  }
+
+  async claimNextControl(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null> {
+    return await this.claimNextMatching(owner, ttlMs, true);
+  }
+
+  private async claimNextMatching(
+    owner: string,
+    ttlMs: number,
+    controlOnly: boolean,
+  ): Promise<AgentDwsInboxRecord | null> {
     assertOwnerFence(owner, 1, false);
     if (!Number.isInteger(ttlMs) || ttlMs < 1 || ttlMs > MAX_LEASE_TTL_MS) {
       throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
@@ -172,6 +185,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
             )
             OR (item.state='processing' AND item.lease_expires_at <= NOW())
           )
+          AND (($3 AND item.content ~* $4) OR (NOT $3 AND item.content !~* $4))
           AND NOT EXISTS (
             SELECT 1
             FROM ${this.inboxTable} active
@@ -184,6 +198,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
                 OR active.work_conversation_id=item.work_conversation_id
               )
               AND active.inbox_id<>item.inbox_id
+              AND (($3 AND active.content ~* $4) OR (NOT $3 AND active.content !~* $4))
               AND (active.state='processing' OR active.state='reply_pending')
               AND active.lease_expires_at > NOW()
           )
@@ -199,6 +214,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
                 OR earlier.work_conversation_id=item.work_conversation_id
               )
               AND earlier.state IN ('pending','processing','retry_wait','reply_pending')
+              AND (($3 AND earlier.content ~* $4) OR (NOT $3 AND earlier.content !~* $4))
               AND (
                 COALESCE(earlier.event_timestamp,earlier.created_at),
                 earlier.created_at,
@@ -222,7 +238,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
         FROM candidate
         WHERE inbox.inbox_id=candidate.inbox_id
         RETURNING inbox.*
-      `, [owner, ttlMs]);
+      `, [owner, ttlMs, controlOnly, CONTROL_MESSAGE_PATTERN]);
       await client.query('COMMIT');
       const row = result.rows[0] as Record<string, unknown> | undefined;
       return row ? mapInboxRow(row) : null;

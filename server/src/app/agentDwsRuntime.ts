@@ -28,6 +28,7 @@ import type { UserIdentity } from '../types/index.js';
 import type { Logger } from '../utils/logger.js';
 import { governancePersonaForUser } from '../governance/subject/platformIdentity.js';
 import { createOrgAgentRuntimeCapabilityProbe } from './orgAgentRuntimeCapability.js';
+import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 
 export type ConnectorServerRemoteResolver = (principal: DwsWorkspacePrincipal) => Promise<{
   baseUrl: string;
@@ -118,6 +119,7 @@ export async function createAgentDwsRuntime(options: {
   orgAgentStore: Pick<OrgAgentStore, 'get'>;
   runPreflightService: Pick<RunPreflightService, 'preflight'>;
   governanceAuditStore: GovernanceAuditStore;
+  backgroundTasks?: Pick<BackgroundTaskRuntime, 'get' | 'cancel' | 'controlWorkOrder'>;
   resolveServerRemote: ConnectorServerRemoteResolver;
   remoteAvailable: boolean;
   enableWorker: boolean;
@@ -247,6 +249,7 @@ export async function createAgentDwsRuntime(options: {
         }),
         ...(options.pgRunStore ? { runStore: options.pgRunStore } : {}),
         eventStore: options.pgEventStore,
+        ...(options.backgroundTasks ? { backgroundTasks: options.backgroundTasks } : {}),
         logger: options.logger.child('AgentDwsMessageRouter'),
       })
     : undefined;

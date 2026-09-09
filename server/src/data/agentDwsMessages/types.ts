@@ -116,6 +116,7 @@ export interface AgentDwsMessageStore {
   listActiveForAccount(tenantId: string, accountId: string): Promise<AgentDwsInboxRecord[]>;
   getById(tenantId: string, inboxId: string): Promise<AgentDwsInboxRecord | null>;
   claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null>;
+  claimNextControl?(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null>;
   releaseClaim(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord>;
   renewLease(inboxId: string, owner: string, fence: number, ttlMs: number): Promise<boolean>;
   pinLegacyIdentityOrTerminate(

@@ -125,6 +125,47 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     );
   });
 
+  it('控制消息绕过普通执行队列，并通过同一群权限上下文暂停指定任务', async () => {
+    const routed = workOrder({ shortId: 'W-123456ABCDEF' });
+    const backgroundTasks = {
+      get: vi.fn().mockResolvedValue({ status: 'running' }),
+      cancel: vi.fn(),
+      controlWorkOrder: vi.fn().mockResolvedValue({
+        task: null,
+        workOrder: { ...routed, state: 'paused' },
+      }),
+    };
+    const test = setup({
+      claimedSequence: [],
+      controlClaimed: {
+        ...item,
+        content: '暂停 W-123456ABCDEF',
+        workConversationId: 'workconv-route-a',
+      },
+      shortWorkOrder: routed,
+      workOrders: [routed],
+      backgroundTasks,
+    });
+
+    test.router.start();
+    await vi.waitFor(() => expect(backgroundTasks.controlWorkOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelContext: expect.objectContaining({
+          orgAgentChannel: expect.objectContaining({
+            bindingId: 'channel-binding-a',
+            workConversationId: 'workconv-route-a',
+          }),
+        }),
+      }),
+      { taskId: 'W-123456ABCDEF', action: 'pause' },
+    ));
+    expect(test.dispatch).not.toHaveBeenCalled();
+    expect(test.messageStore.complete).toHaveBeenCalledWith(
+      'inbox-a', 'agent-dws-control', 1,
+    );
+    await test.router.stop();
+  });
+
   it('keeps consecutive messages in one group on the same ConversationSpace front desk', async () => {
     const test = setup({
       claimedSequence: [

@@ -2754,6 +2754,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
     enableWorker: enableSchedulerWorker, isExecutionEnabled: isRuntimeExecutionEnabled, logger: serverLogger,
     isRuntimeWorkerV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready,
+    backgroundTasks: rawRuntimeConfig.backgroundTasks,
   });
   if (feishuConnectionStore && userStore && resolvedFeishuConnector && feishuConnectorScopes) {
     feishuTokenBroker = new FeishuTokenBroker({

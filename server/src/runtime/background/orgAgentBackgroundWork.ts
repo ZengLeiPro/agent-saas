@@ -42,6 +42,7 @@ import {
 import { parseBackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 import { markBackgroundTaskTerminal } from './backgroundTaskTerminal.js';
 import { withWorkOrderContinuationPrompt } from './orgAgentContinuationPrompt.js';
+import { controlCommandCompletionUnsettled, failPreparedOrgAgentControlCommand } from './orgAgentControlCommandSettlement.js';
 import {
   buildOrgAgentContinuation,
   buildPausedAttemptContext,
@@ -803,25 +804,18 @@ export class OrgAgentBackgroundWorkCoordinator {
         currentRun = activeRun;
       }
     } catch (error) {
-      await this.failSetup(
-        tenantId,
-        workOrderId,
-        taskId,
-        layout.taskRoot,
-        error,
-        nextAttemptNo,
-      );
+      let cleanupError: unknown;
+      try {
+        await this.failSetup(tenantId, workOrderId, taskId, layout.taskRoot, error, nextAttemptNo);
+      } catch (failedCleanup) { cleanupError = failedCleanup; }
       if (options.inboxReceipt)
-        await store.failControlCommand({
-          tenantId,
-          workOrderId,
-          inboxReceipt: options.inboxReceipt,
-          error: error instanceof Error ? error.message : String(error),
-        }).catch(() => undefined);
+        await failPreparedOrgAgentControlCommand({
+          store, tenantId, workOrderId, inboxReceipt: options.inboxReceipt, operationError: cleanupError ?? error,
+        });
       throw error;
     }
     if (options.inboxReceipt)
-      await store.completeControlCommand({ tenantId, workOrderId, inboxReceipt: options.inboxReceipt });
+      await store.completeControlCommand({ tenantId, workOrderId, inboxReceipt: options.inboxReceipt }).catch(error => { throw controlCommandCompletionUnsettled(error); });
     return currentRun;
   }
 
@@ -886,13 +880,19 @@ export class OrgAgentBackgroundWorkCoordinator {
       });
     }
     if (inboxReceipt) {
-      await stopPreparedOrgAgentAttempt(
-        this.config,
-        tenantId,
-        workOrderId,
-        prepared?.sourceAttemptNo ?? work.currentAttemptNo,
-      );
-      await store.completeControlCommand({ tenantId, workOrderId, inboxReceipt });
+      try {
+        await stopPreparedOrgAgentAttempt(
+          this.config, tenantId, workOrderId,
+          prepared?.sourceAttemptNo ?? work.currentAttemptNo,
+        );
+      } catch (error) {
+        await failPreparedOrgAgentControlCommand({
+          store, tenantId, workOrderId, inboxReceipt, operationError: error,
+        });
+        throw error;
+      }
+      await store.completeControlCommand({ tenantId, workOrderId, inboxReceipt })
+        .catch(error => { throw controlCommandCompletionUnsettled(error); });
     }
     return task;
   }

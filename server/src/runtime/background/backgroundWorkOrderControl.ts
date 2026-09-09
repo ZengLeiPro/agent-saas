@@ -5,6 +5,7 @@ import type { RawRuntimeRunDispatchConfig } from '../rawRuntimeRunDispatch.js';
 import type { OrgAgentWorkOrderControlRequest } from './backgroundTaskRuntime.js';
 import { parseBackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 import type { OrgAgentBackgroundWorkCoordinator } from './orgAgentBackgroundWork.js';
+import { withPreparedOrgAgentControlFailureSettlement } from './orgAgentControlCommandSettlement.js';
 
 const ORG_AGENT_BACKGROUND_TASK_POLICY_TOOL = 'BackgroundTask';
 
@@ -32,9 +33,13 @@ export async function controlOrgAgentWorkOrder(
     throw new Error(priorCommand.error ?? 'ORG_AGENT_CONTROL_COMMAND_FAILED');
   if (priorCommand?.phase === 'completed') return { task, workOrder: work };
   if (request.action === 'pause') {
-    const pausedTask = await orgWork.pause(
-      work.tenantId, work.workOrderId, work.version, request.durableResult,
-    );
+    const pausedTask = await withPreparedOrgAgentControlFailureSettlement({
+      store: config.orgGroupAgentStore!, tenantId: work.tenantId,
+      workOrderId: work.workOrderId, inboxReceipt: request.durableResult,
+      operation: async () => await orgWork.pause(
+        work.tenantId, work.workOrderId, work.version, request.durableResult,
+      ),
+    });
     work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
     return { task: pausedTask, workOrder: work };
   }
@@ -49,9 +54,13 @@ export async function controlOrgAgentWorkOrder(
         targetAttemptNo: work.currentAttemptNo + 1,
       },
     } : undefined;
-    const resumed = await orgWork.retry(work.tenantId, work.workOrderId, work.version, {
-      ...(resumeControl ? { control: resumeControl } : {}),
-      ...(request.durableResult ? { inboxReceipt: request.durableResult } : {}),
+    const resumed = await withPreparedOrgAgentControlFailureSettlement({
+      store: config.orgGroupAgentStore!, tenantId: work.tenantId,
+      workOrderId: work.workOrderId, inboxReceipt: request.durableResult,
+      operation: async () => await orgWork.retry(work.tenantId, work.workOrderId, work.version, {
+        ...(resumeControl ? { control: resumeControl } : {}),
+        ...(request.durableResult ? { inboxReceipt: request.durableResult } : {}),
+      }),
     });
     work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
     return { task: resumed, workOrder: work };
@@ -97,14 +106,18 @@ export async function controlOrgAgentWorkOrder(
       work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
     }
   }
-  const resumed = await orgWork.retry(work.tenantId, work.workOrderId, work.version, {
-    allowPendingArtifacts: true,
-    control: nextControl,
-    supersedePendingCompletion: true,
-    ...(durable && !priorCommand
-      && ['queued', 'running', 'waiting_input'].includes(work.state)
-      ? { supersedeActiveAttempt: true } : {}),
-    ...(request.durableResult ? { inboxReceipt: request.durableResult } : {}),
+  const resumed = await withPreparedOrgAgentControlFailureSettlement({
+    store: config.orgGroupAgentStore!, tenantId: work.tenantId,
+    workOrderId: work.workOrderId, inboxReceipt: request.durableResult,
+    operation: async () => await orgWork.retry(work.tenantId, work.workOrderId, work.version, {
+      allowPendingArtifacts: true,
+      control: nextControl,
+      supersedePendingCompletion: true,
+      ...(durable && !priorCommand
+        && ['queued', 'running', 'waiting_input'].includes(work.state)
+        ? { supersedeActiveAttempt: true } : {}),
+      ...(request.durableResult ? { inboxReceipt: request.durableResult } : {}),
+    }),
   });
   work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
   return { task: resumed, workOrder: work };

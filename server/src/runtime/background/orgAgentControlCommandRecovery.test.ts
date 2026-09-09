@@ -14,6 +14,7 @@ import type { RawRuntimeRunDispatchConfig } from '../rawRuntimeRunDispatch.js';
 import type { SessionCatalog } from '../sessionCatalog.js';
 import { buildPausedAttemptContext } from './orgAgentContinuation.js';
 import { OrgAgentBackgroundWorkCoordinator } from './orgAgentBackgroundWork.js';
+import { OrgAgentControlCommandUnsettledError } from './orgAgentControlCommandSettlement.js';
 import {
   durableOrgAgentAttemptFixture as durableAttempt,
   liveOrgAgentBindingFixture as liveBinding,
@@ -56,6 +57,89 @@ describe('组织 Agent 控制命令阶段恢复', () => {
     expect(markStatusIfCurrent).not.toHaveBeenCalled();
   });
 
+  it('暂停 prepared 已提交后 stop 失败会固化失败命令', async () => {
+    const source = previousRun('tenant-1/.agent-agent-1/shared/binding-1/wc-1');
+    source.status = 'running';
+    let work = workOrder('running');
+    const failControlCommand = vi.fn(async () => {
+      work = {
+        ...work,
+        control: {
+          ...work.control,
+          command: { ...work.control.command!, phase: 'failed', error: 'SESSION_MISSING' },
+        },
+      };
+      return work;
+    });
+    const store = {
+      getWorkOrder: vi.fn(async () => work),
+      listWorkAttempts: vi.fn(async () => [
+        durableAttempt({ status: 'running' }) as unknown as OrgAgentWorkAttempt,
+      ]),
+      pauseWorkOrder: vi.fn(async (input) => {
+        work = { ...work, state: 'paused', version: 5, control: input.control! };
+        return work;
+      }),
+      failControlCommand,
+    } as unknown as OrgGroupAgentStore;
+    const coordinator = new OrgAgentBackgroundWorkCoordinator({
+      orgGroupAgentStore: store,
+      runStore: { get: vi.fn(async () => source) },
+      sessionCatalog: { get: vi.fn(async () => null) },
+    } as unknown as RawRuntimeRunDispatchConfig);
+
+    await expect(
+      coordinator.pause('tenant-1', 'work-1', 4, receipt('owner', 1, '已暂停')),
+    ).rejects.toThrow('后台任务 session 不存在');
+    expect(failControlCommand).toHaveBeenCalledOnce();
+    expect(work.control.command?.phase).toBe('failed');
+  });
+
+  it('暂停失败结算再次失败时保持可重领，并由新 fence 完成失败结算', async () => {
+    const source = previousRun('tenant-1/.agent-agent-1/shared/binding-1/wc-1');
+    source.status = 'running';
+    let work = workOrder('running');
+    const failControlCommand = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('INJECTED_SETTLEMENT_FAILURE'))
+      .mockImplementation(async () => {
+        work = {
+          ...work,
+          control: {
+            ...work.control,
+            command: { ...work.control.command!, phase: 'failed', error: 'SESSION_MISSING' },
+          },
+        };
+        return work;
+      });
+    const store = {
+      getWorkOrder: vi.fn(async () => work),
+      listWorkAttempts: vi.fn(async () => [
+        durableAttempt({ status: 'running' }) as unknown as OrgAgentWorkAttempt,
+      ]),
+      pauseWorkOrder: vi.fn(async (input) => {
+        work = { ...work, state: 'paused', version: 5, control: input.control! };
+        return work;
+      }),
+      failControlCommand,
+    } as unknown as OrgGroupAgentStore;
+    const coordinator = new OrgAgentBackgroundWorkCoordinator({
+      orgGroupAgentStore: store,
+      runStore: { get: vi.fn(async () => source) },
+      sessionCatalog: { get: vi.fn(async () => null) },
+    } as unknown as RawRuntimeRunDispatchConfig);
+
+    const first = coordinator.pause('tenant-1', 'work-1', 4, receipt('owner', 1, '已暂停'));
+    await expect(first).rejects.toBeInstanceOf(OrgAgentControlCommandUnsettledError);
+    expect(work.control.command?.phase).toBe('prepared');
+
+    await expect(
+      coordinator.pause('tenant-1', 'work-1', 5, receipt('owner', 2, '已暂停')),
+    ).rejects.toThrow('后台任务 session 不存在');
+    expect(failControlCommand).toHaveBeenCalledTimes(2);
+    expect(work.control.command?.phase).toBe('failed');
+  });
+
   it('activation 完成后才提交成功回执', async () => {
     const success = await retryRig();
     await expect(
@@ -84,6 +168,21 @@ describe('组织 Agent 控制命令阶段恢复', () => {
       );
     },
   );
+
+  it('failSetup 自身失败也不会跳过命令失败结算', async () => {
+    const failed = await retryRig('run');
+    vi.spyOn(failed.coordinator, 'failSetup').mockRejectedValue(
+      new Error('INJECTED_CLEANUP_FAILURE'),
+    );
+
+    await expect(failed.coordinator.retry('tenant-1', 'work-1', 4, failed.options)).rejects.toThrow(
+      'INJECTED_RUN_FAILURE',
+    );
+    expect(failed.failControlCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'INJECTED_CLEANUP_FAILURE' }),
+    );
+    expect(failed.workOrder().control.command?.phase).toBe('failed');
+  });
 
   it('amend 在最终回执丢失后按同一 inbox 恢复且不重复取消、建 run 或追加要求', async () => {
     const root = await mkdtemp(join(tmpdir(), 'org-agent-command-replay-'));
@@ -171,7 +270,7 @@ describe('组织 Agent 控制命令阶段恢复', () => {
         supersedePendingCompletion: true,
         inboxReceipt: firstReceipt,
       }),
-    ).rejects.toThrow('ORG_AGENT_FAST_CONTROL_LEASE_LOST');
+    ).rejects.toBeInstanceOf(OrgAgentControlCommandUnsettledError);
     await expect(
       coordinator.retry('tenant-1', 'work-1', work.version, {
         control: work.control,
@@ -202,7 +301,16 @@ async function retryRig(failAt?: 'session' | 'attempt' | 'run' | 'activation') {
     order.push('receipt');
     return work;
   });
-  const failControlCommand = vi.fn(async () => work);
+  const failControlCommand = vi.fn(async (input) => {
+    work = {
+      ...work,
+      control: {
+        ...work.control,
+        command: { ...work.control.command!, phase: 'failed', error: input.error },
+      },
+    };
+    return work;
+  });
   const store = {
     getWorkOrder: vi.fn(async () => work),
     getBindingById: vi.fn(async () => liveBinding()),
@@ -245,6 +353,7 @@ async function retryRig(failAt?: 'session' | 'attempt' | 'run' | 'activation') {
     order,
     completeControlCommand,
     failControlCommand,
+    workOrder: () => work,
     options: {
       control: { revision: 1, workerType: 'general' as const, supplements: [], command },
       inboxReceipt: receipt('owner', 1, '已恢复'),

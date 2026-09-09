@@ -8,6 +8,7 @@ import {
 } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
+import { isOrgAgentControlCommandUnsettledError } from '../runtime/background/orgAgentControlCommandSettlement.js';
 import { deriveOrgAgentSharedView } from '../runtime/orgAgentTaskWorkspace.js';
 import { resolveAgentCwd } from '../workspace/resolver.js';
 import { buildOrgAgentSharedContext, serviceIdentity } from './personalMessageRouterHelpers.js';
@@ -373,6 +374,7 @@ export class OrgAgentFastControlPump {
           });
           responsePersistedWithMutation = !['status', 'cancel'].includes(request.action);
         } catch (error) {
+          if (isOrgAgentControlCommandUnsettledError(error)) throw error;
           response = `未能执行 ${resolvedRequest.taskId} 的控制操作：${compactError(error)}`;
         }
       }

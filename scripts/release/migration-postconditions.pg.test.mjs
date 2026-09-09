@@ -33,12 +33,10 @@ test('V45 connection settings catalog independently checks required columns and 
   }
 });
 
-test('V46 binding generation catalog rejects incomplete identity and delivery constraints', { skip: !url }, async () => {
+test('V46 binding generation catalog rejects incomplete expand schema', { skip: !url }, async () => {
   const prefix = `ky46_${process.pid}_${Date.now().toString(36)}`;
   const bindings = `${prefix}_org_agent_channel_bindings`;
-  const deliveries = `${prefix}_agent_dws_delivery_intents`;
   const identityIndex = `${bindings}_identity_generation_idx`;
-  const deliveryForeignKey = `${deliveries}_binding_generation_fkey`;
   const pool = new Pool({ connectionString: url });
   const catalog = JSON.parse(await readFile(new URL('../../config/release-migration-postconditions.json', import.meta.url), 'utf8'));
   const entry = catalog.entries.find(
@@ -58,24 +56,10 @@ test('V46 binding generation catalog rejects incomplete identity and delivery co
         conversation_id TEXT NOT NULL,
         retired_at TIMESTAMPTZ,
         logical_conversation_id TEXT,
-        UNIQUE (account_id, conversation_id),
-        UNIQUE (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)
+        UNIQUE (account_id, conversation_id)
       );
       CREATE INDEX ${identityIndex} ON ${bindings}
-        (tenant_id, agent_id, conversation_space_id, account_id, conversation_id);
-      CREATE TABLE ${deliveries} (
-        tenant_id TEXT NOT NULL,
-        binding_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        conversation_space_id TEXT NOT NULL,
-        account_id TEXT NOT NULL,
-        conversation_id TEXT NOT NULL,
-        CONSTRAINT ${deliveryForeignKey} FOREIGN KEY
-          (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)
-          REFERENCES ${bindings}
-          (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)
-          ON UPDATE CASCADE
-      )`);
+        (tenant_id, agent_id, conversation_space_id, account_id, conversation_id)`);
     assert.equal((await readback()).status, 'passed');
 
     await pool.query(`ALTER TABLE ${bindings} DROP COLUMN logical_conversation_id`);
@@ -89,14 +73,17 @@ test('V46 binding generation catalog rejects incomplete identity and delivery co
       (tenant_id, agent_id, conversation_space_id, account_id, conversation_id)`);
     assert.equal((await readback()).status, 'passed');
 
-    await pool.query(`ALTER TABLE ${deliveries} DROP CONSTRAINT ${deliveryForeignKey};
-      ALTER TABLE ${deliveries} ADD CONSTRAINT ${deliveryForeignKey} FOREIGN KEY
-        (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)
-        REFERENCES ${bindings}
-        (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)`);
+    const oldUnique = (
+      await pool.query(
+        `SELECT conname FROM pg_constraint WHERE conrelid=$1::regclass AND contype='u'
+          AND pg_get_constraintdef(oid)='UNIQUE (account_id, conversation_id)'`,
+        [bindings],
+      )
+    ).rows[0].conname;
+    await pool.query(`ALTER TABLE ${bindings} DROP CONSTRAINT ${oldUnique}`);
     await assert.rejects(readback(), /Database postcondition failed/);
   } finally {
-    await pool.query(`DROP TABLE IF EXISTS ${deliveries}, ${bindings} CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS ${bindings} CASCADE`);
     await pool.end();
   }
 });

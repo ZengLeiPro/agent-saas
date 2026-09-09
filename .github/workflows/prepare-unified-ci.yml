@@ -18,12 +18,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22.23.1'
       - name: Prepare reviewed workflow edits
         id: apply
         run: python3 .github/scripts/prepare-unified-ci.py
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.1'
+          package-manager-cache: false
       - name: Dependency-free regression tests
         continue-on-error: true
         run: node --test scripts/release/unified-ci*.test.mjs

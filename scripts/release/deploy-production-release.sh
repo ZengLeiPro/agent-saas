@@ -625,6 +625,7 @@ const binding = envPath === '-'
   ? { releaseId, expectedConfigIdentity: JSON.parse(expectedJson) }
   : await readReleaseConfigIdentityBinding(envPath);
 await validatePrivateConfigIdentityReleaseBinding({
+  productionConfigPath: '/etc/agent-saas/config.json',
   privateSnapshotPath: snapshotPath,
   ...binding,
   label,
@@ -746,6 +747,7 @@ if (
   throw new Error(`${label} release identity disagrees with release env`);
 }
 await validatePrivateConfigIdentityReleaseBinding({
+  productionConfigPath: '/etc/agent-saas/config.json',
   privateSnapshotPath: snapshotPath,
   ...binding,
   label,

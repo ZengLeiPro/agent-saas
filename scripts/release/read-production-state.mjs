@@ -436,6 +436,7 @@ export async function validatePrivateConfigIdentityReleaseBinding({
   releaseId,
   expectedConfigIdentity,
   label = 'Candidate private ConfigIdentity',
+  productionConfigPath,
 }) {
   const summary = await readPrivateConfigIdentitySnapshot(privateSnapshotPath);
   if (summary.status !== 'consistent' || summary.releaseId !== releaseId) {
@@ -443,9 +444,14 @@ export async function validatePrivateConfigIdentityReleaseBinding({
   }
   // 发布入口传入 config-identity-cli 的 observed 形态；严格校验其 version metadata，
   // 再与私有快照中的 release expected 绑定字段逐项比较。
-  const expected = configIdentitySide(expectedConfigIdentity, `${label} computed configIdentity`, {
+  const computed = configIdentitySide(expectedConfigIdentity, `${label} computed configIdentity`, {
     observed: Object.hasOwn(expectedConfigIdentity, 'versionResolution'),
   });
+  // Only production deployment callers select an online authority. Staging and
+  // pure candidate checks retain their independently bound expected identity.
+  const expected = productionConfigPath
+    ? publishedExpected(productionConfigPath, releaseId, computed)
+    : computed;
   for (const field of ['schemaVersion', 'digest', 'credentialVersionDigest']) {
     if ((summary.expected?.[field] ?? null) !== (expected[field] ?? null)) {
       throw new Error(`${label} expected ${field} disagrees with deployment`);

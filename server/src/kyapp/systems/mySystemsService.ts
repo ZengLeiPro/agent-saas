@@ -240,15 +240,16 @@ export class MySystemsService {
     installation: KyAppInstallation,
     userId: string,
     technical: ReturnType<typeof deriveStatus>,
-  ): Promise<Pick<
-    MyBusinessSystem,
-    'agentStatus' | 'personalAuthorizationStatus' | 'reasonCode' | 'nextAction' | 'message'
-  >> {
+  ): Promise<
+    Pick<
+      MyBusinessSystem,
+      'agentStatus' | 'personalAuthorizationStatus' | 'reasonCode' | 'nextAction' | 'message'
+    >
+  > {
     if (technical.agentStatus !== 'ready' || !installation.registeredDigest) {
       return {
         ...technical,
-        personalAuthorizationStatus:
-          installation.status === 'enabled' ? 'pending' : 'not_required',
+        personalAuthorizationStatus: installation.status === 'enabled' ? 'pending' : 'not_required',
       };
     }
     const observation = await this.options.capabilityObservations?.get(
@@ -279,9 +280,13 @@ export class MySystemsService {
       return {
         agentStatus: 'waiting_personal_authorization',
         personalAuthorizationStatus: 'pending',
-        reasonCode: 'me_no_projected_capabilities',
+        reasonCode:
+          observation.status === 'unverified' ? 'me_not_verified' : 'me_no_projected_capabilities',
         nextAction: 'retry',
-        message: '页面已经开通，但最近一次对话未注入该业务系统能力',
+        message:
+          observation.status === 'unverified'
+            ? '页面已经开通，请新建对话确认当前账号的业务能力'
+            : '页面已经开通，但最近一次对话未注入该业务系统能力',
       };
     }
     return {

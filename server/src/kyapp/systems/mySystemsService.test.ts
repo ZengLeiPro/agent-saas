@@ -44,7 +44,9 @@ function service(
     ...installation,
     status: overrides.installationStatus ?? 'enabled',
     domainVerifiedAt:
-      'domainVerifiedAt' in overrides ? (overrides.domainVerifiedAt ?? null) : installation.domainVerifiedAt,
+      'domainVerifiedAt' in overrides
+        ? (overrides.domainVerifiedAt ?? null)
+        : installation.domainVerifiedAt,
     registeredDigest: overrides.registeredDigest ?? null,
   };
   return new MySystemsService({
@@ -87,16 +89,15 @@ describe('MySystemsService', () => {
         'tenant-1',
         'user-1',
       ),
-    )
-      .toMatchObject([
-        {
-          state: 'pending',
-          pageStatus: 'not_configured',
-          agentStatus: 'not_configured',
-          reasonCode: 'domain_verification_required',
-          nextAction: 'continue_onboarding',
-        },
-      ]);
+    ).toMatchObject([
+      {
+        state: 'pending',
+        pageStatus: 'not_configured',
+        agentStatus: 'not_configured',
+        reasonCode: 'domain_verification_required',
+        nextAction: 'continue_onboarding',
+      },
+    ]);
   });
 
   it('技术门禁通过但尚无真实 /me 观测时不标记 Agent 可用', async () => {
@@ -108,15 +109,16 @@ describe('MySystemsService', () => {
       readyCheckedAt: '2026-09-08T01:00:00Z',
       liveCheckedAt: '2026-09-08T01:00:00Z',
     };
-    expect(await service({ registeredDigest: digest, runtime }).listForUser('tenant-1', 'user-1'))
-      .toMatchObject([
-        {
-          agentStatus: 'waiting_personal_authorization',
-          personalAuthorizationStatus: 'pending',
-          canUseAgent: false,
-          reasonCode: 'me_not_verified',
-        },
-      ]);
+    expect(
+      await service({ registeredDigest: digest, runtime }).listForUser('tenant-1', 'user-1'),
+    ).toMatchObject([
+      {
+        agentStatus: 'waiting_personal_authorization',
+        personalAuthorizationStatus: 'pending',
+        canUseAgent: false,
+        reasonCode: 'me_not_verified',
+      },
+    ]);
   });
 
   it('真实会话 /me 观测到至少一个能力后才标记 Agent 可用', async () => {
@@ -152,7 +154,7 @@ describe('MySystemsService', () => {
         nextAction: 'none',
         personalAuthorizationStatus: 'connected',
       },
-      ]);
+    ]);
   });
 
   it('/me 调用失败或未返回授权能力时均不标记 Agent 可用', async () => {
@@ -197,6 +199,24 @@ describe('MySystemsService', () => {
         personalAuthorizationStatus: 'pending',
         canUseAgent: false,
         reasonCode: 'me_no_projected_capabilities',
+      },
+    ]);
+
+    const unverified = await service({
+      registeredDigest: digest,
+      runtime,
+      observation: {
+        registeredDigest: digest,
+        status: 'unverified',
+        enabledCapabilityCount: 0,
+      },
+    }).listForUser('tenant-1', 'user-1');
+    expect(unverified).toMatchObject([
+      {
+        agentStatus: 'waiting_personal_authorization',
+        personalAuthorizationStatus: 'pending',
+        canUseAgent: false,
+        reasonCode: 'me_not_verified',
       },
     ]);
   });

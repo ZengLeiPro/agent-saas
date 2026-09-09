@@ -460,6 +460,7 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
         ...summary,
         readiness: installationReadiness({
           installation,
+          definitionStatus: definition?.status ?? null,
           publishedDigest: definition?.publishedDigest ?? null,
           runtime,
           assignmentConfigured: summary?.assignmentSummary.configured ?? false,

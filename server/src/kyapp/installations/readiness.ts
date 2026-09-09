@@ -1,5 +1,5 @@
 import type { KyAppInstallationRuntimeRecord } from './runtimeStore.js';
-import type { KyAppInstallation } from '../systems/types.js';
+import type { KyAppInstallation, KyAppSystemStatus } from '../systems/types.js';
 
 export interface InstallationReadiness {
   overallStatus: 'action_required' | 'ready' | 'degraded' | 'disabled';
@@ -16,11 +16,12 @@ export interface InstallationReadiness {
 
 export function installationReadiness(input: {
   installation: KyAppInstallation;
+  definitionStatus: KyAppSystemStatus | null;
   publishedDigest: string | null;
   runtime: KyAppInstallationRuntimeRecord | null;
   assignmentConfigured: boolean;
 }): InstallationReadiness {
-  const { installation, publishedDigest, runtime, assignmentConfigured } = input;
+  const { installation, definitionStatus, publishedDigest, runtime, assignmentConfigured } = input;
   const base = {
     personalAuthorizationMode: 'not_required' as const,
     lastCheckedAt: runtime?.readyCheckedAt ?? runtime?.liveCheckedAt ?? null,
@@ -36,6 +37,17 @@ export function installationReadiness(input: {
       ownerRole: 'organization_admin',
       nextAction: '启用业务系统',
     };
+  if (definitionStatus !== 'published')
+    return {
+      ...base,
+      overallStatus: 'disabled',
+      pageStatus: 'unavailable',
+      agentStatus: 'disabled',
+      currentStep: null,
+      reasonCode: 'system_definition_unavailable',
+      ownerRole: 'platform_admin',
+      nextAction: '联系平台管理员处理系统状态',
+    };
   const onboarding = installation.status === 'pending';
   if (!installation.domainVerifiedAt)
     return {
@@ -48,22 +60,31 @@ export function installationReadiness(input: {
       ownerRole: 'technical_contact',
       nextAction: '验证业务域名',
     };
-  if (runtime?.liveStatus === 'failed' || runtime?.readyStatus === 'failed')
+  if (
+    runtime?.liveStatus === 'failed' ||
+    runtime?.liveStatus === 'maintenance' ||
+    runtime?.readyStatus === 'failed'
+  )
     return {
       ...base,
       overallStatus: 'degraded',
       pageStatus: onboarding
         ? 'not_configured'
-        : runtime.liveStatus === 'failed'
+        : runtime.liveStatus === 'failed' || runtime.liveStatus === 'maintenance'
           ? 'unavailable'
           : 'available',
       agentStatus: 'degraded',
       currentStep: 'service_readiness',
-      reasonCode: 'diagnostic_failed',
+      reasonCode:
+        runtime.liveStatus === 'maintenance' ? 'service_maintenance' : 'diagnostic_failed',
       ownerRole: 'technical_contact',
       nextAction: '重新检查服务',
     };
-  if (!installation.registeredDigest || runtime?.readyStatus !== 'ok')
+  if (
+    !installation.registeredDigest ||
+    runtime?.liveStatus !== 'ok' ||
+    runtime.readyStatus !== 'ok'
+  )
     return {
       ...base,
       overallStatus: 'action_required',

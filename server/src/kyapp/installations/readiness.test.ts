@@ -45,6 +45,7 @@ describe('installationReadiness', () => {
     expect(
       installationReadiness({
         installation: { ...installation, status: 'pending', domainVerifiedAt: null },
+        definitionStatus: 'published',
         publishedDigest: 'digest-a',
         runtime: null,
         assignmentConfigured: false,
@@ -63,6 +64,7 @@ describe('installationReadiness', () => {
     expect(
       installationReadiness({
         installation: { ...installation, status: 'pending' },
+        definitionStatus: 'published',
         publishedDigest: 'digest-a',
         runtime,
         assignmentConfigured: true,
@@ -79,6 +81,7 @@ describe('installationReadiness', () => {
     expect(
       installationReadiness({
         installation,
+        definitionStatus: 'published',
         publishedDigest: 'digest-a',
         runtime,
         assignmentConfigured: true,
@@ -91,6 +94,63 @@ describe('installationReadiness', () => {
       nextAction: '无需处理',
     });
   });
+
+  it.each([
+    { liveStatus: 'maintenance' as const, reasonCode: 'service_maintenance' },
+    { liveStatus: 'failed' as const, reasonCode: 'diagnostic_failed' },
+  ])('live 状态为 $liveStatus 时不误报可用', ({ liveStatus, reasonCode }) => {
+    expect(
+      installationReadiness({
+        installation,
+        definitionStatus: 'published',
+        publishedDigest: 'digest-a',
+        runtime: { ...runtime, liveStatus },
+        assignmentConfigured: true,
+      }),
+    ).toMatchObject({
+      overallStatus: 'degraded',
+      pageStatus: 'unavailable',
+      agentStatus: 'degraded',
+      reasonCode,
+    });
+  });
+
+  it('live 尚未通过时保持待处理，不用 ready 探测结果冒充整体可用', () => {
+    expect(
+      installationReadiness({
+        installation,
+        definitionStatus: 'published',
+        publishedDigest: 'digest-a',
+        runtime: { ...runtime, liveStatus: 'unknown' },
+        assignmentConfigured: true,
+      }),
+    ).toMatchObject({
+      overallStatus: 'action_required',
+      agentStatus: 'waiting_service',
+      reasonCode: 'ready_required',
+    });
+  });
+
+  it.each(['draft', 'disabled', 'retired'] as const)(
+    '系统定义为 %s 时实例不得显示可用',
+    (definitionStatus) => {
+      expect(
+        installationReadiness({
+          installation,
+          definitionStatus,
+          publishedDigest: 'digest-a',
+          runtime,
+          assignmentConfigured: true,
+        }),
+      ).toMatchObject({
+        overallStatus: 'disabled',
+        pageStatus: 'unavailable',
+        agentStatus: 'disabled',
+        reasonCode: 'system_definition_unavailable',
+        ownerRole: 'platform_admin',
+      });
+    },
+  );
 
   it.each([
     {
@@ -131,6 +191,7 @@ describe('installationReadiness', () => {
       expect(
         installationReadiness({
           installation: { ...installation, ...patch },
+          definitionStatus: 'published',
           publishedDigest: 'digest-a',
           runtime: current,
           assignmentConfigured: assigned,

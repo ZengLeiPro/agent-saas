@@ -4,7 +4,8 @@ import {
 } from '../../data/governance-schema/index.js';
 import type { AppCapabilityEntry } from './snapshot.js';
 
-export type UserCapabilityObservationStatus = 'ready' | 'not_projected' | 'unavailable';
+export type UserCapabilityObservationStatus =
+  'ready' | 'not_projected' | 'unavailable' | 'unverified';
 
 export interface UserCapabilityObservation {
   tenantId: string;
@@ -32,6 +33,7 @@ export interface UserCapabilityObservationReader {
 
 type SnapshotRow = {
   user_id: unknown;
+  snapshot_key: unknown;
   entries: unknown;
   degraded: unknown;
   updated_at: unknown;
@@ -58,13 +60,20 @@ function fromSnapshot(
     (entry) =>
       entry.installationId === installationId && entry.registeredDigest === registeredDigest,
   ).length;
+  const installationCount = String(row.snapshot_key).split('|').filter(Boolean).length;
   return {
     tenantId,
     installationId,
     userId: String(row.user_id),
     registeredDigest,
     status:
-      enabledCapabilityCount > 0 ? 'ready' : row.degraded === true ? 'unavailable' : 'not_projected',
+      enabledCapabilityCount > 0
+        ? 'ready'
+        : row.degraded !== true
+          ? 'not_projected'
+          : installationCount === 1
+            ? 'unavailable'
+            : 'unverified',
     enabledCapabilityCount,
     checkedAt: new Date(String(row.updated_at)).toISOString(),
   };
@@ -74,7 +83,10 @@ function fromSnapshot(
 export class PgKyAppCapabilityObservationReader implements UserCapabilityObservationReader {
   readonly snapshotsTable: string;
 
-  constructor(private readonly pool: GovernancePgPool, tablePrefix?: string) {
+  constructor(
+    private readonly pool: GovernancePgPool,
+    tablePrefix?: string,
+  ) {
     this.snapshotsTable = `${governanceTablePrefix(tablePrefix)}_ky_app_session_tool_snapshots`;
   }
 
@@ -85,7 +97,7 @@ export class PgKyAppCapabilityObservationReader implements UserCapabilityObserva
     registeredDigest: string,
   ): Promise<UserCapabilityObservation | null> {
     const result = await this.pool.query(
-      `SELECT user_id,entries,degraded,updated_at FROM ${this.snapshotsTable}
+      `SELECT user_id,snapshot_key,entries,degraded,updated_at FROM ${this.snapshotsTable}
        WHERE tenant_id=$1 AND user_id=$2
          AND string_to_array(snapshot_key,'|') @> ARRAY[$3 || ':' || $4]
        ORDER BY updated_at DESC,session_id DESC LIMIT 1`,
@@ -101,7 +113,7 @@ export class PgKyAppCapabilityObservationReader implements UserCapabilityObserva
     registeredDigest: string,
   ): Promise<UserCapabilityObservation[]> {
     const result = await this.pool.query(
-      `SELECT DISTINCT ON (user_id) user_id,entries,degraded,updated_at
+      `SELECT DISTINCT ON (user_id) user_id,snapshot_key,entries,degraded,updated_at
        FROM ${this.snapshotsTable}
        WHERE tenant_id=$1
          AND string_to_array(snapshot_key,'|') @> ARRAY[$2 || ':' || $3]

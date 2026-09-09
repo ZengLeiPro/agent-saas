@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { governanceV43KyAppSessionToolSnapshotStatements } from '../../data/governance-schema/v43KyAppSessionToolSnapshotMigration.js';
 import type { AppCapabilityEntry } from './snapshot.js';
@@ -10,6 +10,30 @@ import { PgKyAppCapabilityObservationReader } from './capabilityObservationStore
 
 const url = process.env.TEST_DATABASE_URL;
 const digest = 'a'.repeat(64);
+
+describe('业务系统逐用户能力观测归因', () => {
+  it('多系统快照 degraded 时不把其他系统故障错误归因到当前零能力系统', async () => {
+    const pool = {
+      query: vi.fn().mockResolvedValue({
+        rows: [
+          {
+            user_id: 'u1',
+            snapshot_key: `install-1:${digest}|install-2:${digest}`,
+            entries: JSON.stringify([entry({ installationId: 'install-2', systemId: 'crm' })]),
+            degraded: true,
+            updated_at: '2026-09-08T01:00:00Z',
+          },
+        ],
+      }),
+    };
+    const observations = new PgKyAppCapabilityObservationReader(pool as never);
+
+    await expect(observations.get('tenant-a', 'install-1', 'u1', digest)).resolves.toMatchObject({
+      status: 'unverified',
+      enabledCapabilityCount: 0,
+    });
+  });
+});
 
 function entry(overrides: Partial<AppCapabilityEntry> = {}): AppCapabilityEntry {
   return {
@@ -66,9 +90,7 @@ function snapshot(
   it('从真实会话最终工具面区分可用、未投影和 /me 不可用', async () => {
     await snapshots.save(snapshot('session-ready', 'u1'));
     await snapshots.save(snapshot('session-empty', 'u2', { entries: [] }));
-    await snapshots.save(
-      snapshot('session-unavailable', 'u3', { entries: [], degraded: true }),
-    );
+    await snapshots.save(snapshot('session-unavailable', 'u3', { entries: [], degraded: true }));
 
     expect(await observations.get('tenant-a', 'install-1', 'u1', digest)).toMatchObject({
       userId: 'u1',

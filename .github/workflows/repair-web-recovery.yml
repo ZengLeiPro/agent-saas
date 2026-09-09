@@ -55,6 +55,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.1'
+          # 本工作流只用 node --test 与 python3，不安装依赖；setup-node@v5 默认按 packageManager 自动启用 pnpm 缓存，
+          # 而这里没有执行 ./.github/actions/setup-pnpm，会因找不到 pnpm 直接失败（run 34307920167）。
+          package-manager-cache: false
       - name: Validate repair confirmation and run offline regression tests
         run: |
           set -euo pipefail

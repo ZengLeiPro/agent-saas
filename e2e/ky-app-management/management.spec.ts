@@ -28,48 +28,52 @@ const manifest = {
     },
   ],
 };
-test('真实 PG 管理页面：上传、双人复核、发布、组织安装、一次性领取', async ({ page }, testInfo) => {
-  page.on('dialog', (dialog) => dialog.accept());
+test('真实 PG 管理页面：登记、发布、组织安装、一次性领取', async ({ page }, testInfo) => {
+  const nativeDialogs: string[] = [];
+  page.on('dialog', (dialog) => {
+    nativeDialogs.push(dialog.message());
+    void dialog.dismiss();
+  });
   const errors: string[] = [];
   page.on('pageerror', (error) => {
     errors.push(error.message);
     console.error(error.message);
   });
   await page.goto('/');
-  await page.getByLabel('上传 Manifest JSON').setInputFiles({
+  await page.getByLabel('Manifest JSON 文件').setInputFiles({
     name: 'manifest.json',
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(manifest)),
   });
   await page.getByRole('button', { name: '校验并登记版本', exact: true }).click();
-  await expect(page.getByText('待复核', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '复核版本', exact: true })).toHaveCount(0);
-  await page.screenshot({ path: testInfo.outputPath('01-version-pending.png'), fullPage: true });
-  await page.getByLabel('测试身份').selectOption('reviewer');
-  await page.getByRole('button', { name: '复核版本', exact: true }).click();
-  await expect(page.getByText('已复核', { exact: true })).toBeVisible();
-  await page.locator('summary').filter({ hasText: '字段差异' }).click();
+  await expect(page.getByRole('button', { name: '发布版本', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Manifest JSON 文件')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('01-version-registered.png'), fullPage: true });
+  await page.getByText('历史版本与高级信息', { exact: false }).click();
+  await expect(page.getByLabel('Manifest JSON 文件')).toHaveCount(0);
   await page.screenshot({
-    path: testInfo.outputPath('02-version-diff-review.png'),
+    path: testInfo.outputPath('02-version-history.png'),
     fullPage: true,
   });
   await page.getByRole('button', { name: '发布版本', exact: true }).click();
-  await expect(page.getByText('已发布', { exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button', { name: '确认发布', exact: true }).click();
+  await expect(page.getByText(/^已发布 ·/u)).toBeVisible();
   await page.getByRole('link', { name: '系统目录', exact: true }).click();
-  await expect(
-    page.getByRole('cell', { name: '验收订单系统 e2e-business-system', exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole('cell', { name: '验收订单系统', exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('03-system-catalog.png'), fullPage: true });
   await page.getByLabel('测试身份').selectOption('org');
   await page.getByRole('link', { name: '组织系统', exact: true }).click();
-  await page.getByRole('tab', { name: '可安装', exact: true }).click();
-  await page.getByRole('button', { name: '安装', exact: true }).click();
+  await page.getByRole('button', { name: '接入业务系统', exact: true }).click();
+  await page.getByRole('button', { name: '选择', exact: true }).click();
   await page.getByLabel('安装实例标识', { exact: true }).fill('e2e-business-system-tenant-a');
   await page.getByLabel('业务服务地址', { exact: true }).fill('http://127.0.0.1:4195');
   await page.getByLabel('业务页面地址', { exact: true }).fill('http://127.0.0.1:4195');
   await page.getByLabel('本组织技术联系人用户 ID', { exact: true }).fill('u_member');
   await page.getByRole('button', { name: '创建安装实例', exact: true }).click();
-  await expect(page.getByText('_ky-app-verify.127.0.0.1', { exact: false })).toBeVisible();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button', { name: '确认创建', exact: true }).click();
+  await expect(page.getByText('下一步：验证业务域名', { exact: true })).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath('04-installation-domain-guide.png'),
     fullPage: true,
@@ -104,4 +108,5 @@ test('真实 PG 管理页面：上传、双人复核、发布、组织安装、�
   );
   expect(duplicate.status()).toBe(409);
   expect(errors).toEqual([]);
+  expect(nativeDialogs).toEqual([]);
 });

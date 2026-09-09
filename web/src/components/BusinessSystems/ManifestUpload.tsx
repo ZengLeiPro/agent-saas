@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { FileJson, Upload } from 'lucide-react';
 import { validateManifest } from '@kaiyan/ky-app-contract/validation';
 import type { Manifest } from '@kaiyan/ky-app-contract/browser';
 import { Button } from '@/components/ui/button';
@@ -13,11 +14,14 @@ export function ManifestUpload({
   const [manifest, setManifest] = useState<Manifest>();
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [fileName, setFileName] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
   async function read(file?: File) {
     const request = ++generation.current;
     setManifest(undefined);
     setErrors([]);
+    setFileName(file?.name ?? '');
     if (!file) return;
     try {
       if (file.size > 2 * 1024 * 1024) throw new Error('Manifest 文件不能超过 2 MB');
@@ -48,6 +52,8 @@ export function ManifestUpload({
       });
       onRegistered(manifest.systemId);
       setManifest(undefined);
+      setFileName('');
+      if (inputRef.current) inputRef.current.value = '';
     } catch (error) {
       setErrors([error instanceof Error ? error.message : '登记失败']);
     } finally {
@@ -55,18 +61,37 @@ export function ManifestUpload({
     }
   }
   return (
-    <section className="space-y-3 rounded-lg border p-4">
-      <h3 className="font-medium">登记业务系统版本</h3>
-      <label className="block text-sm">
-        上传 Manifest JSON
+    <section className="space-y-4">
+      <div>
+        <h3 className="font-medium">登记新版本</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          选择 Manifest JSON，平台会先完成格式与系统标识校验。
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed bg-muted/30 p-4">
         <input
-          className="mt-2 block"
+          ref={inputRef}
+          className="sr-only"
           type="file"
           accept=".json,application/json"
+          aria-label="Manifest JSON 文件"
           disabled={busy}
           onChange={(event) => void read(event.target.files?.[0])}
         />
-      </label>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy}
+          onClick={() => inputRef.current?.click()}
+        >
+          <Upload className="mr-2 h-4 w-4" />
+          选择 Manifest JSON
+        </Button>
+        <span className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+          <FileJson className="h-4 w-4 shrink-0" />
+          <span className="truncate">{fileName || '尚未选择文件'}</span>
+        </span>
+      </div>
       {errors.length > 0 && (
         <ul role="alert" className="text-sm text-destructive">
           {errors.map((error, index) => (
@@ -75,7 +100,7 @@ export function ManifestUpload({
         </ul>
       )}
       {manifest && (
-        <p className="text-sm">
+        <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
           {manifest.name} · {manifest.systemId} · {manifest.capabilities.length} 项能力
         </p>
       )}

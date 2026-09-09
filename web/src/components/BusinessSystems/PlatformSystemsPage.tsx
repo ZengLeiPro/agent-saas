@@ -1,6 +1,13 @@
 import { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, ChevronUp, FilePlus2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EntityIcons } from '@/lib/icons';
 import { governanceRoute } from '@/lib/governanceNavigation';
@@ -10,7 +17,7 @@ import type { SystemDetail } from '@/lib/kyAppManagementTypes';
 import { useManagementResource, ResourceState } from './ManagementResource';
 import { ManifestUpload } from './ManifestUpload';
 import { SystemDeliveryPage } from '../SystemDelivery/SystemDeliveryPage';
-import { SystemVersions } from './SystemVersions';
+import { PublishVersionAction, SystemVersions } from './SystemVersions';
 import { SystemConnectionSettings } from './SystemConnectionSettings';
 import { SystemActions } from './SystemActions';
 import { businessStatusLabel } from './presentation';
@@ -105,6 +112,8 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
   const [tab, setTab] = useState(initial === 'installations' ? 'installations' : 'config');
   const [connectionRevision, setConnectionRevision] = useState(0);
   const [settingsNotice, setSettingsNotice] = useState('');
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   if (!resource.data)
     return (
       <section className="p-4">
@@ -115,17 +124,38 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
       </section>
     );
   const detail = resource.data;
+  const publishedVersion = detail.versions.find(
+    (version) => version.digest === detail.definition.publishedDigest,
+  );
+  const publishableVersion = detail.versions.find(
+    (version) =>
+      version.allowedActions?.includes('publish_version') &&
+      version.digest !== detail.definition.publishedDigest,
+  );
+  const releaseTarget =
+    publishableVersion ?? (detail.definition.status === 'disabled' ? publishedVersion : undefined);
+  const capabilities = (publishedVersion ?? detail.versions[0])?.manifest.capabilities ?? [];
   return (
-    <section className="space-y-5 p-4">
-      <Button variant="outline" onClick={() => navigateGovernance(governanceRoute(routeId))}>
+    <section className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
+      <Button
+        variant="ghost"
+        className="-ml-2"
+        onClick={() => navigateGovernance(governanceRoute(routeId))}
+      >
         返回目录
       </Button>
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold">{detail.definition.name}</h2>
-          <p className="text-sm text-muted-foreground">
-            {businessStatusLabel(detail.definition.status)} · 管理系统配置和组织接入。
-          </p>
+      <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border bg-gradient-to-br from-brand-50/80 via-card to-card p-5 shadow-sm dark:from-brand-950/20 md:p-6">
+        <div className="flex min-w-0 items-center gap-4">
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm">
+            <EntityIcons.businessSystem className="h-6 w-6" strokeWidth={1.5} />
+          </div>
+          <div className="min-w-0">
+            <h2 className="truncate text-xl font-semibold">{detail.definition.name}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {businessStatusLabel(detail.definition.status)} · {detail.metrics.installationCount}{' '}
+              个组织实例
+            </p>
+          </div>
         </div>
         <SystemActions detail={detail} reload={resource.reload} />
       </header>
@@ -138,18 +168,41 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
           window.history.replaceState(window.history.state, '', url);
         }}
       >
-        <TabsList aria-label="业务系统管理">
+        <TabsList aria-label="业务系统管理" className="grid w-full max-w-sm grid-cols-2">
           <TabsTrigger value="config">系统配置</TabsTrigger>
           <TabsTrigger value="installations">组织接入</TabsTrigger>
         </TabsList>
         <TabsContent value="config" className="space-y-4">
-          <section className="rounded border p-4">
-            <h3 className="font-medium">当前发布版本</h3>
-            <p className="mt-1 text-sm">
-              {detail.definition.publishedDigest
-                ? `已发布 ${detail.definition.publishedDigest.slice(0, 10)}`
-                : '尚未发布版本'}
-            </p>
+          <section className="rounded-xl border bg-card p-4 shadow-sm md:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="font-medium">版本发布</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  当前发布版本：
+                  <span className="ml-1 font-mono text-foreground">
+                    {detail.definition.publishedDigest?.slice(0, 10) ?? '暂无'}
+                  </span>
+                </p>
+                {publishableVersion ? (
+                  <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
+                    有待发布版本 {publishableVersion.digest.slice(0, 10)}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {detail.allowedActions?.includes('register_version') ? (
+                  <Button variant="outline" onClick={() => setRegisterOpen(true)}>
+                    <FilePlus2 className="mr-2 h-4 w-4" />
+                    登记新版本
+                  </Button>
+                ) : null}
+                <PublishVersionAction
+                  detail={detail}
+                  digest={releaseTarget?.digest}
+                  reload={resource.reload}
+                />
+              </div>
+            </div>
           </section>
           {settingsNotice && <p role="status">{settingsNotice}，不会自动修改已接入组织。</p>}
           <SystemConnectionSettings
@@ -159,22 +212,60 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
               setSettingsNotice('配置已保存');
             }}
           />
-          <section className="rounded border p-4">
-            <h3 className="font-medium">Agent 能力概览</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              已声明 {detail.metrics.capabilityCount} 项能力，其中{' '}
-              {detail.metrics.externalWriteCapabilityCount} 项涉及外部写入。
-            </p>
+          <section className="rounded-xl border bg-card p-4 shadow-sm md:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-medium">Agent 能力</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  已声明 {detail.metrics.capabilityCount} 项能力，其中{' '}
+                  {detail.metrics.externalWriteCapabilityCount} 项涉及外部写入。
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCapabilitiesOpen((value) => !value)}
+              >
+                {capabilitiesOpen ? '收起能力' : '查看全部能力'}
+                {capabilitiesOpen ? (
+                  <ChevronUp className="ml-2 h-4 w-4" />
+                ) : (
+                  <ChevronDown className="ml-2 h-4 w-4" />
+                )}
+              </Button>
+            </div>
+            {capabilitiesOpen ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {capabilities.length ? (
+                  capabilities.map((capability) => (
+                    <article key={capability.id} className="rounded-lg border bg-muted/30 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <h4 className="font-medium">{capability.name}</h4>
+                          <code className="text-xs text-muted-foreground">{capability.id}</code>
+                        </div>
+                        <span className="rounded-full bg-background px-2 py-1 text-xs">
+                          {capability.riskLevel === 'external_write' ? '外部写入' : '只读'}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        {capability.description || '暂无能力说明'}
+                      </p>
+                    </article>
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground">当前版本未声明 Agent 能力。</p>
+                )}
+              </div>
+            ) : null}
           </section>
-          <details className="rounded border p-4">
+          <details className="rounded-xl border bg-card p-4 shadow-sm">
             <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
               历史版本与高级信息 <ChevronDown className="h-4 w-4" />
             </summary>
             <div className="mt-4 space-y-4">
-              {detail.allowedActions?.includes('register_version') && (
-                <ManifestUpload systemId={systemId} onRegistered={resource.reload} />
-              )}
-              <SystemVersions detail={detail} reload={resource.reload} />
+              <SystemVersions detail={detail} />
               <p className="break-all text-xs text-muted-foreground">
                 完整发布摘要：{detail.definition.publishedDigest ?? '暂无'}
               </p>
@@ -189,6 +280,23 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
           />
         </TabsContent>
       </Tabs>
+      <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>登记“{detail.definition.name}”新版本</DialogTitle>
+            <DialogDescription>
+              上传并校验新的 Manifest JSON；登记成功后仍需单独发布。
+            </DialogDescription>
+          </DialogHeader>
+          <ManifestUpload
+            systemId={systemId}
+            onRegistered={() => {
+              setRegisterOpen(false);
+              resource.reload();
+            }}
+          />
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

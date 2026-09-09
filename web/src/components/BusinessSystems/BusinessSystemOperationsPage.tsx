@@ -110,7 +110,8 @@ function BusinessSystemOperationsContent({ installationId }: { installationId?: 
               className="flex items-center justify-between rounded border p-3"
             >
               <span>
-                {item.systemName} · {item.tenantId} · {item.status} · {item.runtimeStatus}
+                {item.systemName} · {item.tenantName ?? item.tenantId} · {item.status} ·{' '}
+                {item.runtimeStatus}
               </span>
               <Button variant="outline" onClick={() => open(item.installationId)}>
                 实例详情

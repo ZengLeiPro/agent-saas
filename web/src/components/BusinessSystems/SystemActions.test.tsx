@@ -1,10 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { kyAppPost } from '@/lib/kyAppManagementApi';
 import type { SystemDetail } from '@/lib/kyAppManagementTypes';
 import { SystemActions } from './SystemActions';
-import { SystemVersions } from './SystemVersions';
+import { PublishVersionAction } from './SystemVersions';
 
 vi.mock('@/lib/kyAppManagementApi', async (original) => ({
   ...(await original<object>()),
@@ -57,10 +57,9 @@ describe('系统生命周期操作', () => {
     expect(kyAppPost).not.toHaveBeenCalled();
   });
   it('停用后能重新发布当前版本恢复系统', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const reload = vi.fn();
     render(
-      <SystemVersions
+      <PublishVersionAction
         detail={
           {
             ...detail,
@@ -76,10 +75,12 @@ describe('系统生命周期操作', () => {
             ],
           } as unknown as SystemDetail
         }
+        digest="digest"
         reload={reload}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: '重新发布并恢复系统' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '确认发布' }));
     await waitFor(() => expect(reload).toHaveBeenCalledOnce());
     expect(kyAppPost).toHaveBeenCalledWith('/systems/demo/versions/digest/publish', {
       expectedVersion: 3,

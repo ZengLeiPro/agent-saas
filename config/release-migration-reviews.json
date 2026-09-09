@@ -49,9 +49,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -98,9 +98,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -154,7 +154,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -217,9 +217,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:8c3df94963b1d0f1541df2d1080b4b96df1499a6d50fe69e0ab0b87ba8655418",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -784,9 +784,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -976,7 +976,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -1333,9 +1333,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -1382,9 +1382,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -1554,7 +1554,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -1890,9 +1890,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -1939,9 +1939,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -2095,7 +2095,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -2431,9 +2431,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -2480,9 +2480,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -2636,7 +2636,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -2958,9 +2958,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -3007,9 +3007,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -3155,7 +3155,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -3477,9 +3477,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -3526,9 +3526,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -3674,7 +3674,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -3996,9 +3996,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -4045,9 +4045,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -4193,7 +4193,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -4277,9 +4277,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -4858,9 +4858,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -5018,7 +5018,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -5347,9 +5347,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -5396,9 +5396,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -5564,7 +5564,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -5914,9 +5914,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -5963,9 +5963,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -6123,7 +6123,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -6473,9 +6473,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -6522,9 +6522,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -6682,7 +6682,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -6969,9 +6969,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -7018,9 +7018,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -7162,7 +7162,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -7449,9 +7449,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -7498,9 +7498,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -7642,7 +7642,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -7929,9 +7929,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -7978,9 +7978,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -8122,7 +8122,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -8409,9 +8409,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -8458,9 +8458,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -8602,7 +8602,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -8875,9 +8875,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -8924,9 +8924,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -9064,7 +9064,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -9337,9 +9337,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -9386,9 +9386,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -9526,7 +9526,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -9743,9 +9743,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -9792,9 +9792,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -9912,7 +9912,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -10122,9 +10122,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -10171,9 +10171,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -10287,7 +10287,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -10497,9 +10497,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -10546,9 +10546,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -10654,7 +10654,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -10864,9 +10864,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -10913,9 +10913,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -11021,7 +11021,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -11231,9 +11231,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -11280,9 +11280,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -11388,7 +11388,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -11570,9 +11570,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -11619,9 +11619,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -11719,7 +11719,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -11887,9 +11887,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -11936,9 +11936,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -12044,7 +12044,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -12184,9 +12184,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -12233,9 +12233,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -12325,7 +12325,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -12465,9 +12465,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -12514,9 +12514,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -12606,7 +12606,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -12704,9 +12704,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -12753,9 +12753,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -12829,7 +12829,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -12927,9 +12927,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -12976,9 +12976,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -13044,7 +13044,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -13128,9 +13128,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -13177,9 +13177,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -13233,7 +13233,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -13303,9 +13303,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -13352,9 +13352,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -13404,7 +13404,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -13488,9 +13488,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -13537,9 +13537,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -13593,7 +13593,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -13656,9 +13656,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -13705,9 +13705,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -13753,7 +13753,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -13816,9 +13816,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -13865,9 +13865,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -13913,7 +13913,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -13962,9 +13962,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -14011,9 +14011,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -14062,7 +14062,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -14118,9 +14118,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -14167,9 +14167,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -14223,7 +14223,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -14251,9 +14251,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -14321,9 +14321,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -14384,7 +14384,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -14412,9 +14412,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/agentDwsMessages/types.ts",
@@ -14482,9 +14482,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -14545,7 +14545,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "docs/release/公共辅助模型密钥装配无结构变更审核-20260909.md",
@@ -14566,9 +14566,9 @@
         {
           "path": "server/src/data/agentDwsMessages/store.ts",
           "baselineDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
-          "targetDigest": "sha256:4a1bf13bacb9289edf59d1b22690edcc627ffa2b635f693f603af305768b83a4",
+          "targetDigest": "sha256:250d818dfa587e0a8e226985b2e6b065ce61b1e1be2f3b60cdd734799ef0394e",
           "classification": "no-schema-change",
-          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；init 仍委托治理迁移，无新增 DDL。"
+          "reason": "在既有 inbox/outbox 上执行运行期领取、状态、正文、幂等键与恢复预算读写；prepared 快速控制即使耗尽普通重试预算也保持低频 retry_wait，只有命令完成或失败结算后才允许终止 inbox；init 仍委托治理迁移，无新增 DDL。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -14615,9 +14615,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
+          "targetDigest": "sha256:afef4341ce3386224cfef65f100021cc9e975d346f6446eda2487e6014c09104",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用后把 WorkOrder command 与 inbox phase 原子结算为 completed 或 failed，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -14627,7 +14627,7 @@
         },
         {
           "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
-          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
+          "digest": "sha256:b453ae069b11a3abb6c73920e3bd029c1d9a22f9db2d434390f61697a65b441b"
         },
         {
           "path": "server/src/runtime/background/orgAgentControlCommandRecovery.test.ts",

@@ -160,6 +160,8 @@ describePg('Agent DWS fast control claim lane', () => {
         leaseFence: claim.leaseFence, responseText,
       },
     });
+    expect((await store.getById('tenant-a', claim.inboxId))?.payload)
+      .toMatchObject({ fastControlPhase: 'completed' });
     await pool.query(`UPDATE ${prefix}_agent_dws_event_inbox
       SET lease_expires_at=NOW()-INTERVAL '1 second' WHERE inbox_id=$1`, [claim.inboxId]);
     const replay = await store.claimNextControl('next-worker', 60_000);
@@ -246,5 +248,123 @@ describePg('Agent DWS fast control claim lane', () => {
     })).rejects.toThrow('ORG_AGENT_FAST_CONTROL_LEASE_LOST');
     expect((await orgStore.getWorkOrder('tenant-a', work.workOrderId))?.control.command)
       .toMatchObject({ phase: 'prepared' });
+
+    const recoveryClaim = (await store.claimNextControl('recovery-worker', 60_000))!;
+    await orgStore.failControlCommand({
+      tenantId: 'tenant-a', workOrderId: work.workOrderId,
+      inboxReceipt: {
+        inboxId: recoveryClaim.inboxId, leaseOwner: 'recovery-worker',
+        leaseFence: recoveryClaim.leaseFence, responseText: '失败',
+      },
+      error: 'INJECTED_SETUP_FAILURE',
+    });
+    await store.saveDispatchResult(
+      recoveryClaim.inboxId, 'recovery-worker', recoveryClaim.leaseFence, '失败',
+    );
+    await store.complete(
+      recoveryClaim.inboxId, 'recovery-worker', recoveryClaim.leaseFence,
+    );
   });
+
+  it.each([1, 2])(
+    'prepared 控制在 maxAttempts=%i 耗尽后仍可重领，结算后才允许终止 inbox',
+    async (maxAttempts) => {
+      const suffix = `exhaust-${maxAttempts}`;
+      const binding = await orgStore.ensureShadowBinding({
+        tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
+        conversationId: `group-${suffix}`, channelKind: 'group', workspaceId: 'workspace-a',
+        accountIdentity,
+      });
+      await pool.query(`UPDATE ${prefix}_org_agent_channel_bindings
+        SET enabled=TRUE WHERE binding_id=$1`, [binding.bindingId]);
+      const conversation = await orgStore.getOrCreateWorkConversation({
+        tenantId: 'tenant-a', bindingId: binding.bindingId, rootKey: `root-${suffix}`,
+      });
+      const work = await orgStore.createWorkOrder({
+        tenantId: 'tenant-a', agentId: 'agent-a', bindingId: binding.bindingId,
+        workConversationId: conversation.workConversationId, idempotencyKey: `${suffix}-work`,
+        title: '需要恢复结算的任务', visibility: 'conversation',
+        createdByActor: {
+          kind: 'external_user', provider: 'dingtalk', corpId: 'corp-a', openId: 'member-a',
+          assurance: 'mapped', mappedUserId: 'user-a', role: 'member',
+        },
+        policySnapshot: {}, cancelPolicy: {},
+      });
+      await store.ingest({
+        tenantId: 'tenant-a', accountId: 'account-a', eventId: `event-${suffix}`,
+        eventType: 'user_im_message_receive_at', conversationId: `group-${suffix}`,
+        senderOpenDingtalkId: 'member-a', content: `暂停 ${work.shortId}`, maxAttempts,
+      }, {
+        schemaVersion: 2, source: 'dws_personal_stream',
+        accountIdentity: {
+          profileId: 'corp-a:member-a', corpId: 'corp-a', dingtalkUserId: 'member-a',
+        },
+      });
+
+      let owner = `${suffix}-worker-0`;
+      let claim = (await store.claimNextControl(owner, 60_000))!;
+      await orgStore.pauseWorkOrder({
+        tenantId: 'tenant-a', workOrderId: work.workOrderId, expectedVersion: work.version,
+        control: { ...work.control, command: {
+          inboxId: claim.inboxId, action: 'pause', phase: 'prepared',
+          sourceAttemptNo: work.currentAttemptNo,
+        } },
+        controlLease: {
+          inboxId: claim.inboxId, leaseOwner: owner,
+          leaseFence: claim.leaseFence, responseText: '失败',
+        },
+      });
+
+      for (let failureNo = 1; failureNo <= maxAttempts + 2; failureNo += 1) {
+        const failed = await store.fail(
+          claim.inboxId, owner, claim.leaseFence, 'INJECTED_SETTLEMENT_FAILURE', 0,
+        );
+        expect(failed).toMatchObject({
+          state: 'retry_wait', maxAttempts,
+          payload: expect.objectContaining({
+            fastControlWorkOrderId: work.workOrderId,
+            fastControlPhase: 'prepared',
+            fastControlRecoveryRequired: true,
+          }),
+        });
+        expect(failed.responseText).toBeUndefined();
+        expect(failed.completedAt).toBeUndefined();
+        expect(failed.attempt).toBeLessThanOrEqual(maxAttempts);
+        await pool.query(`UPDATE ${prefix}_agent_dws_event_inbox
+          SET next_attempt_at=NOW() WHERE inbox_id=$1`, [claim.inboxId]);
+        owner = `${suffix}-worker-${failureNo}`;
+        claim = (await store.claimNextControl(owner, 60_000))!;
+        expect(claim.inboxId).toBe(failed.inboxId);
+      }
+
+      await orgStore.failControlCommand({
+        tenantId: 'tenant-a', workOrderId: work.workOrderId,
+        inboxReceipt: {
+          inboxId: claim.inboxId, leaseOwner: owner,
+          leaseFence: claim.leaseFence, responseText: '失败',
+        },
+        error: 'INJECTED_SETUP_FAILURE',
+      });
+      expect((await orgStore.getWorkOrder('tenant-a', work.workOrderId))?.control.command)
+        .toMatchObject({ phase: 'failed' });
+      expect((await store.getById('tenant-a', claim.inboxId))?.payload)
+        .toMatchObject({ fastControlPhase: 'failed' });
+
+      const terminal = await store.fail(
+        claim.inboxId, owner, claim.leaseFence, 'INJECTED_POST_SETTLEMENT_FAILURE', 0,
+      );
+      expect(terminal).toMatchObject({
+        state: 'reply_pending',
+        payload: expect.objectContaining({
+          fastControlPhase: 'failed', disposition: 'execution_failed',
+        }),
+      });
+      expect(terminal.responseText).toContain('这次处理未能完成');
+      const terminalReply = (await store.claimNextControl(`${suffix}-reply-worker`, 60_000))!;
+      expect(terminalReply.inboxId).toBe(terminal.inboxId);
+      await store.complete(
+        terminalReply.inboxId, `${suffix}-reply-worker`, terminalReply.leaseFence,
+      );
+    },
+  );
 });

@@ -269,7 +269,7 @@ async function settleControlCommand(
       await persistControlInboxReceipt(client, inboxTable, input.tenantId, input.inboxReceipt);
     else
       await persistControlInboxProgress(
-        client, inboxTable, input.tenantId, input.workOrderId, input.inboxReceipt,
+        client, inboxTable, input.tenantId, input.workOrderId, input.inboxReceipt, 'failed',
       );
     await client.query('COMMIT');
     return mapWorkOrder(updated.rows[0] as Record<string, unknown>);
@@ -290,7 +290,9 @@ async function persistControlInboxReceipt(
   const result = await client.query(
     `UPDATE ${inboxTable}
     SET state='reply_pending',response_text=$5,
-      payload_json=payload_json || jsonb_build_object('replyKind','normal'),
+      payload_json=payload_json || jsonb_build_object(
+        'replyKind','normal','fastControlPhase','completed'
+      ),
       last_error=NULL,updated_at=NOW()
     WHERE tenant_id=$1 AND inbox_id=$2 AND state='processing'
       AND lease_owner=$3 AND lease_fence=$4 AND lease_expires_at>NOW()
@@ -306,16 +308,17 @@ async function persistControlInboxProgress(
   tenantId: string,
   workOrderId: string,
   lease: OrgAgentControlInboxReceipt,
+  phase: 'prepared' | 'failed' = 'prepared',
 ): Promise<void> {
   const result = await client.query(
     `UPDATE ${inboxTable}
     SET payload_json=payload_json || jsonb_build_object(
-      'fastControlWorkOrderId',$5::text,'fastControlPhase','prepared'
+      'fastControlWorkOrderId',$5::text,'fastControlPhase',$6::text
     ),updated_at=NOW()
     WHERE tenant_id=$1 AND inbox_id=$2 AND state='processing'
       AND lease_owner=$3 AND lease_fence=$4 AND lease_expires_at>NOW()
     RETURNING inbox_id`,
-    [tenantId, lease.inboxId, lease.leaseOwner, lease.leaseFence, workOrderId],
+    [tenantId, lease.inboxId, lease.leaseOwner, lease.leaseFence, workOrderId, phase],
   );
   if (!result.rows[0]) throw new Error('ORG_AGENT_FAST_CONTROL_LEASE_LOST');
 }

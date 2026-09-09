@@ -1,0 +1,66 @@
+name: Prepare unified CI (branch-only)
+on:
+  push:
+    branches: [refactor/unified-ci-20260910]
+    paths:
+      - .github/scripts/prepare-unified-ci.py
+      - .github/workflows/prepare-unified-ci.yml
+# Temporary branch-only editing/verification. No environments or production credentials.
+# Only creates an unreferenced Git tree; branch commits and the PR are made separately.
+permissions:
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.1'
+      - name: Prepare reviewed workflow edits
+        id: apply
+        run: python3 .github/scripts/prepare-unified-ci.py
+      - name: Dependency-free regression tests
+        continue-on-error: true
+        run: node --test scripts/release/unified-ci*.test.mjs
+      - uses: ./.github/actions/setup-pnpm
+      - name: Install repository dependencies when available
+        id: dependencies
+        continue-on-error: true
+        timeout-minutes: 8
+        run: pnpm install --frozen-lockfile
+      - name: Format new source files
+        if: steps.dependencies.outcome == 'success'
+        run: pnpm exec prettier --write scripts/ci-acs-plan.mjs scripts/release/unified-ci*.mjs docs/unified-ci.md
+      - name: Existing and new workflow contracts
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          node --test scripts/release/unified-ci*.test.mjs
+          scripts/release/staging-release-evidence-workflow.test.mjs
+          scripts/release/staging-workflow.test.mjs
+          scripts/release/promotion-workflow.test.mjs
+          scripts/pr-preflight-contract.test.mjs
+      - name: ACS deployment and classification regression
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        run: pnpm -F server exec vitest run src/__tests__/acsDeployWorkflowContract.test.ts
+      - name: ACS operational script regressions
+        continue-on-error: true
+        run: python3 -m unittest scripts/test_acs_operational_scripts.py scripts/test_acr_webhook_redelivery.py
+      - name: Lint changed source
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        run: pnpm exec eslint scripts/ci-acs-plan.mjs scripts/release/unified-ci*.mjs scripts/release/staging-release-evidence-workflow.test.mjs server/src/__tests__/acsDeployWorkflowContract.test.ts
+      - name: Publish reviewable tree without updating any branch
+        if: always() && steps.apply.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git diff --check
+          git diff --stat 30cacdc2e05a993f9a47a79c6dc035deffeb9171
+          python3 .github/scripts/prepare-unified-ci.py publish-tree

@@ -154,7 +154,7 @@ for (const scenario of [
         join(root, 'acs.env'),
         scenario === 'missingtoken' ? 'UNRELATED=1\n' : 'ACS_ORCH_AUTH_TOKEN="test-token"\n',
       );
-      const initialDeadlineMs = scenario === 'deadlinealreadyaligned' ? '600000' : '120000';
+      const initialDeadlineMs = scenario === 'deadlinealreadyaligned' ? '1140000' : '120000';
       const env = {
         ...process.env,
         TEST_ROOT: root,
@@ -218,13 +218,13 @@ for (const scenario of [
       if (scenario === 'clean') {
         // deadline 必须在发 USR2 之前抬到覆盖 660s 窗口的值，否则 ACS 会自己先认输。
         assert.ok(events.indexOf('-X PATCH') < events.indexOf('kill -USR2'));
-        assert.equal(await readFile(join(root, 'deadline'), 'utf8'), '600000');
-        assert.match(result.stderr, /Aligned ACS drain deadline .*120000ms -> 600000ms/u);
+        assert.equal(await readFile(join(root, 'deadline'), 'utf8'), '1140000');
+        assert.match(result.stderr, /Aligned ACS drain deadline .*120000ms -> 1140000ms/u);
         assert.match(result.stderr, /Waiting for ACS drain: .*inflight=/u);
       }
       if (scenario === 'deadlinealreadyaligned') {
         assert.doesNotMatch(events, /-X PATCH/u);
-        assert.match(result.stderr, /already covers the promotion window: 600000ms/u);
+        assert.match(result.stderr, /already covers the promotion window: 1140000ms/u);
       }
       if (['legacyquiet', 'legacybusy', 'legacyforced'].includes(scenario)) {
         // 兼容协议由旧二进制自己掌管超时，不去改它的运行时配置。
@@ -278,7 +278,7 @@ test -e "$TEST_ROOT/cancelled"`,
     assert.match(events, /kill -USR1 42/u);
     assert.doesNotMatch(events, /restart|kill -KILL|kill -TERM|start acs/u);
     // 对齐后的 deadline 有意不还原：它本就该覆盖发布窗口，还原只会制造不确定状态。
-    assert.equal(await readFile(join(root, 'deadline'), 'utf8'), '600000');
+    assert.equal(await readFile(join(root, 'deadline'), 'utf8'), '1140000');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

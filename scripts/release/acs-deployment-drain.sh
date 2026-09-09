@@ -7,7 +7,12 @@ ACS_DRAIN_DROPIN=''
 ACS_DRAIN_LAST_INFLIGHT=unknown
 # 外层等待窗口。ACS 进程内部的 deadline 必须严格小于它：进程一旦自己把 drain
 # 判成 timed_out 就会恢复准入并放弃换代，此时外层再长的等待都没有意义。
-ACS_DRAIN_WINDOW_SECONDS=660
+#
+# drain 等的是单次工具调用跑完（/execute-stream 一个请求 = 一次工具调用），而前台
+# Shell 的 timeoutMs 默认即顶格 30 分钟（server 的 DEFAULT_SHELL_TIMEOUT_MS =
+# MAX_SHELL_TIMEOUT_MS）。窗口取 20 分钟：盖住绝大多数真实调用，又不至于让准入
+# 长时间停摆；撞上顶格长任务仍会超时失败，此时旧工作原样保留、回滚照走。
+ACS_DRAIN_WINDOW_SECONDS=1200
 # 留给终态取证与回执落盘的余量。
 ACS_DRAIN_DEADLINE_MARGIN_SECONDS=60
 

@@ -47,7 +47,11 @@ export async function stageInterruptedProductionConfiguration(options: {
       if (disk !== state.rawRevision && disk !== state.previous.rawRevision)
         throw new Error('磁盘存在事务外变更，拒绝用启动恢复覆盖');
       const previousText = readSnapshot(options.configPath, state.previous.rawRevision);
-      if (state.phase === 'recovery_required' && state.rawRevision === state.previous.rawRevision && disk === state.rawRevision)
+      if (
+        state.phase === 'recovery_required' &&
+        state.rawRevision === state.previous.rawRevision &&
+        disk === state.rawRevision
+      )
         return true;
       // The existing pending journal records BOTH candidate and previous bytes.
       // Restore bytes first; a crash here remains recoverable from that journal.
@@ -72,12 +76,22 @@ export async function stageInterruptedProductionConfiguration(options: {
 }
 
 /** Runs before config parsing, credential resolution or any execution service. */
-export async function prepareProductionConfigStartup(processCwd: string, processRole: string): Promise<void> {
+export async function prepareProductionConfigStartup(
+  processCwd: string,
+  processRole: string,
+): Promise<void> {
   const runtime = readRuntimeIdentity();
-  if (runtime.environment !== 'production' || !runtime.releaseId || !runtime.expectedConfigIdentity
-    || !['ws-only', 'runtime-worker'].includes(processRole)) return;
+  if (
+    runtime.environment !== 'production' ||
+    !runtime.releaseId ||
+    !runtime.expectedConfigIdentity ||
+    !['ws-only', 'runtime-worker'].includes(processRole)
+  )
+    return;
   await stageInterruptedProductionConfiguration({
-    configPath: getAppConfigPath(processCwd), processCwd, releaseId: runtime.releaseId,
+    configPath: getAppConfigPath(processCwd),
+    processCwd,
+    releaseId: runtime.releaseId,
   });
 }
 
@@ -86,17 +100,29 @@ export async function prepareProductionConfigStartup(processCwd: string, process
 export async function alignProductionConfigStartup(options: {
   processCwd: string;
   refresher: Pick<SharedConfigRefresher, 'refreshIfChanged' | 'getAppliedStamps'>;
-  identity: Pick<RuntimeConfigIdentityAssembly, 'refreshSummary' | 'isExecutionAllowed' | 'recoveryGate'>;
+  identity: Pick<
+    RuntimeConfigIdentityAssembly,
+    'refreshSummary' | 'isExecutionAllowed' | 'recoveryGate'
+  >;
 }): Promise<void> {
   if (!(await options.refresher.refreshIfChanged(true))) throw new Error('共享配置启动对齐失败');
   await options.identity.refreshSummary();
   if (options.identity.isExecutionAllowed()) return;
   const runtime = readRuntimeIdentity();
-  if (runtime.environment === 'production' && runtime.releaseId && runtime.expectedConfigIdentity
-    && !options.identity.recoveryGate.isDirty()) {
+  if (
+    runtime.environment === 'production' &&
+    runtime.releaseId &&
+    runtime.expectedConfigIdentity &&
+    !options.identity.recoveryGate.isDirty()
+  ) {
     const state = assertPublishedDisk(getAppConfigPath(options.processCwd));
-    if (state && state.releaseId === runtime.releaseId && state.phase !== 'committed'
-      && options.refresher.getAppliedStamps().config?.digest === state.rawRevision) return;
+    if (
+      state &&
+      state.releaseId === runtime.releaseId &&
+      state.phase !== 'committed' &&
+      options.refresher.getAppliedStamps().config?.digest === state.rawRevision
+    )
+      return;
   }
   throw new Error('共享配置启动对齐失败');
 }

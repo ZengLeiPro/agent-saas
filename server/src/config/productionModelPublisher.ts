@@ -282,6 +282,8 @@ export class ProductionModelPublisher implements ProductionPublisher {
         throw new Error('磁盘存在事务外变更，拒绝用回滚覆盖');
       }
       const text = readSnapshot(this.options.configPath, state.previous.rawRevision);
+      // Keep both known revisions in the pending journal until old bytes are durable.
+      atomicWrite(this.options.configPath, text);
       rolling = writePublication(this.options.configPath, {
         ...state,
         ...state.previous,
@@ -290,7 +292,6 @@ export class ProductionModelPublisher implements ProductionPublisher {
         owner: processIdentity(),
         updatedAt: new Date(this.now()).toISOString(),
       });
-      atomicWrite(this.options.configPath, text);
       const targets = this.options.targets();
       await this.wait(rolling, targets);
       const committed = this.transition(rolling, 'committed');

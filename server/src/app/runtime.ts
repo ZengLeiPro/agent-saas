@@ -1,3 +1,4 @@
+import { prepareProductionConfigStartup, alignProductionConfigStartup } from './productionConfigStartup.js';
 import { initializeProductionModelPublication } from './productionModelPublication.js';
 import { createMemoryIndexRuntimeUpdatePreparer } from './memoryIndexRuntimeUpdate.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -290,6 +291,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const enableSchedulerWorker = processRole !== 'ws-only';
   const enableHttpListeners = processRole === 'all' || processRole === 'ws-only';
   const enableSingletonWorkers = processRole === 'all' || processRole === 'runtime-worker';
+  await prepareProductionConfigStartup(processCwd, processRole);
   const config = loadAppConfig(processCwd); const sessionAutomationFlagSource = createSessionAutomationFlagSource(config);
   const sessionLockMode = config.runtimeScheduler?.sessionLockMode ?? 'dual';
   // 非 production 进程禁止连远程 PG（2026-07-26 本地 dev 接管生产库事故）
@@ -1806,9 +1808,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     webChannelTarget: voiceTranscriptionOptions,
     secretVault,
   }); const refreshVoiceTranscriptionConfig = createVoiceTranscriptionConfigRefresher({ config, secretVault, refreshSharedConfig: () => refreshPublishedConfig(true), prepareSttUpdate: prepareSttRuntimeUpdate });
-  if (!await refreshPublishedConfig(true)) {
-    throw new Error('共享配置启动对齐失败');
-  }
+  await alignProductionConfigStartup({ processCwd, refresher: sharedConfigRefresher, identity: configIdentityAssembly });
   const applyWebToolsRuntimeUpdate = createWebToolsRuntimeUpdater({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
   const updateToolSettingsConfig = createToolSettingsUpdater({ config, target: rawRuntimeConfig, applyWebTools: applyWebToolsRuntimeUpdate });
   const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => { await resolveImageGenToolsConfig(imageGenTools, secretVault); };

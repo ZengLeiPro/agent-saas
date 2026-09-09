@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { HandHealthScanner } from '../runtime/handHealthScanner.js';
 import type { HandRecord, HandStore } from '../runtime/handStore.js';
 
+function legacyTenantProvision(updatedAt: string): HandRecord {
+  const { metadata, ...rest } = crashedTenantProvision();
+  const { provisionGeneration: _dropped, provisionKey: _key, ...legacyMetadata } = metadata as Record<string, unknown>;
+  return { ...rest, handId: 'h-legacy-provision', updatedAt, metadata: legacyMetadata };
+}
+
 function crashedTenantProvision(): HandRecord {
   return {
     handId: 'h-result-unknown', sessionId: 's-1', workspaceId: 'w-r', tenantId: 'tenant-1',
@@ -72,5 +78,44 @@ describe('HandHealthScanner tenant provision crash fence', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/provision'))).toBe(false);
     expect(handStore.claims).toBe(0);
     expect(handStore.hand).toMatchObject({ status: 'unhealthy', metadata: { reconcileRequired: true } });
+  });
+});
+
+describe('HandHealthScanner generationless provisioning fallback', () => {
+  const silentLogger = { warn: () => {}, info: () => {}, error: () => {} };
+
+  it('parks a long-idle generationless provisioning hand instead of warning every scan', async () => {
+    const handStore = fakeStore(legacyTenantProvision(new Date(Date.now() - 60 * 60_000).toISOString()));
+    const warnings: string[] = [];
+    const scanner = new HandHealthScanner({
+      handStore,
+      fetchImpl: vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch,
+      resolveHandAuthToken: () => 'token',
+      logger: { ...silentLogger, warn: (message: string) => { warnings.push(message); } },
+    });
+
+    expect(await scanner.scanOnce()).toEqual({ scanned: 1, flipped: 1 });
+    expect(handStore.hand).toMatchObject({
+      status: 'unhealthy',
+      metadata: { reconcileRequired: true, provisionResult: 'result_unknown_legacy_attempt' },
+    });
+    expect(warnings.filter((line) => line.includes('could not be atomically parked'))).toHaveLength(0);
+  });
+
+  it('leaves a fresh generationless attempt alone and throttles the unparkable warning', async () => {
+    const handStore = fakeStore(legacyTenantProvision(new Date().toISOString()));
+    const warnings: string[] = [];
+    const scanner = new HandHealthScanner({
+      handStore,
+      fetchImpl: vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch,
+      resolveHandAuthToken: () => 'token',
+      logger: { ...silentLogger, warn: (message: string) => { warnings.push(message); } },
+    });
+
+    await scanner.scanOnce();
+    await scanner.scanOnce();
+
+    expect(handStore.hand.status).toBe('provisioning');
+    expect(warnings.filter((line) => line.includes('could not be atomically parked'))).toHaveLength(1);
   });
 });

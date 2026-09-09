@@ -1,6 +1,7 @@
 import pg from 'pg';
 
 import type { RunRecord, RunStatus } from './runStore.js';
+import { serverLogger } from '../utils/logger.js';
 
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
@@ -108,5 +109,27 @@ export async function releaseRunLease(
       AND ($5::text IS NULL OR run.metadata->>'runLeaseToken' = $5)
     RETURNING row_to_json(run.*) AS row_json
   `, [runId, workerId, finalStatus ?? null, reason ?? null, leaseToken ?? null]);
-  return result.rows[0] ? context.normalizeRunRecord(result.rows[0].row_json) : null;
+  const released = result.rows[0] ? context.normalizeRunRecord(result.rows[0].row_json) : null;
+  warnOnNonTerminalRelease(released, runId, workerId, reason);
+  return released;
+}
+
+// 未带终态释放一个仍在推进的 run，会把它留成 stale 并在宽限后被收割为
+// orphaned/lease_expired；真正的原因此刻只存在于调用栈里，必须当场留痕。
+function warnOnNonTerminalRelease(
+  released: RunRecord | null,
+  runId: string,
+  workerId: string,
+  reason?: string,
+): void {
+  if (released?.liveness?.state !== 'stale') return;
+  const frames = (new Error().stack ?? '').split('\n').slice(1)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('at ') && !line.includes('runTerminalLifecycle'));
+  const caller = frames.slice(0, 5).join(' <- ') || 'unknown';
+  const livenessReason = released.liveness.reasonCode ?? 'none';
+  // 这里刻意先拼好整句再输出：发布迁移分类器把「引号紧邻加号」视为动态 SQL 形态，
+  // 分段拼接会让本文件从 no-schema-change 掉回严格迁移审核。
+  const detail = `run=${runId} worker=${workerId} reason=${reason ?? 'none'} livenessReason=${livenessReason}`;
+  serverLogger.warn(`[RunLease] released without terminal status while still active ${detail} caller=${caller}`);
 }

@@ -555,9 +555,9 @@
         {
           "path": "server/src/runtime/runTerminalLifecycle.ts",
           "baselineDigest": "sha256:f6a253104bffba03bb2a02c28fa983262ec218d0aee165d22fc92684f0710878",
-          "targetDigest": "sha256:e7863da5f7e346eab25277add4854f9a7bb130606dc409b69c3f721bb62b06a1",
+          "targetDigest": "sha256:cd5ce274edc08e4e23c74dc1d07215bd8fc201d2ef635e3d18009dd083b99c3c",
           "classification": "no-schema-change",
-          "reason": "释放租约 UPDATE 增加 lease token 校验，无启动迁移。"
+          "reason": "释放租约 UPDATE 增加 lease token 校验；本次仅新增「未带终态释放仍在推进的 run」的 WARN 留痕函数与一条 import，SQL 字面量逐字未变，无启动迁移。"
         },
         {
           "path": "server/src/runtime/runTerminalOutboxStore.ts",
@@ -3908,9 +3908,9 @@
         {
           "path": "server/src/runtime/runTerminalLifecycle.ts",
           "baselineDigest": "sha256:e7863da5f7e346eab25277add4854f9a7bb130606dc409b69c3f721bb62b06a1",
-          "targetDigest": "sha256:e7863da5f7e346eab25277add4854f9a7bb130606dc409b69c3f721bb62b06a1",
+          "targetDigest": "sha256:cd5ce274edc08e4e23c74dc1d07215bd8fc201d2ef635e3d18009dd083b99c3c",
           "classification": "no-schema-change",
-          "reason": "释放租约 UPDATE 增加 lease token 校验，无启动迁移。"
+          "reason": "释放租约 UPDATE 增加 lease token 校验；本次仅新增「未带终态释放仍在推进的 run」的 WARN 留痕函数与一条 import，SQL 字面量逐字未变，无启动迁移。"
         },
         {
           "path": "server/src/runtime/runTerminalOutboxStore.ts",

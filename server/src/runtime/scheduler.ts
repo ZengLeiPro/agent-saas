@@ -503,6 +503,11 @@ export class RuntimeScheduler {
     }
     for (const record of result.orphaned) {
       const reason = record.statusReason ?? record.liveness?.reasonCode ?? 'lease_expired';
+      this.options.logger?.warn(
+        `Runtime liveness reaper orphaned run=${record.runId} session=${record.sessionId}`
+        + ` channel=${record.channel ?? 'unknown'} reason=${reason}`
+        + ` lastHeartbeatAt=${record.liveness?.lastHeartbeatAt ?? 'none'}`,
+      );
       await finalizeTerminalRun({
         runStore: this.options.runStore, eventStore: this.options.eventStore,
         runId: record.runId, status: 'orphaned', reason,

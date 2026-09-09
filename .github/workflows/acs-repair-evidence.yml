@@ -1,4 +1,4 @@
-# Non-production source regressions. No environments, secrets or deployment steps.
+# Non-production evidence only: read-only checkout, no deployment environment or secrets.
 name: ACS repair evidence
 
 on:
@@ -19,9 +19,9 @@ concurrency:
 
 jobs:
   regressions:
-    name: Actual-source hang and ownership regressions
+    name: Exact-source repair evidence (failures remain failures)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -35,15 +35,69 @@ jobs:
         env:
           NODE_ENV: development
         run: pnpm install --frozen-lockfile
-      - name: Record exact source and execute real modules
-        shell: bash
+      - name: Record exact source and toolchain
         run: |
-          set -o pipefail
           mkdir -p "$RUNNER_TEMP/acs-repair-evidence"
           git rev-parse HEAD > "$RUNNER_TEMP/acs-repair-evidence/source-sha.txt"
           node --version > "$RUNNER_TEMP/acs-repair-evidence/toolchain.txt"
           pnpm --version >> "$RUNNER_TEMP/acs-repair-evidence/toolchain.txt"
-          pnpm -F acs-orchestrator exec vitest run src/acsHangRegression.test.ts src/ownershipReaderRegression.test.ts --reporter=verbose 2>&1 | tee "$RUNNER_TEMP/acs-repair-evidence/regressions.log"
+          sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/acs-repair-evidence/lockfile-sha256.txt"
+          printf '%s\n' '{"runId":"${{ github.run_id }}","attempt":${{ github.run_attempt }},"headSha":"${{ github.event.pull_request.head.sha }}","productionActions":false}' > "$RUNNER_TEMP/acs-repair-evidence/run.json"
+      - name: Server and orchestrator type checks
+        id: types
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          (pnpm -F server typecheck && pnpm -F acs-orchestrator typecheck) 2>&1 | tee "$RUNNER_TEMP/acs-repair-evidence/typecheck.log"
+      - name: Actual baseline-module regressions
+        id: regressions
+        continue-on-error: true
+        run: pnpm -F acs-orchestrator exec vitest run src/acsHangRegression.test.ts src/ownershipReaderRegression.test.ts --reporter=json --outputFile="$RUNNER_TEMP/acs-repair-evidence/regressions.json"
+      - name: New ownership primitive coverage (not baseline reproduction)
+        id: primitives
+        continue-on-error: true
+        run: pnpm -F acs-orchestrator exec vitest run src/ownershipPrimitives.test.ts --reporter=json --outputFile="$RUNNER_TEMP/acs-repair-evidence/primitives.json"
+      - name: Existing line and environment ratchets
+        id: ratchets
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm check:ratchets 2>&1 | tee "$RUNNER_TEMP/acs-repair-evidence/ratchets.log"
+      - name: Existing orchestrator bundle
+        id: bundle
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm -F acs-orchestrator build 2>&1 | tee "$RUNNER_TEMP/acs-repair-evidence/bundle.log"
+          find acs-orchestrator/dist -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/acs-repair-evidence/bundle-sha256.txt"
+      - name: Publish individual test verdicts without hiding a failed gate
+        if: always()
+        shell: bash
+        run: |
+          node --input-type=module - "$RUNNER_TEMP/acs-repair-evidence" <<'NODE'
+          import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+          import { join } from 'node:path';
+          const root = process.argv[2];
+          const lines = [];
+          for (const suite of ['regressions', 'primitives']) {
+            const file = join(root, `${suite}.json`);
+            if (!existsSync(file)) { lines.push(`${suite}: NOT_RUN (no test report)`); continue; }
+            const report = JSON.parse(readFileSync(file, 'utf8'));
+            lines.push(`${suite}: PASS=${report.numPassedTests} FAIL=${report.numFailedTests} PENDING=${report.numPendingTests}`);
+            for (const fileResult of report.testResults ?? []) {
+              for (const test of fileResult.assertionResults ?? []) {
+                lines.push(`${test.status.toUpperCase()}: ${test.fullName}`);
+                for (const message of test.failureMessages ?? []) lines.push(message.slice(0, 1800));
+              }
+            }
+          }
+          const text = lines.join('\n') + '\n';
+          console.log(text);
+          writeFileSync(join(root, 'verdicts.txt'), text);
+          NODE
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -51,3 +105,13 @@ jobs:
           path: ${{ runner.temp }}/acs-repair-evidence/
           if-no-files-found: error
           retention-days: 14
+      - name: Preserve the aggregate failure verdict
+        if: always()
+        env:
+          TYPES: ${{ steps.types.outcome }}
+          REGRESSIONS: ${{ steps.regressions.outcome }}
+          PRIMITIVES: ${{ steps.primitives.outcome }}
+          RATCHETS: ${{ steps.ratchets.outcome }}
+          BUNDLE: ${{ steps.bundle.outcome }}
+        run: |
+          test "$TYPES" = success && test "$REGRESSIONS" = success && test "$PRIMITIVES" = success && test "$RATCHETS" = success && test "$BUNDLE" = success

@@ -1,0 +1,42 @@
+# Non-production evidence only. No environments, secrets, deployment or remote commands.
+name: ACS repair evidence
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/acs-repair-evidence.yml'
+      - 'acs-orchestrator/**'
+      - 'server/src/dws/**'
+      - 'scripts/acs-repair/**'
+      - 'docs/engineering/acs-repair/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acs-repair-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    name: Exact-source inspection archive (not a test verdict)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Archive tracked source without Git credentials or runtime files
+        run: |
+          mkdir -p "$RUNNER_TEMP/acs-repair-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/acs-repair-source/source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/acs-repair-source/source-sha.txt"
+          sha256sum "$RUNNER_TEMP/acs-repair-source/source.tar.gz" > "$RUNNER_TEMP/acs-repair-source/archive-sha256.txt"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: acs-repair-source-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/acs-repair-source/
+          if-no-files-found: error
+          retention-days: 1

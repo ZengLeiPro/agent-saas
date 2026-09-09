@@ -1,11 +1,7 @@
-name: ACS CI
+name: ACS Manual Deploy
 
+# Automatic PR/main checks now live in ci.yml. This compatibility entry is manual only.
 on:
-  pull_request:
-    branches: [main]
-  # 仅 main push 进入 changes job，由 acs-classify.sh 作为唯一影响分类真源。
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       force:
@@ -13,7 +9,7 @@ on:
         type: boolean
         default: false
 
-# PR 检查淘汰旧 head；main 检查各自完成。生产 mutation 仍使用 job 级不可取消锁。
+# 人工兼容发布保留原有并发语义；生产 mutation 使用 job 级不可取消锁。
 concurrency:
   group: acs-ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -28,127 +24,6 @@ env:
   ACS_SERVICE_NAME: agent-saas-acs-orchestrator.service
 
 jobs:
-  acs-impact-gate:
-    name: ACS Impact Gate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-
-    steps:
-      - name: 检出拉取请求版本
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: 判定 ACS 影响范围
-        id: impact
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          git cat-file -e "$BASE_SHA^{commit}"
-          git cat-file -e "$HEAD_SHA^{commit}"
-
-          changed_files="$RUNNER_TEMP/acs-pr-changed-files.txt"
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$changed_files"
-          out="$RUNNER_TEMP/acs-pr-classification.out"
-          bash .github/scripts/acs-classify.sh "$changed_files" "$BASE_SHA" > "$out"
-          cat "$out"
-
-          publish="$(sed -n 's/^publish=//p' "$out")"
-          contract_check="$(sed -n 's/^contract_check=//p' "$out")"
-          reason="$(sed -n 's/^reason=//p' "$out")"
-          skipped="$(sed -n 's/^skipped=//p' "$out")"
-          case "$publish:$contract_check" in
-            true:*|*:true) required=true ;;
-            false:false) required=false ;;
-            *) echo "::error title=ACS classifier contract::Invalid classifier result"; exit 1 ;;
-          esac
-          {
-            echo "required=$required"
-            echo "publish=$publish"
-            echo "contract_check=$contract_check"
-          } >> "$GITHUB_OUTPUT"
-          {
-            echo "### ACS Impact Gate"
-            echo
-            if [ "$required" = "true" ]; then
-              echo "- result: \`required\`"
-              echo "- reasons: $reason"
-            else
-              echo "- result: \`not_required\`"
-              echo "- skipped inputs: $skipped"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: 配置 pnpm
-        if: steps.impact.outputs.required == 'true'
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        if: steps.impact.outputs.required == 'true'
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: 安装依赖
-        if: steps.impact.outputs.required == 'true'
-        run: pnpm install --frozen-lockfile
-
-      - name: 检查服务端与编排器类型
-        if: steps.impact.outputs.required == 'true'
-        run: |
-          pnpm -F server typecheck
-          pnpm -F acs-orchestrator typecheck
-
-      - name: 测试编排器
-        if: steps.impact.outputs.required == 'true'
-        run: pnpm -F acs-orchestrator test
-
-      - name: 测试服务端 ACS 生命周期与准入契约
-        if: steps.impact.outputs.required == 'true'
-        run: >-
-          pnpm -F server exec vitest run
-          src/__tests__/acsDeployWorkflowContract.test.ts
-          src/__tests__/dwsAuthFlow.test.ts
-          src/__tests__/dwsKeepalive.test.ts
-          src/__tests__/dwsPersonalEventGateway.test.ts
-          src/__tests__/dwsPersonalMessageSender.test.ts
-          src/__tests__/executionDispatchValidation.test.ts
-          src/__tests__/feishuConnector.test.ts
-          src/__tests__/runtimeHandProvisionRace.test.ts
-          src/__tests__/runtimeTombstoneAdmission.test.ts
-          src/__tests__/runtimeWakeSessionRestore.test.ts
-          src/__tests__/sandboxLifecycleService.test.ts
-          src/__tests__/sandboxRunAdmissionFence.test.ts
-          src/__tests__/sandboxWorkloadDescriptor.test.ts
-          src/__tests__/sandboxWarmup.test.ts
-          src/__tests__/serverRemoteConfig.test.ts
-          src/__tests__/sessionCatalog.test.ts
-          src/__tests__/taskboardExecution.test.ts
-          src/__tests__/webChannelPersistentInteractionRecovery.test.ts
-          src/context/sync/dwsContextRuntime.test.ts
-          src/dws/businessToolProvider.test.ts
-          src/dws/requesterIdentityResolver.test.ts
-
-      - name: 测试 ACS 测试及生产环境生命周期门禁
-        if: steps.impact.outputs.required == 'true'
-        run: >-
-          node --test
-          scripts/release/staging-workflow.test.mjs
-          scripts/release/promotion-workflow.test.mjs
-
-      - name: 测试 ACS 运维脚本
-        if: steps.impact.outputs.required == 'true'
-        run: >-
-          python3 -m unittest
-          scripts/test_acs_operational_scripts.py
-          scripts/test_acr_webhook_redelivery.py
-
   changes:
     name: 判定 ACS 影响范围
     runs-on: ubuntu-24.04
@@ -226,77 +101,9 @@ jobs:
             echo "- skipped inputs: $skipped_reason"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  contract-check:
-    name: ACS 契约检查
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    needs: changes
-    if: needs.changes.outputs.contract_check == 'true'
-
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v5
-
-      - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: 安装依赖
-        run: pnpm install --frozen-lockfile
-
-      - name: 检查服务端与编排器类型
-        run: |
-          pnpm -F server typecheck
-          pnpm -F acs-orchestrator typecheck
-
-      - name: 测试编排器
-        run: pnpm -F acs-orchestrator test
-
-      - name: 测试服务端 ACS 生命周期与准入契约
-        run: >-
-          pnpm -F server exec vitest run
-          src/__tests__/acsDeployWorkflowContract.test.ts
-          src/__tests__/dwsAuthFlow.test.ts
-          src/__tests__/dwsKeepalive.test.ts
-          src/__tests__/dwsPersonalEventGateway.test.ts
-          src/__tests__/dwsPersonalMessageSender.test.ts
-          src/__tests__/executionDispatchValidation.test.ts
-          src/__tests__/feishuConnector.test.ts
-          src/__tests__/runtimeHandProvisionRace.test.ts
-          src/__tests__/runtimeTombstoneAdmission.test.ts
-          src/__tests__/runtimeWakeSessionRestore.test.ts
-          src/__tests__/sandboxLifecycleService.test.ts
-          src/__tests__/sandboxRunAdmissionFence.test.ts
-          src/__tests__/sandboxWorkloadDescriptor.test.ts
-          src/__tests__/sandboxWarmup.test.ts
-          src/__tests__/serverRemoteConfig.test.ts
-          src/__tests__/sessionCatalog.test.ts
-          src/__tests__/taskboardExecution.test.ts
-          src/__tests__/webChannelPersistentInteractionRecovery.test.ts
-          src/context/sync/dwsContextRuntime.test.ts
-          src/dws/businessToolProvider.test.ts
-          src/dws/requesterIdentityResolver.test.ts
-
-      - name: 测试 ACS 测试及生产环境生命周期门禁
-        run: >-
-          node --test
-          scripts/release/staging-workflow.test.mjs
-          scripts/release/promotion-workflow.test.mjs
-
-      - name: 测试 ACS 运维脚本
-        run: >-
-          python3 -m unittest
-          scripts/test_acs_operational_scripts.py
-          scripts/test_acr_webhook_redelivery.py
-
   # ── 方案 C（2026-07-04 曾磊拍板）: 镜像构建全部在阿里云 ACR EE 源码构建完成 ──
   # GitHub Actions 只做两件事:
-  #   gate: typecheck + test（push/dispatch 都跑, 代码门禁）
+  #   gate: typecheck + test（仅 dispatch，代码门禁）
   #   build-deploy (dispatch only): 等待 push webhook 触发的 ACR 云端构建 → 轮询到
   #     SUCCESS → scp orchestrator 源码到 ECS → drain 旧进程(SIGUSR2) →
   #     systemd 自动拉起新代码+新镜像 env → health/smoke → 失败自动回滚 env。

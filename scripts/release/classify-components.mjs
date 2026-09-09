@@ -63,6 +63,7 @@ const NON_RUNTIME_FILES = new Set([
   'scripts/check-max-lines-ratchet.mjs',
   'scripts/ratchets.test.mjs',
   'scripts/ci-plan.mjs',
+  'scripts/ci-acs-plan.mjs',
   'scripts/ci-coverage-blobs.mjs',
   'scripts/ci-source-guards.mjs',
   'scripts/ci-test-selection.mjs',

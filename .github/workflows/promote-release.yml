@@ -1035,6 +1035,8 @@ jobs:
           export PRODUCTION_WEB_OSS_URI RELEASE_RECORD_OSS_REGION
           # 单对象 CLI 启动约有固定网络开销；保持逐文件字节校验，但与 Staging 一致限为 8 路。
           # 整批仍由一个 run_with_web_lock 监管，锁丢失或总截止时间到达会终止整个进程组。
+          # assets/ 已由 upload-web-assets-immutable.sh 以 SDK GET 逐对象按存储字节回读并校验公开 headers；
+          # aliyun `oss cp` 会对 Content-Encoding: gzip 对象透明解压并因 CRC 不一致失败，故这里只回读壳文件。
           run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '
             source="$1"
             relative="${source#"$WEB_ASSETS_ROOT/"}"
@@ -1042,15 +1044,8 @@ jobs:
             mkdir -p "$(dirname "$target")"
             aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/$relative" \
               "$target" --region "$RELEASE_RECORD_OSS_REGION"
-            expected="$source"
-            case "$relative" in
-              assets/*.js|assets/*.mjs|assets/*.css)
-                expected="$target.expected"
-                gzip -n -9 -c "$source" > "$expected"
-                ;;
-            esac
-            cmp "$expected" "$target"
-          ' _ < <(find "$WEB_ASSETS_ROOT" -type f -print0)
+            cmp "$source" "$target"
+          ' _ < <(find "$WEB_ASSETS_ROOT" -type f -not -path "$WEB_ASSETS_ROOT/assets/*" -print0)
           run_with_web_lock curl -fsS --retry 10 -H 'cache-control: no-cache' \
             "https://agent.kaiyan.net/release-identity.json?release=$RELEASE_ID" \
             -o "$RUNNER_TEMP/web-release-identity-readback.json"

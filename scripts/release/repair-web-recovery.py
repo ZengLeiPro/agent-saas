@@ -248,7 +248,11 @@ class Driver:
             headers, response = folder / 'headers' / key, folder / 'http' / key
             for file in (local, headers, response):
                 file.parent.mkdir(parents=True, exist_ok=True)
-            self.command(['ossutil', 'cp', BUCKET + '/' + key, str(local), '-f', '--region', REGION])
+            # ossutil/aliyun `cp` gunzip Content-Encoding: gzip objects and fail their CRC check; the SDK GET
+            # (no Accept-Encoding, credentials from the runner-private file the workflow wrote) returns the stored bytes.
+            self.command(['node', str(self.repo / 'scripts/release/get-web-object.mjs'),
+                          BUCKET[len('oss://'):], key, REGION, str(local),
+                          str(Path(os.environ['RUNNER_TEMP']) / 'web-oss-sdk-credentials.json')])
             if compressed_asset(key):
                 metadata = self.command(['curl', '-fsSI', '--noproxy', '*', '--connect-timeout', '15', '--max-time', '45',
                                          '-H', 'Accept-Encoding: gzip', 'https://agent-saas-web.oss-cn-shenzhen.aliyuncs.com/' + key]).decode()

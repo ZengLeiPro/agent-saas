@@ -74,6 +74,27 @@ module.exports = class FakeOSS {
     if (headers['Content-Encoding']) text += 'Content-Encoding: ' + headers['Content-Encoding'] + '\\r\\n';
     fs.writeFileSync(target + '.headers', text + '\\r\\n');
   }
+  // Stored-bytes readback: HEAD answers 404 for a missing key, GET would answer the website fallback.
+  async head(key) {
+    const target = path.join(process.env.FAKE_OSS_ROOT, key);
+    if (!fs.existsSync(target)) {
+      const error = new Error('NoSuchKey');
+      error.code = 'NoSuchKey';
+      error.status = 404;
+      throw error;
+    }
+    return { status: 200, res: { headers: { etag: '"' + fs.statSync(target).size + '"' } } };
+  }
+  async get(key, file) {
+    fs.appendFileSync(process.env.FAKE_OSS_LOG, 'sdk-get ' + key + '\\n');
+    const target = path.join(process.env.FAKE_OSS_ROOT, key);
+    if (!fs.existsSync(target)) {
+      fs.writeFileSync(file, '<html>website fallback</html>');
+      return { res: { status: 200, headers: { etag: '"fallback"' } } };
+    }
+    fs.copyFileSync(target, file);
+    return { res: { status: 200, headers: { etag: '"' + fs.statSync(target).size + '"' } } };
+  }
 };
 `;
   const ossutil = `#!/usr/bin/env bash
@@ -152,6 +173,9 @@ test('atomically uploads final Web asset bytes from the Workflow working directo
   assert.equal(sdkPuts.length, 3);
   assert.ok(sdkPuts.every((line) => line.includes('"x-oss-forbid-overwrite":"true"')));
   assert.ok(!firstLog.split('\n').some((line) => /^cp \/.* oss:\/\//u.test(line)));
+  // Readback must be the SDK GET (stored bytes); ossutil/aliyun cp gunzip gzip objects and fail CRC.
+  assert.equal(firstLog.split('\n').filter((line) => line.startsWith('sdk-get ')).length, 3);
+  assert.ok(!firstLog.split('\n').some((line) => /^cp oss:\/\//u.test(line)));
 
   const second = runUploader(root);
   assert.equal(second.status, 0, second.stderr);

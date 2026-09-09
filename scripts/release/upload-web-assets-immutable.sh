@@ -81,7 +81,10 @@ while IFS= read -r -d '' source_path; do
 
   readback="$(mktemp)"
   unlink "$readback"
-  ossutil cp "$target_uri" "$readback" -f --region "$region"
+  # ossutil/aliyun `cp` transparently gunzip Content-Encoding: gzip objects and then fail their own
+  # CRC check; the SDK GET (no Accept-Encoding) is the only authenticated read of the stored bytes.
+  node "$script_dir/get-web-object.mjs" "$bucket" "${target_uri#"oss://$bucket/"}" "$region" \
+    "$readback" "$credentials_path" "$oss_module_path" >/dev/null
   cmp "$upload_path" "$readback"
   # Verify the public object contract, not only the authenticated readback bytes.
   headers="$(mktemp)"

@@ -25,6 +25,25 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
     await new PgGovernanceMigrationRunner(pool, prefix).run();
+    const bindings = `${prefix}_org_agent_channel_bindings`;
+    const deliveries = `${prefix}_agent_dws_delivery_intents`;
+    const currentForeignKey = await pool.query<{ conname: string }>(
+      `SELECT conname FROM pg_constraint
+       WHERE conrelid=$1::regclass AND confrelid=$2::regclass AND contype='f'
+         AND pg_get_constraintdef(oid) LIKE
+           'FOREIGN KEY (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)%'`,
+      [deliveries, bindings],
+    );
+    const constraint = `"${currentForeignKey.rows[0]!.conname.replaceAll('"', '""')}"`;
+    await pool.query(`ALTER TABLE ${deliveries} DROP CONSTRAINT ${constraint}`);
+    await pool.query(`ALTER TABLE ${deliveries}
+      ADD CONSTRAINT ${deliveries}_binding_generation_fk
+      FOREIGN KEY (tenant_id,binding_id,agent_id,conversation_space_id,account_id,conversation_id)
+      REFERENCES ${bindings}(tenant_id,binding_id,agent_id,conversation_space_id,account_id,conversation_id)
+      ON UPDATE CASCADE NOT VALID`);
+    await pool.query(
+      `ALTER TABLE ${deliveries} VALIDATE CONSTRAINT ${deliveries}_binding_generation_fk`,
+    );
     await pool.query(`INSERT INTO ${prefix}_managed_agents
       (agent_id,tenant_id,kind,owner_user_id,status,revision,created_by,updated_by)
       VALUES ('agent-a','tenant-a','org_agent','admin','enabled',1,'admin','admin')`);

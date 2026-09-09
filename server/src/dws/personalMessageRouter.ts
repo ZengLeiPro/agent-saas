@@ -237,7 +237,6 @@ export class AgentDwsMessageRouter {
     this.scheduleKick();
     this.fastControl?.kick();
   }
-
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
@@ -248,7 +247,6 @@ export class AgentDwsMessageRouter {
     await Promise.allSettled([...this.active]);
     await this.fastControl?.stop();
   }
-
   async ingest(account: AgentDwsAccountRecord, event: DwsPersonalEvent): Promise<boolean> {
     if (!hasExactAgentDwsProfile(account)) {
       this.options.logger?.warn(
@@ -999,5 +997,4 @@ export class AgentDwsMessageRouter {
     return await resolveSharedGroupContext(this.options, account, item, requester, senderName);
   }
 }
-
 export { buildSystemContext } from './personalMessageRouterHelpers.js';

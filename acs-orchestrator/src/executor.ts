@@ -14,7 +14,11 @@ import type { SandboxManager, SandboxRef, SandboxResourceOverride } from './sand
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 import { sandboxResourceOverride } from './provision.js';
 import { MAX_BACKGROUND_SHELL_TIMEOUT_MS } from './backgroundShell.js';
-import { summarizeRunnerStderr } from './runnerLog.js';
+import { spawnOneShotRunner, readRunnerLines as readLines, parseRunnerLine, remoteUnknownResponse, isRemoteUnknown } from './runnerTransport.js';
+import { localProcessResult as waitForClose } from './localProcessSupervisor.js';
+import type { OwnedOperations } from './ownedOperations.js';
+import { executeOwnedInvocation } from './ownedInvocation.js';
+import { waitForOwned, OWNED_WAIT_BUDGETS } from './ownedWait.js';
 import {
   ACTIVE_INVOCATION_LEASE_MS,
   InvocationLeaseMonitor,
@@ -25,6 +29,8 @@ interface InvocationEntry {
   controller: AbortController;
   child?: ChildProcessWithoutNullStreams;
   sandboxName?: string;
+  leaseKey?: string;
+  unresolved?: boolean;
 }
 interface InvocationProtectionState {
   preserveInvocationLease: boolean;
@@ -40,6 +46,7 @@ interface InvocationProtectionState {
   };
 }
 interface AcsExecutorOptions {
+  ownedOperations?: OwnedOperations;
   persistentRunner?: boolean;
   terminateBackgroundTasks?: (ref: SandboxRef, taskIds: string[]) => Promise<void>;
   reconcileBackgroundTasks?: (ref: SandboxRef) => Promise<{ protectedUntil?: string; activeTaskIds: string[] }>;
@@ -69,18 +76,29 @@ export class AcsExecutor {
     private readonly options: AcsExecutorOptions = {},
   ) {}
 
-  async execute(request: WireToolInvocationRequest): Promise<ToolInvocationResponse> {
+  async execute(request: WireToolInvocationRequest, options: { signal?: AbortSignal } = {}): Promise<ToolInvocationResponse> {
     let final = null as ToolInvocationResponse | null;
-    for await (const chunk of this.executeStream(request, { stream: false })) {
+    for await (const chunk of this.executeStream(request, { stream: false, signal: options.signal })) {
       if (chunk.type === 'completed') final = chunk.response;
     }
     return final ?? { status: 'error', error: 'ACS sandbox runner ended without completed chunk' };
   }
 
-  async *executeStream(
+  async *executeStream(request: WireToolInvocationRequest, options: { stream: boolean; signal?: AbortSignal }): AsyncIterable<ToolInvocationStreamChunk> {
+    if (this.options.ownedOperations) {
+      yield* executeOwnedInvocation({ config: this.config, manager: this.sandboxManager, operations: this.options.ownedOperations, request, signal: options.signal,
+        execute: (operation) => this.executeStreamOwned(request, { ...options, signal: operation.controller.signal }) });
+    } else {
+      yield* this.executeStreamOwned(request, options);
+    }
+  }
+
+  private async *executeStreamOwned(
     request: WireToolInvocationRequest,
     options: { stream: boolean; signal?: AbortSignal },
   ): AsyncIterable<ToolInvocationStreamChunk> {
+    if (options.signal?.aborted) return;
+    const operation = this.options.ownedOperations?.current();
     const workspace = request.context.workspace;
     const resourceOverride = workspace.sandboxResources
       ? sandboxResourceOverride({ workspaceId: workspace.id!, resources: workspace.sandboxResources }, this.config)
@@ -102,7 +120,7 @@ export class AcsExecutor {
     const ownedBackgroundTaskId = backgroundShellRequested && typeof requestedTaskId === 'string' ? requestedTaskId : undefined;
     // 同一 invocationId 可因跨实例重试并发存在；每次执行必须使用独立 annotation key，
     // 否则旧实例 finally 清理会删除新实例刚续租的 lease。
-    const leaseKey = `${invocationKey}:${randomUUID()}`;
+    const leaseKey = operation?.record.attemptId ?? `${invocationKey}:${randomUUID()}`;
     if (this.invocations.has(invocationKey)) {
       yield {
         type: 'completed',
@@ -114,9 +132,10 @@ export class AcsExecutor {
     const onExternalAbort = () => controller.abort();
     options.signal?.addEventListener('abort', onExternalAbort, { once: true });
     if (options.signal?.aborted) controller.abort();
-    this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
+    this.invocations.set(invocationKey, { controller, sandboxName: ref.name, leaseKey });
     const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
     let leasePersisted = false;
+    let remoteDispatched = false;
     let sandboxUid: string | undefined;
     let leaseMonitor: InvocationLeaseMonitor | undefined;
     let recoveryOwnsLease = false;
@@ -131,10 +150,8 @@ export class AcsExecutor {
       controller.abort();
       this.invocations.get(invocationKey)?.child?.kill('SIGTERM');
       const persistent = this.persistentRunners.get(ref.name);
-      if (persistent) {
-        persistent.close('invocation_lease_lost');
-        this.persistentRunners.delete(ref.name);
-      }
+      persistent?.cancel(leaseKey);
+      operation?.markUncertain('lease_lost');
     };
     try {
       await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey, recordsUserActivity);
@@ -193,6 +210,7 @@ export class AcsExecutor {
         try {
           runner = await this.getPersistentRunner(ref);
         } catch (err) {
+          if (this.persistentRunners.get(ref.name)?.hasOwnedAttempts()) throw err;
           this.persistentRunnerBackoffUntil.set(ref.name, Date.now() + 5 * 60_000);
           this.logger.warn(`runner_daemon_fallback sandbox=${ref.name}: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -201,9 +219,11 @@ export class AcsExecutor {
         if (leaseMonitor.failure) throw leaseMonitor.failure;
         return;
       }
+      await operation?.dispatch(sandboxUid);
+      remoteDispatched = true;
       if (runner) {
         yield { type: 'progress', message: 'acs sandbox invocation accepted' };
-        for await (const output of runner.invoke(invocationKey, runnerInput, controller.signal)) {
+        for await (const output of runner.invoke(leaseKey, runnerInput, controller.signal)) {
           if (output.kind === 'chunk') {
             if (output.chunk.type === 'completed') {
               finalResponse = addRunnerMetadata(output.chunk.response, 'persistent');
@@ -232,6 +252,13 @@ export class AcsExecutor {
     } catch (err) {
       runError = err;
     } finally {
+      if (remoteDispatched && (!finalResponse || isRemoteUnknown(finalResponse) || leaseMonitor?.failure)) {
+        protectionState.preserveInvocationLease = true;
+        finalResponse = remoteUnknownResponse('remote_unconfirmed');
+        const entry = this.invocations.get(invocationKey);
+        if (entry) entry.unresolved = true;
+        await operation?.unknown('remote_unconfirmed').catch(() => undefined);
+      }
       if (leasePersisted && sandboxUid && backgroundShellRequested
         && !protectionState.backgroundMetadataObserved && !protectionState.recovery) {
         protectionState.preserveInvocationLease = true;
@@ -261,7 +288,10 @@ export class AcsExecutor {
       } else {
         // Stop heartbeats before the durable terminal transition so no in-flight
         // executing/background_pending renewal can overwrite completion_pending.
-        leaseFailure = await leaseMonitor?.finish();
+        if (leaseMonitor) {
+          leaseFailure = await waitForOwned(leaseMonitor.finish(), { phase: 'lease_monitor_finish', timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs })
+            .catch(() => { protectionState.preserveInvocationLease = true; operation?.markUncertain('lease_finish_unknown'); return new Error('lease monitor finalization is unresolved'); });
+        }
         if (shouldCompleteInvocation && sandboxUid && completedAt && !leaseFailure) {
           try {
             if (recordsUserActivity) {
@@ -296,8 +326,13 @@ export class AcsExecutor {
         this.logger.warn(`invocation_housekeeping_clear_failed sandbox=${ref.name} invocation=${invocationKey}: ${errorMessage(completionFenceError)}`);
         this.startHousekeepingLeaseClearRecovery(ref, leaseKey, invocationKey, sandboxUid);
       }
-      this.invocations.delete(invocationKey);
-      releaseActive?.();
+      if (!protectionState.preserveInvocationLease || !remoteDispatched) {
+        this.invocations.delete(invocationKey);
+        releaseActive?.();
+      } else {
+        const retained = this.invocations.get(invocationKey);
+        if (retained) retained.unresolved = true;
+      }
       if (leaseFailure) {
         finalResponse = {
           status: 'error',
@@ -314,11 +349,12 @@ export class AcsExecutor {
     if (!entry) return false;
     entry.controller.abort();
     entry.child?.kill('SIGTERM');
-    if (entry.sandboxName) this.persistentRunners.get(entry.sandboxName)?.cancel(invocationId);
+    if (entry.sandboxName) this.persistentRunners.get(entry.sandboxName)?.cancel(entry.leaseKey ?? invocationId);
     return true;
   }
   backgroundRecoveryCount(): number {
-    return this.backgroundProtectionRecoveries.size + this.invocationCompletionRecoveries.size;
+    return this.backgroundProtectionRecoveries.size + this.invocationCompletionRecoveries.size
+      + [...this.invocations.values()].filter((entry) => entry.unresolved).length;
   }
   busySandboxNames(): Set<string> {
     return new Set(
@@ -807,6 +843,7 @@ export class AcsExecutor {
     if (existing?.isHealthy()) return existing;
     const pending = this.persistentRunnerPromises.get(ref.name);
     if (pending) return await pending;
+    if (existing?.hasOwnedAttempts()) throw new Error('ACS runner still owns unresolved attempts; replacement is blocked');
     existing?.close('runner_replaced');
     this.persistentRunners.delete(ref.name);
     const connect = this.connectPersistentRunner(ref).finally(() => {
@@ -841,7 +878,7 @@ export class AcsExecutor {
   ): AsyncIterable<ToolInvocationStreamChunk> {
     const child = this.spawnRunner(ref, runnerInput, controller);
     const closePromise = waitForClose(child);
-    this.invocations.set(invocationKey, { controller, child, sandboxName: ref.name });
+    this.invocations.set(invocationKey, { ...this.invocations.get(invocationKey), controller, child, sandboxName: ref.name, leaseKey });
     yield { type: 'progress', message: 'acs sandbox invocation accepted' };
     // Protection persistence shares the parent invocation lease and task ownership state.
     let sawCompleted = false;
@@ -872,46 +909,13 @@ export class AcsExecutor {
     if (!sawCompleted) {
       yield {
         type: 'completed',
-        response: {
-          status: 'error',
-          error: `ACS sandbox runner exited without final response (code=${exit.exitCode ?? exit.signal ?? 'unknown'})`,
-        },
+        response: remoteUnknownResponse(`runner_no_final_${exit.exitCode ?? 'unknown'}`),
       };
     }
   }
 
   private spawnRunner(ref: SandboxRef, input: SandboxRunnerInput, controller: AbortController): ChildProcessWithoutNullStreams {
-    const args = [
-      'exec',
-      '-i',
-      ref.name,
-      '-c',
-      this.config.sandboxContainerName,
-      '--',
-      // 2026-08-10（A 方案批次 3）：优先跑镜像内预编译的单文件 ESM。
-      // pod 内实测 tsx 实时转译 480~730ms vs 预编译 68ms（快 7~9 倍），
-      // 这是每一次工具调用都要付的固定底噪。
-      //
-      // 用 sh -c 做运行期存在性判断而非直接指向 .mjs：蓝绿/回滚期间可能短暂
-      // 跑到不含该产物的旧镜像，此时静默退回 tsx 保持可用（宁可慢，不可不可用）。
-      // 镜像构建侧已对产物做 fail-fast 校验，正常路径不会走到 fallback。
-      '/bin/sh',
-      '-c',
-      'if [ -s /app/acs-orchestrator/dist/sandboxRunner.mjs ]; then '
-      + 'exec node /app/acs-orchestrator/dist/sandboxRunner.mjs; '
-      + 'else '
-      + 'exec /app/acs-orchestrator/node_modules/.bin/tsx /app/acs-orchestrator/src/sandboxRunner.ts; '
-      + 'fi',
-    ];
-    const child = this.kubectl.spawn(args, {
-      input: JSON.stringify(input),
-      signal: controller.signal,
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf-8').trim();
-      if (text) this.logger.warn(`kubectl_exec_stderr sandbox=${ref.name} ${summarizeRunnerStderr(text)}`);
-    });
-    return child;
+    return spawnOneShotRunner(this.config, this.kubectl, ref, input, controller, this.logger);
   }
 }
 
@@ -932,38 +936,6 @@ export function toolNameForSandboxRunner(toolName: string): string {
       return 'run_shell';
     default:
       return toolName;
-  }
-}
-
-async function* readLines(child: ChildProcessWithoutNullStreams): AsyncIterable<string> {
-  let buffer = '';
-  for await (const chunk of child.stdout) {
-    buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk);
-    const parts = buffer.split(/\r?\n/);
-    buffer = parts.pop() ?? '';
-    for (const part of parts) {
-      if (part.trim()) yield part;
-    }
-  }
-  if (buffer.trim()) yield buffer;
-}
-
-async function waitForClose(child: ChildProcessWithoutNullStreams): Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }> {
-  return await new Promise((resolve) => {
-    child.on('close', (exitCode, signal) => resolve({ exitCode, signal }));
-  });
-}
-
-function parseRunnerLine(line: string): SandboxRunnerOutput | SandboxRunnerFinalOutput | null {
-  try {
-    const parsed = JSON.parse(line) as SandboxRunnerOutput | SandboxRunnerFinalOutput;
-    if (parsed && typeof parsed === 'object' && (parsed.kind === 'chunk' || parsed.kind === 'final')) return parsed;
-    return null;
-  } catch {
-    return {
-      kind: 'chunk',
-      chunk: { type: 'output', channel: 'stdout', content: `${line}\n` },
-    };
   }
 }
 

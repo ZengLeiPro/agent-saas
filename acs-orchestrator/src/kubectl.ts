@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { localProcessResult } from './localProcessSupervisor.js';
 
 import type { AcsOrchestratorConfig } from './config.js';
 
@@ -12,52 +13,35 @@ export interface KubectlResult {
 }
 
 export class Kubectl {
+  private ownershipObserver?: (reason: string) => void;
   constructor(private readonly config: AcsOrchestratorConfig) {}
+  setOwnershipObserver(observer: (reason: string) => void): void { this.ownershipObserver = observer; }
 
   async run(args: string[], options: { input?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<KubectlResult> {
-    if (options.signal?.aborted) {
-      return { stdout: '', stderr: 'kubectl request aborted before spawn', exitCode: -1, signal: null, remoteState: 'not_started' };
+    if (options.signal?.aborted) return { stdout: '', stderr: 'kubectl request aborted before spawn', exitCode: -1, signal: null, remoteState: 'not_started' };
+    const observer = this.ownershipObserver;
+    let child;
+    try {
+      child = spawn(this.config.kubectlPath, this.baseArgs(args), { stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
+    } catch {
+      return { stdout: '', stderr: 'kubectl spawn failed', exitCode: -1, signal: null, remoteState: 'not_started' };
     }
-    return await new Promise<KubectlResult>((resolve) => {
-      const fullArgs = this.baseArgs(args);
-      const child = spawn(this.config.kubectlPath, fullArgs, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: process.env,
-      });
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (!settled) child.kill('SIGTERM');
-      }, options.timeoutMs ?? this.config.execTimeoutMs);
-      timer.unref?.();
-      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf-8'); });
-      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf-8'); });
-      child.on('error', (err) => {
-        settled = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr: stderr + `\n${err.message}`, exitCode: -1, signal: null });
-      });
-      child.on('close', (exitCode, signal) => {
-        settled = true;
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode, signal });
-      });
-      if (options.input !== undefined) child.stdin?.end(options.input);
-      else child.stdin?.end();
-    });
+    const task = localProcessResult(child, { signal: options.signal, timeoutMs: options.timeoutMs ?? this.config.execTimeoutMs });
+    child.stdin.end(options.input);
+    const result = await task;
+    if (result.remoteState === 'unknown') observer?.(result.reason ?? 'transport_unknown');
+    return result;
   }
 
-  spawn(args: string[], options: { input?: string; signal?: AbortSignal } = {}) {
+  spawn(args: string[], options: { input?: string; signal?: AbortSignal; timeoutMs?: number } = {}) {
     options.signal?.throwIfAborted();
-    const child = spawn(this.config.kubectlPath, this.baseArgs(args), {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
-    });
-    const onAbort = () => child.kill('SIGTERM');
-    options.signal?.addEventListener('abort', onAbort, { once: true });
-    child.on('close', () => options.signal?.removeEventListener('abort', onAbort));
-    if (options.input !== undefined) child.stdin?.end(options.input);
+    const observer = this.ownershipObserver;
+    const child = spawn(this.config.kubectlPath, this.baseArgs(args), { stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
+    const task = localProcessResult(child, { signal: options.signal, timeoutMs: options.timeoutMs, collectOutput: false });
+    void task.then((result) => {
+      if (result.remoteState === 'unknown') observer?.(result.reason ?? 'transport_unknown');
+    }).catch(() => observer?.('transport_observer_failed'));
+    if (options.input !== undefined) child.stdin.end(options.input);
     return child;
   }
 

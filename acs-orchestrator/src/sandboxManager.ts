@@ -1,5 +1,7 @@
 import { chmod, chown, mkdir, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { SandboxOwnershipReaders } from './sandboxOwnershipReaders.js';
+import { sandboxImageRef } from './sandboxImageRef.js';
 import { CapacityReservations } from './capacityReservations.js';
 import { summarizeSandboxCapacity } from './sandboxCapacity.js';
 import type { AcsOrchestratorConfig } from './config.js';
@@ -112,6 +114,8 @@ interface EnsureRunningOptions {
   busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string; recordActivity?: boolean;
 }
 export class SandboxManager {
+  private ownership?: SandboxOwnershipReaders;
+  setOwnershipReaders(readers: SandboxOwnershipReaders): void { this.ownership = readers; }
   private readonly networkPolicyManager: AcsNetworkPolicyManager;
   readonly snatManager: SnatManager;
   private readonly prewarmInFlight = new Map<string, Promise<void>>();
@@ -180,6 +184,7 @@ export class SandboxManager {
   ): Promise<SandboxRef> {
     const ref = this.ref(input);
     while (true) {
+      await this.ownership?.assertWritable(ref);
       const deleting = this.deleteInFlight.get(ref.name);
       if (deleting) {
         this.logger.info(`sandbox_ensure_wait_delete name=${ref.name}`);
@@ -406,7 +411,8 @@ export class SandboxManager {
   }
 
   async listManagedSandboxes(): Promise<ManagedSandbox[]> {
-    return await readManagedSandboxes(this.config, this.kubectl, this.kubeApi);
+    const inventory = await readManagedSandboxes(this.config, this.kubectl, this.kubeApi);
+    return this.ownership ? await this.ownership.project(inventory) : inventory;
   }
 
   async listSandboxInventory(input: {
@@ -615,6 +621,7 @@ export class SandboxManager {
   }
   async archiveWorkspace(workspaceId: string, reason: string): Promise<{ workspaceId: string; archived: boolean; missing?: boolean; archiveId?: string; archivePath?: string }> {
     const id = validateWorkspaceId(workspaceId);
+    await this.ownership?.assertArchive(id);
     if (!this.config.hostWorkspaceRoot) {
       return { workspaceId: id, archived: false, missing: false };
     }
@@ -1112,6 +1119,7 @@ export class SandboxManager {
     activeKey?: string; busySandboxNames?: Set<string>; expectedPreconditions?: SandboxDeletionPreconditions;
     ensureMutationToken?: symbol;
   } = {}): Promise<SandboxDeletionPreconditions | undefined> {
+    await this.ownership?.assertMutation(name);
     try {
       const gate = await readSandboxMutationGate({
         name, config: this.config, getStatus: () => this.getStatus(name),
@@ -1135,18 +1143,6 @@ export class SandboxManager {
     return `${this.config.sandboxKind.toLowerCase()}/${name}`;
   }
 
-  private existingImage(status: SandboxStatus): string | undefined {
-    const raw = status.raw ?? {};
-    const spec = raw.spec && typeof raw.spec === 'object' ? raw.spec as Record<string, unknown> : {};
-    const template = spec.template && typeof spec.template === 'object' ? spec.template as Record<string, unknown> : {};
-    const podSpec = template.spec && typeof template.spec === 'object' ? template.spec as Record<string, unknown> : {};
-    const containers = Array.isArray(podSpec.containers) ? podSpec.containers : [];
-    const container = containers.find((item): item is Record<string, unknown> => (
-      Boolean(item)
-      && typeof item === 'object'
-      && (!('name' in item) || item.name === this.config.sandboxContainerName)
-    ));
-    return container ? stringValue(container.image) : undefined;
-  }
+  private existingImage(status: SandboxStatus): string | undefined { return sandboxImageRef(status, this.config.sandboxContainerName); }
 
 }

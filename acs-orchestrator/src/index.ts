@@ -11,9 +11,9 @@ import {
   releaseIdentityHealth,
   runtimeConfigSnapshot,
 } from './config.js';
-import { AcsExecutor } from './executor.js';
-import { Kubectl } from './kubectl.js';
-import { KubeApi } from './kubeApi.js';
+import { createOwnedExecutionRuntime } from './ownedExecutionRuntime.js';
+import { handleOperationDiagnostics } from './operationDiagnostics.js';
+import { withDisconnectedWaiter } from './httpOwnedWaiter.js';
 import {
   MAX_BODY_BYTES,
   buildToolsResponse,
@@ -21,13 +21,11 @@ import {
   parseWarmupRequest,
   parseWireRequest,
 } from './protocol.js';
-import { Provisioner, sandboxResourceOverride } from './provision.js';
+import { sandboxResourceOverride } from './provision.js';
 import {
   SandboxCapacityError,
-  SandboxManager,
   brokenSandboxStateReason,
 } from './sandboxManager.js';
-import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { SnatSharedCidrCoverageError } from './snatManager.js';
 import { SnatOperations } from './snatOperations.js';
 import {
@@ -51,18 +49,7 @@ const logger = {
   error: (msg: string) => console.error(`[acs-orchestrator] ${msg}`),
 };
 
-const kubectl = new Kubectl(config);
-const kubeApi = KubeApi.tryCreate(config, logger);
-const activeRegistry = new ActiveSandboxRegistry();
-const sandboxManager = new SandboxManager(config, kubectl, logger, activeRegistry, kubeApi);
-const executor = new AcsExecutor(config, kubectl, sandboxManager, logger, activeRegistry);
-const provisioner = new Provisioner(
-  config,
-  kubectl,
-  sandboxManager,
-  () => executor.busySandboxNames(),
-  activeRegistry,
-);
+const { kubectl, kubeApi, activeRegistry, sandboxManager, executor, provisioner, ownershipJournal, ownedOperations } = createOwnedExecutionRuntime(config, logger);
 const alerts = new AlertDispatcher(config, logger);
 const emitAlert = (input: AcsAlert) => alerts.emit(input);
 let lifecycleController: SandboxLifecycleController;
@@ -72,7 +59,7 @@ const STREAM_HEARTBEAT_MS = 25_000;
 // 报告 draining + inflight 供 CI 脚本轮询。SIGTERM 沿用原短路径 (5s 硬退)。
 let inflightRequests = 0;
 let draining = false;
-const effectiveInflightRequests = () => inflightRequests + executor.backgroundRecoveryCount();
+const effectiveInflightRequests = () => inflightRequests + executor.backgroundRecoveryCount() + ownedOperations.drainBlockers();
 async function withInflight<T>(fn: () => Promise<T>): Promise<T> {
   inflightRequests++;
   try {
@@ -106,6 +93,10 @@ lifecycleController = new SandboxLifecycleController(
   () => snatOperations.isMaintenanceActive(),
 );
 const server = createServer((req, res) => {
+  if (handleOperationDiagnostics(req, res, { operations: ownedOperations, journal: ownershipJournal,
+    authorize: (request, response) => { if (authorize(request)) return true; sendJson(response, 401, { status: 'error', error: 'unauthorized' }); return false; },
+    counts: () => ({ requests: inflightRequests, recovery: executor.backgroundRecoveryCount(), draining }),
+  })) return;
   if (req.method === 'GET' && req.url === '/health') {
     void handleHealth(res);
     return;
@@ -687,7 +678,7 @@ async function handleProvision(req: IncomingMessage, res: ServerResponse): Promi
   const parsed = parseProvisionRecipe(body.value);
   if (!parsed.ok) return sendJson(res, 400, { status: 'error', error: parsed.error });
   try {
-    const result = await provisioner.provision(parsed.value);
+    const result = await withDisconnectedWaiter(res, (signal) => provisioner.provision(parsed.value, { signal }));
     return sendJson(res, 200, {
       status: result.status,
       ...(result.error ? { error: result.error } : {}),

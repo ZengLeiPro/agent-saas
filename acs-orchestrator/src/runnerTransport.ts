@@ -53,7 +53,7 @@ export function spawnOneShotRunner(
       + 'exec node /app/acs-orchestrator/dist/sandboxRunner.mjs; '
       + 'else exec /app/acs-orchestrator/node_modules/.bin/tsx /app/acs-orchestrator/src/sandboxRunner.ts; fi',
   ];
-  const child = kubectl.spawn(args, { input: JSON.stringify(input), signal: controller.signal });
+  const child = kubectl.spawn(args, { input: JSON.stringify(input), signal: controller.signal, timeoutMs: invocationTransportBudget(input) });
   void localProcessResult(child, { signal: controller.signal, timeoutMs: invocationTransportBudget(input), collectOutput: false });
   child.stderr.on('data', (chunk: Buffer) => {
     const text = chunk.toString('utf8').trim();

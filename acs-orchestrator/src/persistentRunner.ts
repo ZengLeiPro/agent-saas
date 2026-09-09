@@ -1,4 +1,9 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
+import { PendingRunnerInvocation } from './pendingRunnerInvocation.js';
+import { localProcessResult } from './localProcessSupervisor.js';
+import { invocationTransportBudget } from './runnerTransport.js';
+import { OWNED_WAIT_BUDGETS } from './ownedWait.js';
 
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
@@ -16,11 +21,6 @@ const HEARTBEAT_STALE_MS = 40_000;
 
 type RunnerOutput = SandboxRunnerOutput | SandboxRunnerFinalOutput;
 
-interface PendingInvocation {
-  queue: RunnerOutput[];
-  waiters: Array<() => void>;
-  done: boolean;
-}
 
 export class PersistentSandboxRunner {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -31,18 +31,23 @@ export class PersistentSandboxRunner {
   private readyResolve?: () => void;
   private readyReject?: (error: Error) => void;
   private readonly readyPromise: Promise<void>;
-  private readonly pending = new Map<string, PendingInvocation>();
+  private readonly pending = new Map<string, PendingRunnerInvocation>();
+  private readonly decoder = new StringDecoder('utf8');
+  private readonly transportController = new AbortController();
+  private watchdog?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly config: AcsOrchestratorConfig,
     private readonly kubectl: Kubectl,
     readonly ref: SandboxRef,
     private readonly logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void },
+    private readonly hooks: { unresolved?(key: string): void; lateTerminal?(key: string, output: RunnerOutput): void } = {},
   ) {
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.readyResolve = resolve;
       this.readyReject = reject;
     });
+    void this.readyPromise.catch(() => undefined);
   }
 
   async start(): Promise<void> {
@@ -68,50 +73,49 @@ export class PersistentSandboxRunner {
     return this.ready
       && !this.closed
       && Boolean(this.child)
-      && (this.pending.size > 0 || now - this.lastHeartbeatAt <= HEARTBEAT_STALE_MS);
+      && now - this.lastHeartbeatAt <= HEARTBEAT_STALE_MS;
   }
 
-  async *invoke(
-    invocationKey: string,
-    input: SandboxRunnerInput,
-    signal: AbortSignal,
-  ): AsyncIterable<RunnerOutput> {
-    // A request cancelled before admission must not start even the shared daemon.
+  hasOwnedAttempts(): boolean { return [...this.pending.values()].some((pending) => pending.retained); }
+
+  async *invoke(invocationKey: string, input: SandboxRunnerInput, signal: AbortSignal): AsyncIterable<RunnerOutput> {
     if (signal.aborted) return;
     await this.start();
     if (!this.isHealthy()) throw new Error('ACS persistent runner is not healthy');
-    if (this.pending.has(invocationKey)) throw new Error(`runner invocation already active: ${invocationKey}`);
-    const pending: PendingInvocation = { queue: [], waiters: [], done: false };
+    if (this.pending.has(invocationKey)) throw new Error(`runner invocation already owned: ${invocationKey}`);
+    if (this.pending.size >= 128) throw new Error('ACS persistent runner ownership capacity exhausted');
+    const pending = new PendingRunnerInvocation(
+      () => { this.write({ kind: 'cancel', invocationKey }); },
+      (output) => this.hooks.lateTerminal?.(invocationKey, output),
+      () => this.hooks.unresolved?.(invocationKey),
+    );
     this.pending.set(invocationKey, pending);
-    const cancel = () => this.write({ kind: 'cancel', invocationKey });
+    const cancel = () => pending.cancel();
     signal.addEventListener('abort', cancel, { once: true });
     try {
       if (signal.aborted) return;
-      this.write({ kind: 'invoke', invocationKey, input });
-      while (!pending.done || pending.queue.length > 0) {
-        const output = pending.queue.shift();
-        if (output) {
-          yield output;
-          continue;
-        }
-        await new Promise<void>((resolve) => pending.waiters.push(resolve));
+      pending.start(invocationTransportBudget(input));
+      if (!this.write({ kind: 'invoke', invocationKey, input })) pending.unresolved('runner_write_failed');
+      for (;;) {
+        const next = await pending.next();
+        if (next.done) break;
+        yield next.value;
       }
     } finally {
       signal.removeEventListener('abort', cancel);
-      if (!pending.done) cancel();
-      this.pending.delete(invocationKey);
+      pending.detach();
+      if (!pending.retained && this.pending.get(invocationKey) === pending) this.pending.delete(invocationKey);
     }
   }
 
-  cancel(invocationKey: string): void {
-    if (this.pending.has(invocationKey)) this.write({ kind: 'cancel', invocationKey });
-  }
+  cancel(invocationKey: string): void { this.pending.get(invocationKey)?.cancel(); }
 
   close(reason = 'runner_closed'): void {
     if (this.closed) return;
     this.closed = true;
     this.readyReject?.(new Error(reason));
-    this.child?.kill('SIGTERM');
+    this.transportController.abort();
+    if (this.watchdog) clearInterval(this.watchdog);
     this.failPending(reason);
   }
 
@@ -123,8 +127,17 @@ export class PersistentSandboxRunner {
       + 'fi';
     const child = this.kubectl.spawn([
       'exec', '-i', this.ref.name, '-c', this.config.sandboxContainerName, '--', '/bin/sh', '-c', script,
-    ]);
+    ], { signal: this.transportController.signal });
     this.child = child;
+    void localProcessResult(child, { signal: this.transportController.signal, collectOutput: false }).then((result) => {
+      if (result.remoteState === 'unknown') this.onClose('runner_transport_unknown');
+    });
+    this.watchdog = setInterval(() => {
+      if (this.ready && Date.now() - this.lastHeartbeatAt > HEARTBEAT_STALE_MS) {
+        for (const pending of this.pending.values()) pending.unresolved('control_heartbeat_stale');
+      }
+    }, OWNED_WAIT_BUDGETS.heartbeatTickMs);
+    this.watchdog.unref?.();
     child.stdout.on('data', (chunk: Buffer) => this.onStdout(chunk));
     child.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString('utf-8').trim();
@@ -137,7 +150,11 @@ export class PersistentSandboxRunner {
   }
 
   private onStdout(chunk: Buffer): void {
-    this.stdoutBuffer += chunk.toString('utf-8');
+    this.stdoutBuffer += this.decoder.write(chunk);
+    if (Buffer.byteLength(this.stdoutBuffer) > 2 * 1024 * 1024) {
+      this.onClose('runner_frame_budget_exceeded');
+      return;
+    }
     const lines = this.stdoutBuffer.split(/\r?\n/);
     this.stdoutBuffer = lines.pop() ?? '';
     for (const line of lines) {
@@ -167,38 +184,30 @@ export class PersistentSandboxRunner {
         continue;
       }
       if (response.kind !== 'invocation_output') continue;
-      this.lastHeartbeatAt = Date.now();
       const pending = this.pending.get(response.invocationKey);
       if (!pending) continue;
-      pending.queue.push(response.output);
-      if (isTerminalOutput(response.output)) pending.done = true;
-      for (const wake of pending.waiters.splice(0)) wake();
+      pending.accept(response.output);
+      if (pending.remoteDone && this.pending.get(response.invocationKey) === pending) this.pending.delete(response.invocationKey);
     }
   }
 
   private onClose(reason: string): void {
     if (this.closed) return;
     this.closed = true;
+    if (this.watchdog) clearInterval(this.watchdog);
     this.readyReject?.(new Error(reason));
     this.failPending(reason);
   }
 
   private failPending(reason: string): void {
-    for (const pending of this.pending.values()) {
-      if (!pending.done) {
-        pending.queue.push({ kind: 'final', response: { status: 'error', error: `ACS persistent runner disconnected: ${reason}` } });
-        pending.done = true;
-      }
-      for (const wake of pending.waiters.splice(0)) wake();
-    }
+    for (const pending of this.pending.values()) pending.unresolved(reason.replace(/[^a-z0-9_]/gi, '_').slice(0, 80));
   }
 
-  private write(request: RunnerDaemonRequest): void {
-    if (!this.child?.stdin.writable || this.closed) return;
-    this.child.stdin.write(`${JSON.stringify(request)}\n`);
+  private write(request: RunnerDaemonRequest): boolean {
+    if (!this.child?.stdin.writable || this.closed) return false;
+    try {
+      this.child.stdin.write(`${JSON.stringify(request)}\n`);
+      return true;
+    } catch { return false; }
   }
-}
-
-function isTerminalOutput(output: RunnerOutput): boolean {
-  return output.kind === 'final' || (output.kind === 'chunk' && output.chunk.type === 'completed');
 }

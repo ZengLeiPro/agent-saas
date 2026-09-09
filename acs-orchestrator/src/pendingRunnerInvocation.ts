@@ -31,6 +31,7 @@ export class PendingRunnerInvocation {
   get retained(): boolean { return this.dispatched && !this.remoteDone; }
 
   accept(output: Output): void {
+    if (this.remoteDone) return;
     const response = output.kind === 'final' ? output.response
       : output.chunk.type === 'completed' ? output.chunk.response : undefined;
     if (response && !isRemoteUnknown(response)) {

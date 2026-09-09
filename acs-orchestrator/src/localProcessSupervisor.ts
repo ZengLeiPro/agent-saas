@@ -126,6 +126,7 @@ export function superviseLocalProcess(
     child.stdout.on('error', () => terminate('stdio_timeout'));
     child.stderr.on('error', () => terminate('stdio_timeout'));
     child.on('exit', (code, value) => {
+      if (settled) return;
       exited = true;
       exitCode = code;
       exitSignal = value;

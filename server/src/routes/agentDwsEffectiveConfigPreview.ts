@@ -119,7 +119,7 @@ export function buildAgentDwsEffectiveConfigPreview(
     ? (effective.capabilities.dwsResourceIds?.length ?? 0)
     : 0;
   const previewEffective: AgentDwsConfigPreview['effective'] = {
-    label: '当前可执行最终值',
+    label: '当前生效范围',
     status: available ? 'available' : 'unavailable',
     unavailableReasons,
     instructionsConfigured: Boolean(effective.instructions?.system?.trim()),

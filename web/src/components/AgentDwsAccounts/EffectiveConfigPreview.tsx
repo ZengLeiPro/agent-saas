@@ -28,7 +28,7 @@ export function EffectiveConfigPreview({ preview }: { preview?: AgentDwsConfigPr
         <div className="flex items-center justify-between gap-2">
           <h5 className="text-xs font-medium">{preview.effective.label}</h5>
           <Badge variant={preview.effective.status === 'available' ? 'success' : 'warning'}>
-            {preview.effective.status === 'available' ? '可执行' : '不可执行'}
+            {preview.effective.status === 'available' ? '前台可用' : '不可执行'}
           </Badge>
         </div>
         <div className="mt-1 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
@@ -38,7 +38,11 @@ export function EffectiveConfigPreview({ preview }: { preview?: AgentDwsConfigPr
             {preview.effective.frontdesk.sourceCount} 个
           </p>
           <p>
-            Worker：技能 {preview.effective.worker.skillCount} 项、知识源{' '}
+            Worker（
+            {preview.effective.worker.status === 'task_compile_required'
+              ? '任务创建时确认'
+              : '当前不可用'}
+            ）：技能 {preview.effective.worker.skillCount} 项、知识源{' '}
             {preview.effective.worker.sourceCount} 个、钉钉资源{' '}
             {preview.effective.worker.dwsResourceCount} 个
           </p>

@@ -138,7 +138,10 @@ export function createFastControlToolContext(input: {
 export async function executeFastControl(input: {
   runtime: Pick<BackgroundTaskRuntime, 'get' | 'cancel' | 'controlWorkOrder'>;
   context: ToolCallContext;
-  request: OrgAgentFastControl & { taskId: string };
+  request: OrgAgentFastControl & {
+    taskId: string;
+    durableResult?: import('../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
+  };
 }): Promise<string> {
   const existing = await input.runtime.get(input.context, input.request.taskId);
   if (!existing) throw new Error('任务不存在，或不属于当前群与话题');
@@ -148,12 +151,19 @@ export async function executeFastControl(input: {
     const cancelled = await input.runtime.cancel(input.context, input.request.taskId);
     return `任务 ${input.request.taskId} 已取消（${cancelled.status}）`;
   }
+  const expectedState = input.request.action === 'pause' ? 'paused' : 'queued';
+  const responseText = `任务 ${input.request.taskId} 已${actionLabel(input.request.action)}，当前状态：${expectedState}`;
   const result = await input.runtime.controlWorkOrder(input.context, {
     taskId: input.request.taskId,
     action: input.request.action,
     ...(input.request.text ? { text: input.request.text } : {}),
+    ...(input.request.durableResult
+      ? { durableResult: { ...input.request.durableResult, responseText } }
+      : {}),
   });
-  return `任务 ${result.workOrder.shortId} 已${actionLabel(input.request.action)}，当前状态：${result.workOrder.state}`;
+  return input.request.durableResult
+    ? responseText
+    : `任务 ${result.workOrder.shortId} 已${actionLabel(input.request.action)}，当前状态：${result.workOrder.state}`;
 }
 
 function actionLabel(action: Exclude<OrgAgentFastControl['action'], 'status' | 'cancel'>): string {
@@ -339,6 +349,7 @@ export class OrgAgentFastControlPump {
       shared,
     });
     let response = item.responseText;
+    let responsePersistedWithMutation = false;
     if (response === undefined) {
       const contextualTask = request.taskId ? undefined : shared.visibleWorkOrders[0];
       if (!request.taskId && shared.visibleWorkOrders.length !== 1) {
@@ -347,6 +358,12 @@ export class OrgAgentFastControlPump {
         const resolvedRequest = {
           ...request,
           taskId: request.taskId ?? contextualTask!.shortId.toUpperCase(),
+          durableResult: {
+            inboxId: item.inboxId,
+            leaseOwner: owner,
+            leaseFence: item.leaseFence,
+            responseText: '',
+          },
         };
         try {
           response = await executeFastControl({
@@ -354,16 +371,18 @@ export class OrgAgentFastControlPump {
             context,
             request: resolvedRequest,
           });
+          responsePersistedWithMutation = !['status', 'cancel'].includes(request.action);
         } catch (error) {
           response = `未能执行 ${resolvedRequest.taskId} 的控制操作：${compactError(error)}`;
         }
       }
-      await this.options.messageStore.saveDispatchResult(
-        item.inboxId,
-        owner,
-        item.leaseFence,
-        response,
-      );
+      if (!responsePersistedWithMutation)
+        await this.options.messageStore.saveDispatchResult(
+          item.inboxId,
+          owner,
+          item.leaseFence,
+          response,
+        );
     }
     await this.options.messageStore.markReplyAttemptStarted(item.inboxId, owner, item.leaseFence);
     const delivery = await this.options.visibleReply.send(

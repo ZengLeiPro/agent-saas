@@ -105,7 +105,7 @@ const workspace = {
             summaries: ['已保存技能 1 项', '完成后回复原会话'] },
         ],
         effective: {
-          label: '当前可执行最终值', status: 'available', unavailableReasons: [],
+          label: '当前生效范围', status: 'available', unavailableReasons: [],
           instructionsConfigured: true, contextEnabled: true,
           frontdesk: { status: 'available', skillCount: 1, toolCount: 1, sourceCount: 1 },
           worker: { status: 'task_compile_required', skillCount: 1, sourceCount: 1,
@@ -216,9 +216,13 @@ describe('GroupAgentWorkspacePanel', () => {
     expect(screen.getByText('当前发布值')).toBeTruthy();
     expect(screen.getByText('渠道上限')).toBeTruthy();
     expect(screen.getByText('会话已保存值')).toBeTruthy();
-    expect(screen.getByText('当前可执行最终值')).toBeTruthy();
+    expect(screen.getByText('当前生效范围')).toBeTruthy();
+    expect(screen.getByText('前台可用')).toBeTruthy();
+    expect(screen.getByText(/Worker（任务创建时确认）/)).toBeTruthy();
     expect(screen.getByText(/前台：技能 1 项、工具 1 项、知识源 1 个/)).toBeTruthy();
-    expect(screen.getByText(/Worker：技能 1 项、知识源 1 个、钉钉资源 0 个/)).toBeTruthy();
+    expect(screen.getByText(
+      /Worker（任务创建时确认）：技能 1 项、知识源 1 个、钉钉资源 0 个/,
+    )).toBeTruthy();
     expect(screen.getByText(/范围说明：会话使用的技能少于当前发布值/)).toBeTruthy();
     expect(screen.getByText(/不表示未填写项会自动恢复继承/)).toBeTruthy();
     expect(screen.queryByText(/"published"/)).toBeNull();

@@ -50,7 +50,7 @@ describe('Agent DWS effective config preview', () => {
       '会话已保存值',
     ]);
     expect(preview.effective).toMatchObject({
-      label: '当前可执行最终值',
+        label: '当前生效范围',
       status: 'available',
       instructionsConfigured: true,
       contextEnabled: true,

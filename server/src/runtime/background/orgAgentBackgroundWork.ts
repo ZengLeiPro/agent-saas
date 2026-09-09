@@ -567,6 +567,7 @@ export class OrgAgentBackgroundWorkCoordinator {
       allowPendingArtifacts?: boolean;
       control?: OrgAgentWorkOrderControl;
       supersedePendingCompletion?: boolean;
+      inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
     } = {},
   ): Promise<RunRecord> {
     const store = this.config.orgGroupAgentStore;
@@ -674,6 +675,7 @@ export class OrgAgentBackgroundWorkCoordinator {
       tenantId, workOrderId, expectedVersion,
       ...(options.control ? { control: options.control } : {}),
       ...(options.supersedePendingCompletion ? { supersedePendingCompletion: true } : {}),
+      ...(options.inboxReceipt ? { inboxReceipt: options.inboxReceipt } : {}),
     });
     try {
       await catalog.upsert(
@@ -776,6 +778,7 @@ export class OrgAgentBackgroundWorkCoordinator {
     tenantId: string,
     workOrderId: string,
     expectedVersion: number,
+    inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt,
   ): Promise<RunRecord | null> {
     const store = this.config.orgGroupAgentStore;
     const runStore = this.config.runStore;
@@ -835,7 +838,9 @@ export class OrgAgentBackgroundWorkCoordinator {
       runtimeRunController.abort(task.runId);
       await resolveSessionCatalog(this.config).markStatus(task.sessionId, 'error').catch(() => undefined);
     }
-    await store.pauseWorkOrder({ tenantId, workOrderId, expectedVersion });
+    await store.pauseWorkOrder({
+      tenantId, workOrderId, expectedVersion, ...(inboxReceipt ? { inboxReceipt } : {}),
+    });
     return task;
   }
 

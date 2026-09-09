@@ -73,7 +73,7 @@ export interface AgentDwsConfigPreviewLayer {
 }
 
 export interface AgentDwsConfigPreviewEffective {
-  label: "当前可执行最终值";
+  label: "当前生效范围";
   status: "available" | "unavailable";
   unavailableReasons: string[];
   instructionsConfigured: boolean;

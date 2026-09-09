@@ -203,6 +203,13 @@ export interface OrgAgentWorkOrderControl {
   workerType: 'general' | 'explore';
 }
 
+export interface OrgAgentControlInboxReceipt {
+  inboxId: string;
+  leaseOwner: string;
+  leaseFence: number;
+  responseText: string;
+}
+
 export interface OrgAgentWorkAttempt {
   attemptId: string;
   tenantId: string;
@@ -450,6 +457,7 @@ export interface OrgGroupAgentStore {
     tenantId: string;
     workOrderId: string;
     expectedVersion: number;
+    inboxReceipt?: OrgAgentControlInboxReceipt;
   }): Promise<OrgAgentWorkOrder>;
   queueWorkOrderAttempt(input: {
     tenantId: string;
@@ -457,6 +465,7 @@ export interface OrgGroupAgentStore {
     expectedVersion: number;
     control?: OrgAgentWorkOrderControl;
     supersedePendingCompletion?: boolean;
+    inboxReceipt?: OrgAgentControlInboxReceipt;
   }): Promise<OrgAgentWorkOrder>;
   reopenWorkOrder(input: {
     tenantId: string;

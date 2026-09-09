@@ -792,8 +792,11 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     tenantId: string;
     workOrderId: string;
     expectedVersion: number;
+    inboxReceipt?: import('./types.js').OrgAgentControlInboxReceipt;
   }): Promise<OrgAgentWorkOrder> {
-    return await pauseStoredWorkOrder(this.pool, this.workOrdersTable, this.attemptsTable, input);
+    return await pauseStoredWorkOrder(
+      this.pool, this.workOrdersTable, this.attemptsTable, this.inboxTable, input,
+    );
   }
 
   async queueWorkOrderAttempt(input: {
@@ -802,9 +805,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     expectedVersion: number;
     control?: OrgAgentWorkOrderControl;
     supersedePendingCompletion?: boolean;
+    inboxReceipt?: import('./types.js').OrgAgentControlInboxReceipt;
   }): Promise<OrgAgentWorkOrder> {
     return await queueStoredWorkOrderAttempt(
-      this.pool, this.workOrdersTable, this.deliveriesTable, input,
+      this.pool, this.workOrdersTable, this.deliveriesTable, this.inboxTable, input,
     );
   }
 

@@ -20,12 +20,16 @@ export async function controlOrgAgentWorkOrder(
     throw new Error('ORG_AGENT_WORK_ORDER_NOT_FOUND');
   let work = await authorizeOrgAgentWorkOrderMutation(config, context, metadata.workOrderId);
   if (request.action === 'pause') {
-    const pausedTask = await orgWork.pause(work.tenantId, work.workOrderId, work.version);
+    const pausedTask = await orgWork.pause(
+      work.tenantId, work.workOrderId, work.version, request.durableResult,
+    );
     work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
     return { task: pausedTask, workOrder: work };
   }
   if (request.action === 'resume') {
-    const resumed = await orgWork.retry(work.tenantId, work.workOrderId, work.version);
+    const resumed = await orgWork.retry(work.tenantId, work.workOrderId, work.version, {
+      ...(request.durableResult ? { inboxReceipt: request.durableResult } : {}),
+    });
     work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
     return { task: resumed, workOrder: work };
   }
@@ -63,6 +67,7 @@ export async function controlOrgAgentWorkOrder(
     allowPendingArtifacts: true,
     control: nextControl,
     supersedePendingCompletion: true,
+    ...(request.durableResult ? { inboxReceipt: request.durableResult } : {}),
   });
   work = (await config.orgGroupAgentStore!.getWorkOrder(work.tenantId, work.workOrderId))!;
   return { task: resumed, workOrder: work };

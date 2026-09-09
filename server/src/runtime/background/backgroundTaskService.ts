@@ -741,8 +741,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     return await this.orgWork.cancel(tenantId, workOrderId, expectedVersion);
   }
 
-  async pauseWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord | null> {
-    return await this.orgWork.pause(tenantId, workOrderId, expectedVersion);
+  async pauseWorkOrder(
+    tenantId: string, workOrderId: string, expectedVersion: number,
+    inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt,
+  ): Promise<RunRecord | null> {
+    return await this.orgWork.pause(tenantId, workOrderId, expectedVersion, inboxReceipt);
   }
 
   async retryWorkOrder(
@@ -753,6 +756,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       allowPendingArtifacts?: boolean;
       control?: import('../../data/orgGroupAgents/index.js').OrgAgentWorkOrderControl;
       supersedePendingCompletion?: boolean;
+      inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
     },
   ): Promise<RunRecord> {
     return await this.orgWork.retry(tenantId, workOrderId, expectedVersion, options);

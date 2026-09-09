@@ -46,6 +46,7 @@ export interface OrgAgentWorkOrderControlRequest {
   action: OrgAgentWorkOrderControlAction;
   text?: string;
   workerType?: 'general' | 'explore';
+  durableResult?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
 }
 
 /**
@@ -78,7 +79,12 @@ export interface BackgroundTaskRuntime {
     request: OrgAgentWorkOrderControlRequest,
   ): Promise<{ task: RunRecord | null; workOrder: import('../../data/orgGroupAgents/index.js').OrgAgentWorkOrder }>;
   cancelWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord | null>;
-  pauseWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord | null>;
+  pauseWorkOrder(
+    tenantId: string,
+    workOrderId: string,
+    expectedVersion: number,
+    inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt,
+  ): Promise<RunRecord | null>;
   retryWorkOrder(
     tenantId: string,
     workOrderId: string,
@@ -87,6 +93,7 @@ export interface BackgroundTaskRuntime {
       allowPendingArtifacts?: boolean;
       control?: OrgAgentWorkOrderControl;
       supersedePendingCompletion?: boolean;
+      inboxReceipt?: import('../../data/orgGroupAgents/index.js').OrgAgentControlInboxReceipt;
     },
   ): Promise<RunRecord>;
   publishWorkOrderArtifacts(

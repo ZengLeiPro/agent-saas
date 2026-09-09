@@ -1,0 +1,36 @@
+name: Publication failure diagnostics
+# Temporary branch-only read-only log inspection; removed before final PR delivery.
+on:
+  push:
+    branches: [fix/models-production-write-policy-20260908]
+    paths: [.github/workflows/production-model-diagnostics.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    if: github.repository == 'ZengLeiPro/agent-saas' && github.ref == 'refs/heads/fix/models-production-write-policy-20260908'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: production-model-final-34298556822
+          run-id: 34298556822
+          github-token: ${{ github.token }}
+          path: /tmp/production-model-diagnostics
+      - name: Print bounded contract failures and check summary
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path('/tmp/production-model-diagnostics')
+          print((root / 'results.json').read_text())
+          lines = re.sub(r'\x1b\[[0-9;]*m', '', (root / 'release-contracts.log').read_text()).splitlines()
+          selected = set()
+          for i, line in enumerate(lines):
+              if re.match(r'not ok ', line):
+                  end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith('# Subtest:')), min(len(lines), i + 100))
+                  selected.update(range(max(0, i - 1), min(end, i + 100)))
+          print('\n'.join(lines[i] for i in sorted(selected))[:20000])
+          PY

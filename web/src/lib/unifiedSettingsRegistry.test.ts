@@ -23,7 +23,6 @@ const EXPECTED_KEYS = [
   "personal:session-organization",
   "personal:appearance-layout",
   "personal:my-permissions",
-  "personal:connections",
   "personal:files-storage",
   "personal:trash",
   "tenant:users",
@@ -68,10 +67,10 @@ function expectUnique(values: readonly string[]) {
 }
 
 describe("unified settings registry", () => {
-  it("穷举唯一的 38 个叶子，scope 数量固定为 9/11/18", () => {
+  it("穷举唯一的 37 个叶子，scope 数量固定为 8/11/18", () => {
     expect(SETTINGS_REGISTRY.map((entry) => entry.key)).toEqual(EXPECTED_KEYS);
     expectUnique(SETTINGS_REGISTRY.map((entry) => entry.key));
-    expect(settingsSectionsForScope("personal")).toHaveLength(9);
+    expect(settingsSectionsForScope("personal")).toHaveLength(8);
     expect(settingsSectionsForScope("tenant")).toHaveLength(11);
     expect(settingsSectionsForScope("platform")).toHaveLength(18);
   });
@@ -104,7 +103,7 @@ describe("unified settings registry", () => {
     expect(groups.map((group) => [group.group, group.items.length])).toEqual([
       ["personal", 2],
       ["preferences", 3],
-      ["access", 2],
+      ["access", 1],
       ["data", 2],
     ]);
   });
@@ -131,7 +130,6 @@ describe("unified settings registry", () => {
     ["all-agents", "my-agent"],
     ["memory", "my-agent"],
     ["skills", "my-permissions"],
-    ["mcp", "connections"],
     ["files", "files-storage"],
     ["storage", "files-storage"],
     ["data", "trash"],

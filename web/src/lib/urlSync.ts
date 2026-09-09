@@ -28,7 +28,6 @@ const LEGACY_SETTINGS_SECTION_MAP: Readonly<Record<string, CanonicalSettingsSect
   'all-agents': 'my-agent',
   memory: 'my-agent',
   skills: 'my-permissions',
-  mcp: 'connections',
   files: 'files-storage',
   storage: 'files-storage',
   data: 'trash',
@@ -424,6 +423,9 @@ function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | '
 
 /** 解析 pathname → URL state；search 同时用于管理路由与旧任务中心深链的 canonical。 */
 export function parseUrl(pathname = window.location.pathname, search = window.location.search): ParsedUrlState {
+  if (pathname === '/settings/connections' || pathname === '/settings/mcp' || pathname === '/mcp') {
+    return parsed({ tab: 'capabilities', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/capabilities/connectors' });
+  }
   // 旧管理设置 URL 也统一交给 Governance parser，canonical 到唯一管理路由。
   const governance = parseGovernanceUrl(`${pathname}${search}`);
   if (governance.kind === 'route') {
@@ -493,9 +495,6 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
   }
   if (pathname === '/settings/cron') {
     return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/cron' });
-  }
-  if (pathname === '/settings/mcp' || pathname === '/mcp') {
-    return parsed({ tab: 'capabilities', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/capabilities/connectors' });
   }
   if (pathname === '/agents' || pathname === '/all-agents' || pathname === '/settings/all-agents') {
     return parsed({ tab: 'capabilities', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/capabilities/experts' });

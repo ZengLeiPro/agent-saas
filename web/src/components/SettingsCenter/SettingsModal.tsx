@@ -28,7 +28,6 @@ import { ConversationBehaviorSettings } from "@/components/SettingsCenter/Conver
 import { SessionOrganizationSettings } from "@/components/SettingsCenter/SessionOrganizationSettings";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import {
-  ConnectionsSection,
   FilesStorageSection,
   MyAgentSection,
   MyPermissionsSection,
@@ -859,7 +858,6 @@ export function SettingsModalInner({
       ),
     },
     { id: "my-permissions", node: <MyPermissionsSection /> },
-    { id: "connections", node: <ConnectionsSection /> },
     { id: "files-storage", node: <FilesStorageSection renderFiles={renderFiles} /> },
     {
       id: "trash",

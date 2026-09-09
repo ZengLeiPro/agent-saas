@@ -5,7 +5,7 @@ import { createWebPushNotifyChannel } from '../cron/notifyChannels/webPushNotify
 import type { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import { notifyWebPushForRuntimeEvent } from '../webPush/runtimeEventNotifier.js';
-import { WebPushService, assertSafePushEndpoint } from '../webPush/service.js';
+import { MAX_CONSECUTIVE_PUSH_FAILURES, WebPushService, assertSafePushEndpoint } from '../webPush/service.js';
 import { PgWebPushStore, type WebPushOwner, type WebPushSubscriptionInput, type WebPushSubscriptionRecord } from '../webPush/store.js';
 
 vi.mock('web-push', () => ({
@@ -123,6 +123,28 @@ describe('WebPushService', () => {
       status: '执行失败',
       url: '/chat/session-1',
     })).resolves.toEqual({ sent: 0, failed: 1, skipped: 0, deferred: 0 });
+    expect(await service.list(owner)).toEqual([]);
+  });
+
+  it('无状态码的失败累积到上限后清理死订阅，不再无限重投', async () => {
+    await service.subscribe(owner, subscription('dead'));
+    vi.mocked(webPush.sendNotification).mockRejectedValue(Object.assign(new Error(''), { code: 'ETIMEDOUT' }));
+    const message = {
+      ...owner,
+      eventKey: 'cron:job-2:run-2:error',
+      taskName: '钉钉动态轮询',
+      status: '执行失败',
+      url: '/chat/session-2',
+    };
+
+    for (let attempt = 0; attempt < MAX_CONSECUTIVE_PUSH_FAILURES - 1; attempt += 1) {
+      store.deliveries.clear();
+      await expect(service.send(message)).resolves.toMatchObject({ failed: 1 });
+      expect(await service.list(owner)).toHaveLength(1);
+    }
+
+    store.deliveries.clear();
+    await expect(service.send(message)).resolves.toMatchObject({ failed: 1 });
     expect(await service.list(owner)).toEqual([]);
   });
 

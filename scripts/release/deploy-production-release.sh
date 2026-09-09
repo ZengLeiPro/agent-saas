@@ -197,6 +197,17 @@ NODE
 cleanup_acs_failure() {
   local deploy_status=$?
   local rollback_status=0
+  # EXIT can run after deploy_acs locals have unwound. Rehydrate the complete
+  # snapshot, not just acs_committed: rollback also needs paths and prior flags.
+  if [ "${DEPLOY_ACS_ROLLBACK_INITIALIZED:-false}" = true ]; then
+    local acs_committed="$DEPLOY_ACS_ROLLBACK_COMMITTED"
+    local acs_mutation_started="$DEPLOY_ACS_ROLLBACK_MUTATION_STARTED"
+    local previous="$DEPLOY_ACS_ROLLBACK_PREVIOUS"
+    local rollback_root="$DEPLOY_ACS_ROLLBACK_ROOT"
+    local unit_path="$DEPLOY_ACS_ROLLBACK_UNIT_PATH"
+    local had_previous_identity="$DEPLOY_ACS_ROLLBACK_HAD_PREVIOUS_IDENTITY"
+    local had_previous_unit="$DEPLOY_ACS_ROLLBACK_HAD_PREVIOUS_UNIT"
+  fi
   if declare -F cancel_acs_deployment_drain >/dev/null; then
     cancel_acs_deployment_drain || rollback_status=70
   fi
@@ -374,6 +385,11 @@ deploy_rollback_cleanup() {
 
 # Rollback state must outlive deploy_acs/deploy_app function scope for EXIT.
 DEPLOY_ACS_ROLLBACK_COMMITTED=false
+DEPLOY_ACS_ROLLBACK_INITIALIZED=false
+DEPLOY_ACS_ROLLBACK_MUTATION_STARTED=false
+DEPLOY_ACS_ROLLBACK_ROOT=
+DEPLOY_ACS_ROLLBACK_UNIT_PATH=
+DEPLOY_ACS_ROLLBACK_HAD_PREVIOUS_UNIT=false
 DEPLOY_ACS_ROLLBACK_PREVIOUS=
 DEPLOY_ACS_ROLLBACK_ENV_BACKUP=
 DEPLOY_ACS_ROLLBACK_IDENTITY_BACKUP=
@@ -1406,13 +1422,23 @@ deploy_acs() {
     had_previous_identity=true
     cp -a "$ACS_IDENTITY_PATH" "$rollback_root/acs-release-identity.json"
   fi
-  trap cleanup_acs_failure EXIT
+  # Publish trap-owned state before arming EXIT; no function-local rollback
+  # variable may be required after the deployment stack has returned.
+  DEPLOY_ACS_ROLLBACK_COMMITTED=false
+  DEPLOY_ACS_ROLLBACK_MUTATION_STARTED=false
+  DEPLOY_ACS_ROLLBACK_PREVIOUS="$previous"
+  DEPLOY_ACS_ROLLBACK_ROOT="$rollback_root"
+  DEPLOY_ACS_ROLLBACK_UNIT_PATH="$unit_path"
+  DEPLOY_ACS_ROLLBACK_HAD_PREVIOUS_IDENTITY="$had_previous_identity"
+  DEPLOY_ACS_ROLLBACK_HAD_PREVIOUS_UNIT="$had_previous_unit"
+  DEPLOY_ACS_ROLLBACK_INITIALIZED=true
   arm_deploy_rollback cleanup_acs_failure
   trap 'exit 130' HUP INT TERM
   # Stop only after a PID-bound clean terminal outcome; never rewrite the old
   # generation's current/env before its accepted work has safely finished.
   drain_acs_before_cutover
   acs_mutation_started=true
+  DEPLOY_ACS_ROLLBACK_MUTATION_STARTED=true
   install -m 0644 "$ACS_UNIT_TEMPLATE" "$unit_path"
   systemctl daemon-reload
   node - "$MANIFEST_PATH" "$ACS_ENV_PATH" <<'NODE'

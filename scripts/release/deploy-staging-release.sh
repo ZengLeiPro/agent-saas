@@ -55,6 +55,7 @@ test -f "$config_identity_reader" || {
 source "$(dirname "$0")/acs-deployment-drain.sh"
 ACS_SERVICE_NAME=agent-saas-acs-orchestrator-staging.service
 ACS_HEALTH_URL=http://127.0.0.1:3410/health
+ACS_ENV_PATH="$acs_env"
 ACS_DRAIN_STATE_PATH="$run_root/acs-drain.json"
 acs_mutation_started=false
 

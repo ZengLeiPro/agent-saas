@@ -33,6 +33,74 @@ test('V45 connection settings catalog independently checks required columns and 
   }
 });
 
+test('V46 binding generation catalog rejects incomplete identity and delivery constraints', { skip: !url }, async () => {
+  const prefix = `ky46_${process.pid}_${Date.now().toString(36)}`;
+  const bindings = `${prefix}_org_agent_channel_bindings`;
+  const deliveries = `${prefix}_agent_dws_delivery_intents`;
+  const identityIndex = `${bindings}_identity_generation_idx`;
+  const deliveryForeignKey = `${deliveries}_binding_generation_fkey`;
+  const pool = new Pool({ connectionString: url });
+  const catalog = JSON.parse(await readFile(new URL('../../config/release-migration-postconditions.json', import.meta.url), 'utf8'));
+  const entry = catalog.entries.find(
+    (item) => item.path === 'server/src/data/governance-schema/v46OrgGroupBindingGenerationMigration.ts',
+  );
+  assert.ok(entry?.checks.length, 'V46 postconditions must be registered');
+  const postconditions = entry.checks;
+  const manifest = { releaseId: 'rc-20260908-02', digest: `sha256:${'a'.repeat(64)}`, migrationPlan: { phase: 'expand', planDigest: `sha256:${'b'.repeat(64)}`, postconditions, postconditionsDigest: digestBuffer(canonicalJson(postconditions)) } };
+  const readback = () => readMigrationPostconditions({ manifest, config: { runtimeEventStore: { connectionString: url, tablePrefix: prefix } }, environment: 'staging', Pool });
+  try {
+    await pool.query(`CREATE TABLE ${bindings} (
+        tenant_id TEXT NOT NULL,
+        binding_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        conversation_space_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        retired_at TIMESTAMPTZ,
+        logical_conversation_id TEXT,
+        UNIQUE (account_id, conversation_id),
+        UNIQUE (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)
+      );
+      CREATE INDEX ${identityIndex} ON ${bindings}
+        (tenant_id, agent_id, conversation_space_id, account_id, conversation_id);
+      CREATE TABLE ${deliveries} (
+        tenant_id TEXT NOT NULL,
+        binding_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        conversation_space_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        CONSTRAINT ${deliveryForeignKey} FOREIGN KEY
+          (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)
+          REFERENCES ${bindings}
+          (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)
+          ON UPDATE CASCADE
+      )`);
+    assert.equal((await readback()).status, 'passed');
+
+    await pool.query(`ALTER TABLE ${bindings} DROP COLUMN logical_conversation_id`);
+    await assert.rejects(readback(), /Database postcondition failed/);
+    await pool.query(`ALTER TABLE ${bindings} ADD COLUMN logical_conversation_id TEXT`);
+    assert.equal((await readback()).status, 'passed');
+
+    await pool.query(`DROP INDEX ${identityIndex}`);
+    await assert.rejects(readback(), /Database postcondition failed/);
+    await pool.query(`CREATE INDEX ${identityIndex} ON ${bindings}
+      (tenant_id, agent_id, conversation_space_id, account_id, conversation_id)`);
+    assert.equal((await readback()).status, 'passed');
+
+    await pool.query(`ALTER TABLE ${deliveries} DROP CONSTRAINT ${deliveryForeignKey};
+      ALTER TABLE ${deliveries} ADD CONSTRAINT ${deliveryForeignKey} FOREIGN KEY
+        (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)
+        REFERENCES ${bindings}
+        (tenant_id, binding_id, agent_id, conversation_space_id, account_id, conversation_id)`);
+    await assert.rejects(readback(), /Database postcondition failed/);
+  } finally {
+    await pool.query(`DROP TABLE IF EXISTS ${deliveries}, ${bindings} CASCADE`);
+    await pool.end();
+  }
+});
+
 test(
   'D-03: PostgreSQL checks real column types, index readiness and backfill; readback cannot write',
   { skip: !url },

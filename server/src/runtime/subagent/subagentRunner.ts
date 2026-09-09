@@ -225,6 +225,14 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
 
   const sessionCatalog = resolveSessionCatalog(config);
   const parentSession = await sessionCatalog.get(parentSessionId).catch(() => null);
+  const workerChild = parentContext.executionRole === 'worker'
+    || Boolean(params.orgAgentExecutionContext)
+    || Boolean(params.profileSourceSession?.executionRole === 'worker'
+      && params.profileSourceSession.orgAgentId
+      && params.profileSourceSession.orgAgentSnapshot)
+    || Boolean(parentSession?.executionRole === 'dispatcher'
+      && parentSession.orgAgentId
+      && parentSession.orgAgentSnapshot?.runtime.executionMode === 'dispatcher');
   const identity = parentContext.channelContext.sessionOwner ?? parentContext.channelContext.user;
   const tenantCandidates = [
     parentSession?.tenantId,
@@ -360,7 +368,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
       ...((effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot)
         ? { orgAgentSnapshot: effectiveOrgAgentSnapshot ?? parentSession!.orgAgentSnapshot } : {}),
-      ...(parentContext.executionRole === 'worker' ? { executionRole: 'worker' as const } : {}),
+      ...(workerChild ? { executionRole: 'worker' as const } : {}),
       channel: parentContext.channelContext.channel,
       cwd: parentWorkspace.root,
       modelRef: refToResolve ?? model,
@@ -404,7 +412,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         description: request.description,
         ...(childAutomationFence ? { automationFence: childAutomationFence } : {}),
         ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
-        ...(parentContext.executionRole === 'worker' ? { executionRole: 'worker' } : {}),
+        ...(workerChild ? { executionRole: 'worker' } : {}),
         ...((effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot)?.runtime.executionMode
           ? { executionMode: (effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot)!.runtime.executionMode }
           : {}),

@@ -76,6 +76,8 @@ export class PersistentSandboxRunner {
     input: SandboxRunnerInput,
     signal: AbortSignal,
   ): AsyncIterable<RunnerOutput> {
+    // A request cancelled before admission must not start even the shared daemon.
+    if (signal.aborted) return;
     await this.start();
     if (!this.isHealthy()) throw new Error('ACS persistent runner is not healthy');
     if (this.pending.has(invocationKey)) throw new Error(`runner invocation already active: ${invocationKey}`);

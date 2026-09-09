@@ -7,12 +7,17 @@ export interface KubectlResult {
   stderr: string;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
+  /** Transport observation only; local completion is never remote-stop proof. */
+  remoteState?: 'unknown' | 'not_started';
 }
 
 export class Kubectl {
   constructor(private readonly config: AcsOrchestratorConfig) {}
 
-  async run(args: string[], options: { input?: string; timeoutMs?: number } = {}): Promise<KubectlResult> {
+  async run(args: string[], options: { input?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<KubectlResult> {
+    if (options.signal?.aborted) {
+      return { stdout: '', stderr: 'kubectl request aborted before spawn', exitCode: -1, signal: null, remoteState: 'not_started' };
+    }
     return await new Promise<KubectlResult>((resolve) => {
       const fullArgs = this.baseArgs(args);
       const child = spawn(this.config.kubectlPath, fullArgs, {
@@ -44,6 +49,7 @@ export class Kubectl {
   }
 
   spawn(args: string[], options: { input?: string; signal?: AbortSignal } = {}) {
+    options.signal?.throwIfAborted();
     const child = spawn(this.config.kubectlPath, this.baseArgs(args), {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: process.env,

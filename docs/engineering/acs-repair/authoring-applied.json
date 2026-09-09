@@ -1,9 +1,8 @@
 {
-  "id": "reader-preparation",
-  "baseSha": "f48833a04db69c5e753e90ebce6fec06fb272bc5",
+  "id": "pre-abort-guards",
+  "baseSha": "194b959f1251df778e30ae193610821ba718c878",
   "files": [
-    "acs-orchestrator/src/sandboxLifecyclePolicy.ts",
-    "acs-orchestrator/src/invocationRestartRecovery.ts",
-    "acs-orchestrator/src/acsHangRegression.test.ts"
+    "acs-orchestrator/src/persistentRunner.ts",
+    "acs-orchestrator/src/kubectl.ts"
   ]
 }

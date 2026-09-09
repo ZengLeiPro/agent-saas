@@ -166,6 +166,62 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     await test.router.stop();
   });
 
+  it('原生话题内仅有一个可见任务时，自然控制指令安全命中该任务', async () => {
+    const routed = workOrder({ shortId: 'W-123456ABCDEF' });
+    const backgroundTasks = {
+      get: vi.fn().mockResolvedValue({ status: 'running' }),
+      cancel: vi.fn(),
+      controlWorkOrder: vi.fn().mockResolvedValue({
+        task: null,
+        workOrder: { ...routed, state: 'paused' },
+      }),
+    };
+    const test = setup({
+      claimedSequence: [],
+      controlClaimed: {
+        ...item,
+        content: '暂停这个任务',
+        workConversationId: 'workconv-route-a',
+      },
+      workOrders: [routed],
+      backgroundTasks,
+    });
+
+    test.router.start();
+    await vi.waitFor(() => expect(backgroundTasks.controlWorkOrder).toHaveBeenCalledWith(
+      expect.any(Object),
+      { taskId: 'W-123456ABCDEF', action: 'pause' },
+    ));
+    expect(test.messageStore.complete).toHaveBeenCalledWith(
+      'inbox-a', 'agent-dws-control', 1,
+    );
+    await test.router.stop();
+  });
+
+  it('自然控制指令没有确定话题目标时只返回澄清，不执行 mutation', async () => {
+    const routed = workOrder({ shortId: 'W-123456ABCDEF' });
+    const backgroundTasks = {
+      get: vi.fn(),
+      cancel: vi.fn(),
+      controlWorkOrder: vi.fn(),
+    };
+    const test = setup({
+      claimedSequence: [],
+      controlClaimed: { ...item, content: '取消当前任务' },
+      workOrders: [routed],
+      backgroundTasks,
+    });
+
+    test.router.start();
+    await vi.waitFor(() => expect(test.messageStore.complete).toHaveBeenCalled());
+    expect(backgroundTasks.cancel).not.toHaveBeenCalled();
+    expect(backgroundTasks.controlWorkOrder).not.toHaveBeenCalled();
+    expect(test.messageStore.saveDispatchResult).toHaveBeenCalledWith(
+      'inbox-a', 'agent-dws-control', 1, expect.stringContaining('W-123456ABCDEF'),
+    );
+    await test.router.stop();
+  });
+
   it('keeps consecutive messages in one group on the same ConversationSpace front desk', async () => {
     const test = setup({
       claimedSequence: [

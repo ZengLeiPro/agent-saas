@@ -64,6 +64,7 @@ describePg('Agent DWS fast control claim lane', () => {
       );
     await ingest('event-normal', '请执行一个很长的普通任务');
     const control = await ingest('event-control', '暂停 W-ABCDEF123456');
+    const contextual = await ingest('event-contextual-control', '暂停这个任务');
     expect((await ingest('event-control', '暂停 W-ABCDEF123456')).created).toBe(false);
 
     const normalClaim = await store.claimNext('normal-worker', 60_000);
@@ -71,5 +72,8 @@ describePg('Agent DWS fast control claim lane', () => {
     const controlClaim = await store.claimNextControl('control-worker', 60_000);
     expect(controlClaim?.inboxId).toBe(control.record.inboxId);
     expect(controlClaim?.conversationId).toBe(normalClaim?.conversationId);
+    await store.complete(controlClaim!.inboxId, 'control-worker', controlClaim!.leaseFence);
+    expect((await store.claimNextControl('control-worker', 60_000))?.inboxId)
+      .toBe(contextual.record.inboxId);
   });
 });

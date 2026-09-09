@@ -19,7 +19,9 @@ const MAX_PAYLOAD_BYTES = 256 * 1024;
 const PAYLOAD_SIZE_MARGIN = 128;
 const MAX_LEASE_TTL_MS = 24 * 60 * 60 * 1_000;
 const MAX_RETRY_DELAY_MS = 24 * 60 * 60 * 1_000;
-const CONTROL_MESSAGE_PATTERN = '^[[:space:]]*((status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)[[:space:]]+W-[A-F0-9]{12}([[:space:]]+.+)?|W-[A-F0-9]{12}[[:space:]]+(status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)([[:space:]]+.+)?)[[:space:]]*$';
+const EXPLICIT_CONTROL_PATTERN = '(status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)[[:space:]]+W-[A-F0-9]{12}([[:space:]]+.+)?|W-[A-F0-9]{12}[[:space:]]+(status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充)([[:space:]]+.+)?';
+const CONTEXTUAL_CONTROL_PATTERN = '(取消|暂停|恢复)[[:space:]]*(这个|当前)?[[:space:]]*任务|(查看|查询)?[[:space:]]*(这个|当前)?[[:space:]]*任务[[:space:]]*(状态|进度)';
+const CONTROL_MESSAGE_PATTERN = `^[[:space:]]*(${EXPLICIT_CONTROL_PATTERN}|${CONTEXTUAL_CONTROL_PATTERN})[[:space:]]*$`;
 
 type PgPool = pg.Pool;
 

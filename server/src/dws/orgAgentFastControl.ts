@@ -24,7 +24,7 @@ import type { UserIdentity } from '../types/index.js';
 import { finalizeReplyDelivery, type OrgAgentVisibleReplyService } from './orgAgentVisibleReply.js';
 
 export type OrgAgentFastControl = {
-  taskId: string;
+  taskId?: string;
   action: 'status' | 'cancel' | 'pause' | 'resume' | 'amend';
   text?: string;
 };
@@ -45,16 +45,23 @@ const SHORT_ID = 'W-[A-F0-9]{12}';
 const ACTION = 'status|cancel|pause|resume|amend|状态|取消|暂停|恢复|补充';
 const PREFIX = new RegExp(`^\\s*(${ACTION})\\s+(${SHORT_ID})(?:\\s+([\\s\\S]+))?\\s*$`, 'iu');
 const SUFFIX = new RegExp(`^\\s*(${SHORT_ID})\\s+(${ACTION})(?:\\s+([\\s\\S]+))?\\s*$`, 'iu');
+const CONTEXTUAL_MUTATION = /^\s*(取消|暂停|恢复)\s*(?:(?:这个|当前)\s*)?任务\s*$/u;
+const CONTEXTUAL_STATUS = /^\s*(?:查看|查询)?\s*(?:(?:这个|当前)\s*)?任务\s*(?:状态|进度)\s*$/u;
 
 export function parseOrgAgentFastControl(content: string): OrgAgentFastControl | null {
   const match = PREFIX.exec(content) ?? SUFFIX.exec(content);
-  if (!match) return null;
-  const prefix = ACTIONS[match[1]!.toLowerCase()];
-  const action = prefix ?? ACTIONS[match[2]!.toLowerCase()];
-  const taskId = (prefix ? match[2] : match[1])!.toUpperCase();
-  const text = match[3]?.trim();
-  if (!action || (action === 'amend') !== Boolean(text)) return null;
-  return { taskId, action, ...(text ? { text } : {}) };
+  if (match) {
+    const prefix = ACTIONS[match[1]!.toLowerCase()];
+    const action = prefix ?? ACTIONS[match[2]!.toLowerCase()];
+    const taskId = (prefix ? match[2] : match[1])!.toUpperCase();
+    const text = match[3]?.trim();
+    if (!action || (action === 'amend') !== Boolean(text)) return null;
+    return { taskId, action, ...(text ? { text } : {}) };
+  }
+  const contextualMutation = CONTEXTUAL_MUTATION.exec(content);
+  if (contextualMutation) return { action: ACTIONS[contextualMutation[1]!]! };
+  if (CONTEXTUAL_STATUS.test(content)) return { action: 'status' };
+  return null;
 }
 
 export function createFastControlToolContext(input: {
@@ -131,7 +138,7 @@ export function createFastControlToolContext(input: {
 export async function executeFastControl(input: {
   runtime: Pick<BackgroundTaskRuntime, 'get' | 'cancel' | 'controlWorkOrder'>;
   context: ToolCallContext;
-  request: OrgAgentFastControl;
+  request: OrgAgentFastControl & { taskId: string };
 }): Promise<string> {
   const existing = await input.runtime.get(input.context, input.request.taskId);
   if (!existing) throw new Error('任务不存在，或不属于当前群与话题');
@@ -299,7 +306,10 @@ export class OrgAgentFastControlPump {
       throw new Error('ORG_AGENT_FAST_CONTROL_CHANNEL_UNAVAILABLE');
     }
     const shared = sharedResult.context;
-    if (!shared.visibleWorkOrders.some((work) => work.shortId.toUpperCase() === request.taskId))
+    if (
+      request.taskId &&
+      !shared.visibleWorkOrders.some((work) => work.shortId.toUpperCase() === request.taskId)
+    )
       return await this.options.reject(
         account,
         item,
@@ -330,10 +340,23 @@ export class OrgAgentFastControlPump {
     });
     let response = item.responseText;
     if (response === undefined) {
-      try {
-        response = await executeFastControl({ runtime: this.options.runtime, context, request });
-      } catch (error) {
-        response = `未能执行 ${request.taskId} 的控制操作：${compactError(error)}`;
+      const contextualTask = request.taskId ? undefined : shared.visibleWorkOrders[0];
+      if (!request.taskId && shared.visibleWorkOrders.length !== 1) {
+        response = contextualControlClarification(shared);
+      } else {
+        const resolvedRequest = {
+          ...request,
+          taskId: request.taskId ?? contextualTask!.shortId.toUpperCase(),
+        };
+        try {
+          response = await executeFastControl({
+            runtime: this.options.runtime,
+            context,
+            request: resolvedRequest,
+          });
+        } catch (error) {
+          response = `未能执行 ${resolvedRequest.taskId} 的控制操作：${compactError(error)}`;
+        }
       }
       await this.options.messageStore.saveDispatchResult(
         item.inboxId,
@@ -356,4 +379,9 @@ export class OrgAgentFastControlPump {
     if (await finalizeReplyDelivery(this.options.messageStore, owner, item, delivery))
       await this.options.messageStore.complete(item.inboxId, owner, item.leaseFence);
   }
+}
+
+function contextualControlClarification(shared: SharedGroupContext): string {
+  if (shared.routingClarification) return shared.routingClarification;
+  return '我还不能确定你指哪项任务。请回复/引用原任务消息，或带上任务短号再说一次。';
 }

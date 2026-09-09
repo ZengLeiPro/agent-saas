@@ -16,12 +16,18 @@ describe('DWS org Agent fast control', () => {
         text: '请增加风险清单',
       },
     ],
-  ])('只解析显式短号控制：%s', (content, expected) => {
+    ['取消这个任务', { action: 'cancel' }],
+    ['暂停当前任务', { action: 'pause' }],
+    ['恢复任务', { action: 'resume' }],
+    ['查看这个任务进度', { action: 'status' }],
+    ['当前任务状态', { action: 'status' }],
+  ])('解析显式短号或上下文控制：%s', (content, expected) => {
     expect(parseOrgAgentFastControl(content)).toEqual(expected);
   });
 
   it.each([
-    '取消这个任务',
+    '取消这个任务并通知我',
+    '补充这个任务',
     '继续 W-不是短号',
     'W-ABCDEF123456',
     '补充 W-ABCDEF123456',

@@ -114,9 +114,8 @@ import { resolveServerRemoteDispatchConfig } from './serverRemoteConfig.js';
 import { createRuntimeWebPushAssembly, startTaskboardStatusNotificationWorker } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
 import { resolveImageUnderstandingModelConfigs } from './imageUnderstandingModelConfigs.js';
-import { createTitleModelAdapterFactory, resolveTitleGeneratorConfigs } from './titleGeneratorConfigs.js';
-import { resolveGuardrailModelConfigs } from './guardrailModelConfigs.js';
-import { assertAuxiliaryModelRefsResolvable } from './modelsHotUpdate.js';
+import { createTitleModelAdapterFactory } from './titleGeneratorConfigs.js';
+import { assembleRuntimeModels } from './runtimeModelAssembly.js';
 import { applyTenantLifecycleChange, TenantLifecycleWatcher } from './tenantLifecycleEffects.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
@@ -389,23 +388,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantSharedEnv,
     sharedDir,
   };
-  if (config.models) assertAuxiliaryModelRefsResolvable(config, config.models);
-  const titleGeneratorDefaultModel = process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini'; const titleGeneratorConfigs = resolveTitleGeneratorConfigs({
-    models: config.models,
-    titleGenerator: config.titleGenerator,
-    defaultModel: titleGeneratorDefaultModel,
-    logger: serverLogger,
-  });
-  // 门禁模型配置链（主 + fallback；2026-07 唯恩批次）。与 title 不同：
-  // config.guardrail 缺省 = 门禁模块不激活（空数组，checkTopicScope fail-open
-  // 短路），**没有** env 默认模型兜底。热更由 routes.ts onModelsUpdated 经
-  // updateGuardrailModelConfigs 写回本变量，WebChannel 通过 getter 读取；标题链
-  // 则由热更逻辑原地替换数组内容，保证已捕获该数组的会话也能看到新配置。
-  let guardrailModelConfigs: GuardrailModelConfig[] = resolveGuardrailModelConfigs({
-    models: config.models,
-    guardrail: config.guardrail,
-    logger: serverLogger,
-  });
+  const titleGeneratorDefaultModel = process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini';
   // Auth 与 epoch authority 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
   // 跨进程刷新用（见 sharedConfigRefresher）：runtime-worker 要能感知 ws-only
   // 进程对 tenants.json 的改写，所以路径需要在初始化结果中保留。
@@ -1523,7 +1506,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       userId: user.id, username: user.username, userTenantId: user.tenantId }),
     resolveHand: hand => tenantRemoteHandResolver.resolveForRegister(hand) });
   const resolvedWebTools = await resolveWebToolsConfig(config.webTools, secretVault);
-  const resolvedModels = await resolveModelsConfig(config.models, secretVault);
+  const {
+    resolvedModels,
+    titleGeneratorConfigs,
+    guardrailModelConfigs: initialGuardrailModelConfigs,
+  } = await assembleRuntimeModels({
+    config,
+    secretVault,
+    defaultTitleModel: titleGeneratorDefaultModel,
+    logger: serverLogger,
+  });
+  // 门禁模型配置链（主 + fallback；2026-07 唯恩批次）。config.guardrail 缺省时
+  // 模块不激活。启动与热更新都从 SecretVault 已解析的模型快照构造辅助链。
+  let guardrailModelConfigs: GuardrailModelConfig[] = initialGuardrailModelConfigs;
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
   configureImageGenPricing(config.imageGenTools?.pricing);
   // 模型解析器：如果配置了 models，则绑定到 RawRuntime、WebChannel 与 Cron。
@@ -1538,7 +1533,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     create: async (index) => createMemoryIndexService(processCwd, await resolveMemoryIndexConfig(index, secretVault), { beginEmbeddingBillingRun: beginMemoryEmbeddingBillingRun }),
     publish: (service) => publishMemoryIndexService(service), warn: (message) => serverLogger.warn(message),
   });
-  const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
+  const { modelResolver, defaultModelResolver, getRuntimeModels, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
     processCwd, recoveryGate: configIdentityAssembly.recoveryGate,
     tenantStore,
@@ -1709,7 +1704,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(
       agentDwsMessageStore, orgGroupAgentStore,
     ) } : {}),
-    getImageUnderstandingModelConfigs: () => resolveImageUnderstandingModelConfigs(config.models),
+    getImageUnderstandingModelConfigs: () => resolveImageUnderstandingModelConfigs(getRuntimeModels()),
     getImageUnderstandingTimeoutMs: () => config.models?.imageUnderstanding?.timeoutMs,
     toolControls: config.toolControls,
     // 子 agent 工具（2026-07-06）：两者都在本 config 构造之后才就绪

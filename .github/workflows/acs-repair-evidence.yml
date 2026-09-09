@@ -22,18 +22,30 @@ jobs:
   source:
     name: Exact-source inspection archive (not a test verdict)
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Archive tracked source without Git credentials or runtime files
+      - uses: ./.github/actions/setup-pnpm
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.1'
+      - name: Install locked development dependencies for isolated verification
+        env:
+          NODE_ENV: development
+        run: pnpm install --frozen-lockfile
+      - name: Archive tracked source and installed verification tools without credentials
         run: |
           mkdir -p "$RUNNER_TEMP/acs-repair-source"
           git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/acs-repair-source/source.tar.gz"
           git rev-parse HEAD > "$RUNNER_TEMP/acs-repair-source/source-sha.txt"
-          sha256sum "$RUNNER_TEMP/acs-repair-source/source.tar.gz" > "$RUNNER_TEMP/acs-repair-source/archive-sha256.txt"
+          tar -czf "$RUNNER_TEMP/acs-repair-source/dependencies.tar.gz" node_modules acs-orchestrator/node_modules server/node_modules shared/node_modules
+          cp "$(command -v node)" "$RUNNER_TEMP/acs-repair-source/node"
+          node --version > "$RUNNER_TEMP/acs-repair-source/toolchain.txt"
+          pnpm --version >> "$RUNNER_TEMP/acs-repair-source/toolchain.txt"
+          sha256sum "$RUNNER_TEMP/acs-repair-source/"*.tar.gz "$RUNNER_TEMP/acs-repair-source/node" > "$RUNNER_TEMP/acs-repair-source/archive-sha256.txt"
       - uses: actions/upload-artifact@v7
         with:
           name: acs-repair-source-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}

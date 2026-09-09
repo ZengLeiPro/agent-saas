@@ -74,12 +74,13 @@ export class InstallationAccessOverviewService {
       effectiveSubjects.map((item) => [`${item.subjectType}:${item.subjectId}`, item] as const),
     );
     const observationByUser = new Map(observations.map((item) => [item.userId, item] as const));
-    const groupNames = new Map(groupRecords.map((item) => [item.groupId, item.displayName] as const));
+    const groupNames = new Map(
+      groupRecords.map((item) => [item.groupId, item.displayName] as const),
+    );
 
-    const effectiveUsers = users
+    const organizationUsers = users
       .map((user) => {
         const effective = effectiveBySubject.get(`user:${user.id}`);
-        if (!effective) return null;
         const observation = observationByUser.get(user.id);
         const observed =
           observation && input.registeredDigest === observation.registeredDigest
@@ -95,7 +96,7 @@ export class InstallationAccessOverviewService {
                 : 'unverified';
         const sources = [
           ...new Set(
-            effective.bindings
+            (effective?.bindings ?? [])
               .filter((binding) => binding.effect === 'allow')
               .map((binding) =>
                 binding.assigneeType === 'user'
@@ -108,7 +109,7 @@ export class InstallationAccessOverviewService {
         ];
         const departmentNames = [
           ...new Set(
-            effective.bindings
+            (effective?.bindings ?? [])
               .filter((binding) => binding.assigneeType === 'directory_group')
               .map((binding) => groupNames.get(binding.assigneeId ?? ''))
               .filter((name): name is string => Boolean(name)),
@@ -118,20 +119,19 @@ export class InstallationAccessOverviewService {
           userId: user.id,
           displayName: user.realName ?? user.username,
           username: user.username,
+          authorized: Boolean(effective),
           departmentNames,
           accessSources: sources,
-          personalAuthorizationStatus:
-            capabilityStatus === 'ready'
-              ? 'connected'
-              : capabilityStatus === 'waiting_personal_authorization'
-                ? 'pending'
-                : 'pending',
+          // 当前 KY App 接入模型不要求成员逐人完成 OAuth；这里展示访问前置条件，
+          // 能力是否实际调用成功由观测字段单独维护，不再误报成“个人授权待处理”。
+          personalAuthorizationStatus: effective ? 'not_required' : 'not_applicable',
           agentCapabilityStatus: capabilityStatus,
           capabilityCheckedAt: observed?.checkedAt ?? null,
         };
       })
-      .filter((item): item is NonNullable<typeof item> => item !== null)
       .sort((a, b) => a.userId.localeCompare(b.userId));
+
+    const effectiveUsers = organizationUsers.filter((item) => item.authorized);
 
     const effectiveAgents = agents
       .map((agent) => {
@@ -158,10 +158,10 @@ export class InstallationAccessOverviewService {
 
     const query = input.query?.trim().toLocaleLowerCase('zh-CN') ?? '';
     const filteredUsers = query
-      ? effectiveUsers.filter((item) =>
+      ? organizationUsers.filter((item) =>
           `${item.displayName}\n${item.username}`.toLocaleLowerCase('zh-CN').includes(query),
         )
-      : effectiveUsers;
+      : organizationUsers;
     const filteredAgents = query
       ? effectiveAgents.filter((item) => item.name.toLocaleLowerCase('zh-CN').includes(query))
       : effectiveAgents;
@@ -181,9 +181,7 @@ export class InstallationAccessOverviewService {
         restrictedAgentCount: effectiveAgents.filter(
           (item) => item.capabilityStatus === 'restricted',
         ).length,
-        pendingPersonalAuthorizationCount: effectiveUsers.filter(
-          (item) => item.personalAuthorizationStatus !== 'connected',
-        ).length,
+        pendingPersonalAuthorizationCount: 0,
         ruleCount: assignmentSet?.assignments.length ?? 0,
       },
       users: input.kind === 'user' ? rows : [],
@@ -203,7 +201,8 @@ function agentAllowsAnyCapability(
 ): boolean {
   const policy = normalizeOrgAgentRuntimePolicy(runtime);
   const systemSegment = normalizeToolSegment(systemId);
-  if (policy.apps.systemAllowlist && !policy.apps.systemAllowlist.includes(systemSegment)) return false;
+  if (policy.apps.systemAllowlist && !policy.apps.systemAllowlist.includes(systemSegment))
+    return false;
   if (policy.apps.denySystems.includes(systemSegment)) return false;
   return capabilityIds.some((capabilityId) => {
     const capabilitySegment = normalizeToolSegment(capabilityId);

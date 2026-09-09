@@ -15,6 +15,7 @@ export function InstallationAssignments({
       resourceType="system_installation"
       title="业务系统成员、部门与 Agent 授权"
       items={[{ resourceId: installationId, label: name }]}
+      initialResourceId={installationId}
     />
   );
 }

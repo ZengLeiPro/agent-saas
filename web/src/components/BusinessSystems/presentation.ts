@@ -31,6 +31,7 @@ const STATUS_LABELS: Readonly<Record<string, string>> = {
   ready: '可使用',
   degraded: '连接异常',
   not_required: '无需授权',
+  not_applicable: '未授权',
   connected: '已授权',
   expired: '已过期',
   insufficient_scope: '权限不足',

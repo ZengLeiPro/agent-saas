@@ -90,6 +90,27 @@ describe('kyapp outbound', () => {
     expect(init?.redirect).toBe('manual');
   });
 
+  it('请求 ID 只发送一个规范化请求头，调用方不同大小写不能制造重复值', async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response('{"ok":true}', { status: 200 }),
+    );
+    const client = outbound({ fetchImpl });
+    await client.request({
+      baseUrl: 'https://app.example.com',
+      path: '/ky/v1/capabilities/orders.read',
+      method: 'POST',
+      requestId: 'rid-from-sat',
+      headers: { 'X-KY-Request-Id': 'duplicate-value', Authorization: 'Bearer sat' },
+    });
+
+    const headers = fetchImpl.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(Object.keys(headers).filter((name) => name.toLowerCase() === 'x-ky-request-id')).toEqual(
+      ['x-ky-request-id'],
+    );
+    expect(headers['x-ky-request-id']).toBe('rid-from-sat');
+  });
+
   it('协议相对路径与非绝对路径被拒', async () => {
     const client = outbound();
     await expectBlocked(

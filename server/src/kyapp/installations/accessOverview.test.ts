@@ -10,24 +10,28 @@ describe('InstallationAccessOverviewService', () => {
       {
         subjectType: 'user',
         subjectId: 'u1',
-        bindings: [{
-          assignmentId: 'allow-group',
-          assigneeType: 'directory_group',
-          assigneeId: 'sales',
-          effect: 'allow',
-          origin: 'direct',
-        }],
+        bindings: [
+          {
+            assignmentId: 'allow-group',
+            assigneeType: 'directory_group',
+            assigneeId: 'sales',
+            effect: 'allow',
+            origin: 'direct',
+          },
+        ],
       },
       ...['agent-1', 'agent-2'].map((subjectId) => ({
         subjectType: 'agent',
         subjectId,
-        bindings: [{
-          assignmentId: `allow-${subjectId}`,
-          assigneeType: 'agent',
-          assigneeId: subjectId,
-          effect: 'allow',
-          origin: 'direct',
-        }],
+        bindings: [
+          {
+            assignmentId: `allow-${subjectId}`,
+            assigneeType: 'agent',
+            assigneeId: subjectId,
+            effect: 'allow',
+            origin: 'direct',
+          },
+        ],
       })),
     ]);
     const service = new InstallationAccessOverviewService({
@@ -48,15 +52,17 @@ describe('InstallationAccessOverviewService', () => {
       assignments: { listEffectiveSubjectsForInstallation } as never,
       assignmentSets: { getAssignmentSet: async () => ({ assignments: [{}, {}] }) } as never,
       observations: {
-        listForInstallation: async () => [{
-          tenantId: 'tenant-a',
-          installationId: 'install-demo',
-          userId: 'u1',
-          registeredDigest: digest,
-          status: 'ready',
-          enabledCapabilityCount: 1,
-          checkedAt: '2026-09-08T01:00:00.000Z',
-        }],
+        listForInstallation: async () => [
+          {
+            tenantId: 'tenant-a',
+            installationId: 'install-demo',
+            userId: 'u1',
+            registeredDigest: digest,
+            status: 'ready',
+            enabledCapabilityCount: 1,
+            checkedAt: '2026-09-08T01:00:00.000Z',
+          },
+        ],
       },
       groups: {
         listGroups: async () => [{ groupId: 'sales', displayName: '销售部' }],
@@ -97,15 +103,26 @@ describe('InstallationAccessOverviewService', () => {
     expect(users.users).toEqual([
       expect.objectContaining({
         userId: 'u1',
+        authorized: true,
         displayName: 'Alice',
         departmentNames: ['销售部'],
         accessSources: ['directory_group'],
-        personalAuthorizationStatus: 'connected',
+        personalAuthorizationStatus: 'not_required',
         agentCapabilityStatus: 'ready',
+      }),
+      expect.objectContaining({
+        userId: 'u2',
+        authorized: false,
+        displayName: 'bob',
+        accessSources: [],
+        personalAuthorizationStatus: 'not_applicable',
       }),
     ]);
     expect(agents.agents).toEqual([
-      expect.objectContaining({ agentId: 'agent-1', capabilityStatus: 'waiting_user_authorization' }),
+      expect.objectContaining({
+        agentId: 'agent-1',
+        capabilityStatus: 'waiting_user_authorization',
+      }),
       expect.objectContaining({ agentId: 'agent-2', capabilityStatus: 'restricted' }),
     ]);
     expect(listEffectiveSubjectsForInstallation).toHaveBeenCalledTimes(2);
@@ -126,12 +143,14 @@ describe('InstallationAccessOverviewService', () => {
       userIds.map((userId) => ({
         subjectType: 'user' as const,
         subjectId: userId,
-        bindings: [{
-          assignmentId: 'everyone',
-          assigneeType: 'everyone',
-          effect: 'allow',
-          origin: 'direct',
-        }],
+        bindings: [
+          {
+            assignmentId: 'everyone',
+            assigneeType: 'everyone',
+            effect: 'allow',
+            origin: 'direct',
+          },
+        ],
       })),
     );
     const service = new InstallationAccessOverviewService({

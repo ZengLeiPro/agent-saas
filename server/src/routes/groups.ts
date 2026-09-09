@@ -4,13 +4,14 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import type { FileHandle } from "node:fs/promises";
-import type { GroupStore } from "../data/groups/index.js";
+import { SmartGroupingConflictError, type GroupStore } from "../data/groups/index.js";
 import type { UserStore } from "../data/users/store.js";
 import type { GroupSortingPref } from "../data/users/types.js";
 import { resolveUserCwd } from "../workspace/resolver.js";
 import {
   findTranscriptOrMetaPathBySessionId,
   getTranscriptPath,
+  listSessions,
 } from "../data/transcripts/store.js";
 import { readSessionMeta } from "../data/transcripts/meta.js";
 import type { TranscriptSummary } from "../data/transcripts/parse.js";
@@ -21,6 +22,12 @@ import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
 import { hidesMemoryPollFrom } from "../data/sessions/access.js";
 import { isMemoryPollJob } from "../cron/memoryPoll.js";
+import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
+import { extractTitleContext, type TitleGeneratorConfig, type TitleModelAdapterFactory } from "../agent/titleGenerator.js";
+import { SESSION_GROUPING_SYSTEM_PROMPT, generateSessionGroupingSuggestion, type SessionGroupingCandidate } from "../agent/sessionGroupGenerator.js";
+import { appendUserPromptAddition } from "../agent/userPromptComposition.js";
+import type { TokenUsageStore } from "../data/usage/store.js";
+import type { BillingService } from "../data/billing/service.js";
 
 type SessionAgent = Pick<
   AgentProfileInfo,
@@ -136,6 +143,12 @@ export interface GroupsRouterOptions {
   /** 中央事件总线（优先于 broadcastToUser），延迟求值避免初始化时序问题 */
   getEventBus?: () => EventBus | undefined;
   loginLogFilePath?: string;
+  titleGeneratorConfigs?: TitleGeneratorConfig[];
+  titleModelAdapterFactory?: TitleModelAdapterFactory;
+  refreshSharedConfig?: (force?: boolean) => void | boolean | Promise<boolean>;
+  getSessionGroupingSystemPrompt?: () => string;
+  tokenUsageStore?: TokenUsageStore;
+  billingService?: BillingService;
 }
 
 export function createGroupsRouter(options: GroupsRouterOptions): Router {
@@ -210,6 +223,136 @@ export function createGroupsRouter(options: GroupsRouterOptions): Router {
       return res.json({ groups });
     } catch (err) {
       res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /** 生成只读智能分组方案；不会修改现有分组。 */
+  router.post("/groups/smart-plan", async (req: Request, res: Response) => {
+    if (!req.user || !userStore) { res.status(401).json({ error: "Authentication required" }); return; }
+    const scope = req.body?.scope === "all" ? "all" : req.body?.scope === "ungrouped" ? "ungrouped" : null;
+    if (!scope) { res.status(400).json({ error: "scope must be ungrouped or all" }); return; }
+    if (await options.refreshSharedConfig?.(true) === false) { res.status(503).json({ error: "Shared config refresh failed" }); return; }
+    if (!options.titleGeneratorConfigs?.length) { res.status(501).json({ error: "Smart grouping model not configured" }); return; }
+    try {
+      const userId = req.user.sub;
+      const workspaceUser = { id: userId, username: req.user.username, role: req.user.role, tenantId: req.user.tenantId };
+      const userCwd = resolveUserCwd(agentCwd, workspaceUser);
+      const owner = { tenantId: req.user.tenantId, userId };
+      const allGroups = groupStore.listByUserId(userId);
+      const fingerprint = groupStore.getUserSnapshotFingerprint(userId);
+      const protectedIds = new Set(allGroups.filter(group => group.kind !== "manual").flatMap(group => group.sessionIds));
+      const groupedIds = new Set(allGroups.flatMap(group => group.sessionIds));
+      const page = await listSessions(userCwd, { limit: Number.MAX_SAFE_INTEGER, owner });
+      const candidates: SessionGroupingCandidate[] = [];
+      for (const session of page.items) {
+        if (protectedIds.has(session.sessionId) || (scope === "ungrouped" && groupedIds.has(session.sessionId))) continue;
+        const transcriptPath = getTranscriptPath(userCwd, session.sessionId, owner);
+        const meta = await readSessionMeta(transcriptPath);
+        if (!meta || meta.userId !== userId || meta.deletedAt || meta.channel === "cron"
+          || meta.sessionSource === "taskboard_execution" || meta.sessionSource === "memory_consolidation") continue;
+        const context = await extractTitleContext(transcriptPath).catch(() => null);
+        if (!context?.userMessages.length) continue;
+        candidates.push({
+          sessionId: session.sessionId,
+          title: (meta.customTitle || meta.generatedTitle || context.userMessages[0]!).slice(0, 100),
+          userMessages: context.userMessages,
+          assistantReplies: context.assistantReplies,
+        });
+        if (candidates.length > 100) break;
+      }
+      const truncated = candidates.length > 100;
+      candidates.splice(100);
+      if (candidates.length === 0) {
+        res.json({ scope, fingerprint, groups: [], ungroupedSessionIds: [], sessions: [], truncated: false });
+        return;
+      }
+      const utilityBilling = options.billingService
+        ? await options.billingService.beginUtilityModelRun({
+            tenantId: req.user.tenantId ?? DEFAULT_TENANT_ID,
+            userId, username: req.user.username, channel: "session_grouping",
+          })
+        : undefined;
+      let suggestion;
+      try {
+        suggestion = await generateSessionGroupingSuggestion({
+          candidates,
+          existingGroupNames: allGroups.filter(group => group.kind === "manual").map(group => group.name),
+          configs: options.titleGeneratorConfigs,
+          systemPrompt: appendUserPromptAddition(
+            options.getSessionGroupingSystemPrompt?.() ?? SESSION_GROUPING_SYSTEM_PROMPT,
+            userStore.findById(userId)?.preferences?.sessionGroupingPromptAddition,
+            "session-grouping",
+          ),
+          options: {
+            modelAdapterFactory: options.titleModelAdapterFactory,
+            runtimeContext: { sessionId: candidates[0]!.sessionId, tenantId: req.user.tenantId, cwd: userCwd },
+            beforeModelCall: () => utilityBilling?.beforeModelCall(),
+            onUsage: async (model, usage) => {
+              await utilityBilling?.recordUsage(model, usage);
+              options.tokenUsageStore?.recordResult({
+                username: req.user!.username,
+                tenantId: req.user!.tenantId ?? DEFAULT_TENANT_ID,
+                channel: "session_grouping",
+                modelUsage: { [model]: usage },
+                occurredAtMs: Date.now(),
+              });
+            },
+          },
+        });
+      } finally {
+        await utilityBilling?.finalize();
+      }
+      if (!suggestion) { res.status(502).json({ error: "智能分组生成失败，请重试" }); return; }
+      res.json({
+        scope,
+        fingerprint,
+        ...suggestion,
+        sessions: candidates.map(candidate => ({ sessionId: candidate.sessionId, title: candidate.title })),
+        truncated,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "智能分组生成失败" });
+    }
+  });
+
+  /** 应用用户确认后的方案；模型调用和数据写入严格分离。 */
+  router.post("/groups/smart-apply", async (req: Request, res: Response) => {
+    if (!req.user || !userStore) { res.status(401).json({ error: "Authentication required" }); return; }
+    const fingerprint = typeof req.body?.fingerprint === "string" ? req.body.fingerprint : "";
+    const targetSessionIds = Array.isArray(req.body?.targetSessionIds) ? req.body.targetSessionIds : null;
+    const groups = Array.isArray(req.body?.groups) ? req.body.groups : null;
+    if (!fingerprint || !targetSessionIds || targetSessionIds.length > 100 || new Set(targetSessionIds).size !== targetSessionIds.length
+      || !targetSessionIds.every((id: unknown) => typeof id === "string")
+      || !groups || groups.length > 12 || !groups.every((group: any) => typeof group?.name === "string" && group.name.trim().length > 0 && group.name.trim().length <= 30
+        && Array.isArray(group.sessionIds) && group.sessionIds.every((id: unknown) => typeof id === "string"))) {
+      res.status(400).json({ error: "智能分组方案格式不正确" }); return;
+    }
+    try {
+      const ownershipError = await validateSessionOwnership(targetSessionIds, req.user.sub);
+      if (ownershipError) { res.status(400).json({ error: ownershipError }); return; }
+      const userCwd = resolveUserCwd(agentCwd, { id: req.user.sub, username: req.user.username, role: req.user.role, tenantId: req.user.tenantId });
+      for (const sessionId of targetSessionIds) {
+        const transcriptPath = getTranscriptPath(userCwd, sessionId, { tenantId: req.user.tenantId, userId: req.user.sub });
+        const meta = await readSessionMeta(transcriptPath);
+        if (!meta || meta.deletedAt || meta.channel === "cron" || meta.sessionSource === "taskboard_execution"
+          || meta.sessionSource === "memory_consolidation") {
+          res.status(400).json({ error: `会话不可参与智能分组：${sessionId}` }); return;
+        }
+      }
+      const changedGroups = await groupStore.applySmartGrouping({
+        userId: req.user.sub,
+        expectedFingerprint: fingerprint,
+        targetSessionIds,
+        groups: groups.map((group: any) => ({ name: group.name.trim(), sessionIds: group.sessionIds })),
+      });
+      if (options.loginLogFilePath) auditLog(req, "group_updated", `智能分组 ${targetSessionIds.length} 个会话`);
+      res.json({ ok: true, groups: changedGroups });
+      const eventBus = options.getEventBus?.();
+      if (eventBus) eventBus.emitUser(req.user.sub, { type: "groups_changed" });
+      else options.broadcastToUser?.(req.user.sub, { type: "groups_changed" });
+    } catch (error) {
+      if (error instanceof SmartGroupingConflictError) { res.status(409).json({ error: error.message }); return; }
+      res.status(500).json({ error: error instanceof Error ? error.message : "智能分组应用失败" });
     }
   });
 

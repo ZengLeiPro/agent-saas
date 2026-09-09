@@ -24,7 +24,7 @@ function expectRoute(input: string, routeId: string, canonicalPath: string | nul
 }
 
 describe("governance navigation registry", () => {
-  it("只暴露平台/组织各五个工作区，并完整登记本地叶子与八个个人设置页", () => {
+  it("只暴露平台/组织各五个工作区，并完整登记本地叶子与九个个人设置页", () => {
     expect(GOVERNANCE_NAVIGATION.platform.map((item) => item.id)).toEqual([
       "overview", "org-business", "resource-center", "runtime", "governance",
     ]);
@@ -33,7 +33,7 @@ describe("governance navigation registry", () => {
     ]);
     expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(28);
     expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(29);
-    expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(8);
+    expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(9);
   });
 
   it("平台与组织控制台菜单全部使用中文标签", () => {

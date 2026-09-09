@@ -1,5 +1,6 @@
 import { GUARDRAIL_SYSTEM_PROMPT } from '../agent/guardrail.js';
 import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
+import { SESSION_GROUPING_SYSTEM_PROMPT } from '../agent/sessionGroupGenerator.js';
 import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js';
 import { loadPrompt } from './promptRenderer.js';
 import { IMAGE_UNDERSTANDING_SYSTEM_PROMPT } from './imageUnderstanding.js';
@@ -126,6 +127,13 @@ const DEFINITIONS_META: ReadonlyArray<Omit<SystemPromptDefinition, 'defaultConte
     variables: [],
   },
   {
+    id: 'utility.sessionGrouping',
+    category: 'utility',
+    label: '辅助模型 · 智能会话分组',
+    description: '会话智能分组模型的 system message；结构化输出和系统分组保护规则不得删除。',
+    variables: [],
+  },
+  {
     id: 'utility.guardrail',
     category: 'utility',
     label: '辅助模型 · 话题门禁',
@@ -201,6 +209,7 @@ export class SystemPromptRegistry {
       case 'subagent.general': return GENERAL_SYSTEM_PROMPT;
       case 'subagent.explore': return EXPLORE_SYSTEM_PROMPT;
       case 'utility.title': return TITLE_SYSTEM_PROMPT;
+      case 'utility.sessionGrouping': return SESSION_GROUPING_SYSTEM_PROMPT;
       case 'utility.guardrail': return GUARDRAIL_SYSTEM_PROMPT;
       case 'utility.imageUnderstanding': return IMAGE_UNDERSTANDING_SYSTEM_PROMPT;
       case 'utility.compaction': return DEFAULT_COMPACTION_REQUEST_PROMPT;

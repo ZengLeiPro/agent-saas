@@ -143,8 +143,8 @@ const updatePreferencesSchema = z.object({
   defaultModel: z.string().min(1).optional(),
   activeRoleId: z.string().min(1).optional(),
   industryHint: z.enum(["manufacturing", "trade", "retail", "service", "export", "ecommerce"]).optional(),
+  titlePromptAddition: z.string().trim().max(2000, "标题生成要求不超过 2000 个字符").optional(), sessionGroupingPromptAddition: z.string().trim().max(2000, "智能分组要求不超过 2000 个字符").optional(),
 });
-
 const updatePhoneSchema = z.object({
   phone: z.string().refine((v) => v === "" || PHONE_PATTERN.test(v), "请输入有效的 11 位手机号"),
 });

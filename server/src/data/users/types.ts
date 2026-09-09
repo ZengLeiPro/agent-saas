@@ -33,6 +33,10 @@ export interface UserPreferences {
   defaultModel?: string;
   activeRoleId?: string;
   industryHint?: IndustryType;
+  /** 追加在平台会话标题提示语后的个人偏好。 */
+  titlePromptAddition?: string;
+  /** 追加在平台智能分组提示语后的个人偏好。 */
+  sessionGroupingPromptAddition?: string;
 }
 
 export const DEFAULT_USER_PREFERENCES = {

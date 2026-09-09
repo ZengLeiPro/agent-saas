@@ -501,7 +501,7 @@ export type { WorkflowTraceProjection } from './lib/workflowTraceProjector';
 
 // Lib - groups API
 export {
-  fetchGroups,
+  fetchGroups, generateSmartGroupingPlan, applySmartGroupingPlan,
   fetchGroupSessions,
   createGroup,
   deleteGroup,
@@ -511,7 +511,7 @@ export {
   fetchGroupSorting,
   saveGroupSorting,
 } from './lib/groupsApi';
-export type { ApiSessionGroup, GroupSortingMode, GroupSortingPref } from './lib/groupsApi';
+export type { ApiSessionGroup, GroupSortingMode, GroupSortingPref, SmartGroupingPlan, SmartGroupingScope } from './lib/groupsApi';
 
 // Lib - agents API
 export {

@@ -6,7 +6,7 @@
  * 说明：这些是「设置分区」专用图标，Web 同样没有把它们收进 `lib/icons.ts`
  * 的 EntityIcons 注册表，本文件保持与 Web 相同的分层。
  */
-import { Bot, HardDrive, Link2, MessageSquare, Palette, User } from 'lucide-react-native';
+import { Bot, HardDrive, Link2, MessageSquare, Palette, Sparkles, User } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 
 import { EntityIcons } from '../../../lib/icons';
@@ -16,6 +16,7 @@ export const PERSONAL_SETTINGS_ICONS: Record<PersonalSettingsIconKey, LucideIcon
   user: User,
   bot: Bot,
   'message-square': MessageSquare,
+  sparkles: Sparkles,
   palette: Palette,
   admin: EntityIcons.admin,
   link: Link2,

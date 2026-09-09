@@ -1,5 +1,5 @@
 import type { AcsOrchestratorConfig } from './config.js';
-import type { Kubectl } from './kubectl.js';
+import type { LocalProcessResult } from './localProcessSupervisor.js';
 import {
   OWNERSHIP_JOURNAL_NAME, OWNERSHIP_LIMITS, OWNERSHIP_PROTOCOL,
   OwnershipBlockedError, OwnershipUnavailableError, ownershipIsTerminal,
@@ -11,13 +11,18 @@ interface JournalSnapshot {
   records: OwnershipRecord[];
 }
 
+/** The journal consumes an explicit transport result, not an assertion of remote stop. */
+export interface OwnershipJournalTransport {
+  run(args: string[], options?: { input?: string; timeoutMs?: number }): Promise<LocalProcessResult>;
+}
+
 /** Namespace-scoped, resourceVersion-CAS journal. No expiry authorizes ownership release. */
 export class OwnershipJournal {
   private cached: OwnershipRecord[] = [];
   private available = false;
   private serial: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly config: AcsOrchestratorConfig, private readonly kubectl: Pick<Kubectl, 'run'>) {}
+  constructor(private readonly config: AcsOrchestratorConfig, private readonly kubectl: OwnershipJournalTransport) {}
 
   snapshot(): { available: boolean; records: OwnershipRecord[] } {
     return { available: this.available, records: structuredClone(this.cached) };

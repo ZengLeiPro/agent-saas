@@ -1,4 +1,4 @@
-# Non-production evidence only. No environments, secrets, deployment or remote commands.
+# Non-production source regressions. No environments, secrets or deployment steps.
 name: ACS repair evidence
 
 on:
@@ -7,8 +7,7 @@ on:
     paths:
       - '.github/workflows/acs-repair-evidence.yml'
       - 'acs-orchestrator/**'
-      - 'server/src/dws/**'
-      - 'scripts/acs-repair/**'
+      - 'server/**'
       - 'docs/engineering/acs-repair/**'
 
 permissions:
@@ -19,8 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  source:
-    name: Exact-source inspection archive (not a test verdict)
+  regressions:
+    name: Actual-source hang and ownership regressions
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -32,23 +31,23 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.1'
-      - name: Install locked development dependencies for isolated verification
+      - name: Install locked development dependencies
         env:
           NODE_ENV: development
         run: pnpm install --frozen-lockfile
-      - name: Archive tracked source and installed verification tools without credentials
+      - name: Record exact source and execute real modules
+        shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/acs-repair-source"
-          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/acs-repair-source/source.tar.gz"
-          git rev-parse HEAD > "$RUNNER_TEMP/acs-repair-source/source-sha.txt"
-          tar -czf "$RUNNER_TEMP/acs-repair-source/dependencies.tar.gz" node_modules acs-orchestrator/node_modules server/node_modules shared/node_modules
-          cp "$(command -v node)" "$RUNNER_TEMP/acs-repair-source/node"
-          node --version > "$RUNNER_TEMP/acs-repair-source/toolchain.txt"
-          pnpm --version >> "$RUNNER_TEMP/acs-repair-source/toolchain.txt"
-          sha256sum "$RUNNER_TEMP/acs-repair-source/"*.tar.gz "$RUNNER_TEMP/acs-repair-source/node" > "$RUNNER_TEMP/acs-repair-source/archive-sha256.txt"
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/acs-repair-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/acs-repair-evidence/source-sha.txt"
+          node --version > "$RUNNER_TEMP/acs-repair-evidence/toolchain.txt"
+          pnpm --version >> "$RUNNER_TEMP/acs-repair-evidence/toolchain.txt"
+          pnpm -F acs-orchestrator exec vitest run src/acsHangRegression.test.ts src/ownershipReaderRegression.test.ts --reporter=verbose 2>&1 | tee "$RUNNER_TEMP/acs-repair-evidence/regressions.log"
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          name: acs-repair-source-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/acs-repair-source/
+          name: acs-repair-evidence-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/acs-repair-evidence/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14

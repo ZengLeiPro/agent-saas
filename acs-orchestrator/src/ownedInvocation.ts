@@ -6,6 +6,7 @@ import type { SandboxManager } from './sandboxManager.js';
 import type { WireToolInvocationRequest } from './protocol.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 import { isRemoteUnknown, remoteUnknownResponse } from './runnerTransport.js';
+import { OWNED_WAIT_BUDGETS } from './ownedWait.js';
 
 interface OwnedInvocationInput {
   config: AcsOrchestratorConfig;
@@ -16,7 +17,7 @@ interface OwnedInvocationInput {
   execute(operation: OwnedOperation): AsyncIterable<ToolInvocationStreamChunk>;
 }
 
-/** The actual executor remains the task owner; this wrapper independently settles its caller. */
+/** The pump remains owned after a cancelled/disconnected HTTP consumer detaches. */
 export async function* executeOwnedInvocation(input: OwnedInvocationInput): AsyncIterable<ToolInvocationStreamChunk> {
   if (input.signal?.aborted) return;
   const workspace = input.request.context.workspace;
@@ -28,37 +29,60 @@ export async function* executeOwnedInvocation(input: OwnedInvocationInput): Asyn
   const operation = await input.operations.begin({
     kind: 'invocation', invocationId, attemptId: `${invocationId}:${randomUUID()}`, scope: writableScope(input.config, ref),
   });
-  let final: ToolInvocationResponse | undefined;
-  let failure: unknown;
-  const onAbort = () => { if (!final) operation.requestCancel(); };
-  input.signal?.addEventListener('abort', onAbort, { once: true });
-  if (input.signal?.aborted) onAbort();
-  const iterator = input.execute(operation)[Symbol.asyncIterator]();
-  operation.waiters += 1;
-  try {
-    for (;;) {
-      // Creating an async generator inside ALS is insufficient: each next/return
-      // must execute within the owner's context so transport failures retain it.
-      const next = await input.operations.context.run(operation, () => iterator.next());
-      if (next.done) break;
-      if (next.value.type === 'completed') final ??= next.value.response;
-      else yield next.value;
+  const queue: ToolInvocationStreamChunk[] = [];
+  let queuedBytes = 0;
+  let notify: (() => void) | undefined;
+  let finished = false;
+  let detached = false;
+  let result: ToolInvocationResponse | undefined;
+  let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
+  const wake = () => { const pending = notify; notify = undefined; pending?.(); };
+  const endWaiter = (reason: string) => {
+    if (finished || detached) return;
+    detached = true;
+    queue.length = 0;
+    queuedBytes = 0;
+    result = remoteUnknownResponse(reason);
+    wake();
+  };
+  const cancel = () => {
+    if (finished) return;
+    operation.requestCancel();
+    if (!cancellationTimer) {
+      cancellationTimer = setTimeout(() => endWaiter('cancel_unconfirmed'), OWNED_WAIT_BUDGETS.cancellationMs);
+      cancellationTimer.unref?.();
     }
-  } catch (error) {
-    failure = error;
-  } finally {
-    operation.waiters -= 1;
-    input.signal?.removeEventListener('abort', onAbort);
-    if (iterator.return) {
-      try { await input.operations.context.run(operation, () => iterator.return!()); }
-      catch (error) { failure ??= error; }
+  };
+  input.signal?.addEventListener('abort', cancel, { once: true });
+  operation.controller.signal.addEventListener('abort', cancel, { once: true });
+  if (input.signal?.aborted) cancel();
+
+  // Do not await iterator.return() on the HTTP path: a suspended generator may
+  // itself be waiting on an unresponsive dependency. The pump owns that cleanup.
+  const task = input.operations.context.run(operation, async () => {
+    let final: ToolInvocationResponse | undefined;
+    let failure: unknown;
+    try {
+      for await (const chunk of input.execute(operation)) {
+        if (chunk.type === 'completed') { final ??= chunk.response; continue; }
+        if (detached) continue;
+        const bytes = Buffer.byteLength(JSON.stringify(chunk));
+        if (queue.length >= 256 || queuedBytes + bytes > 8 * 1024 * 1024) {
+          cancel();
+          endWaiter('presentation_queue_limit');
+          continue;
+        }
+        queue.push(chunk);
+        queuedBytes += bytes;
+        wake();
+      }
+    } catch (error) {
+      failure = error;
     }
     try {
-      if (isRemoteUnknown(final) || operation.record.resource === 'unknown'
-        || (operation.dispatched && !final)) {
-        await operation.unknown(operation.controller.signal.aborted ? 'cancel_unconfirmed' : 'remote_unconfirmed');
-        final = { ...(final ?? remoteUnknownResponse('remote_unconfirmed')),
-          metadata: { ...final?.metadata, remoteExecution: { state: 'unknown', attemptId: operation.record.attemptId } } };
+      if (isRemoteUnknown(final) || operation.record.resource === 'unknown' || (operation.dispatched && !final)) {
+        await operation.unknown('remote_unconfirmed');
+        final = remoteUnknownResponse('remote_unconfirmed');
       } else if (!operation.dispatched) {
         await operation.complete(operation.controller.signal.aborted ? 'cancelled' : failure ? 'failed' : 'success', {
           kind: 'never_dispatched', attemptId: operation.record.attemptId, sandboxUid: operation.record.sandboxUid,
@@ -67,9 +91,6 @@ export async function* executeOwnedInvocation(input: OwnedInvocationInput): Asyn
         const background = final.metadata?.backgroundShell as { protectedUntil?: unknown } | undefined;
         const handedOff = final.status === 'success' && typeof background?.protectedUntil === 'string'
           && Date.parse(background.protectedUntil) > Date.now();
-        // This is the legacy daemon's exact-attempt final contract, not a claim
-        // that local kubectl exit or an HTTP cancel confirmed remote termination.
-        // Supervised descendant receipts remain a separately gated protocol upgrade.
         await operation.complete(final.status === 'success' ? 'success' : 'failed', {
           kind: handedOff ? 'background_inventory' : 'remote_receipt', attemptId: operation.record.attemptId,
           sandboxUid: operation.record.sandboxUid,
@@ -79,14 +100,46 @@ export async function* executeOwnedInvocation(input: OwnedInvocationInput): Asyn
       operation.markUncertain('finalization_unknown');
       final = remoteUnknownResponse('finalization_unknown');
     }
-  }
-  if (failure && !final) throw failure;
-  if (final) {
-    yield { type: 'completed', response: {
-      ...final, metadata: { ...final.metadata, acsOperation: {
-        operationId: operation.record.operationId, attemptId: operation.record.attemptId,
-        resource: operation.record.resource, finalized: ownershipIsTerminal(operation.record),
-      } },
-    } };
+    if (!detached) {
+      result = final ?? { status: 'error', error: failure instanceof Error ? failure.message : 'ACS invocation ended before dispatch' };
+    }
+    finished = true;
+    wake();
+  });
+  // This observer is installed immediately, not only when a caller asks for next().
+  void task.catch(() => {
+    operation.markUncertain('owner_pump_failed');
+    if (!detached) result = remoteUnknownResponse('owner_pump_failed');
+    finished = true;
+    wake();
+  });
+  operation.waiters += 1;
+  try {
+    for (;;) {
+      const chunk = queue.shift();
+      if (chunk) {
+        queuedBytes -= Buffer.byteLength(JSON.stringify(chunk));
+        yield chunk;
+        continue;
+      }
+      if (finished || detached) break;
+      await new Promise<void>((resolve) => { notify = resolve; });
+    }
+    if (result) {
+      yield { type: 'completed', response: {
+        ...result, metadata: { ...result.metadata, acsOperation: {
+          operationId: operation.record.operationId, attemptId: operation.record.attemptId,
+          resource: operation.record.resource, finalized: ownershipIsTerminal(operation.record),
+        } },
+      } };
+    }
+  } finally {
+    operation.waiters -= 1;
+    input.signal?.removeEventListener('abort', cancel);
+    operation.controller.signal.removeEventListener('abort', cancel);
+    if (cancellationTimer) clearTimeout(cancellationTimer);
+    if (!finished) operation.requestCancel();
+    detached = true;
+    queue.length = 0;
   }
 }

@@ -1,3 +1,4 @@
+import type { MemoryIndexRuntimeTransaction } from './memoryIndexRuntimeUpdate.js';
 /**
  * 跨进程共享配置的按需刷新器。
  *
@@ -66,6 +67,7 @@ type ConfigChanges = {
   sessionAutomation: boolean;
   webTools: boolean;
   memoryPolling: boolean;
+  memoryIndex: boolean;
 };
 type ConfigChangeKey = keyof ConfigChanges;
 type PreparationOutcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
@@ -77,6 +79,7 @@ type PreparationResults = [
   PreparationOutcome<WebToolsRuntimeUpdateCommit | undefined>,
   PreparationOutcome<SttRuntimeUpdateCommit | undefined>,
   PreparationOutcome<SttRuntimeUpdateCommit | undefined>,
+  PreparationOutcome<MemoryIndexRuntimeTransaction | undefined>,
 ];
 
 const MODEL_CHANGE_KEYS: ConfigChangeKey[] = ['models', 'titleGenerator', 'guardrail'];
@@ -91,6 +94,7 @@ const CHANGE_LABELS: Record<ConfigChangeKey, string> = {
   sessionAutomation: 'Session Automation',
   webTools: 'WebTools',
   memoryPolling: 'memory polling',
+  memoryIndex: 'memory index',
 };
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {
@@ -195,6 +199,7 @@ export function createSharedConfigRefresher(params: {
     nextConfig: AppConfig,
   ) => ModelsHotUpdateTransaction | Promise<ModelsHotUpdateTransaction>;
   /** memory polling 派生运行态纳入同一提交/回滚事务，禁止旁路直接覆写 AppConfig。 */
+  prepareMemoryIndexUpdate?: (next: NonNullable<AppConfig['memory']>['index']) => Promise<MemoryIndexRuntimeTransaction>;
   prepareMemoryPollingUpdate?: (
     next: NonNullable<AppConfig['memory']>['polling'],
   ) => () => void;
@@ -223,6 +228,7 @@ export function createSharedConfigRefresher(params: {
     prepareSttUpdate,
     onModelsUpdated,
     prepareMemoryPollingUpdate,
+    prepareMemoryIndexUpdate,
     recoveryGate,
     onConfigReloaded,
     validateConfigReload,
@@ -281,6 +287,7 @@ export function createSharedConfigRefresher(params: {
         JSON.stringify(nextConfig.sessionAutomation ?? null),
       webTools:
         JSON.stringify(config.webTools ?? null) !== JSON.stringify(nextConfig.webTools ?? null),
+      memoryIndex: JSON.stringify(config.memory?.index ?? null) !== JSON.stringify(nextConfig.memory?.index ?? null),
       memoryPolling:
         JSON.stringify(config.memory?.polling ?? null) !==
         JSON.stringify(nextConfig.memory?.polling ?? null),
@@ -301,6 +308,7 @@ export function createSharedConfigRefresher(params: {
     else if (label === 'stt') dirtyConfigChanges.add('stt');
     else if (label === 'web tools') dirtyConfigChanges.add('webTools');
     else if (label === 'memory polling') dirtyConfigChanges.add('memoryPolling');
+    else if (label === 'memory index') dirtyConfigChanges.add('memoryIndex');
     else if (label === 'AppConfig') {
       for (const key of Object.keys(changes) as ConfigChangeKey[]) {
         if (changes[key]) dirtyConfigChanges.add(key);
@@ -344,6 +352,10 @@ export function createSharedConfigRefresher(params: {
     if (changes.webTools) {
       if (source.webTools) config.webTools = source.webTools;
       else delete config.webTools;
+    }
+    if (changes.memoryIndex) {
+      if (source.memory?.index) config.memory = { ...(config.memory ?? {}), index: source.memory.index };
+      else if (config.memory) delete config.memory.index;
     }
     if (changes.memoryPolling) {
       config.memory = { ...(config.memory ?? {}), polling: source.memory?.polling };
@@ -430,6 +442,8 @@ export function createSharedConfigRefresher(params: {
     rollbackStt?: SttRuntimeUpdateCommit;
     candidateWebTools?: WebToolsRuntimeUpdateCommit;
     rollbackWebTools?: WebToolsRuntimeUpdateCommit;
+    candidateMemoryIndex?: () => void;
+    rollbackMemoryIndex?: () => void;
     candidateMemoryPolling?: () => void;
     rollbackMemoryPolling?: () => void;
   }): boolean {
@@ -443,6 +457,7 @@ export function createSharedConfigRefresher(params: {
     addStep('stt', params.candidateStt, params.rollbackStt);
     addStep('web tools', params.candidateWebTools, params.rollbackWebTools);
     addStep('memory polling', params.candidateMemoryPolling, params.rollbackMemoryPolling);
+    addStep('memory index', params.candidateMemoryIndex, params.rollbackMemoryIndex);
     steps.push({
       label: 'AppConfig',
       commit: () => applyConfigSlices(params.nextConfig, params.changes),
@@ -569,6 +584,7 @@ export function createSharedConfigRefresher(params: {
       resolvedRollbackWebTools?: WebToolsRuntimeUpdateCommit,
       resolvedCandidateStt?: SttRuntimeUpdateCommit,
       resolvedRollbackStt?: SttRuntimeUpdateCommit,
+      memoryIndexTransaction?: MemoryIndexRuntimeTransaction,
     ): boolean => {
       if (recoveryGate?.isDirty()) {
         configRefreshNeedsRetry = true;
@@ -596,6 +612,8 @@ export function createSharedConfigRefresher(params: {
         rollbackStt: resolvedRollbackStt,
         candidateMemoryPolling,
         rollbackMemoryPolling,
+        candidateMemoryIndex: memoryIndexTransaction?.commit,
+        rollbackMemoryIndex: memoryIndexTransaction?.rollback,
       });
     };
 
@@ -621,21 +639,30 @@ export function createSharedConfigRefresher(params: {
       changes.stt && prepareSttUpdate
         ? startControlledPreparation(() => prepareSttUpdate(previousConfig.stt))
         : { ok: true as const, value: undefined },
+      changes.memoryIndex && prepareMemoryIndexUpdate
+        ? startControlledPreparation(() => prepareMemoryIndexUpdate(nextConfig.memory?.index))
+        : { ok: true as const, value: undefined },
     ] as const;
     const completePreparations = (results: PreparationResults): boolean => {
+      const memory = results[6].ok ? results[6].value : undefined;
       const failed = results.find((result) => !result.ok);
       if (failed && !failed.ok) {
+        memory?.dispose();
         warnConfigReload(failed.error);
         return false;
       }
-      return finalize(
+      const applied = finalize(
         results[1].ok ? results[1].value?.commit : undefined,
         results[1].ok ? results[1].value?.rollback : undefined,
         results[2].ok ? results[2].value : undefined,
         results[3].ok ? results[3].value : undefined,
         results[4].ok ? results[4].value : undefined,
         results[5].ok ? results[5].value : undefined,
+        memory,
       );
+      if (applied) memory?.complete();
+      else memory?.dispose();
+      return applied;
     };
 
     if (preparations.some(isPromiseLike)) {

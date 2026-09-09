@@ -9,6 +9,7 @@
 0444 scripts/release/read-live-production-components.mjs
 0444 scripts/release/read-production-state.mjs
 0444 scripts/release/read-runtime-identity.mjs
+0444 scripts/release/config-publication.mjs
 0444 scripts/release/seal-compatibility-release.mjs
 0444 scripts/release/verify-installed-release.mjs
 0444 scripts/release/write-compatibility-acs-identity.mjs

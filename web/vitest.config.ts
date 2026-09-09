@@ -17,6 +17,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      "@agent/shared/configWritePolicy": fileURLToPath(new URL("../shared/src/configWritePolicy.ts", import.meta.url)),
       // Keep runtime schema imports on the exact shared subpath, matching the production build.
       "@": fileURLToPath(new URL("./src", import.meta.url)),
       "@agent/shared/lib/governanceApi": fileURLToPath(new URL("../shared/src/lib/governanceApi.ts", import.meta.url)),

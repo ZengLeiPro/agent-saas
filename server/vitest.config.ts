@@ -9,6 +9,7 @@ const coverageReporters =
 export default defineConfig({
   resolve: {
     alias: {
+      "@agent/shared/configWritePolicy": fileURLToPath(new URL("../shared/src/configWritePolicy.ts", import.meta.url)),
       '@agent/shared/lib/chatSubmission': fileURLToPath(
         new URL('../shared/src/lib/chatSubmission.ts', import.meta.url),
       ),

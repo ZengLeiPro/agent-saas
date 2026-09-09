@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { publishedExpected } from './config-publication.mjs';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
@@ -234,9 +235,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   } catch {
     throw new Error('Offline production ConfigIdentity cannot be verified; refusing repair');
   }
+  const trusted = JSON.parse(readFileSync('/etc/agent-saas/runtime-identity.json', 'utf8'));
+  const selectedExpected = publishedExpected('/etc/agent-saas/config.json', apiUnit.env.AGENT_SAAS_RELEASE_ID, apiBinding.expectedConfigIdentity);
+  const selectedTrusted = publishedExpected('/etc/agent-saas/config.json', apiUnit.env.AGENT_SAAS_RELEASE_ID, trusted.configIdentity);
   const verified = validateRecoveryObservations({
     manifest,
-    trusted: JSON.parse(readFileSync('/etc/agent-saas/runtime-identity.json', 'utf8')),
+    trusted: { ...trusted, configIdentity: selectedTrusted },
     apiEnv: apiUnit.env,
     workerEnv: workerUnit.env,
     serverBytes,
@@ -245,7 +249,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     acs,
     installedManifest: JSON.parse(readFileSync(`${apiUnit.root}/manifest.json`, 'utf8')),
     observedConfig,
-    expectedConfig: apiBinding.expectedConfigIdentity,
+    expectedConfig: selectedExpected,
   });
   const body = {
     schemaVersion: 1,

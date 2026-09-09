@@ -625,6 +625,7 @@ const binding = envPath === '-'
   ? { releaseId, expectedConfigIdentity: JSON.parse(expectedJson) }
   : await readReleaseConfigIdentityBinding(envPath);
 await validatePrivateConfigIdentityReleaseBinding({
+  productionConfigPath: '/etc/agent-saas/config.json',
   privateSnapshotPath: snapshotPath,
   ...binding,
   label,
@@ -746,6 +747,7 @@ if (
   throw new Error(`${label} release identity disagrees with release env`);
 }
 await validatePrivateConfigIdentityReleaseBinding({
+  productionConfigPath: '/etc/agent-saas/config.json',
   privateSnapshotPath: snapshotPath,
   ...binding,
   label,
@@ -1692,6 +1694,12 @@ deploy_app() {
     --runtime-data-dir /mnt/agent-saas/server-data \
     --env-file /etc/agent-saas/server.env \
     2> >(sed 's/^/[config-identity-cli] /' >&2))"
+  # The existing OS governance fence is held here. Only controlled deployment
+  # bootstraps the signing authority; runtime never silently accepts disk drift.
+  if [ -f "$target/server/dist/config-publication-cli.js" ]; then
+    node "$target/server/dist/config-publication-cli.js" prepare \
+      /etc/agent-saas/config.json "$release_id" "$config_identity"
+  fi
   api_active="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
   worker_active="$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_PATH")"
   case "$api_active:$worker_active" in blue:blue|blue:green|green:blue|green:green) ;; *) exit 1 ;; esac

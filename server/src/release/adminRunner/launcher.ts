@@ -1,3 +1,4 @@
+import { publishedExpected } from '../../../../scripts/release/config-publication.mjs';
 /**
  * Admin Runner 治理 launcher：受支持 one-off 命令的唯一执行入口。
  *
@@ -293,7 +294,15 @@ async function observeConfigIdentity(
     deps.stderr(`[config-identity-cli] observation failed: ${message}`);
     observed = { error: message };
   }
-  return evaluateConfigIdentity({ expected: runtimeIdentity.expectedConfigIdentity, observed });
+  try {
+    const expected = environment === 'production'
+      ? publishedExpected(configPath, runtimeIdentity.releaseId, runtimeIdentity.expectedConfigIdentity)
+      : runtimeIdentity.expectedConfigIdentity;
+    return evaluateConfigIdentity({ expected, observed });
+  } catch {
+    return evaluateConfigIdentity({ expected: runtimeIdentity.expectedConfigIdentity,
+      observed: { error: 'Signed production configuration authority is unavailable or requires recovery' } });
+  }
 }
 
 function summarize(deps: LauncherDeps, receipt: AdminRunnerReceipt, receiptPath: string): void {

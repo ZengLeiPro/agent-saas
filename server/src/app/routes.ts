@@ -377,7 +377,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createModelsAdminRouter({
         processCwd,
         config,
-        configMutationService,
+        configMutationService: runtime.productionModelMutationService ?? configMutationService,
         secretVault: runtime.secretVault,
         requireRevision: true, ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
         ...(runtime.validateSharedConfigCandidate ? { validateConfigReload: runtime.validateSharedConfigCandidate } : {}),

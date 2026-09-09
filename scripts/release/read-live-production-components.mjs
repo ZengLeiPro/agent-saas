@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { publishedExpected } from './config-publication.mjs';
 import { execFileSync as defaultExecFileSync } from 'node:child_process';
 import { readFileSync as defaultReadFileSync, realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
@@ -267,7 +268,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   // retry/readback 时 live topology 允许先于 trusted component matrix 切换；API 已切换的
   // retry baseline 与 candidate readback 均以 active-release-bound private summary 为准。
-  validateExpectedConfigIdentityObservers(trustedRuntime.configIdentity, configIdentity, {
+  const publishedConfigIdentity = publishedExpected('/etc/agent-saas/config.json', api.release.releaseId, trustedRuntime.configIdentity);
+  validateExpectedConfigIdentityObservers(publishedConfigIdentity, configIdentity, {
     configIdentityStage,
   });
   const output = {

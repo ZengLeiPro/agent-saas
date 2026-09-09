@@ -3,6 +3,7 @@ import { useAppLifecycle } from "@/hooks/useAppLifecycle";
 import { useActivityReporter } from "@/hooks/useActivityReporter";
 
 import { saveSessionMessages } from "@/lib/messageCache";
+import { sessionAgentTargetPresentation } from "@/lib/sessionAgentTargetIdentity";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useChatAppState } from "@/hooks/useChatAppState";
 import { useTtsPlayer } from "@/hooks/useTtsPlayer";
@@ -21,7 +22,6 @@ import {
   resolveNewSessionAgentTarget,
   type AgentTarget,
   type AgentTargetTransitionImpact,
-  type AgentTargetUnavailableReason,
 } from "@agent/shared";
 
 import { DesktopLayout } from "@/layouts/DesktopLayout";
@@ -75,7 +75,7 @@ function App() {
   const handleVoiceEvent = useCallback(
     (key: string, text: string, voice?: string, speed?: number) => {
       if (ttsPlayer.autoPlay && ttsPlayer.available) {
-        ttsPlayer.play(key, text, voice, speed);
+        ttsPlayer.play(key, text, voice);
       }
     },
     [ttsPlayer.autoPlay, ttsPlayer.available, ttsPlayer.play],
@@ -153,7 +153,10 @@ function App() {
     () => sessionId ? sessions.find((s) => s.sessionId === sessionId) ?? null : null,
     [sessionId, sessions],
   );
-  const activeAgentTarget = currentSessionItem?.agentTarget ?? pendingAgentTarget;
+  // Once a session ID exists, only its persisted identity can authorize/display its Agent.
+  // A local placeholder must not borrow the current draft picker or be called a legacy failure.
+  const persistedSessionIdentity = sessionId ? sessionAgentTargetPresentation(currentSessionItem) : null;
+  const activeAgentTarget = sessionId ? currentSessionItem?.agentTarget : pendingAgentTarget;
   const activeOrgAgent = useMemo(() => {
     if (activeAgentTarget?.kind !== 'org-agent') return null;
     const mine = myOrgAgents.find((agent) => agent.id === activeAgentTarget.orgAgentId);
@@ -166,12 +169,9 @@ function App() {
       skillCount: mine?.skillCount ?? 0,
     };
   }, [activeAgentTarget, currentSessionItem, myOrgAgents]);
-  const unprovenSessionReason: AgentTargetUnavailableReason | undefined = currentSessionItem && !currentSessionItem.agentTarget && !pendingAgentTarget
-    ? { code: 'legacy_binding_unproven', message: '该历史会话缺少可证明的 Agent 目标，仅支持查看', contactAdmin: true }
-    : undefined;
-  const activeAgentTargetUnavailableReason = currentSessionItem?.agentTargetUnavailableReason ?? unprovenSessionReason;
-  const activeAgentTargetLabel = currentSessionItem
-    ? currentSessionItem.agentTargetSnapshot?.name ?? '绑定不可验证'
+  const activeAgentTargetUnavailableReason = persistedSessionIdentity?.unavailableReason;
+  const activeAgentTargetLabel = persistedSessionIdentity
+    ? persistedSessionIdentity.label
     : activeAgentTarget?.kind === 'personal'
       ? '个人 Agent'
       : activeAgentTarget?.kind === 'org-agent' ? activeOrgAgent?.name ?? '企业专家' : undefined;
@@ -307,7 +307,7 @@ function App() {
     if (target) startAgentTargetSession(target);
   }, [activeTab, adminSettings, agentTargetCatalog, messages.length, orgAgentsLoading, pendingAgentTarget, sessionId, settingsOpen, startAgentTargetSession]);
 
-  // Web/PWA 生命周期：只在数据确已陈旧时做会话域静默刷新；传输续接由 WS connected handler 负责。
+  // Web/PWA 生命周期：只在数据确已陈旧时做会话话域静默刷新；传输续接由 WS connected handler 负责。
   const onResume = useCallback(() => {
     void refreshSessions();
     // 当前 transcript 由重连后的 connected handler 选择 snapshot 或 cursor replay，

@@ -77,9 +77,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -91,9 +91,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -151,6 +151,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -377,9 +381,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:f419fe9752d418c4462bafd689b3e324e476dc5254ed83a4ab6937de37f31042",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -391,9 +395,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/skillPresentations/builtins.ts",
@@ -965,6 +969,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -1135,9 +1143,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -1149,9 +1157,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -1535,6 +1543,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -1705,9 +1717,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -1719,9 +1731,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -2068,6 +2080,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -2238,9 +2254,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -2252,9 +2268,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -2601,6 +2617,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -2764,9 +2784,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -2778,9 +2798,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -3112,6 +3132,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -3275,9 +3299,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -3289,9 +3313,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -3623,6 +3647,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -3786,9 +3814,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -3800,9 +3828,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -4134,6 +4162,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -4374,9 +4406,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -4388,9 +4420,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/skillPresentations/builtins.ts",
@@ -4951,6 +4983,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -5128,9 +5164,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -5142,9 +5178,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -5489,6 +5525,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -5666,9 +5706,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -5680,9 +5720,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -6040,6 +6080,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -6217,9 +6261,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -6231,9 +6275,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -6591,6 +6635,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -6740,9 +6788,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -6754,9 +6802,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -7063,6 +7111,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -7212,9 +7264,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -7226,9 +7278,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -7535,6 +7587,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -7684,9 +7740,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -7698,9 +7754,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -8007,6 +8063,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -8156,9 +8216,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -8170,9 +8230,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -8479,6 +8539,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -8621,9 +8685,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -8635,9 +8699,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -8933,6 +8997,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -9075,9 +9143,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -9089,9 +9157,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -9387,6 +9455,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -9508,9 +9580,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -9522,9 +9594,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -9765,6 +9837,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -9886,9 +9962,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -9900,9 +9976,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -10132,6 +10208,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -10253,9 +10333,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -10267,9 +10347,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -10491,6 +10571,10 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -10612,9 +10696,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -10626,9 +10710,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -10850,6 +10934,10 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -10971,9 +11059,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -10985,9 +11073,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -11209,6 +11297,10 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -11330,9 +11422,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -11344,9 +11436,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -11532,6 +11624,10 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -11653,9 +11749,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -11667,9 +11763,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -11849,6 +11945,10 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -11963,9 +12063,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -11977,9 +12077,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -12122,6 +12222,10 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -12236,9 +12340,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -12250,9 +12354,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -12395,6 +12499,10 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -12481,9 +12589,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -12495,9 +12603,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -12610,6 +12718,10 @@
         {
           "path": "server/src/quota/providerQuotaRuntime.test.ts",
           "digest": "sha256:5993a02112ab563ff75e70ea10e4f0a3ae0a949fd738670ef956e4325fe38109"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -12696,9 +12808,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -12710,9 +12822,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -12817,6 +12929,10 @@
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
           "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -12896,9 +13012,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -12910,9 +13026,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -12998,6 +13114,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -13077,9 +13197,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -13091,9 +13211,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -13161,6 +13281,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -13240,9 +13364,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -13254,9 +13378,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -13342,6 +13466,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -13421,9 +13549,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -13435,9 +13563,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -13494,6 +13622,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -13573,9 +13705,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -13587,9 +13719,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -13646,6 +13778,10 @@
         {
           "path": "server/src/quota/providerQuotaPushedAccounts.pg.test.ts",
           "digest": "sha256:196cbbaa82971c533ce3f40eefc78943fbd005e353d6f643efe40f4d1065d41c"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -13725,9 +13861,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -13739,9 +13875,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -13787,6 +13923,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -13866,9 +14006,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -13880,9 +14020,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -13940,6 +14080,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -14019,9 +14163,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -14033,9 +14177,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -14093,6 +14237,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     },
@@ -14172,9 +14320,9 @@
         {
           "path": "server/src/data/orgGroupAgents/store.ts",
           "baselineDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
-          "targetDigest": "sha256:be66e337cf1ab6f7fe8a980c7e6531c8c18bfae64dd5803d88803cd51bb1223a",
+          "targetDigest": "sha256:6622b1dd0b85fa48f5ab1da5b8402266c118465362a298bf25e3e73478e77eb6",
           "classification": "no-schema-change",
-          "reason": "仅编排治理迁移与各运行期 store，并把 inbox 回执与 WorkOrder mutation 委托到同一事务；本文件无 DDL 或启动回填。"
+          "reason": "仅编排治理迁移与各运行期 store，并把快速控制 prepared、完成或失败状态及 inbox lease fence 委托到 WorkOrder 事务；本文件无 DDL、启动迁移或回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/storeMappers.ts",
@@ -14186,9 +14334,9 @@
         {
           "path": "server/src/data/orgGroupAgents/workOrderLifecycle.ts",
           "baselineDigest": "sha256:aba97b5fe944917809627a3511407c76775adbdf96154e28e6dec6410a85bdc0",
-          "targetDigest": "sha256:bdc84ad4cd00840e9a46a043ace02ce979bfdccda256901503be929bfa9e0be0",
+          "targetDigest": "sha256:9c0d45686b22358d29eb4ec7ac18c2c25e3fd3194dcd41d40de00d112179662c",
           "classification": "no-schema-change",
-          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制回执受 lease owner/fence/expiry 约束并与任务 mutation 同事务提交，无 DDL 或启动回填。"
+          "reason": "在既有 WorkOrder、attempt、delivery 与 inbox 表上执行运行期事务；快速控制先按 lease fence 固化 prepared 与 attempt 状态，运行副作用完成后再同事务提交终态回执，重领复用同一命令与 attempt；无 DDL 或启动回填。"
         },
         {
           "path": "server/src/data/toolDescriptionStore.ts",
@@ -14246,6 +14394,10 @@
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+        },
+        {
+          "path": "server/src/__tests__/agentDwsFastControlClaim.pg.test.ts",
+          "digest": "sha256:fd33accb1725326d337c76ae54f2c79834b5bef5fd99e652a8d7d9170e006af1"
         }
       ]
     }

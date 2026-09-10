@@ -44,6 +44,7 @@ export interface DesktopSessionSidebarProps {
   onCollapse?: () => void;
   onPreviewTrashSession?: (id: string | null) => void;
   trashPreviewSessionId?: string | null;
+  onSessionRestored?: (sessionId: string) => Promise<boolean | void>;
   sidebarLayout?: 'double' | 'single';
   personalAgentEnabled?: boolean;
   responsiveMode?: 'none' | 'secondary-hidden' | 'hidden';

@@ -2,10 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const deploy = readFileSync(
-  new URL('./deploy-production-release.sh', import.meta.url),
-  'utf8',
-);
+const deploy = readFileSync(new URL('./deploy-production-release.sh', import.meta.url), 'utf8');
 const appStart = deploy.indexOf('deploy_app() {');
 const appEnd = deploy.indexOf('case "$PHASE" in', appStart);
 const deployApp = deploy.slice(appStart, appEnd);
@@ -16,10 +13,15 @@ test('deploy_app 在 governance fence 与任何生产写入之前等待上一次
   );
   const begin = deployApp.indexOf('begin_app_deploy_transaction');
   const firstMutation = deployApp.indexOf('install -m 0644 "$SERVER_UNIT_TEMPLATE" "$server_unit"');
-  const colorRecheck = deployApp.indexOf("echo 'Active colors changed while waiting for idle slots; refusing to continue'");
+  const colorRecheck = deployApp.indexOf(
+    "echo 'Active colors changed while waiting for idle slots; refusing to continue'",
+  );
   assert.ok(wait > -1, 'idle slot wait is missing');
   assert.ok(wait < begin, 'idle slot wait must run before the config governance fence is taken');
-  assert.ok(begin < colorRecheck && colorRecheck < firstMutation, 'colors must be re-read after the wait and before mutation');
+  assert.ok(
+    begin < colorRecheck && colorRecheck < firstMutation,
+    'colors must be re-read after the wait and before mutation',
+  );
 });
 
 test('wait_for_idle_app_slots 只等待带 drain marker 的旧色，超时或未知状态 fail closed，绝不强停', () => {
@@ -64,11 +66,76 @@ test('候选 API readiness 使用有界墙钟等待、静默重试与可操作�
   assert.doesNotMatch(readiness, /journalctl/u);
 });
 
+test('候选 Worker 先就绪，候选 API 固定读取配对 Worker 的 readyfile，避免 readiness 循环等待', () => {
+  const apiEnv = deployApp.indexOf('"/run/agent-saas-runtime-worker-$worker_idle.ready"');
+  const workerStart = deployApp.indexOf(
+    'systemctl enable --now "agent-saas-runtime-worker@$worker_idle"',
+    apiEnv,
+  );
+  const workerAdmitted = deployApp.indexOf(
+    'DEPLOY_APP_ROLLBACK_WORKER_CANDIDATE_ADMITTED=true',
+    workerStart,
+  );
+  const apiStart = deployApp.indexOf(
+    'systemctl enable --now "agent-saas-server@$api_idle"',
+    workerAdmitted,
+  );
+  const apiReadyWait = deployApp.indexOf(
+    'while [ "$SECONDS" -lt "$api_candidate_deadline" ]; do',
+    apiStart,
+  );
+
+  assert.ok(apiEnv > -1, 'candidate API must pin its paired Worker readyfile');
+  assert.ok(workerStart > apiEnv, 'candidate Worker must start after its release env is written');
+  assert.ok(workerAdmitted > workerStart, 'candidate Worker must be verified before API startup');
+  assert.ok(apiStart > workerAdmitted, 'candidate API must start after candidate Worker admission');
+  assert.ok(
+    apiReadyWait > apiStart,
+    'API readiness wait must run after both candidate roles start',
+  );
+});
+
+test('repair 在候选变更前只重绑旧 generation 的凭据版本，使失败回滚仍可启动', () => {
+  const helper = deploy.indexOf('rebind_release_env_credential_identity()');
+  const helperEnd = deploy.indexOf('acquire_config_governance_fence() {', helper);
+  const repairGate = deployApp.indexOf('if [ "$PRODUCTION_RECOVERY_MODE" = repair ]; then');
+  const apiRebind = deployApp.indexOf(
+    '"/etc/agent-saas/server-$api_active.release.env" "$config_identity"',
+    repairGate,
+  );
+  const workerRebind = deployApp.indexOf(
+    '"/etc/agent-saas/runtime-worker-$worker_active.release.env" "$config_identity"',
+    apiRebind,
+  );
+  const candidateLink = deployApp.indexOf(
+    'ln -sfn "$target" "$APP_COLOR_ROOT/$api_idle"',
+    workerRebind,
+  );
+
+  assert.ok(helper > -1, 'credential-only rebind helper must exist');
+  assert.ok(repairGate > -1, 'old generation rebind must be repair-only');
+  assert.ok(apiRebind > repairGate, 'repair must rebind the active API release env');
+  assert.ok(workerRebind > apiRebind, 'repair must rebind the active Worker release env');
+  assert.ok(
+    candidateLink > workerRebind,
+    'old generation must be restartable before candidate mutation',
+  );
+  assert.match(
+    deploy.slice(helper, helperEnd),
+    /refusing credential-only rebind for structurally drifted release env/,
+  );
+});
+
 test('authority 提交后旧 generation 后台交接：marker + disable + SIGUSR2，短时确认、不 --now、committed 点前移', () => {
-  const marker = deployApp.indexOf('commit_app_active_colors "$api_idle" "$worker_idle" "$api_active"');
+  const marker = deployApp.indexOf(
+    'commit_app_active_colors "$api_idle" "$worker_idle" "$api_active"',
+  );
   const committed = deployApp.indexOf('DEPLOY_APP_ROLLBACK_COMMITTED=true', marker);
   const handoff = deployApp.indexOf('  complete_app_handoff', committed);
-  const finalCheck = deployApp.indexOf("'Committed candidate App final API ConfigIdentity'", handoff);
+  const finalCheck = deployApp.indexOf(
+    "'Committed candidate App final API ConfigIdentity'",
+    handoff,
+  );
   assert.ok(marker > -1 && committed > marker && handoff > committed && finalCheck > handoff);
   assert.doesNotMatch(deployApp, /retire_systemd_authority/u);
   assert.doesNotMatch(deployApp, /kill -USR2 "\$old_(?:worker|api)_pid"/u);
@@ -84,10 +151,19 @@ test('authority 提交后旧 generation 后台交接：marker + disable + SIGUSR
 
 test('systemd 模板用 drain marker 的 ExecCondition 阻止后台 drain 的旧色被重新拉起', () => {
   for (const [template, marker] of [
-    ['agent-saas-runtime-worker@.service.template', 'ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining'],
-    ['agent-saas-server@.service.template', 'ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining'],
+    [
+      'agent-saas-runtime-worker@.service.template',
+      'ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining',
+    ],
+    [
+      'agent-saas-server@.service.template',
+      'ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining',
+    ],
   ]) {
-    const unit = readFileSync(new URL(`../../daemon-packaging/systemd/${template}`, import.meta.url), 'utf8');
+    const unit = readFileSync(
+      new URL(`../../daemon-packaging/systemd/${template}`, import.meta.url),
+      'utf8',
+    );
     assert.ok(unit.includes(marker), `${template} lacks ${marker}`);
     assert.match(unit, /Restart=on-failure/u);
   }

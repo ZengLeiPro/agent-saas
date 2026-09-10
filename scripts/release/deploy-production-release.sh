@@ -505,9 +505,10 @@ fi
 
 upsert_env() {
   local manifest="$1" target="$2" role="$3" config_identity="$4"
-  node - "$manifest" "$target" "$role" "$config_identity" <<'NODE'
+  local active_runtime_worker_readyfile="${5:-}"
+  node - "$manifest" "$target" "$role" "$config_identity" "$active_runtime_worker_readyfile" <<'NODE'
 const fs = require('node:fs');
-const [manifestPath, target, role, configIdentityJson] = process.argv.slice(2);
+const [manifestPath, target, role, configIdentityJson, activeRuntimeWorkerReadyfile] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const component = role === 'web' ? manifest.components.web : manifest.components.api;
 // TASK-318：Release expected config identity 随发布绑定（由 config-identity-cli 计算）。
@@ -525,8 +526,38 @@ const desired = {
 if (identity.credentialVersionDigest) {
   desired.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST = identity.credentialVersionDigest;
 }
+if (role === 'api' && activeRuntimeWorkerReadyfile) {
+  desired.AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE = activeRuntimeWorkerReadyfile;
+}
 fs.writeFileSync(`${target}.candidate`, `${Object.entries(desired).map(([key, value]) => `${key}=${value}`).join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${target}.candidate`, target);
+NODE
+}
+
+rebind_release_env_credential_identity() {
+  local target="$1" config_identity="$2"
+  node - "$target" "$config_identity" <<'NODE'
+const fs = require('node:fs');
+const [target, configIdentityJson] = process.argv.slice(2);
+const identity = JSON.parse(configIdentityJson);
+if (!identity.credentialVersionDigest) process.exit(0);
+const source = fs.readFileSync(target, 'utf8');
+const values = new Map(source.trimEnd().split('\n').map((line) => {
+  const separator = line.indexOf('=');
+  return [line.slice(0, separator), line.slice(separator + 1)];
+}));
+if (values.get('AGENT_SAAS_CONFIG_IDENTITY_DIGEST') !== identity.digest) {
+  throw new Error(`refusing credential-only rebind for structurally drifted release env: ${target}`);
+}
+values.set(
+  'AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST',
+  identity.credentialVersionDigest,
+);
+const candidate = `${target}.credential-rebind`;
+fs.writeFileSync(candidate, `${[...values].map(([key, value]) => `${key}=${value}`).join('\n')}\n`, {
+  mode: 0o600,
+});
+fs.renameSync(candidate, target);
 NODE
 }
 
@@ -1703,6 +1734,15 @@ deploy_app() {
   api_active="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
   worker_active="$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_PATH")"
   case "$api_active:$worker_active" in blue:blue|blue:green|green:blue|green:green) ;; *) exit 1 ;; esac
+  if [ "$PRODUCTION_RECOVERY_MODE" = repair ]; then
+    # A credential-only repair must leave the old generation restartable if the
+    # candidate fails. Preserve its immutable release identity while rebinding
+    # only the already-observed credential version under the governance fence.
+    rebind_release_env_credential_identity \
+      "/etc/agent-saas/server-$api_active.release.env" "$config_identity"
+    rebind_release_env_credential_identity \
+      "/etc/agent-saas/runtime-worker-$worker_active.release.env" "$config_identity"
+  fi
   if [ "$api_active" != "$planned_api_active" ] || [ "$worker_active" != "$planned_worker_active" ]; then
     echo 'Active colors changed while waiting for idle slots; refusing to continue' >&2
     exit 1
@@ -1943,10 +1983,29 @@ EOF
   printf '%s\n' "$target" >"$rollback_root/api.candidate.target"
   printf '%s\n' "$target" >"$rollback_root/worker.candidate.target"
   DEPLOY_APP_ROLLBACK_CONFIG_IDENTITY="$config_identity"
-  upsert_env "$MANIFEST_PATH" "$api_env" api "$config_identity"
+  upsert_env "$MANIFEST_PATH" "$api_env" api "$config_identity" \
+    "/run/agent-saas-runtime-worker-$worker_idle.ready"
   upsert_env "$MANIFEST_PATH" "$worker_env" worker "$config_identity"
   cp -a "$api_env" "$rollback_root/api.candidate.release.env"
   cp -a "$worker_env" "$rollback_root/worker.candidate.release.env"
+
+  # Candidate API readiness depends on a healthy Runtime Worker. Start and
+  # validate the paired candidate Worker first; its readyfile is pinned in the
+  # candidate API release env above, without changing active authority.
+  rm -f "/run/agent-saas-runtime-worker-$worker_idle.pid" \
+    "/run/agent-saas-runtime-worker-$worker_idle.ready" \
+    "/run/agent-saas-runtime-worker-$worker_idle.draining" \
+    "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json"
+  systemctl enable --now "agent-saas-runtime-worker@$worker_idle"
+  for _ in $(seq 1 180); do
+    pid="$(cat "/run/agent-saas-runtime-worker-$worker_idle.pid" 2>/dev/null || true)"
+    ready="$(cat "/run/agent-saas-runtime-worker-$worker_idle.ready" 2>/dev/null || true)"
+    [ -n "$pid" ] && [ "$pid" = "$ready" ] && kill -0 "$pid" 2>/dev/null && break
+    sleep 1
+  done
+  validate_worker_release_boundary "$worker_idle" - "$release_id" "$config_identity" \
+    'Candidate Worker private ConfigIdentity'
+  DEPLOY_APP_ROLLBACK_WORKER_CANDIDATE_ADMITTED=true
 
   rm -f "/run/agent-saas-server-$api_idle.pid" \
     "/run/agent-saas-server-$api_idle.ready" \
@@ -2046,20 +2105,6 @@ EOF
   validate_api_release_boundary "$api_idle" "$config_identity" \
     'Candidate API final ConfigIdentity'
 
-  rm -f "/run/agent-saas-runtime-worker-$worker_idle.pid" \
-    "/run/agent-saas-runtime-worker-$worker_idle.ready" \
-    "/run/agent-saas-runtime-worker-$worker_idle.draining" \
-    "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json"
-  systemctl enable --now "agent-saas-runtime-worker@$worker_idle"
-  for _ in $(seq 1 180); do
-    pid="$(cat "/run/agent-saas-runtime-worker-$worker_idle.pid" 2>/dev/null || true)"
-    ready="$(cat "/run/agent-saas-runtime-worker-$worker_idle.ready" 2>/dev/null || true)"
-    [ -n "$pid" ] && [ "$pid" = "$ready" ] && kill -0 "$pid" 2>/dev/null && break
-    sleep 1
-  done
-  validate_worker_release_boundary "$worker_idle" - "$release_id" "$config_identity" \
-    'Candidate Worker private ConfigIdentity'
-  DEPLOY_APP_ROLLBACK_WORKER_CANDIDATE_ADMITTED=true
   if ! validate_api_release_boundary "$api_idle" "$config_identity" \
       'Candidate App final API ConfigIdentity' \
     || ! validate_worker_release_boundary "$worker_idle" - "$release_id" "$config_identity" \

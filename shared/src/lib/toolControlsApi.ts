@@ -133,9 +133,12 @@ export async function fetchToolControlsConfig(): Promise<ToolControlsAdminRespon
   );
 }
 
-export async function updateToolControlsConfig(payload: UpdateToolControlsRequest): Promise<ToolControlsAdminResponse> {
+export async function updateToolControlsConfig(
+  payload: UpdateToolControlsRequest,
+  request: typeof authFetch = authFetch,
+): Promise<ToolControlsAdminResponse> {
   return parseJsonResponse<ToolControlsAdminResponse>(
-    await authFetch(API_BASE, {
+    await request(API_BASE, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -147,9 +150,10 @@ export async function updateToolControlsConfig(payload: UpdateToolControlsReques
 export async function updateSingleTool(
   toolId: string,
   payload: UpdateSingleToolRequest,
+  request: typeof authFetch = authFetch,
 ): Promise<ToolControlsAdminResponse> {
   return parseJsonResponse<ToolControlsAdminResponse>(
-    await authFetch(`${API_BASE}/${encodeURIComponent(toolId)}`, {
+    await request(`${API_BASE}/${encodeURIComponent(toolId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

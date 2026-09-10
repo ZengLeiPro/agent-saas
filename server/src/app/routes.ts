@@ -98,6 +98,7 @@ import { createMemoryPollingAdminRouter } from '../routes/memoryPollingAdmin.js'
 import { createSystemPromptsAdminRouter } from '../routes/systemPromptsAdmin.js';
 import { createAgentRuntimeProfilesAdminRouter } from '../routes/agentRuntimeProfilesAdmin.js';
 import { createConfigStatusAdminRouter } from '../routes/configStatusAdmin.js';
+import { createAdminConfigOperationsRouter } from '../routes/adminConfigOperations.js';
 import { createRuntimeConfigGovernance } from './runtimeConfigGovernance.js';
 import { createAdminBillingRouter, createBillingRouter } from '../routes/billing.js';
 import { createAzerothProxyRouter } from '../routes/azeroth-proxy.js';
@@ -391,6 +392,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     );
   }
   const controlledConfigMutationService = runtime.productionModelMutationService ?? configMutationService;
+  app.use('/api/admin/config-operations', createAdminConfigOperationsRouter(controlledConfigMutationService));
   registerModelProviderAdminRoutes(app, runtime, {
     processCwd,
     config,

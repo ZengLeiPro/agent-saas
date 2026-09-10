@@ -245,8 +245,9 @@ export function createCodexSubscriptionAdminRouter(
     let candidateRef: string | undefined;
     const completion = (async () => {
       const authorized = options.deviceAuthService.completedResult(req.params.sessionId);
+      const requestContext = mutationRequestContext(req);
       const result = await configMutationService.mutate({
-        ...mutationRequestContext(req),
+        ...requestContext,
         operation: { id: 'codex.complete' },
         changedPaths: ['codexSubscription'],
         buildCandidate: async (configText, raw) => {
@@ -259,7 +260,11 @@ export function createCodexSubscriptionAdminRouter(
           if (authorized.replaceCredentialRef && !currentRefs.includes(authorized.replaceCredentialRef)) {
             throw new Error('待重授权的 Codex 账号已被移除，请重新发起授权');
           }
-          const candidate = await options.credentialManager.persistLogin(authorized.tokens);
+          const candidate = await options.credentialManager.persistLogin(
+            authorized.tokens,
+            undefined,
+            requestContext.operationId ? { configOperationId: requestContext.operationId } : {},
+          );
           candidateRef = candidate.credentialRef;
           const nextRefs = authorized.replaceCredentialRef
             ? currentRefs.map((ref) => ref === authorized.replaceCredentialRef ? candidate.credentialRef : ref)

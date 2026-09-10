@@ -233,7 +233,7 @@ export function buildWebToolsPayload(
 
 export function ToolControlsManager(): JSX.Element {
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "工具配置");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "工具配置");
   const [toolControlsDraft, setToolControlsDraft] = useState<ToolControlsConfig>(() => normalizeToolControls(null));
   const [webToolsDraft, setWebToolsDraft] = useState<WebToolsConfig>(() => normalizeWebTools(null));
   const [tools, setTools] = useState<ToolCatalogItem[]>([]);
@@ -362,7 +362,7 @@ export function ToolControlsManager(): JSX.Element {
         toolControls,
         webTools,
         ...bodyMetadata(productionConfirmation),
-      });
+      }, mutationFetch);
       hydrate(response);
       setSavedAt(Date.now());
       setError(null);
@@ -371,7 +371,7 @@ export function ToolControlsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [allowedContentTypesText, allowedHostsText, blockedHostsText, bodyMetadata, confirmMutation, hydrate, revision, searchApiKeyText, toolControlsDraft, webToolsDraft]);
+  }, [allowedContentTypesText, allowedHostsText, blockedHostsText, bodyMetadata, confirmMutation, hydrate, mutationFetch, revision, searchApiKeyText, toolControlsDraft, webToolsDraft]);
 
   const saveSingleTool = useCallback(async (
     toolId: string,
@@ -386,11 +386,15 @@ export function ToolControlsManager(): JSX.Element {
         && !!descriptionRevision;
       const productionConfirmation = descriptionOnly ? undefined : confirmMutation();
       if (productionConfirmation === null) return;
-      const response = await updateSingleTool(toolId, {
+      const requestPayload = {
         ...payload,
         ...(descriptionOnly ? { expectedRevision: revision } : bodyMetadata(productionConfirmation)),
         expectedDescriptionRevision: descriptionRevision,
-      });
+      };
+      const response = descriptionOnly
+        ? await updateSingleTool(toolId, requestPayload)
+        : await updateSingleTool(toolId, requestPayload, mutationFetch);
+      acceptMetadata(response);
       if (response.revision) setRevision(response.revision);
       setDescriptionRevision(response.descriptionRevision);
       setTools(response.tools);
@@ -403,7 +407,7 @@ export function ToolControlsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [bodyMetadata, confirmMutation, descriptionRevision, revision]);
+  }, [acceptMetadata, bodyMetadata, confirmMutation, descriptionRevision, mutationFetch, revision]);
 
   const draftVisibleTools = useMemo(
     () => listDraftVisibleTools(tools, toolControlsDraft, webToolsDraft),

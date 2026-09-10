@@ -90,7 +90,7 @@ function Field({
 export function MemoryPollingManager() {
   // 只读平台 admin：保存配置与总开关 disabled
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "记忆轮询配置");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "记忆轮询配置");
   const [view, setView] = useState<MemoryPollingAdminView | null>(null);
   const [draft, setDraft] = useState<MemoryPollingDraft>(EMPTY_DRAFT);
   const [modelList, setModelList] = useState<ModelList | null>(null);
@@ -143,7 +143,7 @@ export function MemoryPollingManager() {
     try {
       const productionConfirmation = confirmMutation();
       if (productionConfirmation === null) return;
-      const response = await authFetch("/api/admin/memory-polling", {
+      const response = await mutationFetch("/api/admin/memory-polling", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -166,7 +166,7 @@ export function MemoryPollingManager() {
     } finally {
       setSaving(false);
     }
-  }, [acceptMetadata, bodyMetadata, confirmMutation, draft]);
+  }, [acceptMetadata, bodyMetadata, confirmMutation, draft, mutationFetch]);
 
   const maxHoursSpan = Math.max(1, Math.min(12, 24 - draft.hour));
   const windowLabel = useMemo(() => {

@@ -116,7 +116,7 @@ function buildEnginePayload(key: EngineKey, draft: EngineDraft, platformEnabled:
 export function ImageGenSettingsCard() {
   // 只读平台 admin：保存引擎配置与引擎开关 disabled
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "生图引擎配置");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "生图引擎配置");
   const [draft, setDraft] = useState<ImageGenDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -168,7 +168,7 @@ export function ImageGenSettingsCard() {
     try {
       const productionConfirmation = confirmMutation();
       if (productionConfirmation === null) return;
-      const response = await authFetch("/api/admin/image-gen-pricing/config", {
+      const response = await mutationFetch("/api/admin/image-gen-pricing/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -191,7 +191,7 @@ export function ImageGenSettingsCard() {
     } finally {
       setSaving(false);
     }
-  }, [bodyMetadata, confirmMutation, draft, hydrate]);
+  }, [bodyMetadata, confirmMutation, draft, hydrate, mutationFetch]);
 
   return (
     <Card>

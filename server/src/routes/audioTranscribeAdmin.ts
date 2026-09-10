@@ -10,6 +10,7 @@ import { GLOBAL_OWNER_ID, type SecretVault, type VaultCaller } from '../security
 import {
   AdminConfigMutationService,
   ConfigConflictError,
+  ConfigMutationCommittedError,
   configFingerprint,
 } from '../config/adminConfigMutationService.js';
 import { adminConfigReadMetadata, mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
@@ -56,6 +57,12 @@ const SECRET_FIELDS: readonly SecretFieldDefinition[] = [
   { envKey: 'OSS_ACCESS_KEY_ID', appKey: 'ossAccessKeyId', refKey: 'ossAccessKeyIdRef' },
   { envKey: 'OSS_ACCESS_KEY_SECRET', appKey: 'ossAccessKeySecret', refKey: 'ossAccessKeySecretRef' },
 ];
+
+class SttCandidateValidationError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
+}
 
 function isRecord(value: unknown): value is RawObject {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -252,28 +259,33 @@ export function createAudioTranscribeAdminRouter(
       SECRET_WRITER,
       { preservePreviousOnCommit: configMutationService.isControlledProductionPublisher() },
     );
-
     try {
+      const requestContext = mutationRequestContext(req);
+      secretMutation.bindOperation(requestContext.operationId);
       const result = await configMutationService.mutate({
-        ...mutationRequestContext(req),
+        ...requestContext,
         operation: { id: 'stt.save' },
         changedPaths: ['stt'],
         validateBaseline: async (freshText) => {
           if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(freshText)) {
-            throw new Error('当前配置基线未完整应用，拒绝写入');
+            throw new SttCandidateValidationError(new Error('当前配置基线未完整应用，拒绝写入'));
           }
         },
         buildCandidate: async (freshText, freshRaw) => {
-          const merged = mergeRequestedStt(freshRaw, req.body);
-          secretMutation.trackPrevious(sttSecretRefs(parseAppConfig(merged.rawRecord).stt));
-          staged = parseAppConfig({ ...merged.rawRecord, stt: merged.staged }).stt;
-          assertEnabledCredentialsComplete(staged);
-          staged = await persistSubmittedSecrets(staged, req.body, secretMutation);
-          staged = parseAppConfig({ ...merged.rawRecord, stt: staged }).stt;
-          await options.validate?.(staged);
-          return applyEdits(freshText, modify(freshText, ['stt'], staged, {
-            formattingOptions: { insertSpaces: true, tabSize: 2 },
-          }));
+          try {
+            const merged = mergeRequestedStt(freshRaw, req.body);
+            secretMutation.trackPrevious(sttSecretRefs(parseAppConfig(merged.rawRecord).stt));
+            staged = parseAppConfig({ ...merged.rawRecord, stt: merged.staged }).stt;
+            assertEnabledCredentialsComplete(staged);
+            staged = await persistSubmittedSecrets(staged, req.body, secretMutation);
+            staged = parseAppConfig({ ...merged.rawRecord, stt: staged }).stt;
+            await options.validate?.(staged);
+            return applyEdits(freshText, modify(freshText, ['stt'], staged, {
+              formattingOptions: { insertSpaces: true, tabSize: 2 },
+            }));
+          } catch (error) {
+            throw new SttCandidateValidationError(error);
+          }
         },
         applyRuntime: async (candidate) => {
           options.config.stt = candidate.stt;
@@ -297,6 +309,10 @@ export function createAudioTranscribeAdminRouter(
       await secretMutation.failed(error, sttSecretRefs(staged));
       if (error instanceof ConfigWriteConflictError) {
         res.status(409).json({ error: safeErrorMessage(new Error(message), staged, req.body) });
+      } else if (error instanceof SttCandidateValidationError) {
+        res.status(400).json({ error: safeErrorMessage(new Error(message), staged, req.body) });
+      } else if (error instanceof ConfigMutationCommittedError) {
+        res.status(500).json({ code: error.code, error: safeErrorMessage(new Error(message), staged, req.body) });
       } else {
         sendConfigMutationError(res, error);
       }

@@ -112,7 +112,7 @@ function formatPricing(entry: ImageGenEnginePricing | undefined): string {
 export function ImageGenPricingCard() {
   // 只读平台 admin：保存定价 disabled
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "生图定价");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "生图定价");
   const [data, setData] = useState<ImageGenPricingAdminResponse | null>(null);
   const [drafts, setDrafts] = useState<DraftTable>({});
   const [loading, setLoading] = useState(true);
@@ -187,7 +187,7 @@ export function ImageGenPricingCard() {
       const productionConfirmation = confirmMutation();
       if (productionConfirmation === null) return;
       const pricing = buildPricingPayload(drafts);
-      const res = await authFetch("/api/admin/image-gen-pricing", {
+      const res = await mutationFetch("/api/admin/image-gen-pricing", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pricing, ...bodyMetadata(productionConfirmation) }),
@@ -202,7 +202,7 @@ export function ImageGenPricingCard() {
     } finally {
       setSaving(false);
     }
-  }, [bodyMetadata, confirmMutation, drafts, hydrate]);
+  }, [bodyMetadata, confirmMutation, drafts, hydrate, mutationFetch]);
 
   const engines = data ? listEngines(data) : [];
 

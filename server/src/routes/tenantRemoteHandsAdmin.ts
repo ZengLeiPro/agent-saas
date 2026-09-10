@@ -19,6 +19,11 @@ const TENANT_HAND_SECRET_WRITER = {
   userId: '__system__',
   scopes: ['secret:tenant-hand:write', 'secret:tenant-hand:revoke'],
 };
+const TENANT_HAND_SECRET_INSPECTOR = {
+  actor: 'system' as const,
+  userId: '__system__',
+  scopes: ['secret:metadata:read'],
+};
 
 export interface CreateTenantRemoteHandsAdminRouterOptions {
   processCwd: string;
@@ -207,17 +212,48 @@ export function createTenantRemoteHandsAdminRouter(
       { preservePreviousOnCommit: configMutationService.isControlledProductionPublisher() },
     );
     try {
+      const requestContext = mutationRequestContext(req);
+      secretMutation.bindOperation(requestContext.operationId);
       const result = await configMutationService.mutate({
-        ...mutationRequestContext(req),
+        ...requestContext,
         operation: { id: 'tenant-remote-hands.save' },
         changedPaths: ['tenantRemoteHands'],
         buildCandidate: async (configText, rawConfig) => {
           const current = parseAppConfig(rawConfig).tenantRemoteHands;
           secretMutation.trackPrevious(current?.hands.map((hand) => hand.authTokenRef) ?? []);
-          const requested = validateTenantRemoteHandsUpdate(rawConfig, req.body.tenantRemoteHands);
+          const requested: TenantRemoteHandsConfig = validateTenantRemoteHandsUpdate(rawConfig, req.body.tenantRemoteHands);
+          const currentRefById = new Map(
+            (current?.hands ?? []).map((hand) => [hand.id, hand.authTokenRef] as const),
+          );
+          for (const hand of requested.hands) {
+            if (!hand.authTokenRef || hand.authTokenRef === currentRefById.get(hand.id)) continue;
+            if (!options.secretVault?.inspectRef) {
+              throw new Error(`tenantRemoteHands ${hand.id} 的新 authTokenRef 无法验证`);
+            }
+            const ref = await options.secretVault.inspectRef(hand.authTokenRef, TENANT_HAND_SECRET_INSPECTOR);
+            if (
+              !ref
+              || ref.revokedAt
+              || ref.ownerId !== GLOBAL_OWNER_ID
+              || ref.kind !== 'tenant-hand'
+              || ref.metadata.handId !== hand.id
+            ) {
+              throw new Error(`tenantRemoteHands ${hand.id} 的 authTokenRef 不属于该执行环境`);
+            }
+          }
+          const submittedInlineIds = new Set<string>(
+            (Array.isArray(req.body.tenantRemoteHands.hands) ? req.body.tenantRemoteHands.hands : [])
+              .filter(isObject)
+              .filter((hand: RawObject) => typeof hand.authToken === 'string' && hand.authToken.length > 0)
+              .map((hand: RawObject) => hand.id)
+              .filter((id: unknown): id is string => typeof id === 'string'),
+          );
+          if (!secretMutation.available && submittedInlineIds.size > 0 && options.validateConfigReload) {
+            await options.validateConfigReload(parseAppConfig({ ...rawConfig, tenantRemoteHands: requested }));
+          }
           staged = {
             hands: await Promise.all(requested.hands.map(async (hand) => {
-              if (!hand.authToken) return hand;
+              if (!hand.authToken || !submittedInlineIds.has(hand.id)) return hand;
               const { authToken, ...safe } = hand;
               const authTokenRef = await secretMutation.put(
                 GLOBAL_OWNER_ID,
@@ -251,7 +287,7 @@ export function createTenantRemoteHandsAdminRouter(
       });
     } catch (error) {
       await secretMutation.failed(error, staged?.hands.map((hand) => hand.authTokenRef) ?? []);
-      if (error instanceof Error && /tenantRemoteHands|hands|baseUrl|authToken/u.test(error.message)) {
+      if (error instanceof Error && /tenantRemoteHands|hands|baseUrl|authToken|Secret|credential/u.test(error.message)) {
         res.status(400).json({ error: error.message });
         return;
       }

@@ -249,6 +249,8 @@ export interface MutationInput {
   operation?: AdminConfigOperation;
   /** 浏览器提交的幂等键；不作为 scope、环境或目标选择器。 */
   operationId?: string;
+  /** 只在进程内参与受保护 HMAC；不会写明文日志。 */
+  requestSemantic?: unknown;
   productionConfirmation?: string;
   actor: string;
   changedPaths: string[];
@@ -361,6 +363,10 @@ export class AdminConfigMutationService {
     const release = await this.acquireLock();
     try { await this.options.productionPublisher!.recover(); }
     finally { await release(); }
+  }
+
+  getProductionOperationStatus(operationId: string, actor: string) {
+    return this.options.productionPublisher?.getOperationStatus?.(operationId, actor);
   }
 
   async mutate(input: MutationInput): Promise<AdminConfigMutationResult> {

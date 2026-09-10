@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { parseConfigWritePolicy, type ConfigWritePolicy } from '@agent/shared/configWritePolicy';
+import { authFetch } from '@/lib/authFetch';
 
 export interface AdminConfigResponseMetadata {
   revision?: string;
@@ -16,6 +17,7 @@ function newOperationId(): string {
 export function useAdminConfigWritePolicy(accountReadOnly: boolean, operationLabel: string) {
   const [revision, setRevision] = useState('');
   const [policy, setPolicy] = useState<ConfigWritePolicy | null>(null);
+  const pendingOperationIdRef = useRef<string | null>(null);
 
   const acceptMetadata = useCallback((value: AdminConfigResponseMetadata) => {
     if (typeof value.revision === 'string' && value.revision) setRevision(value.revision);
@@ -36,22 +38,66 @@ export function useAdminConfigWritePolicy(accountReadOnly: boolean, operationLab
   }, [operationLabel, policy, revision]);
 
   const bodyMetadata = useCallback(
-    (confirmation?: string) => ({
+    (confirmation?: string) => {
+      const operationId = newOperationId();
+      pendingOperationIdRef.current = operationId;
+      return {
       expectedRevision: revision,
       ...(confirmation ? { productionConfirmation: confirmation } : {}),
-      operationId: newOperationId(),
-    }),
+        operationId,
+      };
+    },
     [revision],
   );
 
-  const deleteHeaders = useCallback(
-    (confirmation?: string): Record<string, string> => ({
-      'X-Config-Revision': revision,
-      'X-Config-Operation-Id': newOperationId(),
-      ...(confirmation ? { 'X-Production-Confirmation': confirmation } : {}),
-    }),
+  const deleteHeaders = useCallback((confirmation?: string): Record<string, string> => {
+    const operationId = newOperationId();
+    pendingOperationIdRef.current = operationId;
+    return {
+        'X-Config-Revision': revision,
+        'X-Config-Operation-Id': operationId,
+        ...(confirmation ? { 'X-Production-Confirmation': confirmation } : {}),
+      };
+    },
     [revision],
   );
+
+  /** Network/5xx is ambiguous: query the original id once and never synthesize a retry. */
+  const mutationFetch = useCallback(async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const operationId = pendingOperationIdRef.current;
+    try {
+      const response = await authFetch(input, init);
+      if (response.status < 500 || !operationId) {
+        pendingOperationIdRef.current = null;
+        return response;
+      }
+      const status = await authFetch(`/api/admin/config-operations/${encodeURIComponent(operationId)}`);
+      const operation = await status.json().catch(() => ({})) as { state?: string };
+      if (status.ok && operation.state && operation.state !== 'not_committed' && operation.state !== 'rolled_back') {
+        throw new Error(`配置操作 ${operationId} 当前状态为 ${operation.state}，请刷新读取结果，勿重复提交`);
+      }
+      pendingOperationIdRef.current = null;
+      return response;
+    } catch (error) {
+      if (operationId) {
+        try {
+          const status = await authFetch(`/api/admin/config-operations/${encodeURIComponent(operationId)}`);
+          const operation = await status.json().catch(() => ({})) as { state?: string };
+          if (status.ok && operation.state && operation.state !== 'not_committed' && operation.state !== 'rolled_back') {
+            throw new Error(`配置操作 ${operationId} 当前状态为 ${operation.state}，请刷新读取结果，勿重复提交`);
+          }
+        } catch (statusError) {
+          if (statusError instanceof Error && statusError.message.includes(operationId)) throw statusError;
+        }
+      }
+      throw error;
+    } finally {
+      pendingOperationIdRef.current = null;
+    }
+  }, []);
 
   return useMemo(
     () => ({
@@ -62,6 +108,7 @@ export function useAdminConfigWritePolicy(accountReadOnly: boolean, operationLab
       confirmMutation,
       bodyMetadata,
       deleteHeaders,
+      mutationFetch,
     }),
     [
       acceptMetadata,
@@ -69,6 +116,7 @@ export function useAdminConfigWritePolicy(accountReadOnly: boolean, operationLab
       bodyMetadata,
       confirmMutation,
       deleteHeaders,
+      mutationFetch,
       policy,
       revision,
     ],

@@ -250,7 +250,11 @@ export class CodexCredentialManager {
     return promise.then((bundle) => ({ ...bundle, credentialRef }));
   }
 
-  async persistLogin(tokens: CodexOAuthTokens, existingRef?: string): Promise<{
+  async persistLogin(
+    tokens: CodexOAuthTokens,
+    existingRef?: string,
+    candidateMetadata: Record<string, unknown> = {},
+  ): Promise<{
     credentialRef: string;
     bundle: CodexTokenBundle;
   }> {
@@ -288,7 +292,7 @@ export class CodexCredentialManager {
             CODEX_SECRET_KIND,
             JSON.stringify(bundle),
             systemVaultCaller('write'),
-            { accountBindingHash: hashAccountBinding(accountId) },
+            { accountBindingHash: hashAccountBinding(accountId), ...candidateMetadata },
           );
           return {
             credentialRef: replacement.id,
@@ -322,7 +326,7 @@ export class CodexCredentialManager {
       CODEX_SECRET_KIND,
       JSON.stringify(bundle),
       systemVaultCaller('write'),
-      { accountBindingHash: hashAccountBinding(accountId) },
+      { accountBindingHash: hashAccountBinding(accountId), ...candidateMetadata },
     );
     try {
       await this.runtimeStateStore.clear(ref.id, bundle.generation);

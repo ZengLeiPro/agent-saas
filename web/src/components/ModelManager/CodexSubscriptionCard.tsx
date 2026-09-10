@@ -107,6 +107,7 @@ function accountList(state: CodexSubscriptionState | null): CodexCredentialState
 
 export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const write = useAdminConfigWritePolicy(readOnly, "Codex 订阅配置");
+  const { acceptMetadata } = write;
   const effectiveReadOnly = write.readOnly;
   const [state, setState] = useState<CodexSubscriptionState | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -118,14 +119,14 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const [error, setError] = useState<string | null>(null);
 
   const applyState = useCallback((next: CodexSubscriptionState) => {
-    write.acceptMetadata(next);
+    acceptMetadata(next);
     const credentials = next.credentials ?? (next.credential?.configured ? [next.credential] : []);
     setState({ ...next, credentials });
     setEnabled(next.config.enabled);
     setWebsocketEnabled(next.config.websocketEnabled === true);
     setQuotaCooldownMinutes(next.config.quotaCooldownMinutes ?? 60);
     setError(next.warning ?? null);
-  }, [write.acceptMetadata]);
+  }, [acceptMetadata]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -184,7 +185,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
             setError("外部授权已完成，尚未登记到平台；可稍后继续完成登记");
             return;
           }
-          const completeResponse = await authFetch(
+          const completeResponse = await write.mutationFetch(
             `/api/admin/codex-subscription/device/${encodeURIComponent(deviceSession.sessionId)}/complete`,
             {
               method: "POST",
@@ -242,7 +243,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     try {
       const productionConfirmation = write.confirmMutation();
       if (productionConfirmation === null) return;
-      const response = await authFetch("/api/admin/codex-subscription", {
+      const response = await write.mutationFetch("/api/admin/codex-subscription", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled, websocketEnabled, quotaCooldownMinutes, ...write.bodyMetadata(productionConfirmation) }),
@@ -275,7 +276,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     try {
       const productionConfirmation = write.confirmMutation();
       if (productionConfirmation === null) return;
-      const response = await authFetch("/api/admin/codex-subscription/credentials/order", {
+      const response = await write.mutationFetch("/api/admin/codex-subscription/credentials/order", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ credentialRefs: refs, ...write.bodyMetadata(productionConfirmation) }),
@@ -302,7 +303,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     try {
       const productionConfirmation = write.confirmMutation();
       if (productionConfirmation === null) return;
-      const response = await authFetch(
+      const response = await write.mutationFetch(
         `/api/admin/codex-subscription/credentials/${encodeURIComponent(account.id)}`,
         { method: "DELETE", headers: write.deleteHeaders(productionConfirmation) },
       );
@@ -323,7 +324,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     try {
       const productionConfirmation = write.confirmMutation();
       if (productionConfirmation === null) return;
-      const response = await authFetch("/api/admin/codex-subscription", { method: "DELETE", headers: write.deleteHeaders(productionConfirmation) });
+      const response = await write.mutationFetch("/api/admin/codex-subscription", { method: "DELETE", headers: write.deleteHeaders(productionConfirmation) });
       const data = await readJson<CodexSubscriptionState>(response);
       if (!response.ok || !data.config) {
         throw new Error(data.error || `HTTP ${response.status}`);

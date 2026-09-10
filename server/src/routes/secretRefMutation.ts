@@ -15,6 +15,7 @@ import { serverLogger } from '../utils/logger.js';
 export class RouteSecretRefMutation {
   private readonly created = new Set<string>();
   private readonly previous = new Set<string>();
+  private operationId?: string;
 
   constructor(
     private readonly vault: SecretVault | undefined,
@@ -24,6 +25,10 @@ export class RouteSecretRefMutation {
 
   get available(): boolean {
     return Boolean(this.vault);
+  }
+
+  bindOperation(operationId: string | undefined): void {
+    this.operationId = operationId;
   }
 
   trackPrevious(refs: Iterable<string | undefined>): void {
@@ -39,7 +44,10 @@ export class RouteSecretRefMutation {
     metadata?: Record<string, unknown>,
   ): Promise<string> {
     if (!this.vault) throw new Error('SecretVault 未配置，不能保存密钥');
-    const ref = await this.vault.putSecret(ownerId, kind, value, this.caller, metadata);
+    const ref = await this.vault.putSecret(ownerId, kind, value, this.caller, {
+      ...metadata,
+      ...(this.operationId ? { configOperationId: this.operationId } : {}),
+    });
     this.created.add(ref.id);
     return ref.id;
   }

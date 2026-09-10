@@ -89,7 +89,7 @@ export function useAcsRuntimeConfig(refreshBlocked = false) {
 }
 
 export function useTenantRemoteHands(refreshBlocked = false, accountReadOnly = false) {
-  const { acceptMetadata, bodyMetadata, confirmMutation, readOnly } = useAdminConfigWritePolicy(accountReadOnly, "执行环境池配置");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(accountReadOnly, "执行环境池配置");
   const [config, setConfig] = useState<TenantRemoteHandsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -139,14 +139,14 @@ export function useTenantRemoteHands(refreshBlocked = false, accountReadOnly = f
   }, [refresh]);
 
   const save = useCallback(async (hands: TenantRemoteHandUpdate[]) => {
+    const productionConfirmation = confirmMutation();
+    if (productionConfirmation === null) throw new Error("已取消生产配置保存");
     saveInFlightRef.current = true;
     requestGenerationRef.current += 1;
     setLoading(false);
     setSaving(true);
     try {
-      const productionConfirmation = confirmMutation();
-      if (productionConfirmation === null) throw new Error("已取消生产配置保存");
-      const res = await authFetch(API_BASE, {
+      const res = await mutationFetch(API_BASE, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tenantRemoteHands: { hands }, ...bodyMetadata(productionConfirmation) }),
@@ -168,7 +168,7 @@ export function useTenantRemoteHands(refreshBlocked = false, accountReadOnly = f
       saveInFlightRef.current = false;
       setSaving(false);
     }
-  }, [acceptMetadata, bodyMetadata, confirmMutation]);
+  }, [acceptMetadata, bodyMetadata, confirmMutation, mutationFetch]);
 
   const probeHealth = useCallback(async (id: string) => {
     setHealthById((current) => ({ ...current, [id]: { status: "checking" } }));

@@ -234,10 +234,11 @@ export function createImageGenPricingAdminRouter(options: CreateImageGenPricingA
       IMAGE_SECRET_WRITER,
       { preservePreviousOnCommit: configMutationService.isControlledProductionPublisher() },
     );
-
     try {
+      const requestContext = mutationRequestContext(req);
+      secretMutation.bindOperation(requestContext.operationId);
       await configMutationService.mutate({
-        ...mutationRequestContext(req),
+        ...requestContext,
         operation: { id: 'image-gen.config' },
         changedPaths: ['imageGenTools'],
         buildCandidate: async (freshText, freshRaw) => {

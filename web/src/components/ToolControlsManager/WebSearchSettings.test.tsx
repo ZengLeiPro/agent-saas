@@ -20,6 +20,7 @@ vi.mock('@agent/shared', async (importOriginal) => ({
 
 const initial: ToolControlsAdminResponse = {
   revision: 'revision-1',
+  writePolicy: { environment: 'development', mode: 'online', canSave: true },
   toolControls: {},
   effectiveWebTools: ['WebSearch'],
   tools: [
@@ -99,6 +100,7 @@ describe('WebSearch 管理详情', () => {
           }),
         }),
       }),
+      expect.any(Function),
     );
     expect((domestic.getByLabelText('API Key') as HTMLInputElement).value).toBe('');
   });
@@ -143,6 +145,7 @@ describe('WebSearch 管理详情', () => {
       expect.objectContaining({
         webTools: expect.objectContaining({ search: expect.objectContaining({ global: null }) }),
       }),
+      expect.any(Function),
     );
   });
 

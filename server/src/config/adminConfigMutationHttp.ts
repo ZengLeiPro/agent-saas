@@ -13,6 +13,10 @@ import {
   ProductionConfirmationError,
 } from './adminConfigMutationService.js';
 import {
+  AdminConfigOperationConflictError,
+  AdminConfigOperationPendingError,
+} from './adminConfigOperationJournal.js';
+import {
   CapabilityEnableError,
   capabilityEnableHttpStatus,
 } from './capabilityEnableTransaction.js';
@@ -23,15 +27,22 @@ export function mutationRequestContext(req: Request): {
   expectedRevision?: string;
   productionConfirmation?: string;
   operationId?: string;
+  requestSemantic: unknown;
 } {
-  const raw = req.header('if-match')?.trim().replace(/^W\//u, '').replace(/^"|"$/gu, '');
+  const ifMatchRevision = req.header('if-match')?.trim().replace(/^W\//u, '').replace(/^"|"$/gu, '');
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
     ? req.body as Record<string, unknown>
     : {};
   const headerRevision = req.header('x-config-revision')?.trim();
   const bodyRevision = typeof body.expectedRevision === 'string' ? body.expectedRevision.trim() : undefined;
-  if (headerRevision && bodyRevision && headerRevision !== bodyRevision) {
-    throw new ConfigConflictError(raw ?? '', headerRevision);
+  if ((headerRevision && bodyRevision && headerRevision !== bodyRevision)
+    || (ifMatchRevision && (headerRevision || bodyRevision) && ifMatchRevision !== (headerRevision ?? bodyRevision))) {
+    throw new ConfigConflictError('', headerRevision ?? bodyRevision ?? ifMatchRevision);
+  }
+  const headerFingerprint = req.header('x-config-fingerprint')?.trim();
+  const bodyFingerprint = typeof body.expectedFingerprint === 'string' ? body.expectedFingerprint.trim() : undefined;
+  if (headerFingerprint && bodyFingerprint && headerFingerprint !== bodyFingerprint) {
+    throw new ConfigConflictError(headerFingerprint, headerRevision ?? bodyRevision ?? ifMatchRevision);
   }
   const headerConfirmation = req.header('x-production-confirmation')?.trim();
   const bodyConfirmation = typeof body.productionConfirmation === 'string'
@@ -44,16 +55,23 @@ export function mutationRequestContext(req: Request): {
     ?? (typeof body.operationId === 'string' ? body.operationId.trim() : undefined);
   return {
     actor: req.user?.username ?? req.user?.sub ?? 'platform-admin',
-    ...(raw ? { expectedFingerprint: raw } : {}),
-    ...((headerRevision || bodyRevision) ? { expectedRevision: headerRevision ?? bodyRevision } : {}),
+    ...((headerFingerprint || bodyFingerprint) ? { expectedFingerprint: headerFingerprint ?? bodyFingerprint } : {}),
+    ...((headerRevision || bodyRevision || ifMatchRevision)
+      ? { expectedRevision: headerRevision ?? bodyRevision ?? ifMatchRevision }
+      : {}),
     ...((headerConfirmation || bodyConfirmation)
       ? { productionConfirmation: headerConfirmation ?? bodyConfirmation }
       : {}),
     ...(operationId ? { operationId } : {}),
+    requestSemantic: {
+      method: req.method,
+      params: req.params,
+      body: mutationBusinessBody(req),
+    },
   };
 }
 
-const CONTROL_FIELDS = new Set(['expectedRevision', 'productionConfirmation', 'operationId']);
+const CONTROL_FIELDS = new Set(['expectedRevision', 'expectedFingerprint', 'productionConfirmation', 'operationId']);
 
 /** strict 业务 schema 只接收业务字段，控制元信息由 mutationRequestContext 单独校验。 */
 export function mutationBusinessBody(req: Request): Record<string, unknown> {
@@ -89,6 +107,14 @@ export function sendCapabilityEnableError(res: Response, error: unknown): void {
 }
 
 export function sendConfigMutationError(res: Response, error: unknown): void {
+  if (error instanceof AdminConfigOperationConflictError) {
+    res.status(409).json({ code: error.code, error: error.message });
+    return;
+  }
+  if (error instanceof AdminConfigOperationPendingError) {
+    res.status(409).json({ code: error.code, error: error.message, operationState: error.state });
+    return;
+  }
   if (error instanceof ConfigMutationCommittedError) {
     res.status(500).json({ code: error.code, error: error.message });
     return;

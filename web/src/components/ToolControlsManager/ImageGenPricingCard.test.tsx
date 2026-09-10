@@ -19,7 +19,11 @@ const DEFAULTS = {
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
+  return new Response(JSON.stringify({
+    revision: "revision-pricing-1",
+    writePolicy: { environment: "development", mode: "online", canSave: true },
+    ...(body as Record<string, unknown>),
+  }), { status });
 }
 
 function allDefaultView() {
@@ -95,8 +99,10 @@ describe("ImageGenPricingCard", () => {
     expect(await screen.findByText("已保存并热生效")).toBeTruthy();
     const putCall = vi.mocked(authFetch).mock.calls[1]!;
     expect(putCall[0]).toBe("/api/admin/image-gen-pricing");
-    expect(JSON.parse((putCall[1] as RequestInit).body as string)).toEqual({
+    expect(JSON.parse((putCall[1] as RequestInit).body as string)).toMatchObject({
       pricing: { "gpt-image-2": { creditsPerImage: 500, costYuanPerImage: 2 } },
+      expectedRevision: "revision-pricing-1",
+      operationId: expect.any(String),
     });
     expect(screen.getByText(/当前生效：500 积分\/张 · 成本参考 ¥2\/张/)).toBeTruthy();
   });
@@ -155,6 +161,10 @@ describe("ImageGenPricingCard", () => {
 
     expect(await screen.findByText("已保存并热生效")).toBeTruthy();
     const putCall = vi.mocked(authFetch).mock.calls[1]!;
-    expect(JSON.parse((putCall[1] as RequestInit).body as string)).toEqual({ pricing: null });
+    expect(JSON.parse((putCall[1] as RequestInit).body as string)).toMatchObject({
+      pricing: null,
+      expectedRevision: "revision-pricing-1",
+      operationId: expect.any(String),
+    });
   });
 });

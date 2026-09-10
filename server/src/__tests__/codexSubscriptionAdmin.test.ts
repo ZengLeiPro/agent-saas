@@ -180,7 +180,7 @@ describe('Codex subscription admin router', () => {
     });
     expect(connected.credential).not.toHaveProperty('accessToken');
     expect(connected.credential).not.toHaveProperty('refreshToken');
-    expect(closeWebSockets).toHaveBeenCalledTimes(1);
+    expect(closeWebSockets).not.toHaveBeenCalled();
 
     const written = readFileSync(configPath, 'utf-8');
     const persistedConfig = JSON.parse(written);
@@ -211,7 +211,7 @@ describe('Codex subscription admin router', () => {
       },
       credential: { configured: true },
     });
-    expect(closeWebSockets).toHaveBeenCalledTimes(2);
+    expect(closeWebSockets).toHaveBeenCalledTimes(1);
 
     const cooldownOnlyResponse = await fetch(baseUrl, {
       method: 'PUT',
@@ -222,7 +222,7 @@ describe('Codex subscription admin router', () => {
     expect(await cooldownOnlyResponse.json()).toMatchObject({
       config: { quotaCooldownMinutes: 120 },
     });
-    expect(closeWebSockets).toHaveBeenCalledTimes(2);
+    expect(closeWebSockets).toHaveBeenCalledTimes(1);
 
     const disconnectResponse = await fetch(baseUrl, { method: 'DELETE' });
     expect(disconnectResponse.status).toBe(200);
@@ -231,7 +231,7 @@ describe('Codex subscription admin router', () => {
       credential: { configured: false, connected: false },
     });
     expect(config.codexSubscription?.credentialRef).toBeUndefined();
-    expect(closeWebSockets).toHaveBeenCalledTimes(3);
+    expect(closeWebSockets).toHaveBeenCalledTimes(2);
     expect(JSON.parse(readFileSync(configPath, 'utf-8')).codexSubscription.credentialRef).toBeUndefined();
     expect(credentialFetch).toHaveBeenCalledWith(
       'https://auth.openai.com/oauth/revoke',
@@ -316,7 +316,7 @@ describe('Codex subscription admin router', () => {
     expect(twoState.credentials).toHaveLength(2);
     const firstId = twoState.credentials[0].id as string;
     const secondId = twoState.credentials[1].id as string;
-    expect(closeWebSockets).toHaveBeenLastCalledWith([secondId]);
+    expect(closeWebSockets).not.toHaveBeenCalled();
 
     const reorder = await fetch(`${baseUrl}/credentials/order`, {
       method: 'PUT',
@@ -330,14 +330,14 @@ describe('Codex subscription admin router', () => {
       credentialRef: secondId,
       credentialRefs: [secondId, firstId],
     });
-    expect(closeWebSockets).toHaveBeenCalledTimes(2);
+    expect(closeWebSockets).not.toHaveBeenCalled();
 
     const remove = await fetch(`${baseUrl}/credentials/${encodeURIComponent(secondId)}`, { method: 'DELETE' });
     expect(remove.status).toBe(200);
     const remaining = await remove.json() as any;
     expect(remaining.credentials).toHaveLength(1);
     expect(remaining.credentials[0].id).toBe(firstId);
-    expect(closeWebSockets).toHaveBeenCalledTimes(3);
+    expect(closeWebSockets).toHaveBeenCalledTimes(1);
     expect(closeWebSockets).toHaveBeenLastCalledWith([secondId]);
   });
 
@@ -425,7 +425,7 @@ describe('Codex subscription admin router', () => {
       credentialRefs: [replacementRef],
     });
     expect(persistLoginSpy).toHaveBeenCalledTimes(1);
-    expect(closeWebSockets).toHaveBeenCalledWith(expect.arrayContaining([missingRef, replacementRef]));
+    expect(closeWebSockets).toHaveBeenCalledWith([missingRef]);
     expect(deviceAuthService.complete).toHaveBeenCalledTimes(1);
     expect(deviceAuthService.complete).toHaveBeenCalledWith('repair-session');
   });

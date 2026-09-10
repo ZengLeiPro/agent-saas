@@ -41,9 +41,15 @@ const SEARCH_SECRET_WRITER: VaultCaller = {
   scopes: ['secret:web_tools:write', 'secret:web_tools:revoke'],
 };
 
+class ToolCandidateValidationError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
+}
+
 function configRequestRevisions(req: Request): string[] {
-  const ifMatch = mutationRequestContext(req).expectedFingerprint;
-  return [typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : undefined, ifMatch]
+  const requestRevision = mutationRequestContext(req).expectedRevision;
+  return [typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : undefined, requestRevision]
     .filter((revision): revision is string => Boolean(revision));
 }
 
@@ -58,7 +64,7 @@ function sendRevisionMutationError(res: Response, error: unknown, safeMessage?: 
     return;
   }
   if (safeMessage !== undefined) {
-    res.status(500).json({ error: safeMessage });
+    res.status(error instanceof ToolCandidateValidationError ? 400 : 500).json({ error: safeMessage });
     return;
   }
   sendConfigMutationError(res, error);
@@ -436,11 +442,7 @@ async function persistUpdatedSettings(
   const expectedRevisions = configRequestRevisions(req);
   const result = await configMutationService.mutate({
     operation,
-    actor: requestContext.actor,
-    ...(requestContext.productionConfirmation
-      ? { productionConfirmation: requestContext.productionConfirmation }
-      : {}),
-    ...(requestContext.operationId ? { operationId: requestContext.operationId } : {}),
+    ...requestContext,
     expectedRevision: expectedRevisions[0],
     changedPaths: ['toolControls', 'webTools'],
     validateBaseline: (currentText) => {
@@ -450,7 +452,12 @@ async function persistUpdatedSettings(
       }
     },
     buildCandidate: async (configText, currentRaw) => {
-      const candidateSettings = prepareCandidate ? await prepareCandidate(currentRaw) : nextSettings;
+      let candidateSettings: Pick<AppConfig, 'toolControls' | 'webTools'>;
+      try {
+        candidateSettings = prepareCandidate ? await prepareCandidate(currentRaw) : nextSettings;
+      } catch (error) {
+        throw new ToolCandidateValidationError(error);
+      }
       const withWebTools = applyEdits(configText, modify(configText, ['webTools'], candidateSettings.webTools, {
         formattingOptions: { insertSpaces: true, tabSize: 2 },
       }));
@@ -525,15 +532,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       SEARCH_SECRET_WRITER,
       { preservePreviousOnCommit: configMutationService.isControlledProductionPublisher() },
     );
-
-    try {
-      configText = readFileSync(configPath, 'utf-8');
-      const revision = configRevision(configText); const expectedRevisions = configRequestRevisions(req);
-      if ((options.requireRevision && expectedRevisions.length === 0) || expectedRevisions.some((expected) => expected !== revision)) throw revisionConflict(configText);
-      if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) throw new Error('当前配置基线未完整应用，拒绝写入');
-      const latestText = readFileSync(configPath, 'utf-8');
-      if (latestText !== configText) throw revisionConflict(latestText);
-      const rawConfig = parseJsonc(configText);
+    const settingsFromRaw = (rawConfig: Record<string, unknown>) => {
       // The whole-config form carries effective descriptions. Keep the release baseline
       // intact; only the dedicated single-tool save writes dynamic descriptions.
       let requestedControls = req.body?.toolControls;
@@ -547,7 +546,20 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
           else delete entry.descriptionOverride;
         }
       }
-      nextSettings = validateToolSettingsUpdate(rawConfig, requestedControls, req.body?.webTools);
+      return validateToolSettingsUpdate(rawConfig, requestedControls, req.body?.webTools);
+    };
+
+    try {
+      const requestContext = mutationRequestContext(req);
+      secretMutation.bindOperation(requestContext.operationId);
+      configText = readFileSync(configPath, 'utf-8');
+      const revision = configRevision(configText); const expectedRevisions = configRequestRevisions(req);
+      if ((options.requireRevision && expectedRevisions.length === 0) || expectedRevisions.some((expected) => expected !== revision)) throw revisionConflict(configText);
+      if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) throw new Error('当前配置基线未完整应用，拒绝写入');
+      const latestText = readFileSync(configPath, 'utf-8');
+      if (latestText !== configText) throw revisionConflict(latestText);
+      const rawConfig = parseJsonc(configText) as Record<string, unknown>;
+      nextSettings = settingsFromRaw(rawConfig);
     } catch (error) {
       const message = secretMutation.redactError(error, submittedWebSearchSecrets(req.body));
       await secretMutation.failed(error, webSearchSecretRefs(nextSettings!));
@@ -570,6 +582,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
         { id: 'tool-controls.save' },
         async (freshRaw) => {
           secretMutation.trackPrevious(webSearchSecretRefs(parseAppConfig(freshRaw)));
+          nextSettings = settingsFromRaw(freshRaw);
           nextSettings = await persistSearchCredential(nextSettings, secretMutation);
           await options.validateToolSettingsConfig?.(nextSettings);
           return nextSettings;
@@ -672,6 +685,21 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
         nextSettings,
         undefined,
         { id: 'tool-controls.tool', target: toolId },
+        async (freshRaw) => {
+          const persistedConfig = parseAppConfig(freshRaw);
+          const mergedToolControls = mergeSingleToolPatch(
+            persistedConfig.toolControls,
+            toolId,
+            req.body ?? {},
+          );
+          nextSettings = validateToolSettingsUpdate(
+            freshRaw,
+            mergedToolControls,
+            persistedConfig.webTools ?? undefined,
+          );
+          await options.validateToolSettingsConfig?.(nextSettings);
+          return nextSettings;
+        },
       );
       auditLog(req, 'tool_controls_updated', `${toolId}：${describeToolEntry(persisted.settings.toolControls, toolId)}`);
       res.setHeader('ETag', `"${persisted.revision}"`);

@@ -36,7 +36,7 @@ const CATEGORY_LABELS: Record<PromptCategory, string> = {
 
 export function SystemPromptsManager(): JSX.Element {
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, deleteHeaders, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "系统提示语");
+  const { acceptMetadata, bodyMetadata, confirmMutation, deleteHeaders, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "系统提示语");
   const [prompts, setPrompts] = useState<SystemPromptItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [draft, setDraft] = useState("");
@@ -97,7 +97,7 @@ export function SystemPromptsManager(): JSX.Element {
     setSaving(true);
     setMessage(null);
     try {
-      const response = await authFetch(`/api/admin/system-prompts/${encodeURIComponent(selected.id)}`, {
+      const response = await mutationFetch(`/api/admin/system-prompts/${encodeURIComponent(selected.id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: draft, ...bodyMetadata(productionConfirmation) }),
@@ -110,7 +110,7 @@ export function SystemPromptsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [applyResponse, bodyMetadata, confirmMutation, draft, selected]);
+  }, [applyResponse, bodyMetadata, confirmMutation, draft, mutationFetch, selected]);
 
   const reset = useCallback(async () => {
     if (!selected) return;
@@ -124,7 +124,7 @@ export function SystemPromptsManager(): JSX.Element {
     setSaving(true);
     setMessage(null);
     try {
-      const response = await authFetch(`/api/admin/system-prompts/${encodeURIComponent(selected.id)}`, {
+      const response = await mutationFetch(`/api/admin/system-prompts/${encodeURIComponent(selected.id)}`, {
         method: "DELETE",
         headers: deleteHeaders(productionConfirmation),
       });
@@ -136,7 +136,7 @@ export function SystemPromptsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [applyResponse, confirmMutation, deleteHeaders, selected]);
+  }, [applyResponse, confirmMutation, deleteHeaders, mutationFetch, selected]);
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">

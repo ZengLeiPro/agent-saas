@@ -243,7 +243,10 @@ describe('Codex credential concurrency', () => {
     const { vaultA, vaultB, oauthRefreshTokens, fetchImpl } = sharedHttpVaults();
     const config: CodexSubscriptionRuntimeConfig = { enabled: true };
     const lock = new LocalCodexCredentialLock();
-    const managerA = new CodexCredentialManager({ vault: vaultA, getConfig: () => config, lock, fetchImpl });
+    const coordinateCredentialRotation = vi.fn(async () => undefined);
+    const managerA = new CodexCredentialManager({
+      vault: vaultA, getConfig: () => config, lock, fetchImpl, credentialRotationCoordinator: coordinateCredentialRotation,
+    });
     const managerB = new CodexCredentialManager({ vault: vaultB, getConfig: () => config, lock, fetchImpl });
     const original = await managerA.persistLogin({
       accessToken: jwt('acct-primary'), refreshToken: 'refresh-old', idToken: jwt('acct-primary'),
@@ -263,6 +266,8 @@ describe('Codex credential concurrency', () => {
     expect(refreshed.refreshToken).toBe('refreshed:new-login-refresh');
     expect(refreshed.generation).toBe(3);
     expect(refreshed.accountId).toBe('acct-primary');
+    expect(coordinateCredentialRotation).toHaveBeenCalledOnce();
+    expect(coordinateCredentialRotation).toHaveBeenCalledWith(original.credentialRef);
     await managerA.markQuotaCooldown(original.credentialRef, 'stale-quota', 1);
     await managerA.markAuthUnavailable(original.credentialRef, 'stale-auth', 1);
     await expect(managerA.getRuntimeState(original.credentialRef)).resolves.toBeUndefined();

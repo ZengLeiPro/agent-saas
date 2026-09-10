@@ -1,80 +1,53 @@
 {
-  "id": "owned-budget-and-accounting-v2",
-  "baseSha": "7a217704000d3068773fe7a9e2a45829586816d3",
+  "id": "dws-reader-first-v1",
+  "baseSha": "19844d151823d260348ecdae53d13ca13f5ad5f9",
   "files": [
     {
-      "path": "acs-orchestrator/src/ownedBudgetRegression.test.ts",
-      "replacements": [{"before":"'wait_timeout'","after":"'wait_timed_out'","count":2,"all":true}]
+      "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
+      "content":"export type DwsDeliveryProtocol = 'legacy' | 'handoff_pending' | 'durable-v1' | 'unsupported';\nexport interface DwsRunnableSelection {\n  deliveryProtocol?: 'legacy' | 'durable-v1' | 'all';\n  /** Identity-cleanup recovery is not a listener and may inspect blocked accounts. */\n  includeIdentityCleanup?: boolean;\n}\n\nexport function readDwsDeliveryProtocol(rawPolicy: unknown): DwsDeliveryProtocol {\n  if (rawPolicy === null || rawPolicy === undefined) return 'legacy';\n  if (typeof rawPolicy !== 'object' || Array.isArray(rawPolicy)) return 'unsupported';\n  const policy = rawPolicy as Record<string, unknown>;\n  if (!Object.hasOwn(policy, 'deliveryProtocol')) return 'legacy';\n  return policy.deliveryProtocol === 'legacy' || policy.deliveryProtocol === 'handoff_pending' || policy.deliveryProtocol === 'durable-v1'\n    ? policy.deliveryProtocol : 'unsupported';\n}\n\nexport function canRunLegacyDwsListener(account: { deliveryProtocol?: string; identityCleanupPending?: unknown }): boolean {\n  return (account.deliveryProtocol === undefined || account.deliveryProtocol === 'legacy') && !account.identityCleanupPending;\n}\n\n// A JSON null, malformed object or unknown future protocol is not legacy.\n// This predicate also fences cached pre-migration snapshots at the authoritative UPDATE.\nexport const LEGACY_DWS_DELIVERY_SQL = `jsonb_typeof(COALESCE(event_policy_json,'{}'::jsonb))='object'\n  AND (NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'deliveryProtocol')\n    OR event_policy_json->>'deliveryProtocol'='legacy')`;\n\nexport function runnableDwsDeliverySql(selection: DwsRunnableSelection = {}): string {\n  const protocol = selection.deliveryProtocol ?? 'legacy';\n  const delivery = protocol === 'legacy' ? `(${LEGACY_DWS_DELIVERY_SQL})`\n    : protocol === 'durable-v1' ? `(event_policy_json->>'deliveryProtocol'='durable-v1')`\n    : protocol === 'all' ? `((${LEGACY_DWS_DELIVERY_SQL}) OR event_policy_json->>'deliveryProtocol' IN ('durable-v1','handoff_pending'))`\n    : (() => { throw new Error('Unsupported DWS runnable selection'); })();\n  return selection.includeIdentityCleanup === true ? delivery\n    : `${delivery} AND NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'identityCleanupPending')`;\n}\n"
     },
     {
-      "path": "acs-orchestrator/src/provisionBudgets.ts",
-      "content": "import type { WorkspaceRecipe } from './protocol.js';\nimport { OWNED_WAIT_BUDGETS } from './ownedWait.js';\n\nexport const SETUP_DEFAULT_TIMEOUT_MS = 60_000;\nexport const RUNTIME_BOOTSTRAP_TIMEOUT_MS = 360_000;\n\nexport function setupCommandBudgetMs(requested: number | undefined): number {\n  if (!requested || !Number.isFinite(requested) || requested <= 0) return SETUP_DEFAULT_TIMEOUT_MS;\n  return Math.min(Math.max(1_000, Math.floor(requested)), 600_000);\n}\n\n/** The sum of independently legal phases, never the deployment drain window. */\nexport function provisionBudgets(recipe: WorkspaceRecipe) {\n  const setupMs = setupCommandBudgetMs(recipe.resources?.timeoutMs);\n  const setupSteps = Number(Boolean(recipe.repo)) + (recipe.files?.length ?? 0) + (recipe.setupCommands?.length ?? 0);\n  const transportCleanupMs = OWNED_WAIT_BUDGETS.termGraceMs + OWNED_WAIT_BUDGETS.killGraceMs;\n  const ensureMs = OWNED_WAIT_BUDGETS.ensureMs;\n  const isolationMs = recipe.runtimeIsolationRequirement ? OWNED_WAIT_BUDGETS.ensureMs : 0;\n  const bootstrapMs = Math.max(setupMs, RUNTIME_BOOTSTRAP_TIMEOUT_MS) + transportCleanupMs;\n  const setupTotalMs = setupSteps * (setupMs + transportCleanupMs);\n  // One hash read, one write and final ownership publication each have their own budget.\n  const receiptMs = 3 * (OWNED_WAIT_BUDGETS.persistenceMs + transportCleanupMs);\n  const totalMs = ensureMs + isolationMs + bootstrapMs + setupTotalMs + receiptMs;\n  if (!Number.isSafeInteger(totalMs) || totalMs > 2_147_483_647) {\n    throw new RangeError('Provision recipe exceeds the supported monotonic timer range');\n  }\n  return { ensureMs, isolationMs, bootstrapMs, setupMs, setupSteps, setupTotalMs, receiptMs, totalMs };\n}\n"
-    },
-    {
-      "path": "acs-orchestrator/src/ownedSharedWork.ts",
+      "path": "server/src/data/agentDwsAccounts/types.ts",
       "replacements": [
-        {"before":"    timeoutMs?: number;\n", "after":"    timeoutMs?: number;\n    /** Independent owner budget; a short-lived HTTP waiter cannot shorten it. */\n    ownerTimeoutMs?: number;\n"},
-        {"before":"operation.phase(input.kind, () => input.work(operation), input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs)", "after":"operation.phase(input.kind, () => input.work(operation), input.ownerTimeoutMs ?? input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs)"}
+        {"before":"export type AgentDwsAccountStatus", "after":"import type { DwsDeliveryProtocol } from './deliveryProtocol.js';\nexport * from './deliveryProtocol.js';\n\nexport type AgentDwsAccountStatus"},
+        {"before":"  runtimeStatus: AgentDwsRuntimeStatus;", "after":"  runtimeStatus: AgentDwsRuntimeStatus;\n  /** Missing only on pre-reader snapshots; every PG lease UPDATE also checks the persisted protocol. */\n  deliveryProtocol?: DwsDeliveryProtocol;"}
       ]
     },
     {
-      "path": "acs-orchestrator/src/provision.ts",
+      "path": "server/src/data/agentDwsAccounts/store.ts",
       "replacements": [
-        {"before":"const SETUP_DEFAULT_TIMEOUT_MS = 60_000;\nconst RUNTIME_BOOTSTRAP_TIMEOUT_MS = 360_000;", "after":"import { provisionBudgets, setupCommandBudgetMs as clampTimeoutMs, RUNTIME_BOOTSTRAP_TIMEOUT_MS } from './provisionBudgets.js';"},
-        {"before":"timeoutMs: OWNED_WAIT_BUDGETS.ensureMs", "after":"timeoutMs: provisionBudgets(recipe).totalMs", "all":true,"count":2},
-        {"beforeFrom":{"sourcePath":"acs-orchestrator/src/provision.ts","start":"function clampTimeoutMs(","end":"function truncate("}, "after":""},
-        {"before":"import { waitForOwned, OWNED_WAIT_BUDGETS }", "after":"import { waitForOwned }"}
+        {"before":"import type pg from 'pg';", "after":"import type pg from 'pg';\nimport { LEGACY_DWS_DELIVERY_SQL, readDwsDeliveryProtocol, runnableDwsDeliverySql, type DwsRunnableSelection } from './deliveryProtocol.js';"},
+        {"before":"  listRunnable(): Promise<AgentDwsAccountRecord[]>;", "after":"  listRunnable(selection?: DwsRunnableSelection): Promise<AgentDwsAccountRecord[]>;"},
+        {"before":"  async listRunnable(): Promise<AgentDwsAccountRecord[]> {", "after":"  async listRunnable(selection: DwsRunnableSelection = {}): Promise<AgentDwsAccountRecord[]> {"},
+        {"before":"         AND profile_id=corp_id || ':' || dingtalk_user_id\n       ORDER BY", "after":"         AND profile_id=corp_id || ':' || dingtalk_user_id\n         AND ${runnableDwsDeliverySql(selection)}\n       ORDER BY"},
+        {"before":"        AND (runtime_lease_owner IS NULL OR runtime_lease_expires_at <= NOW())", "after":"        AND ${LEGACY_DWS_DELIVERY_SQL}\n        AND NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'identityCleanupPending')\n        AND (runtime_lease_owner IS NULL OR runtime_lease_expires_at <= clock_timestamp())"},
+        {"before":"      WHERE account_id=$1 AND revision=$4 AND runtime_lease_owner=$2 AND status='active'", "after":"      WHERE account_id=$1 AND revision=$4 AND runtime_lease_owner=$2 AND status='active'\n        AND runtime_lease_expires_at > clock_timestamp()\n        AND ${LEGACY_DWS_DELIVERY_SQL}\n        AND NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'identityCleanupPending')"},
+        {"before":"runtime_lease_expires_at=NOW()+($3::bigint * INTERVAL '1 millisecond')", "after":"runtime_lease_expires_at=clock_timestamp()+($3::bigint * INTERVAL '1 millisecond')", "all":true,"count":2},
+        {"before":"      WHERE account_id=$1 AND runtime_lease_owner=$2\n", "after":"      WHERE account_id=$1 AND runtime_lease_owner=$2 AND ${LEGACY_DWS_DELIVERY_SQL}\n"},
+        {"before":"      WHERE account_id=$1\n    `, [accountId]);", "after":"      WHERE account_id=$1 AND ${LEGACY_DWS_DELIVERY_SQL}\n    `, [accountId]);"},
+        {"before":"      WHERE account_id=$1 AND revision=$5 AND ($4::text IS NULL OR runtime_lease_owner=$4)", "after":"      WHERE account_id=$1 AND revision=$5 AND ${LEGACY_DWS_DELIVERY_SQL}\n        AND ($4::text IS NULL OR (runtime_lease_owner=$4 AND runtime_lease_expires_at > clock_timestamp()))"},
+        {"before":"        AND runtime_lease_owner=$2 AND runtime_lease_expires_at > NOW()", "after":"        AND runtime_lease_owner=$2 AND runtime_lease_expires_at > clock_timestamp()\n        AND ${LEGACY_DWS_DELIVERY_SQL}"},
+        {"before":"    runtimeStatus: String(row.runtime_status) as AgentDwsAccountRecord['runtimeStatus'],", "after":"    runtimeStatus: String(row.runtime_status) as AgentDwsAccountRecord['runtimeStatus'],\n    deliveryProtocol: readDwsDeliveryProtocol(row.event_policy_json),"}
       ]
     },
     {
-      "path": "acs-orchestrator/src/ownedExecutionRuntime.ts",
+      "path": "server/src/dws/personalEventGateway.ts",
       "replacements": [
-        {"before":"import { Provisioner } from './provision.js';", "after":"import { Provisioner } from './provision.js';\nimport { provisionBudgets } from './provisionBudgets.js';"},
-        {"before":"signal: options.signal, work: () => provision(recipe)", "after":"signal: options.signal, ownerTimeoutMs: provisionBudgets(recipe).totalMs, work: () => provision(recipe)"}
+        {"before":"  hasExactAgentDwsProfile,", "after":"  hasExactAgentDwsProfile,\n  canRunLegacyDwsListener,"},
+        {"before":"    if (this.stopped || account.status !== 'active' || !hasExactAgentDwsProfile(account)) return;", "after":"    if (this.stopped || account.status !== 'active' || !hasExactAgentDwsProfile(account)) return;\n    if (!canRunLegacyDwsListener(account)) return;"}
       ]
     },
     {
-      "path": "acs-orchestrator/src/executorSupport.ts",
-      "prefix":"import type { WireToolInvocationRequest } from './protocol.js';\nimport type { ToolInvocationResponse } from 'server/runtime/handProtocol.js';\n\nexport interface InvocationProtectionState {\n  preserveInvocationLease: boolean;\n  backgroundMetadataObserved?: boolean;\n  runnerTerminalObserved?: boolean;\n  remoteNeverStarted?: boolean;\n  observedBackgroundProtectionGeneration?: string | null;\n  originalSandboxGone?: boolean;\n  recovery?: {\n    expectedUid: string;\n    protectedUntil?: string;\n    taskIds: string[];\n    reason: string;\n    launchUncertain?: true;\n  };\n}\n\n",
-      "extract":{"sourcePath":"acs-orchestrator/src/executor.ts","start":"function isBackgroundShellRequest(","end":null},
-      "transforms":[
-        {"before":"function isBackgroundShellRequest(","after":"export function isBackgroundShellRequest("},
-        {"before":"class OriginalSandboxGoneError", "after":"export class OriginalSandboxGoneError"},
-        {"before":"function errorMessage(","after":"export function errorMessage("},
-        {"before":"async function unrefDelay(","after":"export async function unrefDelay("},
-        {"before":"function protectionStateHasObservation(","after":"export function protectionStateHasObservation("},
-        {"before":"function addRunnerMetadata(","after":"export function addRunnerMetadata("}
-      ]
+      "path": "server/src/dws/agentAuthFlow.ts",
+      "replacements": [{"before":"this.options.accountStore.listRunnable()", "after":"this.options.accountStore.listRunnable({ deliveryProtocol: 'all', includeIdentityCleanup: true })"}]
     },
     {
-      "path": "acs-orchestrator/src/executor.ts",
-      "replacements": [
-        {"before":"interface InvocationProtectionState {", "after":"interface InvocationProtectionStateToExtract {"},
-        {"beforeFrom":{"sourcePath":"acs-orchestrator/src/executor.ts","start":"interface InvocationProtectionStateToExtract {","end":"interface AcsExecutorOptions {"},"after":""},
-        {"beforeFrom":{"sourcePath":"acs-orchestrator/src/executor.ts","start":"function isBackgroundShellRequest(","end":null},"after":""},
-        {"before":"import { reconcileInvocationRestartRecovery } from './invocationRestartRecovery.js';", "after":"import { reconcileInvocationRestartRecovery } from './invocationRestartRecovery.js';\nimport { isBackgroundShellRequest, toolNameForSandboxRunner, OriginalSandboxGoneError, errorMessage, unrefDelay, protectionStateHasObservation, addRunnerMetadata, type InvocationProtectionState } from './executorSupport.js';\nexport { toolNameForSandboxRunner } from './executorSupport.js';"},
-        {"before":"  unresolved?: boolean;", "after":"  unresolved?: boolean;\n  releaseActive?: () => void;"},
-        {"before":"    const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);", "after":"    const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);\n    this.invocations.get(invocationKey)!.releaseActive = releaseActive;"},
-        {"before":"      if (remoteDispatched && (!finalResponse || isRemoteUnknown(finalResponse) || leaseMonitor?.failure)) {", "after":"      if (protectionState.remoteNeverStarted) {\n        // A synchronous spawn failure cannot have sent any bytes to a remote command.\n        remoteDispatched = false;\n        if (operation) operation.dispatched = false;\n      }\n      if (remoteDispatched && ((!finalResponse && !protectionState.runnerTerminalObserved) || isRemoteUnknown(finalResponse) || leaseMonitor?.failure)) {"},
-        {"before":"      if (leasePersisted && sandboxUid && backgroundShellRequested\n", "after":"      if (remoteDispatched && leasePersisted && sandboxUid && backgroundShellRequested\n"},
-        {"before":"          error: '后台 Shell 启动结果不确定，ACS 正在保留 lease 并核对本地 worker。',", "after":"          error: '后台 Shell 启动结果不确定，ACS 正在保留 lease 并核对本地 worker。',\n          metadata: remoteUnknownResponse('background_launch_unconfirmed').metadata,"},
-        {"before":"          error: `ACS invocation aborted because persisted lease was lost: ${leaseFailure.message}`,", "after":"          error: `ACS invocation aborted because persisted lease was lost: ${leaseFailure.message}`,\n          metadata: remoteUnknownResponse('lease_lost').metadata,"},
-        {"before":"    return this.backgroundProtectionRecoveries.size + this.invocationCompletionRecoveries.size\n      + [...this.invocations.values()].filter((entry) => entry.unresolved).length;", "after":"    return this.backgroundProtectionRecoveries.size + this.invocationCompletionRecoveries.size;\n  }\n  unresolvedInvocationCount(): number {\n    return [...this.invocations.values()].filter((entry) => entry.unresolved).length;"},
-        {"before":"    const raw = response.metadata?.backgroundShell;", "after":"    if (!isRemoteUnknown(response)) state.runnerTerminalObserved = true;\n    const raw = response.metadata?.backgroundShell;"},
-        {"before":"        if (final) return final;\n      }\n      const child", "after":"        return final ?? remoteUnknownResponse('housekeeping_final_missing');\n      }\n      const child"},
-        {"before":"    const child = this.spawnRunner(ref, runnerInput, controller);", "after":"    let child: ChildProcessWithoutNullStreams;\n    try { child = this.spawnRunner(ref, runnerInput, controller); }\n    catch (error) { protectionState.remoteNeverStarted = true; throw error; }"}
-      ]
+      "path": "server/src/context/sync/dwsContextRuntime.ts",
+      "replacements": [{"before":"this.options.accountStore.listRunnable()", "after":"this.options.accountStore.listRunnable({ deliveryProtocol: 'all' })"}]
     },
     {
-      "path": "acs-orchestrator/src/index.ts",
-      "replacements":[
-        {"before":"inflightRequests + executor.backgroundRecoveryCount() + ownedOperations.drainBlockers()", "after":"inflightRequests + executor.backgroundRecoveryCount() + executor.unresolvedInvocationCount() + ownedOperations.drainBlockers()"},
-        {"before":"counts: () => ({ requests: inflightRequests, recovery: executor.backgroundRecoveryCount(), draining })", "after":"counts: () => ({ requests: inflightRequests, recovery: executor.backgroundRecoveryCount(), unresolvedInvocations: executor.unresolvedInvocationCount(), draining })"}
-      ]
-    },
-    {
-      "path": "acs-orchestrator/src/provisionBudgets.test.ts",
-      "content":"import { describe, expect, it } from 'vitest';\nimport { provisionBudgets, setupCommandBudgetMs } from './provisionBudgets.js';\nimport type { WorkspaceRecipe } from './protocol.js';\n\ndescribe('R09 R18 provisioning phase budget sum', () => {\n  it('preserves every legal setup step instead of applying a drain-sized total cap', () => {\n    const recipe = { workspaceId: 'test', resources: { timeoutMs: 600_000 }, setupCommands: Array(8).fill('fixture') } as WorkspaceRecipe;\n    const budget = provisionBudgets(recipe);\n    expect(budget.setupSteps).toBe(8);\n    expect(budget.totalMs).toBeGreaterThan(80 * 60_000);\n    expect(budget.totalMs).toBe(budget.ensureMs + budget.isolationMs + budget.bootstrapMs + budget.setupTotalMs + budget.receiptMs);\n  });\n  it('uses the exact runtime clamp, counts hydration and accounts for local cleanup', () => {\n    expect(setupCommandBudgetMs(undefined)).toBe(60_000);\n    expect(setupCommandBudgetMs(1)).toBe(1_000);\n    expect(setupCommandBudgetMs(900_000)).toBe(600_000);\n    const budget = provisionBudgets({ workspaceId: 'test', repo: { url: 'https://example.invalid/repo' }, files: [{ path: 'a', artifactId: 'fixture' }], setupCommands: ['fixture'] } as WorkspaceRecipe);\n    expect(budget.setupSteps).toBe(3);\n    expect(budget.setupTotalMs).toBe(3 * 64_000);\n  });\n});\n"
+      "path": "server/src/data/agentDwsAccounts/deliveryProtocol.test.ts",
+      "content":"import { describe, expect, it } from 'vitest';\nimport { canRunLegacyDwsListener, readDwsDeliveryProtocol, runnableDwsDeliverySql } from './deliveryProtocol.js';\n\ndescribe('DWS reader-first protocol discrimination', () => {\n  it('recognizes only genuinely absent old markers as legacy', () => {\n    expect(readDwsDeliveryProtocol({ kinds: ['at_me'] })).toBe('legacy');\n    expect(readDwsDeliveryProtocol({ deliveryProtocol: null })).toBe('unsupported');\n    expect(readDwsDeliveryProtocol({ deliveryProtocol: 'future-v7' })).toBe('unsupported');\n    expect(readDwsDeliveryProtocol([])).toBe('unsupported');\n    expect(readDwsDeliveryProtocol({ deliveryProtocol: 'durable-v1' })).toBe('durable-v1');\n  });\n  it('excludes blocked, migrated and future accounts from both SQL selection and direct starts', () => {\n    for (const deliveryProtocol of ['durable-v1', 'handoff_pending', 'unsupported', 'future-v7']) {\n      expect(canRunLegacyDwsListener({ deliveryProtocol })).toBe(false);\n    }\n    expect(canRunLegacyDwsListener({ deliveryProtocol: 'legacy', identityCleanupPending: {} })).toBe(false);\n    expect(runnableDwsDeliverySql()).toContain(\"->>'deliveryProtocol'='legacy'\");\n    expect(runnableDwsDeliverySql()).toContain('identityCleanupPending');\n    expect(() => runnableDwsDeliverySql({ deliveryProtocol: 'injected' as 'legacy' })).toThrow();\n  });\n});\n"
     }
   ]
 }

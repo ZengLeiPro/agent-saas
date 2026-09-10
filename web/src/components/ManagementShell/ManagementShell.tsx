@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { OrganizationScopeBanner } from '@/components/GovernanceConsole';
 import type { SettingsDirtyController } from '@/components/PersonalSettings/dirtyRegistry';
 import type { ManagementSettingsAccess } from '@/hooks/useManagementSettingsAccess';
@@ -14,9 +15,10 @@ import {
   managementRouteForPage,
   managementRouteForTab,
 } from '@/lib/managementNavigation';
-import type { GovernanceRouteState } from '@/lib/governanceNavigation';
+import { governanceCollectionRoute, type GovernanceRouteState } from '@/lib/governanceNavigation';
 import { navigateGovernance } from '@/lib/urlSync';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { StateBlock } from './StateBlock';
 
 const detailTabLabels: Readonly<Record<string, string>> = {
@@ -145,6 +147,7 @@ export function ManagementShell({
   children: ReactNode;
 }) {
   const page = managementPageForRoute(route);
+  const collectionRoute = governanceCollectionRoute(route);
   const [headerActionsTarget, setHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   if (!page) {
     return (
@@ -172,11 +175,19 @@ export function ManagementShell({
             title={page.label}
             description={page.description}
             actions={
-              <div
-                ref={setHeaderActionsTarget}
-                className="flex flex-wrap items-center justify-end gap-2"
-                data-testid="management-page-actions"
-              />
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {collectionRoute ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => navigateGovernance(collectionRoute)}>
+                    <ArrowLeft className="size-3.5" />
+                    返回列表
+                  </Button>
+                ) : null}
+                <div
+                  ref={setHeaderActionsTarget}
+                  className="flex flex-wrap items-center justify-end gap-2"
+                  data-testid="management-page-actions"
+                />
+              </div>
             }
           />
           {route.area === 'organization' ? (

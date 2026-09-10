@@ -28,7 +28,7 @@ export function OrganizationSystemsPage({
   const [installing, setInstalling] = useState(false);
   const open = (id?: string) =>
     navigateGovernance(
-      governanceRoute(routeId, { orgId: tenantId, ...(id ? { entityId: id } : {}) }),
+      governanceRoute(routeId, { orgId: tenantId, search: window.location.search, ...(id ? { entityId: id } : {}) }),
     );
   if (installationId)
     return (

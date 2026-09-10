@@ -79,6 +79,9 @@ function UserList() {
   useEffect(() => { void load(); }, [load]);
 
   const tenantName = useMemo(() => new Map(tenants.map(tenant => [tenant.id, tenant.name])), [tenants]);
+  const openUserDetail = (row: UserInfo) => {
+    navigatePlatformAdmin({ section: "users", entityId: row.id, search: window.location.search });
+  };
 
   return (
     <div className="w-full space-y-5">
@@ -134,7 +137,7 @@ function UserList() {
           </div>
         }
         onRowClick={(row) => {
-          navigatePlatformAdmin({ section: "users", entityId: row.id });
+          openUserDetail(row);
         }}
         hasPrev={cursorStack.length > 0}
         hasNext={!!nextCursor}
@@ -150,7 +153,7 @@ function UserList() {
           adminQuery.patch({ cursor: nextCursor });
         }}
         columns={[
-          { key: "user", header: "用户", alwaysVisible: true, sortable: true, sortValue: row => row.realName || row.username, cell: row => <div><div className="font-medium">{row.realName || row.username}</div><EntityLink kind="user" id={row.id} /></div> },
+          { key: "user", header: "用户", alwaysVisible: true, sortable: true, sortValue: row => row.realName || row.username, cell: row => <div><button type="button" className="font-medium hover:underline" onClick={(event) => { event.stopPropagation(); openUserDetail(row); }}>{row.realName || row.username}</button><EntityLink kind="user" id={row.id} /></div> },
           { key: "tenant", header: TENANT_LABEL, sortable: true, sortValue: row => tenantName.get(row.tenantId) ?? row.tenantId, cell: row => <EntityLink kind="tenant" id={row.tenantId} label={tenantName.get(row.tenantId) ?? row.tenantId} /> },
           // 管理员排前面（降序），排查权限问题时先看谁有管理员
           { key: "role", header: "角色", sortable: true, sortNumeric: true, sortValue: row => (row.role === "admin" ? 1 : 0), cell: row => <Badge variant={row.role === "admin" ? "default" : "secondary"}>{formatRole(row.role)}</Badge> },

@@ -6,12 +6,14 @@ import type { ManagementSettingsAccess } from '@/hooks/useManagementSettingsAcce
 import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
 import { ManagementShell } from './ManagementShell';
 
+const navigationMocks = vi.hoisted(() => ({ navigateGovernance: vi.fn() }));
+
 vi.mock('@/components/GovernanceConsole', () => ({
   OrganizationScopeBanner: ({ className }: { className?: string }) => (
     <div className={className} data-testid="organization-scope-banner" />
   ),
 }));
-vi.mock('@/lib/urlSync', () => ({ navigateGovernance: vi.fn() }));
+vi.mock('@/lib/urlSync', () => navigationMocks);
 
 const access = {
   status: 'ready',
@@ -21,6 +23,28 @@ const access = {
 } as unknown as ManagementSettingsAccess;
 
 describe('ManagementShell 统一布局', () => {
+  it('所有注册详情页在统一页头返回列表，并保留来源筛选与组织范围', () => {
+    const view = render(
+      <ManagementShell route={governanceRoute('platform.org-business.users', { entityId: 'user-1', search: '?q=王&tenantId=acme' })} access={access}>
+        <div />
+      </ManagementShell>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '返回列表' }));
+    expect(navigationMocks.navigateGovernance).toHaveBeenLastCalledWith(expect.objectContaining({
+      routeId: 'platform.org-business.users', entityId: null, search: '?q=王&tenantId=acme',
+    }));
+
+    view.rerender(
+      <ManagementShell route={governanceRoute('organization.members.member', { orgId: 'acme', entityId: 'user-1', tab: 'access', search: '?status=active' })} access={access}>
+        <div />
+      </ManagementShell>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '返回列表' }));
+    expect(navigationMocks.navigateGovernance).toHaveBeenLastCalledWith(expect.objectContaining({
+      routeId: 'organization.members.list', orgId: 'acme', entityId: null, search: '?status=active',
+    }));
+  });
+
   it('统一内容宽度并只在工作区外层滚动，以注册表标题渲染统一页头', () => {
     render(
       <ManagementShell route={governanceRoute('platform.overview.overview')} access={access}>

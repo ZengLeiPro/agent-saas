@@ -242,7 +242,7 @@ function SandboxList() {
           </div>
         }
         onRowClick={(row) => {
-          navigatePlatformAdmin({ section: "sandboxes", entityId: row.name });
+          navigatePlatformAdmin({ section: "sandboxes", entityId: row.name, search: window.location.search });
         }}
         columns={[
           // 异常环境排最前是运维第一诉求：Failed → Pending → Running → Paused

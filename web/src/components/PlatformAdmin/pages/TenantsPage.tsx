@@ -55,6 +55,14 @@ function TenantList() {
   useEffect(() => { void load("initial"); }, [load]);
 
   const activeCount = items.filter(item => !item.disabled).length;
+  const openTenantConfiguration = (tenant: TenantOverviewItem) => {
+    if (!isCustomerOrganizationId(tenant.id)) return;
+    navigateGovernance(governanceRoute("platform.org-business.tenants", {
+      entityId: tenant.id,
+      tab: "configuration",
+      search: window.location.search,
+    }));
+  };
 
   return (
     <div className="w-full space-y-5">
@@ -104,12 +112,12 @@ function TenantList() {
           />
         }
         onRowClick={(row) => {
-          navigatePlatformAdmin({ section: "tenants", entityId: row.id });
+          openTenantConfiguration(row);
         }}
         columns={[
           // 已禁用排前面（降序），运维要先看异常组织
           { key: "status", header: "状态", sortable: true, sortNumeric: true, sortValue: row => (row.disabled ? 1 : 0), cell: row => <Badge variant={row.disabled ? "destructive" : "secondary"}>{row.disabled ? "已禁用" : "启用中"}</Badge> },
-          { key: "name", header: "名称", alwaysVisible: true, sortable: true, sortValue: row => row.name, cell: row => <div><div className="font-medium">{row.name}</div><EntityLink kind="tenant" id={row.id} /></div> },
+          { key: "name", header: "名称", alwaysVisible: true, sortable: true, sortValue: row => row.name, cell: row => <div>{isCustomerOrganizationId(row.id) ? <button type="button" className="font-medium hover:underline" onClick={(event) => { event.stopPropagation(); openTenantConfiguration(row); }}>{row.name}</button> : <div className="font-medium">{row.name}</div>}<EntityLink kind="tenant" id={row.id} /></div> },
           { key: "users", header: "用户", sortable: true, sortNumeric: true, sortValue: row => row.userCount, cell: row => <span className="tabular-nums">{row.userCount} / 管理员 {row.adminCount}</span> },
           { key: "activeRuns", header: "正在执行", sortable: true, sortNumeric: true, sortValue: row => row.activeRuns, cell: row => <span className="tabular-nums">{row.activeRuns}</span> },
           { key: "sessions", header: "近 7 天对话", sortable: true, sortNumeric: true, sortValue: row => row.sessions7d, cell: row => <span className="tabular-nums">{row.sessions7d}</span> },
@@ -154,6 +162,7 @@ function TenantList() {
                       navigateGovernance(governanceRoute("platform.org-business.tenants", {
                         entityId: item.id,
                         tab: "configuration",
+                        search: window.location.search,
                       }));
                     }}
                   >

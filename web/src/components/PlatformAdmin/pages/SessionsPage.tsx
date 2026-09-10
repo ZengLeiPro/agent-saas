@@ -172,7 +172,7 @@ function SessionList() {
           </div>
         }
         onRowClick={(row) => {
-          navigatePlatformAdmin({ section: "sessions", entityId: row.sessionId });
+          navigatePlatformAdmin({ section: "sessions", entityId: row.sessionId, search: window.location.search });
         }}
         hasPrev={cursorStack.length > 0}
         hasNext={!!nextCursor}

@@ -42,7 +42,7 @@ function SystemCatalog() {
       />
       {resource.data.allowedActions?.includes('register_version') && (
         <ManifestUpload
-          onRegistered={(id) => navigateGovernance(governanceRoute(routeId, { entityId: id }))}
+          onRegistered={(id) => navigateGovernance(governanceRoute(routeId, { entityId: id, search: window.location.search }))}
         />
       )}
       {!resource.data.systems.length ? (
@@ -75,7 +75,7 @@ function SystemCatalog() {
                     <Button
                       variant="outline"
                       onClick={() =>
-                        navigateGovernance(governanceRoute(routeId, { entityId: system.systemId }))
+                        navigateGovernance(governanceRoute(routeId, { entityId: system.systemId, search: window.location.search }))
                       }
                     >
                       管理

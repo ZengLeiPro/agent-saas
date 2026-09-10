@@ -10,6 +10,7 @@ import {
   buildOrganizationSwitchUrl,
   canonicalGovernanceUrl,
   filterCustomerOrganizations,
+  governanceCollectionRoute,
   governanceRoute,
   isCustomerOrganizationId,
   parseGovernanceUrl,
@@ -24,6 +25,16 @@ function expectRoute(input: string, routeId: string, canonicalPath: string | nul
 }
 
 describe("governance navigation registry", () => {
+  it("详情页统一返回所属列表并保留组织范围与列表查询", () => {
+    expect(governanceCollectionRoute(governanceRoute("platform.org-business.users", {
+      entityId: "user-1", search: "?q=王&tenantId=acme",
+    }))).toMatchObject({ routeId: "platform.org-business.users", entityId: null, search: "?q=王&tenantId=acme" });
+    expect(governanceCollectionRoute(governanceRoute("organization.members.member", {
+      orgId: "acme", entityId: "user-1", tab: "access", search: "?status=active",
+    }))).toMatchObject({ routeId: "organization.members.list", orgId: "acme", entityId: null, search: "?status=active" });
+    expect(governanceCollectionRoute(governanceRoute("platform.org-business.users"))).toBeNull();
+  });
+
   it("只暴露平台/组织各五个工作区，并完整登记本地叶子与八个个人设置页", () => {
     expect(GOVERNANCE_NAVIGATION.platform.map((item) => item.id)).toEqual([
       "overview", "org-business", "resource-center", "runtime", "governance",

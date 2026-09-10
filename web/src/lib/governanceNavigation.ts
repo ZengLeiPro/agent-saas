@@ -362,6 +362,16 @@ export function governanceRouteDefinition(routeId: string): GovernanceRouteDefin
   return routesById.get(routeId) ?? null;
 }
 
+/** 详情页统一返回所属列表，并保留进入详情时携带的查询条件与组织范围。 */
+export function governanceCollectionRoute(current: GovernanceRouteState): GovernanceRouteState | null {
+  if (!current.entityId) return null;
+  const currentDefinition = routesById.get(current.routeId);
+  if (!currentDefinition) throw new Error(`Unknown governance route: ${current.routeId}`);
+  const target = currentDefinition.parentId ? routesById.get(currentDefinition.parentId) : currentDefinition;
+  if (!target || target.entity === "required") return null;
+  return makeState(target, { orgId: current.orgId, search: current.search });
+}
+
 function parseRegistered(parts: readonly string[], params: URLSearchParams): GovernanceParseResult | null {
   for (const definition of routesByPath) {
     if (!definition.path.every((part, index) => parts[index] === part)) continue;

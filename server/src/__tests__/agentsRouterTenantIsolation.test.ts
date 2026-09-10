@@ -82,7 +82,7 @@ function fakeAgentStore(): AgentStore {
   } as unknown as AgentStore;
 }
 
-async function makeTestRig(): Promise<TestRig> {
+async function makeTestRig(options: { sealLegacyWrites?: boolean } = {}): Promise<TestRig> {
   const tmpRoot = mkdtempSync(join(tmpdir(), 'agents-tenant-iso-'));
   const agentCwd = join(tmpRoot, 'workspace');
   const agentAvatarsDir = join(tmpRoot, 'avatars');
@@ -113,6 +113,15 @@ async function makeTestRig(): Promise<TestRig> {
     agentCwd,
     sharedDir,
     userStore: fakeUserStore(),
+    ...(options.sealLegacyWrites
+      ? {
+          legacyWriteGate: {
+            assertLegacyWriteAllowed: async () => {
+              throw new Error('MIGRATION_LEGACY_WRITE_SEALED');
+            },
+          },
+        }
+      : {}),
   }));
   const server: Server = await new Promise(resolve => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -254,6 +263,33 @@ describe('agents 路由多组织隔离 (PR 8)', () => {
         body: JSON.stringify({ allowedSkills: ['secret-skill'] }),
       });
       expect(res.status).toBe(400);
+    });
+
+    it('迁移封板后仅开放 self-only 个人资料写入口', async () => {
+      await h.close();
+      h = await makeTestRig({ sealLegacyWrites: true });
+      h.setCaller(KAIYAN_USER);
+
+      const legacy = await h.request('/api/agents/alice', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '旧入口' }),
+      });
+      expect(legacy.status).toBe(409);
+      await expect(legacy.json()).resolves.toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+
+      const profile = await h.request('/api/agents/alice/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '新名称', signature: '新签名', avatar: '🤖' }),
+      });
+      expect(profile.status).toBe(200);
+      await expect(profile.json()).resolves.toMatchObject({
+        username: 'alice',
+        name: '新名称',
+        signature: '新签名',
+        avatar: '🤖',
+      });
     });
 
     it('普通用户读他人 persona (同组织) → 403', async () => {

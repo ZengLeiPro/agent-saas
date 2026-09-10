@@ -710,7 +710,8 @@ describe("OrganizationGovernancePage", () => {
     render(<OrganizationEnvironmentsPage tenantId="tenant-a" />);
     expect(await screen.findByText("Python")).toBeTruthy();
     expect(screen.queryByText("Old")).toBeNull();
-    expect(screen.getByText(/Entitlement 权威源.*v2/)).toBeTruthy();
+    expect(screen.getByText("配置已同步")).toBeTruthy();
+    expect(screen.queryByText(/Entitlement 权威源/)).toBeNull();
   });
 
   it("凭据草稿注册统一 dirty guard", async () => {

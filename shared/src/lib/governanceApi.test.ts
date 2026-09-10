@@ -90,6 +90,13 @@ describe('governanceApi fail closed', () => {
     expect(governanceApiErrorMessage(new GovernanceApiError(
       'GOVERNANCE_PARTIAL_CHANGE', 'partial', 500, 'req-partial',
     ))).toContain('禁止盲目重试。 请求 ID：req-partial');
+
+    const dependencyMessage = governanceApiErrorMessage(new GovernanceApiError(
+      'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE', 'Dependency impact authority unavailable', 503,
+    ));
+    expect(dependencyMessage).toContain('暂时无法确认这次变更会影响哪些成员或资源');
+    expect(dependencyMessage).not.toContain('AUTHORITY');
+    expect(dependencyMessage).not.toContain('权威');
   });
 
   it('2xx 错误 envelope 也抛错，不降级为本地 allow', async () => {

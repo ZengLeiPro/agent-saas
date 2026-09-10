@@ -188,7 +188,10 @@ export function ManagementShell({
           ) : null}
           <ManagementTabs route={route} />
           <DetailTabs route={route} />
-          <div className="mt-6" data-testid="management-page-content">
+          <div
+            className="mt-6 [&>*]:mx-0 [&>*]:max-w-none"
+            data-testid="management-page-content"
+          >
             <SettingsPanelHeaderPortalProvider target={headerActionsTarget}>
               {children}
             </SettingsPanelHeaderPortalProvider>

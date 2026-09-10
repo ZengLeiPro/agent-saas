@@ -318,6 +318,11 @@ export function registerGovernanceRoutes(
           if (input.kind === 'scope' && input.resourceType === 'model') {
             return resolveRuntimeModelScopeImpact(runtime, input.tenantId);
           }
+          if (input.kind === 'scope' || input.kind === 'entitlement') {
+            // 其余组织级资源范围同样影响活跃成员与 Agent；使用统一运行时主体清单，
+            // 避免复用范围编辑器时因资源类型未单独分支而错误返回 503。
+            return resolveRuntimeModelScopeImpact(runtime, input.tenantId);
+          }
           if (input.kind === 'tenant' && input.action) {
             return resolveRuntimeTenantLifecycleImpact(runtime, input.tenantId, input.action);
           }

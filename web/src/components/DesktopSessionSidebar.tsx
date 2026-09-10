@@ -599,6 +599,7 @@ export function DesktopSessionSidebar({
   onCollapse,
   onPreviewTrashSession,
   trashPreviewSessionId,
+  onSessionRestored,
   sidebarLayout = "double",
   personalAgentEnabled = true,
   responsiveMode = "none",
@@ -1850,6 +1851,11 @@ export function DesktopSessionSidebar({
                 }}
                 onPreviewSession={(id) => onPreviewTrashSession?.(id)}
                 activePreviewId={trashPreviewSessionId}
+                onSessionRestored={async (id) => {
+                  const result = await onSessionRestored?.(id);
+                  if (result !== false) setShowTrash(false);
+                  return result;
+                }}
               />
             ) : (
               <>

@@ -30,10 +30,23 @@ describe('ManagementShell 统一布局', () => {
     expect(screen.getByTestId('management-page-content').parentElement?.className).toContain(
       'max-w-6xl',
     );
+    expect(screen.getByTestId('management-page-content').className).toContain('[&>*]:max-w-none');
     expect(screen.queryByRole('banner')).toBeNull();
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
     expect(screen.getByRole('heading', { level: 2, name: '平台总览' })).toBeTruthy();
     expect(screen.getByText('真实内容')).toBeTruthy();
+  });
+
+  it('清除子页面重复的页级宽度约束，使页头与首块内容共用同一坐标系', () => {
+    render(
+      <ManagementShell route={governanceRoute('platform.governance.system-prompts')} access={access}>
+        <div className="mx-auto w-full max-w-6xl">首块内容</div>
+      </ManagementShell>,
+    );
+
+    const content = screen.getByTestId('management-page-content');
+    expect(content.className).toContain('[&>*]:mx-0');
+    expect(content.className).toContain('[&>*]:max-w-none');
   });
 
   it('收口子页面重复标题并将页面操作提升到统一页头', () => {

@@ -4,6 +4,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { AgentDocEditor } from "@/components/AgentProfile/AgentDocEditor";
 import { MyPermissionList } from "@/components/PersonalSettings/MyPermissionList";
 import { AttachmentStorageSection } from "@/components/SettingsCenter/AttachmentStorageSection";
+import { PersonalDebugModeSetting } from "@/components/SettingsCenter/ConversationBehaviorSettings";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Button } from "@/components/ui/button";
 import {
@@ -78,6 +79,9 @@ export function MyPermissionsSection() {
         actions={<Button type="button" size="sm" variant="outline" onClick={request.retry} disabled={request.loading}>{request.loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}刷新</Button>}
       />
       <div className="min-h-0 flex-1 overflow-auto pb-4">
+        <div className="mb-6 rounded-2xl border bg-card p-4 shadow-sm">
+          <PersonalDebugModeSetting title="个人调试模式" />
+        </div>
         <MyPermissionList resources={request.data} loading={request.loading} error={request.error} onRetry={request.retry} />
       </div>
     </div>

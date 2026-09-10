@@ -107,11 +107,10 @@ function MutationReceipt({ receipt }: { receipt: Receipt | null }) {
       role="status"
       className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs"
     >
-      <div>changeId：{receipt.changeId}</div>
-      <div>auditId：{receipt.auditId}</div>
+      <div className="font-medium">设置已保存</div>
       {receipt.projectionStatus ? (
         <div>
-          投影：{receipt.projectionStatus === 'pending' ? '等待中' : receipt.projectionStatus}
+          {receipt.projectionStatus === 'pending' ? '正在同步到运行环境。' : '已同步到运行环境。'}
         </div>
       ) : null}
     </div>
@@ -274,7 +273,7 @@ export function OrganizationEntitlementScopeEditor({
           <h3 className="font-medium">{title}</h3>
           <p className="mt-1 text-xs text-muted-foreground">{description}</p>
         </div>
-        <Badge variant="outline">Entitlement 权威源{scope ? ` · v${scope.version}` : ''}</Badge>
+        {scope ? <Badge variant="outline">配置已同步</Badge> : null}
       </div>
       {loading ? <div className="text-sm text-muted-foreground">正在读取权威范围…</div> : null}
       {!loading && !scope ? (

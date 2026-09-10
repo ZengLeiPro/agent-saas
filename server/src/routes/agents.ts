@@ -34,6 +34,7 @@ export interface AgentsRouterDeps {
 const updateAgentSchema = z.object({
   name: z.string().min(1).max(50).optional(),
   signature: z.string().max(100).optional(),
+  avatar: z.literal('🤖').optional(),
 }).strict();
 
 const personaSchema = z.object({
@@ -49,9 +50,11 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   const { agentStore, agentAvatarsDir, agentCwd, sharedDir, tenantSkillsRootDir, userStore, skillConfigStore } = deps;
   const router = Router();
   router.use(async (req, res, next) => {
+    const isPersonalProfileWrite = req.path.endsWith('/profile')
+      || req.path.endsWith('/profile/avatar');
     const isLegacyAgentWrite = req.method === 'PATCH'
       || (req.method === 'POST' && req.path.endsWith('/avatar'));
-    if (!isLegacyAgentWrite || !deps.legacyWriteGate) return next();
+    if (isPersonalProfileWrite || !isLegacyAgentWrite || !deps.legacyWriteGate) return next();
     try {
       await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
       next();
@@ -225,7 +228,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   });
 
   // PATCH /api/agents/:username — 更新 profile 字段
-  router.patch('/:username', async (req, res) => {
+  router.patch(['/:username', '/:username/profile'], async (req, res) => {
     const { username } = req.params;
     const auth = authorizeSelfAccess(req, res, username);
     if (!auth) return;
@@ -245,6 +248,9 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
       if (changed.length > 0) {
         auditLog(req as any, 'agent_profile_updated', `${displayName(username)}（${changed.join(', ')}）`);
       }
+      if (data.avatar === '🤖') {
+        auditLog(req as any, 'agent_avatar_reset', displayName(username));
+      }
 
       res.json(result);
     } catch (err) {
@@ -253,7 +259,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps): Router {
   });
 
   // POST /api/agents/:username/avatar — 上传头像；先鉴权再落盘
-  router.post('/:username/avatar', (req, res, next) => {
+  router.post(['/:username/avatar', '/:username/profile/avatar'], (req, res, next) => {
     if (!authorizeSelfAccess(req, res, req.params.username)) return;
     next();
   }, (req, res, next) => {

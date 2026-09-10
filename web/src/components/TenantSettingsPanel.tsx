@@ -244,8 +244,10 @@ export function TenantSettingsPanel({
       />
       <fieldset disabled={readOnly} className="min-h-0 flex-1 space-y-5 overflow-auto">
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
-      {saved && <div className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">组织管理已保存</div>}
-      <div className="grid gap-4 xl:grid-cols-2">
+      {saved && <div className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">
+        {section === "brand" ? "品牌资料已保存，本页预览已更新。" : "组织管理已保存"}
+      </div>}
+      <div className={cn("grid gap-4", section !== "brand" && "xl:grid-cols-2")}>
         {showGeneral && <>
         <Card>
           <CardHeader><CardTitle className="text-base">功能开关</CardTitle></CardHeader>
@@ -426,6 +428,23 @@ export function TenantSettingsPanel({
         {showBrand && <Card>
           <CardHeader><CardTitle className="text-base">品牌</CardTitle></CardHeader>
           <CardContent className="grid gap-3">
+            <div className="rounded-lg border bg-muted/25 p-3 text-sm leading-6 text-muted-foreground">
+              保存后作为本组织的品牌资料，供组织身份区域和后续白标页面使用。当前版本不会替换全站“开沿 Agent”平台品牌；下方预览会即时反映本次设置。
+            </div>
+            <div className="flex items-center gap-3 rounded-xl border p-4" aria-label="组织品牌预览">
+              <div
+                className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl text-base font-semibold text-white"
+                style={{ backgroundColor: settings.branding.primaryColor || "#2563eb" }}
+              >
+                {settings.branding.logoUrl
+                  ? <img src={settings.branding.logoUrl} alt="组织 Logo 预览" className="size-full object-cover" />
+                  : (settings.branding.displayName || "组织").slice(0, 1)}
+              </div>
+              <div className="min-w-0">
+                <div className="truncate font-semibold">{settings.branding.displayName || "组织显示名称"}</div>
+                <div className="text-xs text-muted-foreground">组织身份预览</div>
+              </div>
+            </div>
             <div className="space-y-1.5"><Label>显示名称</Label><Input value={settings.branding.displayName ?? ""} onChange={event => patch(d => { d.branding.displayName = event.target.value.trim() || undefined; })} /></div>
             <div className="space-y-1.5"><Label>Logo 地址</Label><Input value={settings.branding.logoUrl ?? ""} onChange={event => patch(d => { d.branding.logoUrl = event.target.value.trim() || undefined; })} /></div>
             <div className="space-y-1.5"><Label>主色</Label><Input value={settings.branding.primaryColor ?? ""} onChange={event => patch(d => { d.branding.primaryColor = event.target.value.trim() || undefined; })} placeholder="#2563eb" /></div>

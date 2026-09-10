@@ -89,14 +89,17 @@ describe('agentsApi — 网络方法', () => {
       await expect(updateAgentProfile('alice', { name: 'New' })).resolves.toEqual(body);
 
       const { url, init } = lastCall();
-      expect(url).toBe('/api/agents/alice');
+      expect(url).toBe('/api/agents/alice/profile');
       expect(init.method).toBe('PATCH');
       expect(init.body).toBe(JSON.stringify({ name: 'New' }));
     });
 
     it('非 2xx 抛错', async () => {
       mockAuthFetch.mockResolvedValue(fail(400));
-      await expect(updateAgentProfile('a', {})).rejects.toThrow('Failed to update agent profile: 400');
+      await expect(updateAgentProfile('a', {})).rejects.toThrow('保存 Agent 资料失败（HTTP 400）');
+
+      mockAuthFetch.mockResolvedValue(fail(409, { error: '资料写入暂不可用' }));
+      await expect(updateAgentProfile('a', {})).rejects.toThrow('资料写入暂不可用');
     });
   });
 
@@ -165,7 +168,7 @@ describe('agentsApi — 网络方法', () => {
       await expect(uploadAgentAvatar('alice', file)).resolves.toBe('agent-avatars/x.png');
 
       const { url, init } = lastCall();
-      expect(url).toBe('/api/agents/alice/avatar');
+      expect(url).toBe('/api/agents/alice/profile/avatar');
       expect(init.method).toBe('POST');
       expect(init.body).toBeInstanceOf(FormData);
     });

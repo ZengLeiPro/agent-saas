@@ -21,7 +21,6 @@ import {
   type OrgAgentFormValues,
 } from './types';
 import { fetchOrgAgentTemplates, type OrgAgentTemplate } from './templates';
-import { useAuth } from '@/contexts/AuthContext';
 
 function formValuesToGovernance(values: OrgAgentFormValues): {
   definition: ManagedOrgAgentDefinition;
@@ -97,9 +96,8 @@ function audienceText(agent: OrgAgentAdminRecord): string {
  * 主体：列表 + 单页统一详情；所有保存走治理 Version / Assignment，legacy 仅作运行投影。
  */
 export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; tenantName?: string }) {
-  const { isPlatformAdmin } = useAuth();
-  // 治理资源明确区分 platform_admin 与 org_admin；平台管理员只能查看，不能代客户组织写配置。
-  const canEdit = !isPlatformAdmin;
+  // 组织管理员写入自身组织；平台管理员在组织工作区已显式绑定 tenantId，治理 API 会再次校验权限。
+  const canEdit = Boolean(tenantId);
   const {
     agents,
     dataIssues = [],
@@ -225,7 +223,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
   };
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+    <div className="flex h-full min-h-0 w-full flex-col">
       <SettingsPanelHeader
         title="企业专家"
         description={`为 ${tenantName || tenantId || '当前组织'} 管理专岗 Agent；打开详情即可配置身份、能力、运行策略、访问范围与钉钉账号。`}

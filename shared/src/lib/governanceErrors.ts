@@ -14,7 +14,8 @@ const GOVERNANCE_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   TARGET_TENANT_REQUIRED: '请先选择目标组织。',
   TARGET_ORGANIZATION_FORBIDDEN: '当前账号无权管理该组织。',
   ENTITLEMENT_SCOPE_NOT_FOUND: '该组织缺少范围基线，请联系平台管理员初始化。',
-  RESOURCE_CATALOG_UNAVAILABLE: '权威目录暂不可用，当前禁止编辑。',
+  RESOURCE_CATALOG_UNAVAILABLE: '资源目录暂时无法读取。为保护现有配置，本次不允许保存，请刷新后重试。',
+  DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE: '暂时无法确认这次变更会影响哪些成员或资源。为保护现有配置，本次不允许保存，请刷新后重试。',
   RESOURCE_SCOPE_STALE_ITEMS: '范围中包含已退出目录的资源，请核对并移除旧引用。',
   ENTITLEMENT_SCOPE_VERSION_CONFLICT: '数据已变化，请刷新后重新预览。',
   GOVERNANCE_PREVIEW_EXPIRED: '预览已过期，请重新预览。',
@@ -28,7 +29,7 @@ export function governanceApiErrorMessage(error: unknown, fallback = '治理请�
   const message =
     GOVERNANCE_ERROR_MESSAGES[error.code] ??
     (error.code.endsWith('_AUTHORITY_UNAVAILABLE')
-      ? `权威依赖不可用（${error.code}）。`
+      ? '配置依赖暂时不可用。为保护现有配置，本次不允许保存，请刷新后重试。'
       : error.message);
   return error.requestId ? `${message} 请求 ID：${error.requestId}` : message;
 }

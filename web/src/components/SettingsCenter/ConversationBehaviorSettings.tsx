@@ -27,22 +27,11 @@ const APPROVAL_OPTIONS = [
 ] as const;
 
 export function ConversationBehaviorSettings() {
-  const { user, updateDebugMode, updatePreferences } = useAuth();
+  const { user, updatePreferences } = useAuth();
   const approvalTier = user ? resolveApprovalTier(user.preferences) : 'ask';
   const [approvalSaving, setApprovalSaving] = useState(false);
   const [approvalSaved, setApprovalSaved] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
-  const debugModeAvailable = user
-    ? isDebugModeAvailable(user.tenantId, user.tenantFeatures)
-    : false;
-  const [debugMode, setDebugMode] = useState(user?.debugMode === true);
-  const [debugModeSaving, setDebugModeSaving] = useState(false);
-  const [debugModeError, setDebugModeError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setDebugMode(user?.debugMode === true && debugModeAvailable);
-  }, [debugModeAvailable, user?.debugMode]);
-
   const changeApprovalTier = useCallback(
     async (next: 'ask' | 'low-risk' | 'full') => {
       if (next === approvalTier || approvalSaving) return;
@@ -74,34 +63,6 @@ export function ConversationBehaviorSettings() {
       }
     },
     [approvalSaving, approvalTier, updatePreferences],
-  );
-
-  const changeDebugMode = useCallback(
-    async (next: boolean) => {
-      setDebugModeSaving(true);
-      setDebugModeError(null);
-      try {
-        const response = await authFetch('/api/auth/me/debug-mode', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ debugMode: next }),
-        });
-        const payload = (await response.json().catch(() => ({}))) as {
-          debugMode?: boolean;
-          error?: string;
-        };
-        if (!response.ok) throw new Error(payload.error || `保存失败（HTTP ${response.status}）`);
-        const effective = payload.debugMode === true;
-        setDebugMode(effective);
-        updateDebugMode(effective);
-      } catch (error) {
-        setDebugMode(user?.debugMode === true && debugModeAvailable);
-        setDebugModeError(error instanceof Error ? error.message : '保存失败');
-      } finally {
-        setDebugModeSaving(false);
-      }
-    },
-    [debugModeAvailable, updateDebugMode, user?.debugMode],
   );
 
   return (
@@ -159,18 +120,65 @@ export function ConversationBehaviorSettings() {
         </div>
       </section>
 
-      <section className="border-t pt-5" aria-labelledby="detailed-execution-process">
+      <PersonalDebugModeSetting className="border-t pt-5" />
+    </div>
+  );
+}
+
+export function PersonalDebugModeSetting({ className = '', title = '显示详细执行过程' }: { className?: string; title?: string }) {
+  const { user, updateDebugMode } = useAuth();
+  const debugModeAvailable = user ? isDebugModeAvailable(user.tenantId, user.tenantFeatures) : false;
+  const [debugMode, setDebugMode] = useState(user?.debugMode === true);
+  const [debugModeSaving, setDebugModeSaving] = useState(false);
+  const [debugModeError, setDebugModeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDebugMode(user?.debugMode === true && debugModeAvailable);
+  }, [debugModeAvailable, user?.debugMode]);
+
+  const changeDebugMode = useCallback(async (next: boolean) => {
+    setDebugModeSaving(true);
+    setDebugModeError(null);
+    try {
+      const response = await authFetch('/api/auth/me/debug-mode', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ debugMode: next }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { debugMode?: boolean; error?: string };
+      if (!response.ok) throw new Error(payload.error || `保存失败（HTTP ${response.status}）`);
+      const effective = payload.debugMode === true;
+      setDebugMode(effective);
+      updateDebugMode(effective);
+    } catch (error) {
+      setDebugMode(user?.debugMode === true && debugModeAvailable);
+      setDebugModeError(error instanceof Error ? error.message : '保存失败');
+    } finally {
+      setDebugModeSaving(false);
+    }
+  }, [debugModeAvailable, updateDebugMode, user?.debugMode]);
+
+  const platformAllowed = user?.tenantFeatures?.debugModeAllowed === true;
+  const organizationEnabled = user?.tenantFeatures?.debugModeEnabled === true;
+  const unavailableGuidance = !platformAllowed
+    ? '需要平台管理员先在“平台管理 → 组织 → 组织配置”开启“调试模式授权”，再由组织管理员在“组织管理 → 功能与配额”开启“成员调试模式”。'
+    : !organizationEnabled
+      ? '平台已授权；还需要组织管理员在“组织管理 → 功能与配额”开启“成员调试模式”。'
+      : null;
+
+  return (
+      <section className={className} aria-labelledby="detailed-execution-process">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h2 id="detailed-execution-process" className="text-sm font-semibold">
-              显示详细执行过程
+              {title}
             </h2>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               开启后显示 Agent 的思考摘要、工具调用和技能执行细节。
             </p>
             {!debugModeAvailable ? (
               <p className="mt-2 text-sm text-muted-foreground" role="note">
-                当前组织未开放此功能。
+                {unavailableGuidance}
               </p>
             ) : null}
           </div>
@@ -194,6 +202,5 @@ export function ConversationBehaviorSettings() {
           </div>
         ) : null}
       </section>
-    </div>
   );
 }

@@ -399,16 +399,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let agentStore: AgentStore | undefined;
   if (userStore) {
     const agentStoreFile = resolve(processCwd, './data/agents.json');
-    const agentStorePgConfig = config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore : undefined;
-    agentStore = new AgentStore(agentStoreFile, agentStorePgConfig ? {
-      withLock: <T>(operation: () => Promise<T>) => withPgAdvisoryLock(
-        agentStorePgConfig.connectionString,
-        `${agentStorePgConfig.tablePrefix ?? 'agent_saas'}:agents-store`,
-        operation,
-      ),
-    } : {});
+    agentStore = new AgentStore(agentStoreFile);
     const allUsernames = userStore.listAll().map(u => u.username);
-    await agentStore.initDefaults(allUsernames);
+    agentStore.initDefaults(allUsernames);
   }
   // 公司级专职 Agent store（2026-07 唯恩批次）：组织管理员定义、员工使用。
   // 仅 auth 启用时装配（org agent 依赖租户/用户身份）；文件与 agents.json 同目录。

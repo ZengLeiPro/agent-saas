@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { open, readFile, writeFile, rename, rm, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AgentProfileRecord, AgentProfileInfo, AgentsFileData } from './types.js';
@@ -13,14 +13,17 @@ const DEFAULT_LOCK_TIMEOUT_MS = 10_000;
 const DEFAULT_LOCK_RETRY_MS = 20;
 
 export interface AgentStoreOptions {
-  /** 生产 PG advisory lock；未提供时使用同路径的跨进程文件锁。 */
-  withLock?: <T>(operation: () => Promise<T>) => Promise<T>;
   lockTimeoutMs?: number;
   lockRetryMs?: number;
 }
 
 interface LocalLock {
   handle: Awaited<ReturnType<typeof open>>;
+  token: string;
+}
+
+interface LocalLockSync {
+  fd: number;
   token: string;
 }
 
@@ -121,6 +124,42 @@ export class AgentStore {
     }
   }
 
+  private acquireLocalLockSync(): LocalLockSync {
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    const lockPath = `${this.filePath}.lock`;
+    const timeoutMs = Math.max(0, this.options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS);
+    const retryMs = Math.max(1, this.options.lockRetryMs ?? DEFAULT_LOCK_RETRY_MS);
+    const deadline = Date.now() + timeoutMs;
+    const token = randomUUID();
+    const signal = new Int32Array(new SharedArrayBuffer(4));
+    for (;;) {
+      let fd: number | undefined;
+      try {
+        fd = openSync(lockPath, 'wx', 0o600);
+        writeFileSync(fd, token, 'utf8');
+        return { fd, token };
+      } catch (error) {
+        if (fd !== undefined) {
+          try { closeSync(fd); } catch { /* best effort */ }
+          try { unlinkSync(lockPath); } catch { /* best effort */ }
+        }
+        if (errorCode(error) !== 'EEXIST') throw error;
+        if (Date.now() >= deadline) throw new Error(`Timed out acquiring agents store lock: ${lockPath}`);
+        Atomics.wait(signal, 0, 0, Math.min(retryMs, Math.max(1, deadline - Date.now())));
+      }
+    }
+  }
+
+  private releaseLocalLockSync(lock: LocalLockSync): void {
+    const lockPath = `${this.filePath}.lock`;
+    try { closeSync(lock.fd); } catch { /* best effort */ }
+    try {
+      if (readFileSync(lockPath, 'utf8') === lock.token) unlinkSync(lockPath);
+    } catch (error) {
+      if (errorCode(error) !== 'ENOENT') throw error;
+    }
+  }
+
   private async mutate<T>(operation: () => MutationResult<T> | Promise<MutationResult<T>>): Promise<T> {
     const execute = async (): Promise<T> => {
       this.mutationActive = true;
@@ -139,7 +178,6 @@ export class AgentStore {
       }
     };
     const run = async (): Promise<T> => {
-      if (this.options.withLock) return this.options.withLock(execute);
       const lock = await this.acquireLocalLock();
       try {
         return await execute();
@@ -225,8 +263,14 @@ export class AgentStore {
   }
 
   /** 为不存在记录的用户写入默认 profile */
-  async initDefaults(usernames: string[]): Promise<void> {
-    await this.mutate(() => {
+  initDefaults(usernames: string[]): void {
+    if (this.mutationActive) throw new Error('Cannot initialize AgentStore defaults during a mutation');
+    const lock = this.acquireLocalLockSync();
+    this.mutationActive = true;
+    let committedAgents = this.agents;
+    try {
+      this.load();
+      committedAgents = structuredClone(this.agents);
       let changed = false;
       const now = new Date().toISOString();
       for (const username of usernames) {
@@ -239,8 +283,25 @@ export class AgentStore {
           changed = true;
         }
       }
-      return { changed, value: undefined };
-    });
+      if (changed) {
+        const data: AgentsFileData = { version: 1, agents: this.agents };
+        mkdirSync(dirname(this.filePath), { recursive: true });
+        const tmpPath = join(dirname(this.filePath), `.agents.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+        try {
+          writeFileSync(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+          renameSync(tmpPath, this.filePath);
+          this.sourceWasPresent = true;
+        } finally {
+          try { unlinkSync(tmpPath); } catch { /* already renamed or best effort */ }
+        }
+      }
+    } catch (error) {
+      this.agents = committedAgents;
+      throw error;
+    } finally {
+      this.mutationActive = false;
+      this.releaseLocalLockSync(lock);
+    }
   }
 }
 

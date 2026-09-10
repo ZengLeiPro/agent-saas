@@ -46,7 +46,7 @@
 
 ### 2026-09-10 PR #614 复核整改
 
-- 复核重新打开 REL-02：AgentStore 原实现只有进程内队列，两个进程仍可能在 `reload` 与 `rename` 之间互相覆盖。现已与 UserStore/GroupStore 对齐为 `lock → reload → mutate → atomic publish`；生产 PG 模式注入独立 advisory lock，本地使用同路径 create-only 文件锁，启动默认 Agent 初始化也进入同一异步事务。
+- 复核重新打开 REL-02：AgentStore 原实现只有进程内队列，两个进程仍可能在 `reload` 与 `rename` 之间互相覆盖。现已与 UserStore/GroupStore 对齐为 `lock → reload → mutate → atomic publish`；所有进程对共享 `agents.json` 使用同路径 create-only 文件锁，启动默认 Agent 初始化也在该锁内同步完成。
 - 新增两个独立 Node 进程的同步竞争回归：复用两个常驻进程连续制造 20 次不同 Agent 的并发更新，20/20 最终文件均同时保留两条记录。
 - CI 将 UserStore 判入生产迁移依赖闭包后严格阻断。该文件不执行 SQL 或结构迁移，因此没有伪造 expand；新增摘要绑定的 `no-schema-change` 审核、审核说明和测试证据，使源码或证据变化时门禁自动失效并要求重新审核。
 - 未修改 Workflow；权威 CI 需在整改提交推送后重新执行并读回。

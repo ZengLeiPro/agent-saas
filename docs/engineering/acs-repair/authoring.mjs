@@ -24,9 +24,9 @@ const checkPath = (path) => {
     || /baseline|ratchet/i.test(path) || path.startsWith('-')) throw new Error(`Forbidden path: ${path}`);
   if (git('diff', '--name-only', plan.baseSha, 'HEAD', '--', path)) throw new Error(`Concurrent change: ${path}`);
 };
-const block = (spec) => {
+const block = (spec, sourceOverride) => {
   checkPath(spec.sourcePath);
-  const source = readFileSync(spec.sourcePath, 'utf8');
+  const source = sourceOverride ?? readFileSync(spec.sourcePath, 'utf8');
   if (typeof spec.start !== 'string' || !spec.start || source.split(spec.start).length !== 2) throw new Error('Extraction start is not unique');
   const start = source.indexOf(spec.start);
   if (spec.end === null) return source.slice(start);
@@ -39,7 +39,11 @@ const replace = (source, replacements, path) => {
   if (!Array.isArray(replacements)) throw new Error(`No patch: ${path}`);
   let next = source;
   for (const replacement of replacements) {
-    const before = replacement.beforeFrom ? block(replacement.beforeFrom) : replacement.before;
+    // An explicitly sequential edit may rename a local anchor before extracting
+    // it. Cross-file extractions still read the exact unchanged base source.
+    const before = replacement.beforeFrom
+      ? block(replacement.beforeFrom, replacement.beforeFrom.sourcePath === path ? next : undefined)
+      : replacement.before;
     const { after } = replacement;
     if (typeof before !== 'string' || !before || typeof after !== 'string') throw new Error('Invalid replacement');
     const count = next.split(before).length - 1;

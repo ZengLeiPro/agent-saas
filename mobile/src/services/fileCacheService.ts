@@ -1,14 +1,24 @@
 import { File, Paths, Directory } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getPlatform, resolveKbFileSrc, TOKEN_KEY } from '@agent/shared';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
+import {
+  getPlatform,
+  isSensitiveTransportAllowed,
+  resolveKbFileSrc,
+  TOKEN_KEY,
+  type BoundaryIdentity,
+} from '@agent/shared';
 import { resolveFileReadSource } from '../lib/fileReadSource';
 
 // --- Constants ---
 const MAX_CACHE_SIZE = 1024 * 1024 * 1024; // 1 GB
-const EVICT_TARGET = 700 * 1024 * 1024;     // 700 MB
-const INDEX_KEY = 'fileCache:index';
+const EVICT_TARGET = 700 * 1024 * 1024; // 700 MB
+const INDEX_KEY = 'fileCache:index:v2';
+const LEGACY_INDEX_KEY = 'fileCache:index';
 const PERSIST_DEBOUNCE_MS = 2000;
-const CACHE_DIR = 'files';
+const CACHE_DIR = 'files-v2';
+const LEGACY_CACHE_DIR = 'files';
 
 // --- Types ---
 interface FileCacheEntry {
@@ -22,41 +32,72 @@ interface FileCacheEntry {
 }
 
 interface FileCacheIndex {
-  version: 1;
+  version: 2;
   entries: Record<string, FileCacheEntry>;
   totalSize: number;
 }
 
-// --- DJB2 hash ---
-function djb2Hash(str: string): string {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
-  }
-  return hash.toString(36);
+interface CacheScope {
+  key: string;
+  lifecycleGeneration: number;
 }
 
-function makeCacheKey(serverPath: string, owner?: string, root?: boolean): string {
+function sha256Hex(value: string): string {
+  return bytesToHex(sha256(utf8ToBytes(value)));
+}
+
+function makeCacheKey(scope: CacheScope, serverPath: string, owner?: string, root?: boolean): string {
   // KB 是租户共享只读，owner/root 不参与命名；同时剥掉 `#page=N` fragment，
   // 避免同一份文档因引用页码不同而重复落盘。
   const source = resolveFileReadSource(serverPath);
-  if (source.kind === 'kb') return `__kb__:${source.doc}`;
+  if (source.kind === 'kb') return `${scope.key}:__kb__:${source.doc}`;
   const prefix = root ? '__root__:' : '';
-  return owner ? `${prefix}${owner}:${serverPath}` : `${prefix}${serverPath}`;
+  return owner ? `${scope.key}:${prefix}${owner}:${serverPath}` : `${scope.key}:${prefix}${serverPath}`;
 }
 
-function makeLocalFileName(serverPath: string, owner?: string, root?: boolean): string {
+function makeLocalFileName(scope: CacheScope, serverPath: string, owner?: string, root?: boolean): string {
   // 扩展名取自真实文档名（kb 路径要先剥伪协议与 fragment），供原生预览器识别类型
   const doc = resolveFileReadSource(serverPath).doc;
   const ext = doc.includes('.') ? doc.slice(doc.lastIndexOf('.')) : '';
-  return djb2Hash(makeCacheKey(serverPath, owner, root)) + ext;
+  return `${sha256Hex(makeCacheKey(scope, serverPath, owner, root))}${ext}`;
 }
 
 class FileCacheService {
-  private index: FileCacheIndex = { version: 1, entries: {}, totalSize: 0 };
+  private index: FileCacheIndex = { version: 2, entries: {}, totalSize: 0 };
   private loaded = false;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private inflight = new Map<string, Promise<string>>();
+  private identity: BoundaryIdentity | null = null;
+  private lifecycleGeneration = 0;
+
+  setIdentity(identity: BoundaryIdentity | null): void {
+    const previous = this.identity;
+    const changed =
+      previous?.userId !== identity?.userId ||
+      previous?.tenantId !== identity?.tenantId ||
+      previous?.generation !== identity?.generation;
+    this.identity = identity;
+    if (changed) {
+      this.lifecycleGeneration += 1;
+      this.inflight.clear();
+    }
+  }
+
+  private captureScope(): CacheScope {
+    if (!this.identity) throw new Error('FILE_CACHE_IDENTITY_UNAVAILABLE');
+    const origin = getPlatform().platformConfig.getBaseUrl();
+    return {
+      key: `v2:${origin}:${this.identity.tenantId}:${this.identity.userId}:${this.identity.generation}`,
+      lifecycleGeneration: this.lifecycleGeneration,
+    };
+  }
+
+  private assertScope(scope: CacheScope): void {
+    const current = this.captureScope();
+    if (current.key !== scope.key || current.lifecycleGeneration !== scope.lifecycleGeneration) {
+      throw new Error('FILE_CACHE_IDENTITY_CHANGED');
+    }
+  }
 
   async init(): Promise<void> {
     if (this.loaded) return;
@@ -64,13 +105,22 @@ class FileCacheService {
       const raw = await AsyncStorage.getItem(INDEX_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as FileCacheIndex;
-        if (parsed.version === 1 && parsed.entries) {
+        if (parsed.version === 2 && parsed.entries) {
           this.index = parsed;
         }
       }
-    } catch { /* corrupted index, start fresh */ }
+    } catch {
+      /* corrupted index, start fresh */
+    }
     // Ensure cache subdirectory exists
     this.ensureCacheDir();
+    await AsyncStorage.removeItem(LEGACY_INDEX_KEY).catch(() => undefined);
+    try {
+      const legacyDir = new Directory(Paths.cache, LEGACY_CACHE_DIR);
+      if (legacyDir.exists) legacyDir.delete();
+    } catch {
+      /* old unscoped cache is never migrated across identities */
+    }
     this.loaded = true;
   }
 
@@ -85,8 +135,10 @@ class FileCacheService {
     owner?: string,
     root?: boolean,
   ): Promise<string | null> {
+    const scope = this.captureScope();
     await this.init();
-    const key = makeCacheKey(serverPath, owner, root);
+    this.assertScope(scope);
+    const key = makeCacheKey(scope, serverPath, owner, root);
     const entry = this.index.entries[key];
     if (!entry) return null;
 
@@ -97,7 +149,9 @@ class FileCacheService {
       try {
         const staleFile = new File(Paths.cache, `${CACHE_DIR}/${entry.localFileName}`);
         if (staleFile.exists) staleFile.delete();
-      } catch { /* silent */ }
+      } catch {
+        /* silent */
+      }
       this.index.totalSize = Math.max(0, this.index.totalSize - entry.size);
       delete this.index.entries[key];
       this.schedulePersist();
@@ -131,57 +185,94 @@ class FileCacheService {
     root?: boolean,
   ): Promise<string> {
     if (!serverPath) throw new Error('serverPath is required');
+    const scope = this.captureScope();
 
     // Check cache first
     const cached = await this.getCached(serverPath, modifiedAt, size, owner, root);
     if (cached) return cached;
 
     // Deduplicate concurrent downloads
-    const key = makeCacheKey(serverPath, owner, root);
+    this.assertScope(scope);
+    const key = makeCacheKey(scope, serverPath, owner, root);
     const existing = this.inflight.get(key);
     if (existing) return existing;
 
-    const downloadPromise = this.downloadAndCache(serverPath, modifiedAt, size, owner, root);
+    const downloadPromise = this.downloadAndCache(scope, serverPath, modifiedAt, size, owner, root);
     this.inflight.set(key, downloadPromise);
 
     try {
       const uri = await downloadPromise;
       return uri;
     } finally {
-      this.inflight.delete(key);
+      // A fenced request may finish after a new lifecycle has installed another
+      // promise under the same logical key. Never delete the newer request.
+      if (this.inflight.get(key) === downloadPromise) this.inflight.delete(key);
     }
   }
 
   /** Authenticated attachmentId route; never accepts a client path or external URL. */
   async getOrDownloadAttachment(attachmentId: string, originalName: string): Promise<string> {
     if (!/^[0-9a-f-]{36}$/i.test(attachmentId)) throw new Error('attachmentId is invalid');
+    const scope = this.captureScope();
     this.ensureCacheDir();
     const platform = getPlatform();
     const baseUrl = platform.platformConfig.getBaseUrl();
     const url = `${baseUrl}/api/attachments/${encodeURIComponent(attachmentId)}/content`;
     platform.platformConfig.assertTrustedUrl?.(url, 'http');
+    if (!isSensitiveTransportAllowed()) throw new Error('LOCAL_APP_LOCK_BLOCKED');
     const token = await platform.secureStorage.getItem(TOKEN_KEY);
-    const extension = originalName.includes('.') ? originalName.slice(originalName.lastIndexOf('.')).replace(/[^.A-Za-z0-9]/g, '') : '';
-    const destination = new File(Paths.cache, `${CACHE_DIR}/attachment-${djb2Hash(attachmentId)}${extension}`);
-    const downloaded = await File.downloadFileAsync(url, destination, {
+    const extension = originalName.includes('.')
+      ? originalName.slice(originalName.lastIndexOf('.')).replace(/[^.A-Za-z0-9]/g, '')
+      : '';
+    const finalFile = new File(
+      Paths.cache,
+      `${CACHE_DIR}/${sha256Hex(`${scope.key}:attachment:${attachmentId}`)}${extension}`,
+    );
+    const temporary = new File(
+      Paths.cache,
+      `${CACHE_DIR}/.${sha256Hex(`${scope.key}:${attachmentId}:${Date.now()}:${Math.random()}`)}.tmp`,
+    );
+    const downloaded = await File.downloadFileAsync(url, temporary, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
-      idempotent: true,
+      idempotent: false,
     });
-    return downloaded.uri;
+    try {
+      this.assertScope(scope);
+      if (finalFile.exists) finalFile.delete();
+      downloaded.move(finalFile);
+      return finalFile.uri;
+    } catch (error) {
+      try {
+        if (downloaded.exists) downloaded.delete();
+      } catch {
+        /* best effort */
+      }
+      throw error;
+    }
   }
 
   /**
    * Clear all cached files and reset index.
    */
   async clearAll(): Promise<void> {
+    this.lifecycleGeneration += 1;
+    this.inflight.clear();
     try {
       const cacheDir = new Directory(Paths.cache, CACHE_DIR);
       if (cacheDir.exists) {
         cacheDir.delete();
       }
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
+    try {
+      const legacyDir = new Directory(Paths.cache, LEGACY_CACHE_DIR);
+      if (legacyDir.exists) legacyDir.delete();
+    } catch {
+      /* legacy cache cleanup is best effort */
+    }
 
-    this.index = { version: 1, entries: {}, totalSize: 0 };
+    this.index = { version: 2, entries: {}, totalSize: 0 };
     this.loaded = true;
 
     if (this.persistTimer) {
@@ -190,8 +281,10 @@ class FileCacheService {
     }
 
     try {
-      await AsyncStorage.removeItem(INDEX_KEY);
-    } catch { /* silent */ }
+      await Promise.all([AsyncStorage.removeItem(INDEX_KEY), AsyncStorage.removeItem(LEGACY_INDEX_KEY)]);
+    } catch {
+      /* silent */
+    }
   }
 
   // --- Private methods (trusted service transport) ---
@@ -202,10 +295,13 @@ class FileCacheService {
       if (!dir.exists) {
         dir.create();
       }
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   private async downloadAndCache(
+    scope: CacheScope,
     serverPath: string,
     modifiedAt: number,
     size: number,
@@ -231,15 +327,34 @@ class FileCacheService {
     // Native downloads bypass authFetch, so enforce the identical origin policy
     // before reading the Bearer token or handing the request to Expo FileSystem.
     platform.platformConfig.assertTrustedUrl?.(url, 'http');
+    if (!isSensitiveTransportAllowed()) throw new Error('LOCAL_APP_LOCK_BLOCKED');
+    this.assertScope(scope);
     const token = await platform.secureStorage.getItem(TOKEN_KEY);
 
-    const localFileName = makeLocalFileName(serverPath, owner, root);
+    const localFileName = makeLocalFileName(scope, serverPath, owner, root);
     const destFile = new File(Paths.cache, `${CACHE_DIR}/${localFileName}`);
+    const temporary = new File(
+      Paths.cache,
+      `${CACHE_DIR}/.${sha256Hex(`${scope.key}:${serverPath}:${Date.now()}:${Math.random()}`)}.tmp`,
+    );
 
-    const downloaded = await File.downloadFileAsync(url, destFile, {
+    const downloaded = await File.downloadFileAsync(url, temporary, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
-      idempotent: true,
+      idempotent: false,
     });
+
+    try {
+      this.assertScope(scope);
+      if (destFile.exists) destFile.delete();
+      downloaded.move(destFile);
+    } catch (error) {
+      try {
+        if (downloaded.exists) downloaded.delete();
+      } catch {
+        /* best effort */
+      }
+      throw error;
+    }
 
     // Get actual downloaded size
     let actualSize = size;
@@ -247,10 +362,12 @@ class FileCacheService {
       if (destFile.exists && destFile.size != null) {
         actualSize = destFile.size;
       }
-    } catch { /* use server size */ }
+    } catch {
+      /* use server size */
+    }
 
     // Update index
-    const key = makeCacheKey(serverPath, owner, root);
+    const key = makeCacheKey(scope, serverPath, owner, root);
     const oldEntry = this.index.entries[key];
     if (oldEntry) {
       this.index.totalSize = Math.max(0, this.index.totalSize - oldEntry.size);
@@ -270,9 +387,23 @@ class FileCacheService {
 
     // Evict if needed, then persist
     await this.evictIfNeeded();
+    try {
+      this.assertScope(scope);
+    } catch (error) {
+      if (this.index.entries[key]?.localFileName === localFileName) {
+        this.index.totalSize = Math.max(0, this.index.totalSize - entrySize);
+        delete this.index.entries[key];
+      }
+      try {
+        if (destFile.exists) destFile.delete();
+      } catch {
+        /* best effort */
+      }
+      throw error;
+    }
     this.schedulePersist();
 
-    return downloaded.uri;
+    return destFile.uri;
   }
 
   private async evictIfNeeded(): Promise<void> {
@@ -292,7 +423,9 @@ class FileCacheService {
         if (localFile.exists) {
           localFile.delete();
         }
-      } catch { /* silent */ }
+      } catch {
+        /* silent */
+      }
 
       this.index.totalSize = Math.max(0, this.index.totalSize - entry.size);
       delete this.index.entries[key];
@@ -310,7 +443,9 @@ class FileCacheService {
   private async persistIndex(): Promise<void> {
     try {
       await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(this.index));
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 }
 

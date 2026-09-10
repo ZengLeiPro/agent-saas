@@ -24,6 +24,8 @@ export * from './directory/store.js';
 export * from './directory/staleness.js';
 export * from './directory/client.js';
 export * from './directory/pgStore.js';
+export * from './directory/managedSync.js';
+export * from './directory/pgCoordinator.js';
 export * from './events/store.js';
 export * from './events/handler.js';
 export * from './events/pgStore.js';

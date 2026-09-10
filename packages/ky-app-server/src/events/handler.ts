@@ -61,6 +61,12 @@ function assertShape(event: unknown, config: KyAppConfig): PlatformEvent {
   ) {
     throw new KyAppError('invalid_input', { message: `未知事件类型：${String(value.type)}` });
   }
+  if (value.type === 'directory.changed') {
+    const payload = value.payload as Record<string, unknown> | null | undefined;
+    if (!Number.isSafeInteger(payload?.targetSeq) || Number(payload?.targetSeq) < 0) {
+      throw new KyAppError('invalid_input', { message: 'directory.changed targetSeq 非法' });
+    }
+  }
   return event as PlatformEvent;
 }
 

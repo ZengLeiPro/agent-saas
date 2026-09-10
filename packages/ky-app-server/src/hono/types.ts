@@ -1,6 +1,7 @@
 /** Hono 参考适配器的公共类型：请求身份、路由配置与 Hono 变量表。 */
 import type {
   HealthLiveResponse,
+  KyAppFeature,
   LocalAct,
   Manifest,
   MeResponse,
@@ -46,6 +47,8 @@ export interface KyLogEntry {
 
 export interface KyAppRouterHealth {
   appVersion: string;
+  /** 应用实际接线的可选协议能力；缺省为空，避免旧接入误收新事件。 */
+  features?: readonly KyAppFeature[];
   /** 发版期间返回 `maintenance`（§8.3）。 */
   maintenance?: () => boolean;
   etaMinutes?: () => number | undefined;

@@ -7,10 +7,11 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { manifestDigest, type Manifest } from '@kaiyan/ky-app-contract';
+import { KY_APP_FEATURES, manifestDigest, type Manifest } from '@kaiyan/ky-app-contract';
 import {
   PgBreakGlassStore,
   PgDirectoryStore,
+  PgDirectorySyncCoordinator,
   PgExecutionStore,
   PgInstallationStateStore,
   PgJtiStore,
@@ -18,9 +19,11 @@ import {
   createAttestationIssuer,
   createBreakGlass,
   createDirectoryClient,
+  createManagedDirectorySync,
   createEventsHandler,
   createLocalKeyRing,
   type DirectoryClient,
+  type ManagedDirectorySync,
 } from '@kaiyan/ky-app-server';
 import {
   contentSecurityPolicyForEnv,
@@ -49,6 +52,7 @@ export interface BuiltApp {
   manifest: Manifest;
   manifestDigest: string;
   directory: DirectoryClient;
+  directorySync: ManagedDirectorySync;
   close(): Promise<void>;
 }
 
@@ -92,6 +96,21 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
 
   const localKeys = createLocalKeyRing(config.ky, { now });
 
+  const directory = createDirectoryClient({
+    config: config.ky,
+    store: directoryStore,
+    baseUrl: config.directoryUrl,
+    now,
+  });
+  // SDK 托管首轮同步、五分钟兜底、失败退避与多实例互斥；业务项目不再自写 Cron。
+  const directorySync = createManagedDirectorySync({
+    client: directory,
+    coordinator: new PgDirectorySyncCoordinator(
+      pool,
+      `ky_app_directory_sync:${config.ky.tenantId}:${config.ky.installationId}`,
+    ),
+  });
+
   // `jwks.probe` / `jwks.rotated` / `jwks.revoke` 要用 router 建出来的那个 JWKS 客户端，
   // 而 router 又要先拿到 events —— 用惰性构造打破这个循环。
   let lazyEvents: ReturnType<typeof createEventsHandler> | null = null;
@@ -101,16 +120,12 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
       store: eventsStore,
       jwks: runtime.jwks,
       now,
+      onEvent: (event) => {
+        if (event.type === 'directory.changed') directorySync.trigger('notification');
+      },
     });
     return lazyEvents;
   };
-
-  const directory = createDirectoryClient({
-    config: config.ky,
-    store: directoryStore,
-    baseUrl: config.directoryUrl,
-    now,
-  });
 
   const capabilityDeps: CapabilityDeps = {
     pool,
@@ -197,6 +212,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     permVersion: async (identity) => permVersionOf(await rolesOf(identity), identity.tadm),
     health: {
       appVersion: '0.1.0',
+      features: KY_APP_FEATURES,
       db: async () => {
         await pool.query('SELECT 1');
         return true;
@@ -226,6 +242,9 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   // 静态托管放最后：契约端点与业务 API 都已注册，剩下的 GET 才走前端产物（含 SPA 兜底）。
   router.get('*', serveWebDist(webDistDir()));
 
+  // 非阻塞启动：平台不可达只会让 Agent 集成降级，不拖住业务 HTTP 服务。
+  directorySync.start();
+
   return {
     app: router,
     runtime,
@@ -233,7 +252,9 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     manifest,
     manifestDigest: digest,
     directory,
+    directorySync,
     close: async () => {
+      await directorySync.stop();
       await pool.end();
     },
   };

@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -9,10 +10,11 @@ import { cn } from "@/lib/utils";
  * UsageDashboard 三处各写一遍，改宽度得记得同时改三处，漏一处就会出现同一个
  * 抽屉里两块内容左右边界对不齐。
  *
- * 取 5xl（64rem）是「设置表单可读宽度」——再宽标签与输入框会拉得太开、眼睛要横扫。
+ * 默认取 6xl（72rem）：在 1366px 及以上桌面多利用一档横向空间，同时小屏仍由
+ * 外层 padding 和 w-full 自适应。表单内部继续自行约束字段宽度，避免输入框无意义拉长。
  * 数据密集型页面（列表 / 看板 / trace）不适用，那些走 fullWidth。
  */
-export const SETTINGS_CONTENT_WIDTH = "mx-auto w-full max-w-5xl";
+export const SETTINGS_CONTENT_WIDTH = "mx-auto w-full max-w-6xl";
 
 interface SettingsPanelHeaderProps {
   title: string;
@@ -23,8 +25,28 @@ interface SettingsPanelHeaderProps {
 
 const StickyHeaderContext = createContext(false);
 
+interface HeaderPortalContextValue {
+  target: HTMLElement | null;
+}
+
+const HeaderPortalContext = createContext<HeaderPortalContextValue | null>(null);
+
 export function SettingsPanelHeaderStickyProvider({ children }: { children: ReactNode }) {
   return <StickyHeaderContext.Provider value>{children}</StickyHeaderContext.Provider>;
+}
+
+/**
+ * 管理工作区由外层壳统一渲染标题时，子页面仍可声明自己的 actions。
+ * 子页面标题会被收口，actions 则挂载到壳级标题右侧，避免重复标题和操作丢失。
+ */
+export function SettingsPanelHeaderPortalProvider({
+  target,
+  children,
+}: {
+  target: HTMLElement | null;
+  children: ReactNode;
+}) {
+  return <HeaderPortalContext.Provider value={{ target }}>{children}</HeaderPortalContext.Provider>;
 }
 
 /**
@@ -39,6 +61,11 @@ export function SettingsPanelHeader({
   className,
 }: SettingsPanelHeaderProps) {
   const sticky = useContext(StickyHeaderContext);
+  const headerPortal = useContext(HeaderPortalContext);
+
+  if (headerPortal) {
+    return actions && headerPortal.target ? createPortal(actions, headerPortal.target) : null;
+  }
 
   return (
     <div

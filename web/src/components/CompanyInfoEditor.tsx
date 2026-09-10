@@ -109,7 +109,7 @@ export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionP
   });
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="公司信息"
         description={

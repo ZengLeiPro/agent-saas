@@ -1,7 +1,14 @@
 import type { ReactNode } from "react";
 
 import { TenantBillingPanel } from "@/components/BillingManager";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PAGE_TABS_LIST_CLASS,
+  PAGE_TAB_TRIGGER_CLASS,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 
 const USAGE_SECTION_KEY = "usageSection";
@@ -27,14 +34,14 @@ export function OrganizationUsageBillingPage({
 
   return (
     <Tabs value={section} onValueChange={changeSection} className="min-h-full w-full">
-      <TabsList className="mb-4 h-9" aria-label="用量、预算与计费">
-        <TabsTrigger value="usage">用量看板</TabsTrigger>
-        <TabsTrigger value="billing">预算与计费</TabsTrigger>
+      <TabsList className={PAGE_TABS_LIST_CLASS} aria-label="用量、预算与计费">
+        <TabsTrigger value="usage" className={PAGE_TAB_TRIGGER_CLASS}>用量看板</TabsTrigger>
+        <TabsTrigger value="billing" className={PAGE_TAB_TRIGGER_CLASS}>预算与计费</TabsTrigger>
       </TabsList>
-      <TabsContent value="usage" className="mt-0">
+      <TabsContent value="usage" className="mt-4">
         {usage}
       </TabsContent>
-      <TabsContent value="billing" className="mt-0">
+      <TabsContent value="billing" className="mt-4">
         <TenantBillingPanel tenantId={tenantId} tenantName={tenantName} />
       </TabsContent>
     </Tabs>

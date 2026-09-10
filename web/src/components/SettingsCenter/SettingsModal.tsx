@@ -77,7 +77,7 @@ function PlaceholderSection({
   children?: ReactNode;
 }) {
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader title={title} description={description} actions={actions} />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="rounded-2xl border bg-card p-5 shadow-sm">
@@ -371,7 +371,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
   }, [userId]);
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader title="账户" description="管理你的账户资料、安全凭据和登录状态。" />
       <div className="min-h-0 flex-1 overflow-auto">
         <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { void onAvatarUpload(event); }} />

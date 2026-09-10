@@ -119,7 +119,7 @@ export function TenantInstructionsSection({ tenantId, tenantName }: TenantInstru
   });
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="自定义规则"
         description={

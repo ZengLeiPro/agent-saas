@@ -333,7 +333,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title={isTenantMode && tenantName ? `${tenantName} · 技能管理` : "技能管理"}
         description={isTenantMode ? "管理当前组织可用的 Agent 技能与用户自建技能。" : "管理平台全局 Agent 技能池，支持启用、禁用和同步。"}

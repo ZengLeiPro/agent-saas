@@ -166,15 +166,6 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     iconKey: 'wallet',
     routeId: 'organization.governance.usage',
     search: '?usageSection=billing',
-    tabs: [
-      tab('budget', '预算', 'organization.governance.usage', '?usageSection=billing'),
-      tab(
-        'billing',
-        '套餐与账单',
-        'organization.governance.usage',
-        '?usageSection=billing&view=statement',
-      ),
-    ],
   },
   {
     id: 'org-members',

@@ -182,7 +182,7 @@ export function TrashView({ onClose, onPreviewSession, activePreviewId, showHead
   );
 
   return (
-    <div className={showHeader ? "flex min-h-0 flex-1 flex-col" : "mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col"}>
+    <div className={showHeader ? "flex min-h-0 flex-1 flex-col" : "mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col"}>
       {showHeader ? (
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <button

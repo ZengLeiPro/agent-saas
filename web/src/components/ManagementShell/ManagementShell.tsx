@@ -1,8 +1,12 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { OrganizationScopeBanner } from '@/components/GovernanceConsole';
 import type { SettingsDirtyController } from '@/components/PersonalSettings/dirtyRegistry';
 import type { ManagementSettingsAccess } from '@/hooks/useManagementSettingsAccess';
-import { SETTINGS_CONTENT_WIDTH } from '@/components/SettingsCenter/SettingsPanelHeader';
+import {
+  SETTINGS_CONTENT_WIDTH,
+  SettingsPanelHeader,
+  SettingsPanelHeaderPortalProvider,
+} from '@/components/SettingsCenter/SettingsPanelHeader';
 import {
   activeManagementTab,
   managementPageForRoute,
@@ -34,7 +38,7 @@ function ManagementTabs({ route }: { route: GovernanceRouteState }) {
   const activeTab = activeManagementTab(page, route);
   if (!page.tabs?.length) return null;
   return (
-    <div className="mt-5 flex gap-6 border-b" role="tablist" aria-label={`${page.label}页面切换`}>
+    <div className="flex gap-6 overflow-x-auto border-b" role="tablist" aria-label={`${page.label}页面切换`}>
       {page.tabs.map((item) => {
         const selected = activeTab?.id === item.id;
         return (
@@ -141,6 +145,7 @@ export function ManagementShell({
   children: ReactNode;
 }) {
   const page = managementPageForRoute(route);
+  const [headerActionsTarget, setHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   if (!page) {
     return (
       <div className="h-full overflow-hidden bg-muted/20 p-4 md:p-8">
@@ -163,6 +168,17 @@ export function ManagementShell({
       <MobileManagementNavigation route={route} access={access} />
       <main className="px-4 py-5 md:px-8 md:py-6">
         <div className={SETTINGS_CONTENT_WIDTH}>
+          <SettingsPanelHeader
+            title={page.label}
+            description={page.description}
+            actions={
+              <div
+                ref={setHeaderActionsTarget}
+                className="flex flex-wrap items-center justify-end gap-2"
+                data-testid="management-page-actions"
+              />
+            }
+          />
           {route.area === 'organization' ? (
             <OrganizationScopeBanner
               route={route}
@@ -173,7 +189,9 @@ export function ManagementShell({
           <ManagementTabs route={route} />
           <DetailTabs route={route} />
           <div className="mt-6" data-testid="management-page-content">
-            {children}
+            <SettingsPanelHeaderPortalProvider target={headerActionsTarget}>
+              {children}
+            </SettingsPanelHeaderPortalProvider>
           </div>
         </div>
       </main>

@@ -174,7 +174,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
   };
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <div className="flex items-center gap-3 border-b py-3">
         <Button variant="ghost" size="sm" onClick={onBack} disabled={props.settingsSaving || overrideSaving} className="gap-1">
           <ArrowLeft className="size-3.5" />

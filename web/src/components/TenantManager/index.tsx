@@ -913,7 +913,7 @@ export function TenantManager() {
   };
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="组织管理"
         description="管理平台组织与成员归属。"

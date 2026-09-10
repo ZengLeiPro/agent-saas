@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { governanceRoute } from '@/lib/governanceNavigation';
 import type { ManagementSettingsAccess } from '@/hooks/useManagementSettingsAccess';
+import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
 import { ManagementShell } from './ManagementShell';
 
 vi.mock('@/components/GovernanceConsole', () => ({ OrganizationScopeBanner: () => null }));
@@ -16,7 +17,7 @@ const access = {
 } as unknown as ManagementSettingsAccess;
 
 describe('ManagementShell 统一布局', () => {
-  it('统一内容宽度并只在工作区外层滚动，不渲染面包屑和重复页标题', () => {
+  it('统一内容宽度并只在工作区外层滚动，以注册表标题渲染统一页头', () => {
     render(
       <ManagementShell route={governanceRoute('platform.overview.overview')} access={access}>
         <div>真实内容</div>
@@ -27,11 +28,28 @@ describe('ManagementShell 统一布局', () => {
     expect(shell.getAttribute('data-scroll-container')).toBe('true');
     expect(shell.className).toContain('overflow-y-auto');
     expect(screen.getByTestId('management-page-content').parentElement?.className).toContain(
-      'max-w-5xl',
+      'max-w-6xl',
     );
     expect(screen.queryByRole('banner')).toBeNull();
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.getByRole('heading', { level: 2, name: '平台总览' })).toBeTruthy();
     expect(screen.getByText('真实内容')).toBeTruthy();
+  });
+
+  it('收口子页面重复标题并将页面操作提升到统一页头', () => {
+    render(
+      <ManagementShell route={governanceRoute('platform.resource-center.models')} access={access}>
+        <SettingsPanelHeader title="模型配置" actions={<button type="button">新增模型</button>} />
+      </ManagementShell>,
+    );
+
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(1);
+    expect(screen.getByRole('heading', { level: 2, name: '模型' })).toBeTruthy();
+    expect(
+      screen
+        .getByTestId('management-page-actions')
+        .contains(screen.getByRole('button', { name: '新增模型' })),
+    ).toBe(true);
   });
 
   it('合并页面只展示一层 URL 驱动 Tab', () => {

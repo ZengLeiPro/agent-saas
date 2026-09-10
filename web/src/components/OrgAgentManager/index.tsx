@@ -225,7 +225,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
   };
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="企业专家"
         description={`为 ${tenantName || tenantId || '当前组织'} 管理专岗 Agent；打开详情即可配置身份、能力、运行策略、访问范围与钉钉账号。`}

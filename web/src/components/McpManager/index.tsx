@@ -849,7 +849,7 @@ function McpManagerInner({
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title={mode === "admin" ? "连接器管理" : "连接器"}
         description={mode === "admin" ? "维护组织或全局 MCP Server Catalog。" : "连接自己的常用账号，让 Agent 在你的权限范围内使用数据和工具。"}

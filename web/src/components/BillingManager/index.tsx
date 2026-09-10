@@ -2061,7 +2061,7 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
     : "按自然月统计";
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="计费"
         description="查看共享积分池、消耗和流水，并为员工设置提醒预算；充值、计费策略与封顶仍由平台管理员统一维护。"

@@ -61,6 +61,15 @@ beforeEach(() => {
 });
 
 describe('WebSearch 管理详情', () => {
+  it('工具详情入口和启停开关是并列控件，不产生嵌套按钮', async () => {
+    const { container } = render(<ToolControlsManager />);
+    await screen.findByRole('button', { name: /WebSearch 开启/ });
+
+    expect(container.querySelector('button button')).toBeNull();
+    expect(screen.getByRole('switch', { name: '启用 WebSearch' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '打开 WebSearch 详情' })).toBeTruthy();
+  });
+
   it('详情页编辑两源后保存，携带版本与既有境外档位，保存后清空密码', async () => {
     const user = userEvent.setup();
     vi.mocked(updateToolControlsConfig).mockResolvedValue({ ...initial, revision: 'revision-2' });

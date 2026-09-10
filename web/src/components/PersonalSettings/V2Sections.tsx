@@ -6,7 +6,14 @@ import { MyPermissionList } from "@/components/PersonalSettings/MyPermissionList
 import { AttachmentStorageSection } from "@/components/SettingsCenter/AttachmentStorageSection";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  PAGE_TABS_LIST_CLASS,
+  PAGE_TAB_TRIGGER_CLASS,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffectiveResources } from "@/hooks/useEffectiveResources";
 import { governanceRoute, parseGovernanceUrl } from "@/lib/governanceNavigation";
@@ -42,17 +49,17 @@ export function MyAgentSection({
   }, []);
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader title="我的 Agent" description="在资料与长期 Memory 之间切换；深链刷新会保留当前 Tab。" />
       <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="mb-4 w-fit">
-          <TabsTrigger value="agent-profile">资料</TabsTrigger>
-          <TabsTrigger value="memory">长期 Memory</TabsTrigger>
+        <TabsList className={PAGE_TABS_LIST_CLASS}>
+          <TabsTrigger value="agent-profile" className={PAGE_TAB_TRIGGER_CLASS}>资料</TabsTrigger>
+          <TabsTrigger value="memory" className={PAGE_TAB_TRIGGER_CLASS}>长期 Memory</TabsTrigger>
         </TabsList>
-        <TabsContent value="agent-profile" className="min-h-0 flex-1 overflow-auto">
+        <TabsContent value="agent-profile" className="mt-4 min-h-0 flex-1 overflow-auto">
           {renderProfile()}
         </TabsContent>
-        <TabsContent value="memory" className="min-h-0 flex-1">
+        <TabsContent value="memory" className="mt-4 min-h-0 flex-1">
           {renderMemory?.() ?? (user?.username ? <AgentDocEditor username={user.username} kind="memory" hideInternalHeader /> : null)}
         </TabsContent>
       </Tabs>
@@ -64,7 +71,7 @@ export function MyPermissionsSection() {
   const request = useEffectiveResources();
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="我的权限"
         description="查看当前账号已经获得并可直接使用的 Agent、技能和其他能力。"
@@ -80,12 +87,12 @@ export function MyPermissionsSection() {
 export function FilesStorageSection({ renderFiles }: { renderFiles?: () => ReactNode }) {
   return (
     <Tabs defaultValue="files" className="flex h-full min-h-0 flex-col">
-      <TabsList className="mb-3 w-fit" aria-label="文件与存储">
-        <TabsTrigger value="files">文件</TabsTrigger>
-        <TabsTrigger value="storage">存储用量</TabsTrigger>
+      <TabsList className={PAGE_TABS_LIST_CLASS} aria-label="文件与存储">
+        <TabsTrigger value="files" className={PAGE_TAB_TRIGGER_CLASS}>文件</TabsTrigger>
+        <TabsTrigger value="storage" className={PAGE_TAB_TRIGGER_CLASS}>存储用量</TabsTrigger>
       </TabsList>
-      <TabsContent value="files" className="min-h-0 flex-1">{renderFiles?.() ?? null}</TabsContent>
-      <TabsContent value="storage" className="min-h-0 flex-1"><AttachmentStorageSection /></TabsContent>
+      <TabsContent value="files" className="mt-4 min-h-0 flex-1">{renderFiles?.() ?? null}</TabsContent>
+      <TabsContent value="storage" className="mt-4 min-h-0 flex-1"><AttachmentStorageSection /></TabsContent>
     </Tabs>
   );
 }

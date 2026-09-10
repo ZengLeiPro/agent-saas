@@ -183,6 +183,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          preflight_dir="$RUNNER_TEMP/staging-promotion-preflight"
+          mkdir -p "$preflight_dir"
+          preflight_check=attestation_retry
+          preflight_failure() {
+            local result=$?
+            trap - ERR
+            STAGING_PREFLIGHT_CHECK="$preflight_check" STAGING_PREFLIGHT_EXIT_CODE="$result" \
+              node scripts/release/staging-deployment-evidence.mjs failure "$preflight_dir" || true
+            echo "::error title=Staging promotion preflight::Failed check=$preflight_check; production mutation has not started. See report.json in the production evidence artifact."
+            exit "$result"
+          }
+          trap preflight_failure ERR
           log="$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
           # 上一次 runner 若在 durable promoting marker 与最终 outcome 之间中断，
           # 生产可能未写入、部分写入或已写入；统一先形成可审计 needs_human 尾部，
@@ -215,7 +227,9 @@ jobs:
               --operation "retry-normalize:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
               --actor "$GITHUB_ACTOR" --reason "$retry_evidence"
           fi
+          preflight_check=migration_postconditions
           node scripts/release/migration-postconditions.mjs "$RUNNER_TEMP/manifest.json"
+          preflight_check=staging_summary
           staging="$(jq -c 'select(.state=="staging_deployed")' "$log" | tail -n1)"
           test -n "$staging"
           staging_reason="$(printf '%s' "$staging" | jq -r .reason)"
@@ -236,6 +250,7 @@ jobs:
           printf '%s' "$staging_run_id" | grep -Eq '^[1-9][0-9]*$'
           test "$(printf '%s' "$staging_reason" | jq -r .manifestDigest)" = "$MANIFEST_DIGEST"
           # 仅 #349 之后的 RC 拥有独立 Staging runtime evidence；旧 RC 沿用既有 verified 证据。
+          preflight_check=staging_runtime_summary
           if [ -n "$staging_runtime_path" ]; then
             runtime_summary="$(printf '%s' "$staging_reason" | jq -ce \
               '.runtimeSummary | select(type=="object")')"
@@ -250,34 +265,22 @@ jobs:
             test "$(printf '%s' "$runtime_summary" | jq -S .)" = \
               "$(printf '%s' "$expected_runtime_summary" | jq -S .)"
           fi
-          deployment="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id")"
-          test "$(printf '%s' "$deployment" | jq -r .environment)" = staging
-          test "$(printf '%s' "$deployment" | jq -r .sha)" = "$RELEASE_SHA"
-          test "$(printf '%s' "$deployment" | jq -r .payload.releaseId)" = "$RELEASE_ID"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses" --jq '.[0].state')" = success
-          staging_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$staging_run_id")"
-          test "$(printf '%s' "$staging_run" | jq -r .head_sha)" = "$RELEASE_SHA"
-          test "$(printf '%s' "$staging_run" | jq -r .conclusion)" = success
-          test "$(printf '%s' "$staging_run" | jq -r .path)" = .github/workflows/deploy-staging.yml
-          staging_run_attempt="$(printf '%s' "$staging_run" | jq -r .run_attempt)"
-          printf '%s' "$staging_run_attempt" | grep -Eq '^[1-9][0-9]*$'
-          if ! gh run download "$staging_run_id" --repo "$GITHUB_REPOSITORY" \
-            --name "staging-evidence-$RELEASE_ID-$staging_run_attempt" \
-            --dir "$RUNNER_TEMP/staging-attempt-evidence"; then
-            echo 'Core smoke evidence is missing or expired; deploy and verify a new RC before promotion' >&2
-            exit 1
-          fi
-          node scripts/release/staging-core-smoke-evidence.mjs \
-            "$RUNNER_TEMP/staging-attempt-evidence/staging-core-smoke.json" \
-            "$RUNNER_TEMP/manifest.json" "$staging_run_id" "$staging_run_attempt"
+          preflight_check=github_staging_evidence
+          bash scripts/release/verify-staging-promotion-evidence.sh \
+            "$RUNNER_TEMP/manifest.json" "$log" "$preflight_dir"
+          jq -e '.status == "passed"' "$preflight_dir/report.json" >/dev/null
+          staging_run_attempt="$(jq -r .stagingRunAttempt "$preflight_dir/report.json")"
+          preflight_check=approval_recording
           approval_reason="$(jq -nc \
             --arg releaseId "$RELEASE_ID" --arg manifestDigest "$MANIFEST_DIGEST" \
             --arg stagingDeploymentId "$deployment_id" --arg stagingRunId "$staging_run_id" \
+            --arg stagingRunAttempt "$staging_run_attempt" \
+            --argjson stagingDeploymentEvidence "$(cat "$preflight_dir/report.json")" \
             --argjson verificationSummary "$verification_summary" \
             --arg triggeredAt "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
             --arg recoveryMode "$retry_mode" \
             --arg reason "$PROMOTION_REASON" \
-            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,recoveryMode:$recoveryMode,reason:$reason}')"
+            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,stagingRunAttempt:$stagingRunAttempt,stagingDeploymentEvidence:$stagingDeploymentEvidence,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,recoveryMode:$recoveryMode,reason:$reason}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state approved --operation "approval:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR" \
@@ -1510,6 +1513,7 @@ jobs:
             ${{ runner.temp }}/production-live*.json
             ${{ runner.temp }}/production-api-ready*.json
             ${{ runner.temp }}/attestations/
+            ${{ runner.temp }}/staging-promotion-preflight/
 
   web_recovery:
     name: 审计或修复生产 Web 冷备

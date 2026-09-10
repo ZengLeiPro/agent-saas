@@ -25,11 +25,7 @@ interface SettingsPanelHeaderProps {
 
 const StickyHeaderContext = createContext(false);
 
-interface HeaderPortalContextValue {
-  target: HTMLElement | null;
-}
-
-const HeaderPortalContext = createContext<HeaderPortalContextValue | null>(null);
+const HeaderPortalContext = createContext<HTMLElement | null | undefined>(undefined);
 
 export function SettingsPanelHeaderStickyProvider({ children }: { children: ReactNode }) {
   return <StickyHeaderContext.Provider value>{children}</StickyHeaderContext.Provider>;
@@ -39,14 +35,8 @@ export function SettingsPanelHeaderStickyProvider({ children }: { children: Reac
  * 管理工作区由外层壳统一渲染标题时，子页面仍可声明自己的 actions。
  * 子页面标题会被收口，actions 则挂载到壳级标题右侧，避免重复标题和操作丢失。
  */
-export function SettingsPanelHeaderPortalProvider({
-  target,
-  children,
-}: {
-  target: HTMLElement | null;
-  children: ReactNode;
-}) {
-  return <HeaderPortalContext.Provider value={{ target }}>{children}</HeaderPortalContext.Provider>;
+export function SettingsPanelHeaderPortalProvider({ target, children }: { target: HTMLElement | null; children: ReactNode }) {
+  return <HeaderPortalContext.Provider value={target}>{children}</HeaderPortalContext.Provider>;
 }
 
 /**
@@ -54,26 +44,19 @@ export function SettingsPanelHeaderPortalProvider({
  * 标题位置抬高与左侧大标题对齐（外层 main 用 pt-5），描述统一收敛到标题右侧的 Info 图标按钮，
  * hover 或点击展开气泡。右侧 actions 插槽保持不变，并预留关闭按钮空间。
  */
-export function SettingsPanelHeader({
-  title,
-  description,
-  actions,
-  className,
-}: SettingsPanelHeaderProps) {
+export function SettingsPanelHeader({ title, description, actions, className }: SettingsPanelHeaderProps) {
   const sticky = useContext(StickyHeaderContext);
   const headerPortal = useContext(HeaderPortalContext);
 
-  if (headerPortal) {
-    return actions && headerPortal.target ? createPortal(actions, headerPortal.target) : null;
+  if (headerPortal !== undefined) {
+    return actions && headerPortal ? createPortal(actions, headerPortal) : null;
   }
 
   return (
     <div
       className={cn(
         "flex items-center justify-between gap-3",
-        sticky
-          ? "mb-4 shrink-0 md:mb-6 md:pr-10"
-          : "mb-4 md:mb-6 md:pr-10",
+        sticky ? "mb-4 shrink-0 md:mb-6 md:pr-10" : "mb-4 md:mb-6 md:pr-10",
         className,
       )}
     >
@@ -81,9 +64,7 @@ export function SettingsPanelHeader({
         <h2 className="truncate text-xl font-semibold tracking-tight md:text-2xl">{title}</h2>
         {description ? <DescriptionTip description={description} /> : null}
       </div>
-      {actions ? (
-        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">{actions}</div>
-      ) : null}
+      {actions ? <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">{actions}</div> : null}
     </div>
   );
 }
@@ -115,7 +96,7 @@ export function DescriptionTip({ description }: { description: ReactNode }) {
     >
       <button
         type="button"
-        onClick={() => setOpen(v => !v)}
+        onClick={() => setOpen((v) => !v)}
         className={cn(
           "inline-flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
           open && "bg-accent text-foreground",

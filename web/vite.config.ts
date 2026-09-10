@@ -9,7 +9,7 @@ const hoistedReactJsxDevRuntime = fileURLToPath(new URL("../node_modules/react/j
 const hoistedReactDom = fileURLToPath(new URL("../node_modules/react-dom", import.meta.url));
 const hoistedReactDomClient = fileURLToPath(new URL("../node_modules/react-dom/client.js", import.meta.url));
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [
     react(),
     VitePWA({
@@ -54,7 +54,13 @@ export default defineConfig({
       "@agent/shared": fileURLToPath(new URL("../shared/src/index.ts", import.meta.url)),
       "@kaiyan/ky-app-contract/validation": fileURLToPath(new URL("../packages/ky-app-contract/src/manifest.ts", import.meta.url)),
       "@kaiyan/ky-app-contract/browser": fileURLToPath(new URL("../packages/ky-app-contract/src/browser.ts", import.meta.url)),
-      "@kaiyan/ky-app-browser": fileURLToPath(new URL("../packages/ky-app-browser/src/index.ts", import.meta.url)),
+      // 本地开发时 workspace 包可能还没有 dist；生产构建继续使用包导出，避免源码 alias
+      // 改变 app shell 的打包边界与启动包体积。
+      ...(command === "serve"
+        ? {
+            "@kaiyan/ky-app-browser": fileURLToPath(new URL("../packages/ky-app-browser/src/index.ts", import.meta.url)),
+          }
+        : {}),
       "react/jsx-dev-runtime": hoistedReactJsxDevRuntime,
       "react/jsx-runtime": hoistedReactJsxRuntime,
       "react-dom/client": hoistedReactDomClient,
@@ -68,8 +74,7 @@ export default defineConfig({
     // 避免为了消除 500 kB 告警而把单请求 app shell 人为拆成更多首屏请求。
     chunkSizeWarningLimit: 1_250,
     modulePreload: {
-      resolveDependencies: (_filename, deps) =>
-        deps.filter((d) => !d.includes("vendor-markdown") && !d.includes("ResourceAccessEditors")),
+      resolveDependencies: (_filename, deps) => deps.filter((d) => !d.includes("vendor-markdown") && !d.includes("ResourceAccessEditors")),
     },
     rollupOptions: {
       output: {
@@ -111,4 +116,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

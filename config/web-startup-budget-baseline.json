@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 360102,
-    "startupCssGzipBytes": 35145,
-    "startupJsBrotliBytes": 287328,
-    "startupCssBrotliBytes": 27855,
-    "largestJsGzipBytes": 360102,
-    "largestCssGzipBytes": 35145,
-    "largestJsBrotliBytes": 287328,
-    "largestCssBrotliBytes": 27855,
-    "largestJs": "assets/index-Bts3JdCr.js",
-    "largestCss": "assets/index-DxLp3e9G.css"
+    "startupJsGzipBytes": 361310,
+    "startupCssGzipBytes": 35197,
+    "startupJsBrotliBytes": 288192,
+    "startupCssBrotliBytes": 27884,
+    "largestJsGzipBytes": 361310,
+    "largestCssGzipBytes": 35197,
+    "largestJsBrotliBytes": 288192,
+    "largestCssBrotliBytes": 27884,
+    "largestJs": "assets/index-Bg00PK2S.js",
+    "largestCss": "assets/index-CHYt5AIH.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "业务系统接入闭环新增首屏导航与管理入口，按生产构建产物登记启动包预算",
-  "updatedAt": "2026-09-09"
+  "reason": "统一管理页标题与操作区并修复权限重验，按生产构建产物登记必要的启动包增长",
+  "updatedAt": "2026-09-10"
 }

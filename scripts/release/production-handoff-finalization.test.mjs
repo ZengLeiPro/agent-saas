@@ -36,6 +36,7 @@ test('target convergence cannot turn a failed handoff into completed, even with 
     });
     assert.equal(reconciliation.outcome, 'completed');
     await writeFile(join(root, 'reconcile.json'), JSON.stringify(reconciliation));
+    await writeFile(join(root, 'deployment-engine.json'), JSON.stringify({ sourceSha: 'a'.repeat(40), implementationDigest: 'sha256:' + 'b'.repeat(64), contract: { schemaVersion: 1 } }));
     const step = workflow.slice(workflow.indexOf('      - name: 记录真实最终结果'));
     const shell = step
       .split('        run: |\n')[1]

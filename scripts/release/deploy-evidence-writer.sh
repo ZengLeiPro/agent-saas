@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 6 ]; then
+if [ "$#" -lt 6 ] || [ "$#" -gt 7 ]; then
   echo 'Usage: deploy-evidence-writer.sh <bundle.tgz> <bundle-digest> <release-sha> <schema-version> <schema-revision> <implementation-digest>' >&2
   exit 64
 fi
@@ -12,7 +12,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 install -d -m 0755 /run/lock/agent-saas-release-evidence
 exec 9>/run/lock/agent-saas-release-evidence/deploy.lock
-flock -n 9 || { echo 'Another Evidence Writer deployment is active' >&2; exit 1; }
+flock -w 300 9 || { echo 'Another Evidence Writer deployment is active' >&2; exit 1; }
 
 archive=$1
 expected_digest=$2
@@ -67,6 +67,24 @@ trap 'exit 143' TERM
 actual_digest="sha256:$(sha256sum "$archive" | awk '{print $1}')"
 test "$actual_digest" = "$expected_digest"
 
+# Recheck after acquiring the lock, not from the runner's potentially stale capability probe.
+if [ -f "$current/writer-identity.json" ]; then
+  if node -e 'const fs=require("node:fs");const v=JSON.parse(fs.readFileSync(process.argv[1]));process.exit(v.implementationDigest===process.argv[2] && v.releaseEvidenceSchemaVersion===Number(process.argv[3]) && v.releaseEvidenceSchemaRevision>=Number(process.argv[4])?0:1)' \
+      "$current/writer-identity.json" "$expected_implementation_digest" "$expected_schema_version" "$expected_schema_revision"; then
+    echo 'Writer already supplies the requested implementation; no mutation'
+    exit 0
+  fi
+fi
+if [ -f "$root/deployed-release-sha" ]; then
+  previous_sha="$(cat "$root/deployed-release-sha")"
+  if [ "$previous_sha" != "$release_sha" ]; then
+    ancestors="${7:-}"
+    [ -f "$ancestors" ] && grep -Fx "$release_sha" "$ancestors" >/dev/null && \
+      grep -Fx "$previous_sha" "$ancestors" >/dev/null || {
+      echo 'Refusing an older or divergent Writer engine; refresh from a descendant commit' >&2; exit 1;
+    }
+  fi
+fi
 sudo install -d -m 0755 "$root" "$releases"
 if sudo test -L "$current"; then
   previous=$(sudo readlink -f "$current")

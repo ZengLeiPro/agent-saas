@@ -108,10 +108,31 @@ export function reconcilePromotion(input) {
         outcome: 'rolled_back',
         reason: 'all components and restored entry bytes match the frozen pre-promotion state',
       };
+    const scopes = { acs: ['acs'], app: ['api', 'runtimeWorker'], web: ['web'] };
+    const componentResults = Object.fromEntries(Object.entries(scopes).map(([scope, names]) => {
+      const receipt = input.rollbackReceipts[scope];
+      const restored = names.every((name) => matrixEquals(observed[name], before[name]));
+      const atTarget = names.every((name) => matrixEquals(observed[name], target[name]));
+      return [scope, {
+        rollbackAttempted: receipt.attempted,
+        rollbackVerified: receipt.attempted && receipt.succeeded && restored,
+        state: restored ? 'before' : atTarget ? 'target' : 'mixed_or_unknown',
+      }];
+    }));
+    const contradictsReceipt = Object.values(componentResults).some(
+      (value) => value.rollbackAttempted && !value.rollbackVerified,
+    );
+    const unknownEffects = input.externalSideEffects === 'unknown';
     return {
-      outcome: 'needs_human',
-      reason:
-        'rollback receipts claim success but the authoritative component matrix is not restored',
+      outcome: contradictsReceipt || unknownEffects ? 'needs_human' : 'partial_failed',
+      reason: contradictsReceipt
+        ? 'a component rollback receipt contradicts the readback within its own scope'
+        : unknownEffects
+          ? 'local rollback verified; other components remain updated and external side effects are unknown'
+          : 'local rollback verified; other components remain updated (not a global rollback)',
+      componentResults,
+      recovery: contradictsReceipt ? 'verify_failed_rollback_scope'
+        : unknownEffects ? 'inspect_external_side_effects_before_resume' : 'resume_uncommitted_components',
     };
   }
   if (matrixEquals(observed, target)) {

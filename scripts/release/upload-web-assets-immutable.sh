@@ -19,6 +19,8 @@ oss_module_path="${4:-}"
 public_origin="${5:?public Web origin is required}"
 concurrency="${6:-4}"
 request_timeout="${7:-60}"
+diagnostics="${8:-}"
+[ -z "$diagnostics" ] || install -d -m 0700 "$diagnostics"
 [[ "$concurrency" =~ ^[1-8]$ ]] || { echo 'Web asset concurrency must be 1..8' >&2; exit 1; }
 [[ "$request_timeout" =~ ^[1-9][0-9]*$ ]] && [ "${#request_timeout}" -le 3 ] && \
   [ "$request_timeout" -le 120 ] || { echo 'Web asset request timeout must be 1..120 seconds' >&2; exit 1; }
@@ -54,6 +56,10 @@ cleanup() {
   if [ "$status" -ne 0 ] && [ "$mode" = asset ]; then
     printf 'Web asset verification failed: key=%s phase=%s exit=%s elapsed=%ss\n' \
       "$key" "$stage" "$status" "$SECONDS" >&2
+  fi
+  if [ -n "$diagnostics" ] && [ "$mode" = asset ] && [ "$status" -ne 0 ]; then
+    printf '{"key":"%s","phase":"verify","attempt":0,"exitCode":%s,"durationSeconds":%s}\n' \
+      "$key" "$status" "$SECONDS" >> "$diagnostics/worker-$$.jsonl"
   fi
   rm -rf -- "$work_dir"
   exit "$status"
@@ -120,7 +126,7 @@ if [ "$mode" = batch ]; then
     index=$((index + 1))
     bash "$script_dir/upload-web-assets-immutable.sh" --asset "$source_path" "$index/$total" "$work_dir/$index.result" \
       "$asset_root" "$target_base" "$credentials_path" "$oss_module_path" "$public_origin" \
-      "$concurrency" "$request_timeout" &
+      "$concurrency" "$request_timeout" "$diagnostics" &
     workers[$!]="$work_dir/$index.result"
     active=$((active + 1))
   done < "$work_dir/sources"
@@ -139,16 +145,22 @@ expected_type="$(file --brief --mime-type "$source_path")"
 expected_encoding=''
 run_request() {
   stage="$1"; shift
-  local attempt status
+  local attempt status started
   for attempt in 1 2; do
     printf 'Web asset [%s] key=%s phase=%s attempt=%s timeout=%ss elapsed=%ss\n' \
       "$progress" "$key" "$stage" "$attempt" "$request_timeout" "$SECONDS"
+    started=$SECONDS
     timeout --foreground --signal=TERM --kill-after=5 "$request_timeout" "$@" \
       > "$work_dir/$stage.out" 2> "$work_dir/$stage.err" &
     command_pid=$!
     status=0
     wait "$command_pid" || status=$?
     command_pid=''
+    if [ -n "$diagnostics" ]; then
+      # key and phase are prevalidated tokens, never credentials, URLs, tool output or user text.
+      printf '{"key":"%s","phase":"%s","attempt":%s,"exitCode":%s,"durationSeconds":%s}\n' \
+        "$key" "$stage" "$attempt" "$status" "$((SECONDS - started))" >> "$diagnostics/worker-$$.jsonl"
+    fi
     if [ "$status" -eq 0 ]; then return 0; fi
     # Retry only a bounded timeout. PUT remains create-only: a lost success followed
     # by 409 still requires exact stored-byte verification, never an overwrite.

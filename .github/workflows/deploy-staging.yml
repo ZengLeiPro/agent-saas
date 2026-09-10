@@ -25,6 +25,10 @@ env:
 jobs:
   ensure-evidence-writer:
     name: 按需升级发布证据 Writer
+    concurrency:
+      group: staging-evidence-writer
+      cancel-in-progress: false
+      queue: max
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -51,6 +55,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+
+      - name: 记录实际部署引擎
+        run: node scripts/release/deployment-engine.mjs .github/workflows/deploy-staging.yml "$RUNNER_TEMP/deployment-engine.json"
 
       - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
@@ -191,11 +198,12 @@ jobs:
           }
           trap cleanup EXIT
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/staging_key "$RUNNER_TEMP/evidence-writer.tgz" \
+          git rev-list "$GITHUB_SHA" > "$RUNNER_TEMP/writer-ancestors.txt"
+          scp -i ~/.ssh/staging_key "$RUNNER_TEMP/evidence-writer.tgz" "$RUNNER_TEMP/writer-ancestors.txt" \
             scripts/release/deploy-evidence-writer.sh \
             "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
-            "bash '$remote/deploy-evidence-writer.sh' '$remote/evidence-writer.tgz' '$EVIDENCE_WRITER_DIGEST' '$GITHUB_SHA' '$RELEASE_EVIDENCE_SCHEMA_VERSION' '$RELEASE_EVIDENCE_SCHEMA_REVISION' '$EVIDENCE_WRITER_IMPLEMENTATION_DIGEST'"
+            "bash '$remote/deploy-evidence-writer.sh' '$remote/evidence-writer.tgz' '$EVIDENCE_WRITER_DIGEST' '$GITHUB_SHA' '$RELEASE_EVIDENCE_SCHEMA_VERSION' '$RELEASE_EVIDENCE_SCHEMA_REVISION' '$EVIDENCE_WRITER_IMPLEMENTATION_DIGEST' '$remote/writer-ancestors.txt'"
           status="$(curl -sS --retry 5 --retry-all-errors --connect-timeout 10 --max-time 30 \
             -o "$RUNNER_TEMP/capabilities-after.json" -w '%{http_code}' \
             -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
@@ -639,6 +647,7 @@ jobs:
     concurrency:
       group: acr-image-${{ github.sha }}
       cancel-in-progress: false
+      queue: max
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 50
@@ -716,6 +725,7 @@ jobs:
     concurrency:
       group: staging-runtime
       cancel-in-progress: false
+      queue: max
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -796,6 +806,9 @@ jobs:
             );
           }
           NODE
+
+      - name: 记录实际部署引擎
+        run: node scripts/release/deployment-engine.mjs .github/workflows/deploy-staging.yml "$RUNNER_TEMP/deployment-engine.json"
 
       - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
@@ -935,27 +948,12 @@ jobs:
           : "${STAGING_RELEASE_OSS_URI:?Missing staging variable STAGING_RELEASE_OSS_URI}"
           case "$STAGING_RELEASE_OSS_URI" in oss://*) ;; *) echo 'Release URI must be OSS'; exit 1 ;; esac
           destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
-          if aliyun --secure oss stat "$destination/artifact-index.json" \
-            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
-            rm -rf "$RUNNER_TEMP/release-saved"
-            mkdir -p "$RUNNER_TEMP/release-saved"
-            aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release-saved/" \
-              --recursive --region "$RELEASE_RECORD_OSS_REGION"
-            node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release-saved/artifact-index.json" "$GITHUB_SHA"
-            rm -rf "$RUNNER_TEMP/release"
-            mv "$RUNNER_TEMP/release-saved" "$RUNNER_TEMP/release"
-          else
-            while IFS= read -r -d '' source; do
-              bash scripts/release/upload-oss-object-immutable.sh \
-                "$source" "$destination/$(basename "$source")"
-            done < <(find "$RUNNER_TEMP/release" -maxdepth 1 -type f -print0)
-            rm -rf "$RUNNER_TEMP/release-saved"
-            mkdir -p "$RUNNER_TEMP/release-saved"
-            aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release-saved/" \
-              --recursive --region "$RELEASE_RECORD_OSS_REGION"
-            node scripts/release/verify-artifact.mjs \
-              "$RUNNER_TEMP/release-saved/artifact-index.json" "$GITHUB_SHA"
-          fi
+          bash scripts/release/publish-artifact-set.sh "$RUNNER_TEMP/release" "$destination" "$GITHUB_SHA"
+          rm -rf "$RUNNER_TEMP/release-saved"
+          mkdir -p "$RUNNER_TEMP/release-saved"
+          aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release-saved/" \
+            --recursive --region "$RELEASE_RECORD_OSS_REGION"
+          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release-saved/artifact-index.json" "$GITHUB_SHA"
 
       - name: 创建规范发布清单
         if: env.REUSE_RC != 'true'
@@ -1288,9 +1286,10 @@ jobs:
               '{schemaVersion:1,mode:"deterministic-deployment-gates-v2",status:"passed",checks:["immutable-artifacts","runtime-identity","api-readiness","acs-health","web-readback","migration-readback","reverse-isolation","core-business-smoke"]}')"
             staging_reason="$(jq -nc --arg deploymentId "$STAGING_DEPLOYMENT_ID" --arg stagingRunId "$GITHUB_RUN_ID" \
               --arg manifestDigest "$MANIFEST_DIGEST" \
+              --argjson deploymentEngine "$(jq -c '{sourceSha,implementationDigest,contract}' "$RUNNER_TEMP/deployment-engine.json")" \
               --argjson runtimeSummary "$(cat "$RUNNER_TEMP/staging-runtime-summary.json")" \
               --argjson verificationSummary "$verification_summary" \
-              '{stagingDeploymentId:$deploymentId,stagingRunId:$stagingRunId,manifestDigest:$manifestDigest,runtimeSummary:$runtimeSummary,verificationSummary:$verificationSummary}')"
+              '{deploymentEngine:$deploymentEngine,stagingDeploymentId:$deploymentId,stagingRunId:$stagingRunId,manifestDigest:$manifestDigest,runtimeSummary:$runtimeSummary,verificationSummary:$verificationSummary}')"
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$log_root" --release-id "$STAGING_RELEASE_ID" --digest "$MANIFEST_DIGEST" \
               --state staging_deployed --operation "staging:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
@@ -1315,7 +1314,7 @@ jobs:
 
       - name: 最终对账并阻止混合版本验收
         if: always() && env.STAGING_DEPLOYMENT_ID != ''
-        run: bash scripts/release/observe-staging-state.sh final
+        run: bash scripts/release/observe-staging-state.sh final "${{ job.status }}"
 
       - name: 撤销临时测试环境 SSH 入站授权
         if: always() && env.STAGING_SSH_SOURCE_CIDR != ''
@@ -1356,6 +1355,7 @@ jobs:
             ${{ runner.temp }}/staging-core-smoke.json
             ${{ runner.temp }}/staging-database-readback.json
             ${{ runner.temp }}/staging-public-web.json
+            ${{ runner.temp }}/deployment-engine.json
             ${{ runner.temp }}/staging-before.json
             ${{ runner.temp }}/staging-final.json
 

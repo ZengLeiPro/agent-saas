@@ -180,7 +180,7 @@ test('teardown closes a provider still waiting for the observer', { timeout: 5_0
 
 test('multiprocess E2E uses the gated provider and continuous observer', async () => {
   const source = await readFile(new URL('../../server/scripts/verify-runtime-multiprocess-e2e.mts', import.meta.url), 'utf8');
-  assert.match(source, /createFakeOpenAI\(\{ gateFinalText: scenario === 'e2e' \}\)/);
+  assert.match(source, /createFakeOpenAI\(\{[\s\S]*?gateFinalText: scenario === 'e2e'/);
   assert.match(source, /await collectStreamingReplay\(replayWs/);
   assert.match(source, /acknowledgeFirstText: \(\) => fakeModel!\.acknowledgeFirstText\(\)/);
   assert.doesNotMatch(source, /const replayActive = await collectUntil/);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile as execFileCb, spawn, type ChildProcess } from 'node:child_process';
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -91,7 +91,10 @@ export async function runScenario(scenario: Scenario, options: { bundleDirectory
         env: { ...opts.env, ...configEnvironment, NODE_ENV: 'production', AGENT_SAAS_ENVIRONMENT: 'production', AGENT_SAAS_RELEASE_ID: 'rc-20260908-00', AGENT_SAAS_CONFIG_PATH: join(rootDir, 'config.json') } },
       !options.bundleDirectory,
     );
-    fakeModel = createFakeOpenAI({ gateFinalText: scenario === 'e2e' });
+    const sideEffectPath = join(rootDir, 'tool-side-effects.txt');
+    fakeModel = createFakeOpenAI({ gateFinalText: scenario === 'e2e',
+      ...(scenario === 'worker-handoff' ? { toolCommand: `printf 'executed\\n' >> '${sideEffectPath}'; for i in 1 2 3; do echo MP_E2E_$i; sleep 1; done` } : {}),
+    });
     await fakeModel.listen(fakeModelPort);
 
     await writeFixtureConfig({
@@ -300,6 +303,9 @@ export async function runScenario(scenario: Scenario, options: { bundleDirectory
       assert.equal(events.some((e) => e.data?.type === 'error'), false, 'worker handoff must not emit a user-visible error');
       await waitForLog(scheduler, /Runtime drain handoff released run=/, 'runtime-worker A lease release');
       await waitForLog(handoffScheduler!, /\[run\] finished session=/, 'runtime-worker B continuation finish');
+      assert.equal((await readFile(sideEffectPath, 'utf8')).trim().split('\n').length, 1, 'side-effecting tool must execute exactly once across old/new worker generations');
+      const cursors = events.map((event) => event.eventCursor).filter((cursor): cursor is string => Boolean(cursor));
+      assert.equal(new Set(cursors).size, cursors.length, 'live handoff must not duplicate durable event cursors');
     } else if (scenario === 'scheduler-restart' || scenario === 'hand-kill') {
       // scheduler-restart：active wake 期间 SIGKILL scheduler-only A，等 lease 过期后
       // spawn 第二个 scheduler-only B；断言 lease 接管后 run 收敛到唯一 terminal done

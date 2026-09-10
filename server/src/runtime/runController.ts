@@ -3,6 +3,7 @@ import type { RuntimeDrainHandoffState } from '../agent/types.js';
 interface RuntimeRunControllerEntry {
   controller: AbortController;
   abortOnDrain: boolean;
+  registeredAt: number;
   drainHandoff?: RuntimeDrainHandoffState;
   userId?: string;
   tenantId?: string;
@@ -30,11 +31,22 @@ export const runtimeRunController = {
   register(runId: string, controller: AbortController, options: RuntimeRunControllerOptions = {}): void {
     controllers.set(runId, {
       controller,
+      registeredAt: Date.now(),
       abortOnDrain: options.abortOnDrain ?? true,
       drainHandoff: options.drainHandoff,
       userId: options.userId,
       tenantId: options.tenantId,
     });
+  },
+
+  drainSnapshot(): { registeredRuns: number; cancelledAwaitingFinalization: number; handoffRequested: number; oldestRunAgeMs: number } {
+    const entries = [...controllers.values()];
+    return {
+      registeredRuns: entries.length,
+      cancelledAwaitingFinalization: entries.filter((entry) => entry.controller.signal.aborted).length,
+      handoffRequested: entries.filter((entry) => entry.drainHandoff?.requested).length,
+      oldestRunAgeMs: entries.length ? Math.max(0, Date.now() - Math.min(...entries.map((entry) => entry.registeredAt))) : 0,
+    };
   },
 
   requestAllForDrain(reason = 'server_drain_handoff'): number {

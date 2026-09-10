@@ -15,6 +15,7 @@ import { serverLogger, cronLogger } from './utils/logger.js';
 import { requestTargetForLog } from './security/httpLogRedaction.js';
 import { sessionCompression } from './middleware/sessionCompression.js';
 import { runtimeRunController } from './runtime/runController.js';
+import { RuntimeDrainState } from './runtime/runtimeDrainState.js';
 import {
   RuntimePerformanceSampler,
   runtimePerformanceSamplerEnabled,
@@ -35,6 +36,7 @@ let kbPreviewScheduler: KbPreviewScheduler | undefined;
 let runtimePerformanceSampler: RuntimePerformanceSampler | undefined;
 let runtimeReadyFileTimer: NodeJS.Timeout | undefined;
 let runtimeReadyFileSyncPending = false;
+let runtimeDrainState: RuntimeDrainState | undefined;
 
 const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
 eventLoopDelayMonitor.enable();
@@ -150,9 +152,10 @@ function writeDrainMarker(snapshot?: {
   if (!drainMarker) return;
   try {
     const body = snapshot
-      ? JSON.stringify({ pid: process.pid, ...snapshot })
+      ? JSON.stringify({ pid: process.pid, ...snapshot, ...runtimeDrainState?.snapshot(), ...runtimeRunController.drainSnapshot(), releaseSha: process.env.AGENT_SAAS_RELEASE_SHA })
       : String(process.pid);
-    fs.writeFileSync(drainMarker, `${body}\n`, 'utf-8');
+    fs.writeFileSync(`${drainMarker}.candidate`, `${body}\n`, 'utf-8');
+    fs.renameSync(`${drainMarker}.candidate`, drainMarker);
   } catch (err) {
     serverLogger.error(`Failed to write drain marker ${drainMarker}: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -369,9 +372,7 @@ startServer().catch((err) => {
 });
 
 // ── 关停、authority refresh/claim 与 drain（2026-07-15）──────────
-// 两条退出路径共用 shutdownCleanup：
 // - gracefulShutdown（SIGTERM/SIGINT）：≤30s 尽力清理后退出；systemd
-//   TimeoutStopSec=35 兜底 SIGKILL。
 // - SIGUSR2 drain（蓝绿部署旧色排空）：拒新流量 → runtime 侧按序 quiesce
 //   （cron 结清 → 释放 leadership → scheduler 结清）→ 等 WS 活跃流清空 →
 //   清理退出。所有 drain 出口 exit(0)：unit Restart=on-failure 不得复活已
@@ -404,6 +405,7 @@ async function shutdownCleanup(): Promise<void> {
     await runtime?.tenantDeletionShutdown?.();
     await runtime?.runtimeEventStoreShutdown?.();
   } catch (err) {
+    runtimeDrainState?.fail('shutdown_cleanup_failed');
     serverLogger.error('Error during shutdown:', err);
   }
 
@@ -466,11 +468,10 @@ function refreshRuntimeEventRetentionAuthority(signal: 'SIGUSR1' | 'SIGHUP', cla
 process.on('SIGUSR1', () => refreshRuntimeEventRetentionAuthority('SIGUSR1', false));
 process.on('SIGHUP', () => refreshRuntimeEventRetentionAuthority('SIGHUP', true));
 
-// ── SIGUSR2: Drain 模式（蓝绿部署旧色排空后自退）──────────────────
-
 process.on('SIGUSR2', () => {
   if (isDraining || shuttingDown) return;
   isDraining = true;
+  runtimeDrainState = new RuntimeDrainState();
   // 进程进入 drain 后可能仍在等待长 run 的安全交棒。先写 /run marker，配合
   // systemd ExecCondition 阻止它被 cgroup/global OOM 杀死后按 Restart=on-failure
   // 复活并丢失 drain 状态。下一次显式蓝绿启动由部署脚本清除此 marker。
@@ -504,11 +505,10 @@ process.on('SIGUSR2', () => {
 
   // runtime 侧按序 quiesce：停 cron 触发 → 等 in-flight cron 结清 →
   // 释放 cron leadership（新实例接管）→ 停 scheduler 并等 in-flight run 结清
-  let runtimeQuiesced = false;
-  const runtimeDrain = runtime?.beginRuntimeDrain().catch((err) => {
+  const drain = runtimeDrainState;
+  void drain.quiesce(() => runtime?.beginRuntimeDrain() ?? Promise.resolve(), (err) => {
     serverLogger.error('Drain: beginRuntimeDrain failed:', err);
-  }) ?? Promise.resolve();
-  void runtimeDrain.then(() => { runtimeQuiesced = true; });
+  });
 
   const finishDrain = (why: string): void => {
     if (shuttingDown) return;
@@ -516,7 +516,10 @@ process.on('SIGUSR2', () => {
     serverLogger.info(`Drain ${why}; cleaning up and exiting`);
     const forceTimer = setTimeout(() => process.exit(0), 30_000);
     forceTimer.unref();
-    void shutdownCleanup().finally(() => process.exit(0));
+    void shutdownCleanup().finally(() => {
+      writeDrainMarker({ activeStreams: runtime?.channelManager.getActiveStreamCount() ?? 0, activeUploads: runtime?.uploadManager.getActiveUploadCount() ?? 0, runtimeQuiesced: drain.runtimeQuiesced });
+      process.exit(0); // Keep Restart=on-failure from resurrecting a drained generation; the marker is authoritative.
+    });
   };
 
   // 轮询等待活跃流、上传清空 + runtime quiesce 完成
@@ -524,9 +527,10 @@ process.on('SIGUSR2', () => {
   const drainPoll = setInterval(() => {
     const active = runtime?.channelManager.getActiveStreamCount() ?? 0;
     const activeUploads = runtime?.uploadManager.getActiveUploadCount() ?? 0;
+    const runtimeQuiesced = drain.runtimeQuiesced;
     writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced });
     serverLogger.info(`Drain: ${active} active stream(s), ${activeUploads} active upload(s) remaining, runtimeQuiesced=${runtimeQuiesced}`);
-    if (active === 0 && activeUploads === 0 && runtimeQuiesced) {
+    if (drain.complete(active, activeUploads)) {
       clearInterval(drainPoll);
       clearTimeout(drainDeadline);
       finishDrain('complete');
@@ -563,6 +567,7 @@ process.on('SIGUSR2', () => {
       drainDeadline.unref();
       return;
     }
+    drain.timeout();
     const abortedRuns = runtimeRunController.abortAllForDrain('server_drain_deadline');
     if (abortedRuns > 0) {
       const abortGraceMs = parseInt(process.env.AGENT_SAAS_DRAIN_ABORT_GRACE_MS || '', 10) || 30_000;

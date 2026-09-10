@@ -50,14 +50,22 @@ commit_app_active_colors() {
     && [ "$(tr -d '[:space:]' <"$worker_marker")" = "$worker_color" ]
 }
 
+write_rollback_receipt() {
+  local path="$1" state="$2"
+  jq -n --arg component "$PHASE" --arg state "$state" --arg releaseId "$release_id" \
+    --arg manifestDigest "$manifest_digest" --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+    '{schemaVersion:1,component:$component,state:$state,releaseId:$releaseId,manifestDigest:$manifestDigest,runId:$runId,runAttempt:$runAttempt}' > "$path.candidate" && \
+    chmod 0444 "$path.candidate" && mv -f "$path.candidate" "$path"
+}
+
 record_rollback_attempt() {
   local path="${ROLLBACK_ATTEMPTED_RECEIPT_PATH:-${ROLLBACK_RECEIPT_PATH:-}}"
-  [ -z "$path" ] || printf '%s\n' "${PHASE:-unknown}:${release_id:-unknown}" >"$path"
+  [ -z "$path" ] || write_rollback_receipt "$path" attempted
 }
 
 record_rollback_success() {
   local path="${ROLLBACK_SUCCEEDED_RECEIPT_PATH:-}"
-  [ -z "$path" ] || printf '%s\n' "${PHASE:-unknown}:${release_id:-unknown}" >"$path"
+  [ -z "$path" ] || write_rollback_receipt "$path" succeeded
 }
 
 
@@ -1617,6 +1625,9 @@ retire_failed_app_generation() {
 
 hand_off_retired_authority() {
   local unit="$1" marker="$2" pidfile="$3" pid main_pid deadline state
+  if [ -s "$marker" ] && jq -e 'type=="object" and (.drainState=="failed" or .drainState=="timed_out")' "$marker" >/dev/null 2>&1; then
+    echo "ERROR: retired generation reported failed/timed-out drain: $unit" >&2; return 1
+  fi
   if ! systemctl is-active --quiet "$unit"; then
     state="$(systemctl show "$unit" --property=ActiveState --value)" || return 1
     if [ "$state" = failed ] && retire_failed_app_generation "$unit" "$marker"; then return 0; fi
@@ -1637,6 +1648,9 @@ hand_off_retired_authority() {
   deadline=$((SECONDS + 15))
   while [ "$SECONDS" -lt "$deadline" ]; do
     state="$(systemctl show "$unit" --property=ActiveState --value)" || return 1
+    if [ -s "$marker" ] && jq -e 'type=="object" and (.drainState=="failed" or .drainState=="timed_out")' "$marker" >/dev/null 2>&1; then
+      echo "ERROR: retired generation did not quiesce: $unit" >&2; return 1
+    fi
     # A clean exit also proves it cannot accept work. Failed/unknown states require investigation.
     [ "$state" != inactive ] || return 0
     main_pid="$(systemctl show "$unit" --property=MainPID --value)" || return 1

@@ -165,7 +165,7 @@ function UsageMetrics({ data }: { data: UsageOverview }) {
   );
 }
 
-/** 健康列表只展示交付指标，实例管理由业务系统运营页承接。 */
+/** 健康列表只展示交付指标；实例管理入口由实际承载它的业务系统页面提供。 */
 export function KyAppDeliveryHealthPanel({ onOpen, tenantId = '', systemId = '' }: { onOpen?: (id: string) => void; tenantId?: string; systemId?: string }) {
   const resource = useManagementResource<{ items: DeliveryHealth[] }>('/deliveries/health');
   if (!resource.data) return <ResourceState error={resource.error} retry={resource.reload} />;

@@ -1,6 +1,5 @@
 import { PlatformSystemsPage } from '@/components/BusinessSystems/PlatformSystemsPage';
 import { LegacySystemDeliveryPage } from '@/components/SystemDelivery/SystemDeliveryPage';
-import { BusinessSystemOperationsPage } from '@/components/BusinessSystems/BusinessSystemOperationsPage';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Loader2, X } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
@@ -630,8 +629,6 @@ export function PlatformAdminShell({
         return <PlatformSystemsPage systemId={governanceRoute.entityId} />;
       case "platform.runtime.system-deliveries":
         return <LegacySystemDeliveryPage executionId={governanceRoute.entityId} systemId={new URLSearchParams(governanceRoute.search?.replace(/^\?/, "")).get("systemId") ?? undefined} />;
-      case "platform.runtime.business-system-operations":
-        return <BusinessSystemOperationsPage installationId={governanceRoute.entityId} />;
       case "platform.overview.overview":
         return <OverviewPage />;
       case "platform.org-business.tenants":

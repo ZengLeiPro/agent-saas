@@ -31,7 +31,7 @@ describe("governance navigation registry", () => {
     expect(GOVERNANCE_NAVIGATION.organization.map((item) => item.id)).toEqual([
       "overview", "members", "agents", "governance", "settings",
     ]);
-    expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(28);
+    expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(27);
     expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(28);
     expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(8);
   });
@@ -179,6 +179,7 @@ describe("legacy URL canonical adapters", () => {
 describe("invalid route and scope safety", () => {
   it.each([
     ["/platform-console/runtime/not-real", "unknown-route"],
+    ["/platform-console/runtime/business-system-operations", "unknown-route"],
     ["/platform-console/runtime/runs/r1/extra", "unexpected-entity"],
     ["/platform-console/org-business/tenants/t1/not-a-tab", "invalid-tab"],
     ["/tenant-admin/members/member?org=acme", "missing-entity"],

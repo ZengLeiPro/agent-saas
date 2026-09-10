@@ -88,7 +88,6 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   },
   {
     id: "runtime", label: "运行与可观测", routes: [
-      route("platform", "runtime", "business-system-operations", "业务系统运营", ["platform-console", "runtime", "business-system-operations"], { entity: "optional" }),
       route("platform", "runtime", "system-deliveries", "系统交付", ["platform-console", "runtime", "system-deliveries"], { entity: "optional" }),
       route("platform", "runtime", "sessions", "会话", ["platform-console", "runtime", "sessions"], { entity: "optional" }),
       route("platform", "runtime", "runs", "运行", ["platform-console", "runtime", "runs"], { entity: "optional" }),

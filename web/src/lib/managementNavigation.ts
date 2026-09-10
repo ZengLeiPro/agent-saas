@@ -43,16 +43,6 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     routeId: 'platform.resource-center.business-systems',
   },
   {
-    id: 'platform-business-system-operations',
-    surface: 'analytics',
-    area: 'platform',
-    group: '平台分析',
-    label: '业务系统运营',
-    description: '管理业务系统运营。',
-    iconKey: 'blocks',
-    routeId: 'platform.runtime.business-system-operations',
-  },
-  {
     id: 'organization-business-systems',
     surface: 'config',
     area: 'organization',

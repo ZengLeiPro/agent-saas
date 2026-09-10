@@ -40,7 +40,12 @@ describe('管理后台导航契约', () => {
 
   it('分析面只注册有真实页面的组织 4 项、平台 9 项', () => {
     expect(managementPagesFor('analytics', 'organization')).toHaveLength(4);
-    expect(managementPagesFor('analytics', 'platform')).toHaveLength(10);
+    expect(managementPagesFor('analytics', 'platform')).toHaveLength(9);
+    expect(
+      managementPagesFor('analytics', 'platform').some(
+        (page) => page.routeId === 'platform.runtime.business-system-operations',
+      ),
+    ).toBe(false);
   });
 
   it('同一用量路由按 URL 语义拆为分析与预算配置', () => {

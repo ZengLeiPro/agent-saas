@@ -4,11 +4,12 @@ import { GOVERNANCE_ROUTES, governanceRoute } from "@/lib/governanceNavigation";
 import { ANALYSIS_NAVIGATION, analysisNavigationRoute, getAnalysisNavigationItem } from "./analysisNavigation";
 
 describe("分析导航注册表", () => {
-  it("固定收纳 10 个平台分析页与 4 个组织分析页", () => {
+  it("固定收纳 9 个平台分析页与 4 个组织分析页", () => {
     expect(ANALYSIS_NAVIGATION.map((group) => [group.scope, group.items.length])).toEqual([
-      ["platform", 10],
+      ["platform", 9],
       ["organization", 4],
     ]);
+    expect(getAnalysisNavigationItem("platform.runtime.business-system-operations")).toBeNull();
   });
 
   it("所有 routeId 唯一且存在于治理路由注册表", () => {

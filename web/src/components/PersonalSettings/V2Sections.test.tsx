@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const retry = vi.fn();
 const governanceError = Object.assign(new Error("private backend detail"), { status: 503 });
 const authState = vi.hoisted(() => ({
-  user: null as { username?: string } | null,
+  user: null as {
+    username?: string;
+    debugMode?: boolean;
+    tenantFeatures?: { debugModeAllowed?: boolean; debugModeEnabled?: boolean };
+  } | null,
 }));
 
 vi.mock("@/hooks/useEffectiveResources", () => ({
@@ -36,6 +40,18 @@ describe("我的权限 fail-closed", () => {
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("暂时无法加载我的权限");
     expect(alert.textContent).not.toContain("private backend detail");
+  });
+
+  it("不再重复展示调试模式区域，唯一开关留在对话与模型", () => {
+    authState.user = {
+      debugMode: false,
+      tenantFeatures: { debugModeAllowed: true, debugModeEnabled: true },
+    };
+    render(<MyPermissionsSection />);
+
+    expect(screen.queryByText("个人调试模式")).toBeNull();
+    expect(screen.queryByText("详细执行过程")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
   });
 });
 

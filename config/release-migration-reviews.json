@@ -14634,6 +14634,36 @@
           "digest": "sha256:05726fa16d048f2a3011ab193e6dfe61640b97948aec7fd734c12ddb06a3bf25"
         }
       ]
+    },
+    {
+      "baselineSha": "b4b5968740dba7a9e7dc2681c1c8a6d012d32fa5",
+      "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:4119f49b801fcaabbf6ce975f9fbafe8e1ef284cb628d9994311d98e931aa74f",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务。PostgreSQL 模式仅注入已有 advisory lock 回调，本文件不导入数据库驱动、不执行 SQL、DDL、数据回填或启动建表。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/身份JSON存储并发锁无结构变更审核-20260910.md",
+          "digest": "sha256:d878adea5f4a6c6ab1a9d8e10fd233cc5db63560c34b77466caf6316b34df4ab"
+        },
+        {
+          "path": "server/src/__tests__/userStore.test.ts",
+          "digest": "sha256:88b6c8c5f68fdd41500a3fe39111ceb046cf24954d374e7cf0dcc734669cf11f"
+        },
+        {
+          "path": "server/src/__tests__/userStoreProcessE2e.test.ts",
+          "digest": "sha256:31b2f141bd3948c1ee52ea7eed76f2a9cf4e2e70b5b768f14cba7338f975e48e"
+        },
+        {
+          "path": "server/src/__tests__/identityJsonStoreCorruption.test.ts",
+          "digest": "sha256:3ade3be8bb359bffcd6e1e61b4792c9e99a544f50a675db8ea4ab046ccac5e98"
+        }
+      ]
     }
   ]
 }

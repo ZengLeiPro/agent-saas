@@ -8,17 +8,16 @@ const manifestPath = new URL(
   '../../acs-orchestrator/k8s/ownership-journal-rbac.yaml',
   import.meta.url,
 );
+const bootstrapPath = new URL('../bootstrap-acs-ownership-journal.sh', import.meta.url);
 
-test('ACS ownership journal bootstrap is pre-created and grants only exact read/write access', () => {
+test('ACS ownership journal bootstrap grants only exact read/write access', () => {
   const resources = parseAllDocuments(readFileSync(manifestPath, 'utf8')).map((document) =>
     document.toJSON(),
   );
-  const journal = resources.find((resource) => resource.kind === 'ConfigMap');
   const role = resources.find((resource) => resource.kind === 'Role');
   const binding = resources.find((resource) => resource.kind === 'RoleBinding');
 
-  assert.deepEqual(JSON.parse(journal.data['journal.json']), { protocolVersion: 1, records: [] });
-  assert.equal(journal.metadata.name, 'acs-operation-ownership-v1');
+  assert.equal(resources.some((resource) => resource.kind === 'ConfigMap'), false);
   assert.deepEqual(role.rules, [
     {
       apiGroups: [''],
@@ -39,4 +38,11 @@ test('ACS ownership journal bootstrap is pre-created and grants only exact read/
     kind: 'Role',
     name: 'agent-saas-acs-orchestrator-ownership-journal',
   });
+});
+
+test('ACS ownership journal bootstrap never reapplies an empty journal over live records', () => {
+  const bootstrap = readFileSync(bootstrapPath, 'utf8');
+  assert.match(bootstrap, /get configmap "\$JOURNAL_NAME" --ignore-not-found -o name/u);
+  assert.match(bootstrap, /if \[ -z "\$existing" \]; then[\s\S]*create configmap/u);
+  assert.doesNotMatch(bootstrap, /apply[^\n]*ConfigMap|replace[^\n]*configmap/u);
 });

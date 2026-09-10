@@ -90,9 +90,26 @@ export function validateRecoveryObservations({
     trusted.configIdentity,
     'Active release ConfigIdentity differs from the committed identity',
   );
+  // 凭据可能在旧代提交后轮换。repair 仅可依据新鲜且完整解析的离线观测
+  // 同时替换两个 App 角色；不得接受配置投影变化或无法核验的 SecretVault。
+  // 候选 release env 会在替换进程 ready 前绑定当前凭据版本。
+  assert.equal(
+    observedConfig.digest,
+    expectedConfig.digest,
+    'Repair cannot recover a changed production config projection',
+  );
+  assert.equal(
+    observedConfig.versionResolution,
+    'resolved',
+    'Repair requires fully resolved production credential versions',
+  );
+  const credentialOnlyDrift =
+    typeof expectedConfig.credentialVersionDigest === 'string' &&
+    typeof observedConfig.credentialVersionDigest === 'string' &&
+    expectedConfig.credentialVersionDigest !== observedConfig.credentialVersionDigest;
   const configIdentity = validateConfigIdentitySummary({
     schemaVersion: 1,
-    status: 'consistent',
+    status: credentialOnlyDrift ? 'drifted' : 'consistent',
     releaseId: apiEnv.AGENT_SAAS_RELEASE_ID,
     expected: expectedConfig,
     observed: observedConfig,

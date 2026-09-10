@@ -29,7 +29,11 @@ export function planPromotionConfigIdentityBaseline({ retryMode, apiAction, runt
 }
 
 /** 每次生产写入前均要求已建立配置身份，禁止恢复到首次升级的缺失豁免。 */
-export function assertPromotionConfigIdentityWriteGate({ manifest, productionState }) {
+export function assertPromotionConfigIdentityWriteGate({
+  manifest,
+  productionState,
+  recoveryMode = 'normal',
+}) {
   const api = requireAction(manifest?.components?.api?.action, 'Manifest API action');
   const worker = requireAction(
     manifest?.components?.runtimeWorker?.action,
@@ -37,10 +41,30 @@ export function assertPromotionConfigIdentityWriteGate({ manifest, productionSta
   );
   if (api !== worker) throw new Error('Manifest API and Runtime Worker actions must match');
 
-  if (productionState?.configIdentity?.status !== 'consistent') {
+  const identity = productionState?.configIdentity;
+  if (identity?.status === 'consistent') {
+    return { configIdentityConfirmed: true };
+  }
+
+  const expected = identity?.expected;
+  const observed = identity?.observed;
+  const credentialOnlyRepair =
+    recoveryMode === 'repair' &&
+    api === 'deploy' &&
+    worker === 'deploy' &&
+    identity?.status === 'drifted' &&
+    expected?.schemaVersion === 1 &&
+    observed?.schemaVersion === 1 &&
+    expected.digest === observed.digest &&
+    observed.versionResolution === 'resolved' &&
+    observed.secretRefCount > 0 &&
+    typeof expected.credentialVersionDigest === 'string' &&
+    typeof observed.credentialVersionDigest === 'string' &&
+    expected.credentialVersionDigest !== observed.credentialVersionDigest;
+  if (!credentialOnlyRepair) {
     throw new Error('Production writes require a consistent ConfigIdentity');
   }
-  return { configIdentityConfirmed: true };
+  return { configIdentityConfirmed: false, credentialOnlyDriftRepair: true };
 }
 
 function parseOptions(argv) {
@@ -73,6 +97,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     result = assertPromotionConfigIdentityWriteGate({
       manifest: JSON.parse(readFileSync(options.manifest, 'utf8')),
       productionState: JSON.parse(readFileSync(options['production-state'], 'utf8')),
+      recoveryMode: options['recovery-mode'] ?? 'normal',
     });
   } else {
     throw new Error(`Unknown command: ${command ?? '<missing>'}`);

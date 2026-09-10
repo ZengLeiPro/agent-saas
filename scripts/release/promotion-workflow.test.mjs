@@ -752,6 +752,10 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(workflow, /promotion-config-identity-state\.mjs plan/u);
   assert.match(workflow, /assert-write-gate/u);
+  assert.match(
+    workflow,
+    /assert-write-gate[\s\S]*--recovery-mode "\$PRODUCTION_RECOVERY_MODE"/u,
+  );
   assert.doesNotMatch(workflow, /legacy_api_requires_upgrade/u);
   assert.equal(workflow.match(/config_identity_readback_stage=candidate-readback/gu)?.length, 1);
   assert.match(workflow, /\[ "\$api_action" = deploy \]/u);

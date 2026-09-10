@@ -48,8 +48,8 @@
 
 - 复核重新打开 REL-02：AgentStore 原实现只有进程内队列，两个进程仍可能在 `reload` 与 `rename` 之间互相覆盖。现已与 UserStore/GroupStore 对齐为 `lock → reload → mutate → atomic publish`；所有进程对共享 `agents.json` 使用同路径 create-only 文件锁，启动默认 Agent 初始化也在该锁内同步完成。
 - 新增两个独立 Node 进程的同步竞争回归：复用两个常驻进程连续制造 20 次不同 Agent 的并发更新，20/20 最终文件均同时保留两条记录。
-- CI 将 UserStore 判入生产迁移依赖闭包后严格阻断。该文件不执行 SQL 或结构迁移，因此没有伪造 expand；新增摘要绑定的 `no-schema-change` 审核、审核说明和测试证据，使源码或证据变化时门禁自动失效并要求重新审核。
-- 未修改 Workflow；权威 CI 需在整改提交推送后重新执行并读回。
+- CI 将 UserStore 判入生产迁移依赖闭包后严格阻断。该文件不执行 SQL 或结构迁移，因此没有伪造 expand；已为清单中的 40 个历史生产基线补齐两端摘要绑定的 `no-schema-change` 审核，新增审核说明和测试证据，使源码或证据变化时门禁自动失效并要求重新审核。历史审核清单已接近 Node 子进程默认 1 MiB 缓冲区，校验脚本现使用显式 8 MiB 上限读取提交内清单，未放宽任何分类或 postcondition 规则。
+- 本地 `check-reviewed-migrations` 已逐一重放 40 个历史基线并全部通过；未修改 Workflow。权威 CI 仍需在整改提交推送后重新执行并读回。
 
 ## 本地端到端证据
 
@@ -60,6 +60,8 @@
 - 真实文件边界：对 Users、Groups、Agents 分别写入损坏 JSON 和非法 schema 后执行 mutation，均拒绝且逐字节读回原件；Groups 的不可读权限用例在非 Windows 平台通过。
 - 扩大回归共 13 个文件、164 项：159 项通过；`groupsCoverage` / `groupsRoutes` 的 5 项在 macOS 因既有 Linux `/proc/self/fd` fixture 不可用而失败，发生在本批修改路径执行前。尝试在本地 Docker Linux 复跑，但离线缓存缺少 Linux Rollup/ESBuild 可选二进制，未把该环境失败计为产品失败或通过。
 - `server typecheck`、`server build`、仓库 `check:ratchets` 通过。
+- PR #614 复核整改后再次运行 AgentStore 双进程 20 轮竞态、三类身份存储故障注入和租户删除回归，共 8 项通过；Server 类型检查与生产 bundle 构建通过。
+- CI 同款静态预检在 macOS 执行到 941 项，其中 Linux 专用发布用例因 GNU `date -Iseconds`、`/proc/<pid>/stat` 和 systemd fixture 在本机不可用而失败；这些失败不涉及本次改动路径，Ubuntu 权威结果以推送后的 CI 为准。
 
 ### Mobile 文件路径
 

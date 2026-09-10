@@ -318,15 +318,33 @@ jobs:
             --production-state "$RUNNER_TEMP/production-before.json" \
             --recovery-mode "$PROMOTION_RETRY_MODE"
           production_already_target=false
+          acs_already_target=false
+          app_already_target=false
+          web_already_target=false
           if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
             jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
               "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
+            if diff -q <(jq -S '.components.acs' "$RUNNER_TEMP/production-before.json") \
+                <(jq -S '.acs' "$RUNNER_TEMP/production-target.json") >/dev/null; then
+              acs_already_target=true
+            fi
+            if diff -q <(jq -S '.components | {api,runtimeWorker}' "$RUNNER_TEMP/production-before.json") \
+                <(jq -S '{api,runtimeWorker}' "$RUNNER_TEMP/production-target.json") >/dev/null; then
+              app_already_target=true
+            fi
+            if diff -q <(jq -S '.components.web' "$RUNNER_TEMP/production-before.json") \
+                <(jq -S '.web' "$RUNNER_TEMP/production-target.json") >/dev/null; then
+              web_already_target=true
+            fi
             if diff -q <(jq -S .components "$RUNNER_TEMP/production-before.json") \
                 <(jq -S . "$RUNNER_TEMP/production-target.json") >/dev/null; then
               production_already_target=true
             fi
           fi
           echo "PRODUCTION_ALREADY_TARGET=$production_already_target" >> "$GITHUB_ENV"
+          echo "ACS_ALREADY_TARGET=$acs_already_target" >> "$GITHUB_ENV"
+          echo "APP_ALREADY_TARGET=$app_already_target" >> "$GITHUB_ENV"
+          echo "WEB_ALREADY_TARGET=$web_already_target" >> "$GITHUB_ENV"
 
       - name: 校验 OSS 中的不可变清单、产物索引与 Release 记录
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
@@ -523,7 +541,7 @@ jobs:
           set -euo pipefail
           outcome=started
           [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-          [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
+          [ "$ACS_ALREADY_TARGET" = true ] && outcome=skipped
           receipt_json="$(node scripts/release/write-operation-receipt.mjs \
             --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component acs \
             --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-acs-start" \
@@ -544,7 +562,7 @@ jobs:
             echo 'ACS already equals the frozen production baseline; keep without restart'
             exit 0
           fi
-          if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
+          if [ "$ACS_ALREADY_TARGET" = true ]; then
             echo 'ACS already equals the immutable target; keep without restart'
             exit 0
           fi
@@ -577,7 +595,7 @@ jobs:
           outcome=failed
           [ "$STEP_OUTCOME" = success ] && outcome=succeeded
           [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-          [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
+          [ "$ACS_ALREADY_TARGET" = true ] && outcome=skipped
           [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
           receipt_json="$(node scripts/release/write-operation-receipt.mjs \
             --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component acs \
@@ -624,7 +642,7 @@ jobs:
             echo 'API and Runtime Worker already equal the frozen production baseline; verify without cutover'
             verify_only=true
           fi
-          if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
+          if [ "$APP_ALREADY_TARGET" = true ]; then
             verify_only=true
             if [ "$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")" = deploy ]; then
               resume_handoff=true
@@ -693,7 +711,7 @@ jobs:
           set -euo pipefail
           outcome=started
           [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-          [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
+          [ "$WEB_ALREADY_TARGET" = true ] && outcome=skipped
           receipt_json="$(node scripts/release/write-operation-receipt.mjs \
             --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component web \
             --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web-start" \
@@ -714,7 +732,7 @@ jobs:
             echo 'Web already equals the frozen production baseline; keep the current entry'
             exit 0
           fi
-          if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
+          if [ "$WEB_ALREADY_TARGET" = true ]; then
             echo 'Web already equals the immutable target; keep the current entry'
             exit 0
           fi
@@ -1075,7 +1093,7 @@ jobs:
           outcome=failed
           [ "$STEP_OUTCOME" = success ] && outcome=succeeded
           [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-          [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
+          [ "$WEB_ALREADY_TARGET" = true ] && outcome=skipped
           [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
           receipt_json="$(node scripts/release/write-operation-receipt.mjs \
             --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component web \

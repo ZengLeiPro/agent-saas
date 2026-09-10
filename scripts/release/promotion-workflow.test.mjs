@@ -523,6 +523,25 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /previous promotion ended after the durable promoting marker/u);
   assert.match(workflow, /--state needs_human --operation "recover-promoting:/u);
   assert.match(workflow, /PRODUCTION_ALREADY_TARGET/u);
+  assert.match(workflow, /ACS_ALREADY_TARGET/u);
+  assert.match(workflow, /APP_ALREADY_TARGET/u);
+  assert.match(workflow, /WEB_ALREADY_TARGET/u);
+  assert.match(
+    workflow,
+    /\.components \| \{api,runtimeWorker\}[\s\S]*\{api,runtimeWorker\}[\s\S]*app_already_target=true/u,
+  );
+  assert.match(
+    workflow,
+    /if \[ "\$APP_ALREADY_TARGET" = true \]; then[\s\S]*resume_handoff=true/u,
+  );
+  assert.match(
+    workflow,
+    /if \[ "\$ACS_ALREADY_TARGET" = true \]; then[\s\S]*ACS already equals the immutable target/u,
+  );
+  assert.match(
+    workflow,
+    /if \[ "\$WEB_ALREADY_TARGET" = true \]; then[\s\S]*Web already equals the immutable target/u,
+  );
   assert.match(workflow, /--state failed_before_change/u);
   assert.match(workflow, /already equals the immutable target/u);
   assert.match(workflow, /read-live-production-components\.mjs/u);

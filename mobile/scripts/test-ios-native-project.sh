@@ -20,10 +20,10 @@ shopt -s nullglob
 PROJECTS=(ios/*.xcodeproj)
 [ "${#PROJECTS[@]}" -eq 1 ] || { echo 'expected one generated Xcode project' >&2; exit 1; }
 
-TEAM_ID="$(node -p 'require(process.argv[1]).identity.iosAppleTeamId' release-manifest.json)"
-APP_BUNDLE_ID="$(node -p 'require(process.argv[1]).identity.iosBundleIdentifier' release-manifest.json)"
-APP_GROUP="$(node -p 'require(process.argv[1]).identity.iosAppGroupIdentifier' release-manifest.json)"
-MARKETING_VERSION="$(node -p 'require(process.argv[1]).version.marketingVersion' release-manifest.json)"
+TEAM_ID="$(node -p 'require(process.argv[1]).identity.iosAppleTeamId' "$MOBILE_DIR/release-manifest.json")"
+APP_BUNDLE_ID="$(node -p 'require(process.argv[1]).identity.iosBundleIdentifier' "$MOBILE_DIR/release-manifest.json")"
+APP_GROUP="$(node -p 'require(process.argv[1]).identity.iosAppGroupIdentifier' "$MOBILE_DIR/release-manifest.json")"
+MARKETING_VERSION="$(node -p 'require(process.argv[1]).version.marketingVersion' "$MOBILE_DIR/release-manifest.json")"
 ruby scripts/configure-ios-signing.rb "${PROJECTS[0]}" "$TEAM_ID" "$MARKETING_VERSION" "$MOBILE_IOS_BUILD_NUMBER" \
   "$APP_BUNDLE_ID" 'Contract Main Profile' '00000000-0000-0000-0000-000000000001' \
   "$APP_BUNDLE_ID.share-extension" 'Contract Share Profile' '00000000-0000-0000-0000-000000000002'

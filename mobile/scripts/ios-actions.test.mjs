@@ -206,7 +206,10 @@ test('iOS native toolchain is explicit and pnpm supports both macOS architecture
   const checksums = readFileSync(join(root, '.github/pnpm-standalone.sha256'), 'utf8');
   assert.match(checksums, /7cf378c3a55d2aa3734007e4fdce5252291a4f1315966b0a996cffcff6aa2a74\s+pnpm-macos-arm64@10\.18\.3/u);
   assert.match(checksums, /fd9380941b1eac83b6e6a8660e9ca341eb8bc5a294c26d510e356c7bdf51a255\s+pnpm-macos-x64@10\.18\.3/u);
-  for (const file of ['build.sh', 'build-ios-native.sh', 'submit-ios.sh', 'setup-ios-runner.sh', 'init-ios-github-release.sh']) {
+  for (const file of ['build.sh', 'build-ios-native.sh', 'submit-ios.sh', 'setup-ios-runner.sh', 'init-ios-github-release.sh', 'test-ios-native-project.sh']) {
     execFileSync('bash', ['-n', join(root, 'mobile/scripts', file)]);
   }
+  const projectCheck = readFileSync(join(root, 'mobile/scripts/test-ios-native-project.sh'), 'utf8');
+  assert.doesNotMatch(projectCheck, /' release-manifest\.json\)/u);
+  assert.match(projectCheck, /"\$MOBILE_DIR\/release-manifest\.json"/u);
 });

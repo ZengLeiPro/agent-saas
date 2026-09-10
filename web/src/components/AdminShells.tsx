@@ -700,7 +700,7 @@ export function PlatformAdminShell({
     return (
       <div className={cn(
         "min-h-full bg-muted/20 p-3 sm:p-4",
-        governanceContentEmbedded && "bg-transparent p-0",
+        governanceContentEmbedded && "bg-transparent p-0 sm:p-0",
       )}>
         {governanceContent}
       </div>

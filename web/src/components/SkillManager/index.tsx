@@ -497,7 +497,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           >
                             <Trash2 className="size-3.5" />
                           </Button>
-                          <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Assignment 权威授权</span>
+                          <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">平台统一授权</span>
                         </div>
                       </div>
                     </div>
@@ -532,7 +532,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                       >
                         <Languages className="size-3.5" />
                       </Button>
-                      <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Entitlement + Assignment 权威授权</span>
+                      <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">平台统一授权</span>
                     </div>
                   </div>
                 </div>

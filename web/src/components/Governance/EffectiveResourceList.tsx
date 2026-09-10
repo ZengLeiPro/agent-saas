@@ -68,7 +68,7 @@ export function EffectiveResourceList({
 }: EffectiveResourceListProps) {
   if (error) return <GovernanceUnavailable error={error} onRetry={onRetry} retrying={loading} className={className} />;
   if (loading && resources === null) {
-    return <div className={className} role="status" aria-live="polite">正在获取权威治理结论…</div>;
+    return <div className={className} role="status" aria-live="polite">正在获取当前权限…</div>;
   }
 
   const groups = new Map<GovernanceDomain, EffectiveResourceView[]>();

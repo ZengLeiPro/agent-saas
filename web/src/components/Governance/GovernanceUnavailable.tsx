@@ -24,7 +24,7 @@ export function GovernanceUnavailable({
   const partialChange = code === 'GOVERNANCE_PARTIAL_CHANGE';
   const fallbackMessage = accessDenied
     ? '当前账号没有访问此治理页面的权限，请联系组织管理员或平台管理员。'
-    : '当前无法获取权威权限判定。系统已停止敏感操作，但这不代表当前账号缺少权限，请稍后重试。';
+    : '当前无法获取权限判定。系统已停止敏感操作，但这不代表当前账号缺少权限，请稍后重试。';
 
   return (
     <section
@@ -50,7 +50,7 @@ export function GovernanceUnavailable({
               disabled={retrying}
             >
               <RotateCcw aria-hidden="true" />
-              {retrying ? '正在重试' : '重试权威判定'}
+              {retrying ? '正在重试' : '重试权限判定'}
             </Button>
           ) : null}
         </div>

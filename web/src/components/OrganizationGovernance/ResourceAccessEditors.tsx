@@ -159,7 +159,7 @@ export function OrganizationEntitlementScopeEditor({
       }
       setError(null);
     } catch (cause) {
-      setError(errorText(cause, '读取权威资源范围失败'));
+      setError(errorText(cause, '读取资源范围失败'));
     } finally {
       setLoading(false);
     }
@@ -250,9 +250,9 @@ export function OrganizationEntitlementScopeEditor({
     save: async () => {
       if (!preview) {
         setError('请先生成签名预览，再保存并离开。');
-        throw new Error('Entitlement preview required');
+        throw new Error('请先生成范围变更预览');
       }
-      if (!(await commit())) throw new Error('Entitlement commit failed');
+      if (!(await commit())) throw new Error('范围变更保存失败');
     },
     discard: () => {
       if (scope) {
@@ -275,7 +275,7 @@ export function OrganizationEntitlementScopeEditor({
         </div>
         {scope ? <Badge variant="outline">配置已同步</Badge> : null}
       </div>
-      {loading ? <div className="text-sm text-muted-foreground">正在读取权威范围…</div> : null}
+      {loading ? <div className="text-sm text-muted-foreground">正在读取可用范围…</div> : null}
       {!loading && !scope ? (
         <div className="text-sm text-destructive">当前组织没有该资源范围基线，已禁止写入。</div>
       ) : null}
@@ -313,7 +313,7 @@ export function OrganizationEntitlementScopeEditor({
                 </label>
               ))}
               {!catalog.length ? (
-                <div className="text-sm text-muted-foreground">权威目录暂无可选资源。</div>
+                <div className="text-sm text-muted-foreground">资源目录暂无可选项。</div>
               ) : null}
             </div>
           ) : null}
@@ -558,9 +558,9 @@ export function OrganizationResourceAssignmentEditor({
     save: async () => {
       if (!preview) {
         setError('请先生成签名预览，再保存并离开。');
-        throw new Error('Assignment preview required');
+        throw new Error('请先生成授权变更预览');
       }
-      if (!(await commit())) throw new Error('Assignment commit failed');
+      if (!(await commit())) throw new Error('授权变更保存失败');
     },
     discard: () => {
       setRules(
@@ -580,7 +580,7 @@ export function OrganizationResourceAssignmentEditor({
     <div className="space-y-3 rounded-lg border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-medium">成员、群组与智能体授权</div>
-        <Badge variant="outline">Assignment v{baseline?.version ?? 0}</Badge>
+        {baseline ? <Badge variant="outline">配置已同步</Badge> : null}
       </div>
       {rules.map((rule, index) => {
         const options = subjectOptions(rule, members, groups);
@@ -723,7 +723,7 @@ export function OrganizationAssignmentManager({
       <div>
         <h3 className="font-medium">{title}</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          选择资源后，通过 Assignment 权威链路配置全员、成员、部门/群组或智能体的允许与拒绝规则。
+          选择资源后，可配置全员、成员、部门/群组或智能体的允许与拒绝规则。
         </p>
       </div>
       <select
@@ -778,7 +778,7 @@ export function OrganizationCatalogAccessPanel({
         }
       })
       .catch((cause) => {
-        if (!cancelled) setError(errorText(cause, '读取权威资源目录失败'));
+        if (!cancelled) setError(errorText(cause, '读取资源目录失败'));
       });
     return () => {
       cancelled = true;
@@ -790,7 +790,7 @@ export function OrganizationCatalogAccessPanel({
         tenantId={tenantId}
         resourceType={resourceType}
         title={scopeTitle}
-        description="控制平台资源进入本组织的第一层范围；提交后由兼容投影同步旧配置。"
+        description="控制哪些平台资源可以进入本组织；保存后会自动同步到实际运行配置。"
       />
       <OrganizationAssignmentManager
         tenantId={tenantId}

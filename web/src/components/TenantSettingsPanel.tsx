@@ -328,8 +328,8 @@ export function TenantSettingsPanel({
             <SettingSwitch label="允许用户切换模型" description="关闭后可在后续运行时策略中限制用户只能使用默认模型。" checked={settings.models.allowUserModelSwitch} onCheckedChange={checked => patch(d => { d.models.allowUserModelSwitch = checked; })} />
             <SettingSwitch label="显示分组名" description="模型选择器中显示模型分组标题。" checked={!!settings.models.showGroupNames} onCheckedChange={checked => patch(d => { d.models.showGroupNames = checked; })} />
             <div className="rounded-md border bg-muted/20 p-3 text-sm">
-              <div className="font-medium">可用模型范围由 Entitlement 统一管理</div>
-              <p className="mt-1 text-xs text-muted-foreground">本区只配置默认模型、切换策略和展示名称；模型白名单通过页面上方的权威范围编辑器修改。</p>
+              <div className="font-medium">可用模型范围由平台授权统一管理</div>
+              <p className="mt-1 text-xs text-muted-foreground">本区只配置默认模型、切换策略和展示名称；模型白名单请在“可用范围”页面修改。</p>
             </div>
             <div className="space-y-3 rounded-md border bg-muted/20 p-3">
               <div>
@@ -445,9 +445,9 @@ export function TenantSettingsPanel({
                 <div className="text-xs text-muted-foreground">组织身份预览</div>
               </div>
             </div>
-            <div className="space-y-1.5"><Label>显示名称</Label><Input value={settings.branding.displayName ?? ""} onChange={event => patch(d => { d.branding.displayName = event.target.value.trim() || undefined; })} /></div>
-            <div className="space-y-1.5"><Label>Logo 地址</Label><Input value={settings.branding.logoUrl ?? ""} onChange={event => patch(d => { d.branding.logoUrl = event.target.value.trim() || undefined; })} /></div>
-            <div className="space-y-1.5"><Label>主色</Label><Input value={settings.branding.primaryColor ?? ""} onChange={event => patch(d => { d.branding.primaryColor = event.target.value.trim() || undefined; })} placeholder="#2563eb" /></div>
+            <div className="space-y-1.5"><Label>显示名称</Label><Input aria-label="显示名称" value={settings.branding.displayName ?? ""} onChange={event => patch(d => { d.branding.displayName = event.target.value.trim(); })} /></div>
+            <div className="space-y-1.5"><Label>Logo 地址</Label><Input aria-label="Logo 地址" value={settings.branding.logoUrl ?? ""} onChange={event => patch(d => { d.branding.logoUrl = event.target.value.trim(); })} /></div>
+            <div className="space-y-1.5"><Label>主色</Label><Input aria-label="主色" value={settings.branding.primaryColor ?? ""} onChange={event => patch(d => { d.branding.primaryColor = event.target.value.trim(); })} placeholder="#2563eb" /></div>
           </CardContent>
         </Card>}
         {showSecurity && <Card>

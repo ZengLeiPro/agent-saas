@@ -113,10 +113,9 @@ describe("PlatformOrganizationGovernance", () => {
     expect(screen.queryByText(/v2 → v3/)).not.toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "确认提交" }));
     await waitFor(() => expect(mocks.updateScope).toHaveBeenCalled());
-    expect(await screen.findByText("changeId：change-scope-1")).toBeTruthy();
-    expect(screen.getByText("auditId：audit-scope-1")).toBeTruthy();
-    expect(screen.getByText(/投影：等待中/)).toBeTruthy();
-    expect(screen.queryByText(/投影：pending/)).toBeNull();
+    expect(await screen.findByText("设置已保存")).toBeTruthy();
+    expect(screen.getByText("正在同步到运行环境。")).toBeTruthy();
+    expect(screen.queryByText(/changeId|auditId|投影：/)).toBeNull();
   });
 
   it("目录已移除的历史选项可单独清理并重新预览", async () => {

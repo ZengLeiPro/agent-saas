@@ -66,15 +66,20 @@ describe('ConversationBehaviorSettings', () => {
     );
   });
 
-  it('调试能力未开放时只展示组织级业务提示', () => {
+  it('调试能力未开放时展示三层开通路径', () => {
+    state.user = {
+      ...state.user,
+      tenantFeatures: { debugModeAllowed: false, debugModeEnabled: false },
+    };
     mocks.isDebugModeAvailable.mockReturnValue(false);
     render(<ConversationBehaviorSettings />);
 
-    expect(screen.getByText('当前组织未开放此功能。')).toBeTruthy();
+    expect(screen.getByText(/平台管理 → 组织 → 组织配置/)).toBeTruthy();
+    expect(screen.getByText(/组织管理 → 功能与配额/)).toBeTruthy();
     expect(
       (screen.getByRole('switch', { name: '显示详细执行过程' }) as HTMLButtonElement).disabled,
     ).toBe(true);
-    expect(screen.queryByText(/平台.*授权/)).toBeNull();
+    expect(screen.queryByText(/Entitlement|debugModeAllowed|debugModeEnabled/)).toBeNull();
   });
 
   it('开启详细执行过程后更新当前认证态', async () => {

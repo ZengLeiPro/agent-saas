@@ -322,7 +322,7 @@ describe("OrganizationGovernancePage", () => {
       orgId: "tenant-a", entityId: "member-1", tab: "assignments",
     })} />);
     expect(await screen.findByText("skill-1")).toBeTruthy();
-    expect(screen.getByText(/Assignment v2/)).toBeTruthy();
+    expect(screen.getByText("配置已同步")).toBeTruthy();
     expect(mocks.getMembershipDetails).toHaveBeenCalledWith("member-1", "tenant-a");
   });
 
@@ -432,7 +432,7 @@ describe("OrganizationGovernancePage", () => {
     fireEvent.change(screen.getByLabelText("接手成员"), { target: { value: "user-owner" } });
     fireEvent.click(screen.getByText("生成影响预览"));
 
-    expect(await screen.findByText(/定时任务归属权威状态未知或暂不可用/)).toBeTruthy();
+    expect(await screen.findByText(/定时任务归属状态未知或暂不可用/)).toBeTruthy();
     const commitButton = screen.getByRole("button", { name: "确认交接并撤权" }) as HTMLButtonElement;
     expect(commitButton.disabled).toBe(true);
     fireEvent.click(commitButton);
@@ -596,11 +596,11 @@ describe("OrganizationGovernancePage", () => {
       changes: expect.arrayContaining([expect.objectContaining({ resourceId: "taskboard-projects",
         assignments: expect.arrayContaining([expect.objectContaining({ assigneeId: "user-1" }), expect.objectContaining({ assigneeId: "dept-rd" })]) })]),
     }), "tenant-a"));
-    expect(await screen.findByText(/原子边界/)).toBeTruthy();
+    expect(await screen.findByText(/本次变更将整体提交/)).toBeTruthy();
     expect(screen.getAllByText(/曾磊（user-1）/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "原子提交 3 个 Collection" }));
     await waitFor(() => expect(mocks.updateAssignmentBatch).toHaveBeenCalled());
-    expect(await screen.findByText(/需新建 Agent 会话验收/)).toBeTruthy();
+    expect(await screen.findByText(/请新建 Agent 会话验收/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "新建 Agent 会话" }).getAttribute("href")).toBe("/");
   });
 
@@ -636,7 +636,7 @@ describe("OrganizationGovernancePage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "管理安全范围" }));
     fireEvent.change(screen.getByLabelText("kb-1规则1主体类型"), { target: { value: "user" } });
     fireEvent.change(await screen.findByLabelText("kb-1规则1主体"), { target: { value: "user-1" } });
-    fireEvent.click(screen.getAllByRole("button", { name: "新增 Assignment 规则" })[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: "新增授权规则" })[1]);
     fireEvent.change(screen.getByLabelText("kb-1规则2主体类型"), { target: { value: "user" } });
     fireEvent.change(await screen.findByLabelText("kb-1规则2主体"), { target: { value: "user-2" } });
     fireEvent.click(screen.getAllByRole("button", { name: "生成签名预览" })[1]);

@@ -67,14 +67,9 @@ while IFS= read -r -d '' source_path; do
       rm -f "$put_log" "$compressed"
       exit 1
     fi
-    stat_log="$(mktemp)"
-    if ! ossutil stat "$target_uri" --region "$region" > "$stat_log" 2>&1; then
-      cat "$put_log" >&2
-      cat "$stat_log" >&2
-      rm -f "$put_log" "$stat_log" "$compressed"
-      exit 1
-    fi
-    rm -f "$stat_log"
+    # The byte-exact SDK HEAD + GET below proves that the conflicting key exists and still
+    # contains the expected immutable bytes. `ossutil stat` additionally requests object ACL,
+    # which is outside the production writer's least-privilege read contract.
     reused=$((reused + 1))
   fi
   rm -f "$put_log"

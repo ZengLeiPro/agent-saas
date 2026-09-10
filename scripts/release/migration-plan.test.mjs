@@ -3100,6 +3100,23 @@ test('闭包依赖模块的纯类型抽出没有 SQL 变化，自动判定为 no
   assert.equal(result.migrationPlan.phase, 'none');
 });
 
+test('闭包依赖模块的业务 update/delete 词汇不会被误判为 SQL', () => {
+  const baselineSource = [
+    'export class JsonStore {',
+    '  update(record) { return record; }',
+    '}',
+  ].join('\n');
+  const targetSource = [
+    'export class JsonStore {',
+    '  update(record) { return { ...record, updated: true }; }',
+    '  remove(record) { delete record.legacy; return record; }',
+    '}',
+  ].join('\n');
+  const result = dependencyPlan(baselineSource, targetSource);
+  assert.equal(result.ok, true, result.blockingReasons.join('\n'));
+  assert.equal(result.migrationPlan.phase, 'none');
+});
+
 test('闭包依赖模块改动 INSERT 列清单属于 SQL 变化，仍然阻断', () => {
   const baselineSource = [
     'export function toBlocks(db, row) {',

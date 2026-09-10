@@ -111,7 +111,15 @@ export function validateProtection(environment, approvals, expected) {
   const required = environment.protection_rules?.find((rule) => rule.type === 'required_reviewers');
   assert.ok(required?.reviewers?.length > 0, 'Configure required environment reviewers before release');
   assert.equal(required.prevent_self_review, true, 'Environment must prevent self-review');
-  assert.equal(environment.can_admins_bypass, false, 'Disable administrator bypass for this environment');
+  // GitHub's documented REST environment response does not expose the admin
+  // bypass setting. Do not invent a false value or make live release impossible
+  // by requiring an undocumented field. Require a real, named reviewer below.
+  if (Object.hasOwn(environment, 'can_admins_bypass')) {
+    assert.equal(environment.can_admins_bypass, false, 'Disable administrator bypass for this environment');
+  }
+  assert.ok(required.reviewers.every((item) => item.type === 'User' && item.reviewer?.login),
+    'Configure named User reviewers; team membership cannot be verified with the read-only workflow token');
+  const allowed = new Set(required.reviewers.map((item) => item.reviewer.login.toLowerCase()));
   const policy = environment.deployment_branch_policy;
   assert.ok(policy?.protected_branches === true || policy?.custom_branch_policies === true,
     'Restrict the environment to protected branches or a main-only branch policy');
@@ -120,11 +128,12 @@ export function validateProtection(environment, approvals, expected) {
     assert.ok(expected.branchPolicies.every((item) => item.name === 'main' && item.type === 'branch'),
       'Custom environment branch policy must allow main only, not tags');
   }
-  const forbidden = new Set([expected.actor, expected.triggeringActor].filter(Boolean));
+  const forbidden = new Set([expected.actor, expected.triggeringActor].filter(Boolean).map((login) => login.toLowerCase()));
   const accepted = approvals.filter((approval) => approval.state === 'approved'
     && approval.environments?.some((item) => item.id === environment.id && item.name === environment.name)
-    && approval.user?.login && !forbidden.has(approval.user.login));
-  assert.ok(accepted.length > 0, 'No independent GitHub environment approval is available for this run');
+    && approval.user?.login && allowed.has(approval.user.login.toLowerCase())
+    && !forbidden.has(approval.user.login.toLowerCase()));
+  assert.ok(accepted.length > 0, 'No independent named GitHub environment approval is available for this run');
   return {
     environment: environment.name,
     environmentId: environment.id,
@@ -132,7 +141,7 @@ export function validateProtection(environment, approvals, expected) {
       protection_rules: environment.protection_rules,
       deployment_branch_policy: policy,
       branch_policies: expected.branchPolicies ?? [],
-      can_admins_bypass: environment.can_admins_bypass,
+      can_admins_bypass: environment.can_admins_bypass ?? 'not-exposed-by-rest',
     })),
     reviewers: [...new Set(accepted.map((item) => item.user.login))].sort(),
   };

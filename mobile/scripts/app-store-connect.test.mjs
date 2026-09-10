@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, verify } from 'node:crypto';
 import test from 'node:test';
 import {
-  classifyAppStoreVersionState,
+  classifyInternalBuildState,
   createAppStoreToken,
-  releaseRequestBodies,
+  validateInternalGroup,
 } from './app-store-connect.mjs';
 
 test('App Store token is a short-lived ES256 JWT with the requested key identity', () => {
@@ -39,36 +39,37 @@ test('App Store token is a short-lived ES256 JWT with the requested key identity
   );
 });
 
-test('review submission bodies bind one exact app, version and processed build', () => {
-  const bodies = releaseRequestBodies({
-    appId: '6808382989',
-    versionId: 'version-1',
-    buildId: 'build-1',
-    submissionId: 'review-1',
-  });
-  assert.equal(bodies.automaticRelease.data.attributes.releaseType, 'AFTER_APPROVAL');
-  assert.deepEqual(bodies.attachBuild.data, { type: 'builds', id: 'build-1' });
-  assert.deepEqual(bodies.createSubmission.data.relationships.app.data, {
-    type: 'apps',
-    id: '6808382989',
-  });
-  assert.deepEqual(bodies.createItem.data.relationships.appStoreVersion.data, {
-    type: 'appStoreVersions',
-    id: 'version-1',
-  });
-  assert.deepEqual(bodies.createItem.data.relationships.reviewSubmission.data, {
-    type: 'reviewSubmissions',
-    id: 'review-1',
-  });
-  assert.equal(bodies.submit.data.attributes.submitted, true);
+test('internal TestFlight state distinguishes ready, blocked, failed and waiting builds', () => {
+  assert.equal(classifyInternalBuildState('IN_BETA_TESTING'), 'ready');
+  assert.equal(classifyInternalBuildState('MISSING_EXPORT_COMPLIANCE'), 'blocked');
+  assert.equal(classifyInternalBuildState('PROCESSING_EXCEPTION'), 'failed');
+  assert.equal(classifyInternalBuildState('EXPIRED'), 'failed');
+  assert.equal(classifyInternalBuildState('READY_FOR_BETA_TESTING'), 'waiting');
+  assert.equal(classifyInternalBuildState('PROCESSING'), 'waiting');
 });
 
-test('review retry distinguishes submitted, rejected and still-editable App Store versions', () => {
-  assert.equal(classifyAppStoreVersionState('WAITING_FOR_REVIEW'), 'submitted');
-  assert.equal(classifyAppStoreVersionState('IN_REVIEW'), 'submitted');
-  assert.equal(classifyAppStoreVersionState('READY_FOR_DISTRIBUTION'), 'submitted');
-  assert.equal(classifyAppStoreVersionState('REJECTED'), 'failed');
-  assert.equal(classifyAppStoreVersionState('INVALID_BINARY'), 'failed');
-  assert.equal(classifyAppStoreVersionState('PREPARE_FOR_SUBMISSION'), 'editable');
-  assert.equal(classifyAppStoreVersionState('READY_FOR_REVIEW'), 'editable');
+test('internal TestFlight group must match the reviewed all-builds group', () => {
+  const group = {
+    id: 'a21bd778-a7de-43ee-97ca-3f6f5877d237',
+    attributes: {
+      name: 'kaiyan',
+      isInternalGroup: true,
+      hasAccessToAllBuilds: true,
+    },
+  };
+  const expected = { id: group.id, name: 'kaiyan' };
+  assert.equal(validateInternalGroup(group, expected), group);
+  assert.throws(() => validateInternalGroup({ ...group, id: 'wrong' }, expected));
+  assert.throws(() =>
+    validateInternalGroup(
+      { ...group, attributes: { ...group.attributes, name: 'other' } },
+      expected,
+    ),
+  );
+  assert.throws(() =>
+    validateInternalGroup(
+      { ...group, attributes: { ...group.attributes, hasAccessToAllBuilds: false } },
+      expected,
+    ),
+  );
 });

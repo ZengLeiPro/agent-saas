@@ -85,5 +85,7 @@ fi
 cd "$MOBILE_DIR"
 node "$MOBILE_DIR/scripts/mobile-submit-credential-policy.mjs" ios-store
 export APP_STORE_CONNECT_APP_ID="$(node -p 'require("./release-manifest.json").identity.iosAscAppId')"
-RESULT_PATH="${APP_STORE_RESULT_PATH:-${RUNNER_TEMP:?RUNNER_TEMP is required}/ios-app-store-result.json}"
+export TESTFLIGHT_INTERNAL_GROUP_ID="$(node -p 'require("./release-manifest.json").identity.iosTestFlightInternalGroupId')"
+export TESTFLIGHT_INTERNAL_GROUP_NAME="$(node -p 'require("./release-manifest.json").identity.iosTestFlightInternalGroupName')"
+RESULT_PATH="${APP_STORE_RESULT_PATH:-${RUNNER_TEMP:?RUNNER_TEMP is required}/ios-testflight-result.json}"
 node "$MOBILE_DIR/scripts/app-store-connect.mjs" --ipa "$SUBMIT_IPA" --result "$RESULT_PATH"

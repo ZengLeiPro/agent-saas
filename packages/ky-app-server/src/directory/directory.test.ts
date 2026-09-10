@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { DIRECTORY_STALENESS_SECONDS, type DirectoryUser } from '@kaiyan/ky-app-contract';
 
-import { DIRECTORY_RATE_LIMIT, createDirectoryClient } from './client.js';
+import {
+  DIRECTORY_RATE_LIMIT,
+  DIRECTORY_REQUEST_TIMEOUT_MS,
+  createDirectoryClient,
+} from './client.js';
 import { directoryStalenessGate } from './staleness.js';
 import { MemoryDirectoryStore } from './store.js';
 import { BASE_NOW_MS, createClock, createTestConfig } from '../__tests__/helpers.js';
@@ -205,6 +209,23 @@ describe('快照与变更流消费（§3.6）', () => {
         call.includes(`/installations/${config.installationId}/credential-ack`),
       ),
     ).toBe(true);
+  });
+
+  it('平台请求默认携带有界超时信号', async () => {
+    let signal: AbortSignal | null | undefined;
+    const directory = createDirectoryClient({
+      config,
+      store,
+      baseUrl: 'https://api.test.invalid/',
+      fetch: async (_input, init) => {
+        signal = init?.signal;
+        return Response.json({ snapshotSeq: 1, users: [], groups: [] });
+      },
+    });
+
+    await directory.sync();
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(DIRECTORY_REQUEST_TIMEOUT_MS).toBe(10_000);
   });
 });
 

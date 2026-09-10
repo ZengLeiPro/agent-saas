@@ -1,5 +1,5 @@
 /** §3.7 / §9.3-13 平台事件处理。 */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createJwksClient, type JwksClient } from '../jwks/client.js';
 import { createEventsHandler, type EventsHandler } from './handler.js';
@@ -116,6 +116,28 @@ describe('jwks.* 事件', () => {
     );
     expect(ack.ack).toBe(true);
     expect(ack.verifiedKid).toBeUndefined();
+  });
+});
+
+describe('directory.changed 事件', () => {
+  it('完成幂等落地后通知托管同步器，且不改变安装状态版本', async () => {
+    const onEvent = vi.fn();
+    handler = createEventsHandler({ config, store, jwks, now: clock.now, onEvent });
+    const ack = await handler.handle(
+      event({ type: 'directory.changed', stateVersion: 0, payload: { targetSeq: 42 } }),
+    );
+
+    expect(ack.stateVersion).toBe(0);
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'directory.changed', payload: { targetSeq: 42 } }),
+      ack,
+    );
+  });
+
+  it('拒绝缺失或非法 targetSeq', async () => {
+    await expect(
+      handler.handle(event({ type: 'directory.changed', payload: { targetSeq: -1 } })),
+    ).rejects.toMatchObject({ code: 'invalid_input' });
   });
 });
 

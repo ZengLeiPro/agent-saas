@@ -46,6 +46,8 @@ export interface KyAppHealthProberOptions {
    */
   reverifyDomain?: (installationId: string) => Promise<boolean>;
   onAlert?: (alert: KyAppHealthAlert) => void;
+  /** 成功 ready 后刷新可选协议能力，用于兼容性协商。 */
+  onFeaturesObserved?: (installationId: string, features: string[]) => void;
   now?: () => number;
 }
 
@@ -78,6 +80,14 @@ function readKids(source: unknown): string[] {
     : [];
 }
 
+function readFeatures(source: unknown): string[] {
+  if (typeof source !== 'object' || source === null) return [];
+  const value = (source as { features?: unknown }).features;
+  return Array.isArray(value)
+    ? [...new Set(value.filter((item): item is string => typeof item === 'string' && item !== ''))]
+    : [];
+}
+
 export class KyAppHealthProber {
   private readonly now: () => number;
   /** installationId → 上次探测时刻，按 §4.6 的两个间隔分别节流。 */
@@ -96,8 +106,8 @@ export class KyAppHealthProber {
       digestMismatches: 0,
       domainDrifts: 0,
     };
-    const installations = await (this.options.directory.listProbeable?.()
-      ?? this.options.directory.listEnabled());
+    const installations = await (this.options.directory.listProbeable?.() ??
+      this.options.directory.listEnabled());
     for (const installation of installations) {
       if (
         this.isDue(
@@ -249,6 +259,7 @@ export class KyAppHealthProber {
           ? { error: `manifestDigest 与登记不一致（登记 ${registered}，上报 ${manifestDigest}）` }
           : {}),
       });
+      this.options.onFeaturesObserved?.(installation.installationId, readFeatures(response.json));
       return { digestMismatch };
     } catch (error) {
       await this.options.runtimeStore.recordReady({

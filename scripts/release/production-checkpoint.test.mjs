@@ -81,6 +81,22 @@ test('explicit repair proves old App bytes and fresh offline config without pret
   assert.equal(result.status, undefined);
   assert.equal(result.components.api.artifactDigest, digest);
 });
+test('explicit repair reports fully resolved credential-only rotation without accepting config drift', () => {
+  const o = observations();
+  o.expectedConfig = {
+    ...o.expectedConfig,
+    credentialVersionDigest: `sha256:${'c'.repeat(64)}`,
+  };
+  o.trusted.configIdentity = o.expectedConfig;
+  o.observedConfig = {
+    ...o.observedConfig,
+    secretRefCount: 1,
+    credentialVersionDigest: `sha256:${'d'.repeat(64)}`,
+  };
+  const result = validateRecoveryObservations(o);
+  assert.equal(result.configIdentity.status, 'drifted');
+  assert.equal(result.configIdentity.expected.digest, result.configIdentity.observed.digest);
+});
 for (const [label, change] of Object.entries({
   'config drift': (o) => {
     o.observedConfig = { ...o.observedConfig, digest: `sha256:${'c'.repeat(64)}` };

@@ -23,7 +23,7 @@ describe('actual owned work integration', () => {
     expect((await next).value).toMatchObject({ kind: 'final', response: { metadata: { remoteExecution: { state: 'unknown' } } } });
     pending.detach();
     expect(pending.retained).toBe(true);
-    pending.accept({ kind: 'final', response: { status: 'success' } });
+    pending.accept({ kind: 'final', response: { status: 'success', content: 'done' } });
     expect(late).toHaveBeenCalledOnce();
     expect(pending.retained).toBe(false);
   });

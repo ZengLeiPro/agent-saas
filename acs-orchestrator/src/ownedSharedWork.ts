@@ -23,6 +23,8 @@ export class OwnedSharedWork<T> {
     work(operation: OwnedOperation): Promise<T>;
     signal?: AbortSignal;
     timeoutMs?: number;
+    /** Independent owner budget; a short-lived HTTP waiter cannot shorten it. */
+    ownerTimeoutMs?: number;
   }): Promise<T> {
     for (;;) {
       const existing = this.leaders.get(input.key);
@@ -63,7 +65,7 @@ export class OwnedSharedWork<T> {
         leader.operation = operation;
         try {
           const result = await this.operations.context.run(operation, () =>
-            operation.phase(input.kind, () => input.work(operation), input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs));
+            operation.phase(input.kind, () => input.work(operation), input.ownerTimeoutMs ?? input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs));
           if (operation.record.resource === 'unknown') throw new OwnershipBlockedError(operation.record.operationId);
           await operation.complete('success', {
             kind: 'remote_receipt', attemptId: operation.record.attemptId, sandboxUid: operation.record.sandboxUid,

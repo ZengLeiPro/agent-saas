@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { waitForOwned, OWNED_WAIT_BUDGETS } from './ownedWait.js';
+import { waitForOwned } from './ownedWait.js';
 
 import type { AcsOrchestratorConfig } from './config.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
@@ -12,8 +12,7 @@ import {
   type RuntimeIsolationEvidence,
 } from 'server/runtime/runtimeIsolationEvidence.js';
 
-const SETUP_DEFAULT_TIMEOUT_MS = 60_000;
-const RUNTIME_BOOTSTRAP_TIMEOUT_MS = 360_000;
+import { provisionBudgets, setupCommandBudgetMs as clampTimeoutMs, RUNTIME_BOOTSTRAP_TIMEOUT_MS } from './provisionBudgets.js';
 const SETUP_MAX_OUTPUT_BYTES = 16 * 1024;
 
 type ProvisionResult = {
@@ -55,7 +54,7 @@ export class Provisioner {
       const inFlight = this.inFlightBySandbox.get(plannedRef.name);
       if (!inFlight) break;
       try {
-        const result = await waitForOwned(inFlight.promise, { phase: 'provision_follower', signal: options.signal, timeoutMs: OWNED_WAIT_BUDGETS.ensureMs });
+        const result = await waitForOwned(inFlight.promise, { phase: 'provision_follower', signal: options.signal, timeoutMs: provisionBudgets(recipe).totalMs });
         if (inFlight.recipeHash === recipeHash) {
           return {
             ...result,
@@ -80,7 +79,7 @@ export class Provisioner {
       const current = this.inFlightBySandbox.get(plannedRef.name);
       if (current?.promise === promise) this.inFlightBySandbox.delete(plannedRef.name);
     }).catch(() => undefined);
-    return await waitForOwned(promise, { phase: 'provision_caller', signal: options.signal, timeoutMs: OWNED_WAIT_BUDGETS.ensureMs });
+    return await waitForOwned(promise, { phase: 'provision_caller', signal: options.signal, timeoutMs: provisionBudgets(recipe).totalMs });
   }
 
   // 2026-08-01：stale Paused 改为直接删除退役（见 SandboxManager.retireStalePausedSandbox），
@@ -420,11 +419,6 @@ function redactProvisioningCommand(command: string): string {
   return command
     .replace(/https:\/\/([^\s/'"]+):([^@\s/'"]+)@/g, 'https://$1:***@')
     .replace(/([?&](?:token|access_token|sig|signature|X-Amz-Signature)=)[^\s'"]+/gi, '$1***');
-}
-
-function clampTimeoutMs(requested: number | undefined): number {
-  if (!requested || !Number.isFinite(requested) || requested <= 0) return SETUP_DEFAULT_TIMEOUT_MS;
-  return Math.min(Math.max(1_000, Math.floor(requested)), 600_000);
 }
 
 function truncate(value: string, maxBytes: number): string {

@@ -59,7 +59,7 @@ const STREAM_HEARTBEAT_MS = 25_000;
 // 报告 draining + inflight 供 CI 脚本轮询。SIGTERM 沿用原短路径 (5s 硬退)。
 let inflightRequests = 0;
 let draining = false;
-const effectiveInflightRequests = () => inflightRequests + executor.backgroundRecoveryCount() + ownedOperations.drainBlockers();
+const effectiveInflightRequests = () => inflightRequests + executor.backgroundRecoveryCount() + executor.unresolvedInvocationCount() + ownedOperations.drainBlockers();
 async function withInflight<T>(fn: () => Promise<T>): Promise<T> {
   inflightRequests++;
   try {
@@ -95,7 +95,7 @@ lifecycleController = new SandboxLifecycleController(
 const server = createServer((req, res) => {
   if (handleOperationDiagnostics(req, res, { operations: ownedOperations, journal: ownershipJournal,
     authorize: (request, response) => { if (authorize(request)) return true; sendJson(response, 401, { status: 'error', error: 'unauthorized' }); return false; },
-    counts: () => ({ requests: inflightRequests, recovery: executor.backgroundRecoveryCount(), draining }),
+    counts: () => ({ requests: inflightRequests, recovery: executor.backgroundRecoveryCount(), unresolvedInvocations: executor.unresolvedInvocationCount(), draining }),
   })) return;
   if (req.method === 'GET' && req.url === '/health') {
     void handleHealth(res);

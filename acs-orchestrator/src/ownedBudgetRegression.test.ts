@@ -21,7 +21,7 @@ describe('R09 R11 R18 actual shared-owner budget regression', () => {
       scope, work, timeoutMs: 20, ownerTimeoutMs: 60 * 60_000,
     };
     const caller = pool.run(input);
-    const expired = expect(caller).rejects.toMatchObject({ code: 'wait_timeout' });
+    const expired = expect(caller).rejects.toMatchObject({ code: 'wait_timed_out' });
     await vi.advanceTimersByTimeAsync(21);
     await expired;
     expect(work).toHaveBeenCalledOnce();
@@ -47,7 +47,7 @@ describe('R09 R11 R18 actual shared-owner budget regression', () => {
       scope, work, timeoutMs: 1_000, ownerTimeoutMs: 20,
     };
     const caller = pool.run(input);
-    const rejected = expect(caller).rejects.toMatchObject({ code: 'wait_timeout' });
+    const rejected = expect(caller).rejects.toMatchObject({ code: 'wait_timed_out' });
     await vi.advanceTimersByTimeAsync(21);
     expect(operations.records()[0]?.resource).toBe('unknown');
     await rejected;

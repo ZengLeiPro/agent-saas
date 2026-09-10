@@ -6,6 +6,7 @@ import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { SandboxManager } from './sandboxManager.js';
 import { AcsExecutor } from './executor.js';
 import { Provisioner } from './provision.js';
+import { provisionBudgets } from './provisionBudgets.js';
 import { OwnershipJournal } from './ownershipJournal.js';
 import { OwnedOperations } from './ownedOperations.js';
 import { OwnedSharedWork } from './ownedSharedWork.js';
@@ -38,7 +39,7 @@ export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logge
   const provision = provisioner.provision.bind(provisioner);
   provisioner.provision = (recipe, options = {}) => {
     const ref = sandboxManager.ref({ workspaceId: recipe.workspaceId, sessionId: recipe.sessionId!, sandboxScopeId: recipe.sandboxScopeId, mountSubPath: recipe.mountSubPath, sharedReadOnlySubPath: recipe.sharedReadOnlySubPath });
-    return provisionPool.run({ key: ref.name, fingerprint: digest(recipe), kind: 'provision', scope: writableScope(config, ref), signal: options.signal, work: () => provision(recipe) });
+    return provisionPool.run({ key: ref.name, fingerprint: digest(recipe), kind: 'provision', scope: writableScope(config, ref), signal: options.signal, ownerTimeoutMs: provisionBudgets(recipe).totalMs, work: () => provision(recipe) });
   };
   let refreshing = false;
   const refresh = async () => {

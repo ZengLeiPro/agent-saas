@@ -25,25 +25,15 @@ import {
 } from './invocationLeaseMonitor.js';
 import { establishInvocationCompletionFence, recoverHousekeepingLeaseClear, recoverInvocationCompletion } from './invocationCompletionRecovery.js';
 import { reconcileInvocationRestartRecovery } from './invocationRestartRecovery.js';
+import { isBackgroundShellRequest, toolNameForSandboxRunner, OriginalSandboxGoneError, errorMessage, unrefDelay, protectionStateHasObservation, addRunnerMetadata, type InvocationProtectionState } from './executorSupport.js';
+export { toolNameForSandboxRunner } from './executorSupport.js';
 interface InvocationEntry {
   controller: AbortController;
   child?: ChildProcessWithoutNullStreams;
   sandboxName?: string;
   leaseKey?: string;
   unresolved?: boolean;
-}
-interface InvocationProtectionState {
-  preserveInvocationLease: boolean;
-  backgroundMetadataObserved?: boolean;
-  observedBackgroundProtectionGeneration?: string | null;
-  originalSandboxGone?: boolean;
-  recovery?: {
-    expectedUid: string;
-    protectedUntil?: string;
-    taskIds: string[];
-    reason: string;
-    launchUncertain?: true;
-  };
+  releaseActive?: () => void;
 }
 interface AcsExecutorOptions {
   ownedOperations?: OwnedOperations;
@@ -134,6 +124,7 @@ export class AcsExecutor {
     if (options.signal?.aborted) controller.abort();
     this.invocations.set(invocationKey, { controller, sandboxName: ref.name, leaseKey });
     const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
+    this.invocations.get(invocationKey)!.releaseActive = releaseActive;
     let leasePersisted = false;
     let remoteDispatched = false;
     let sandboxUid: string | undefined;
@@ -252,14 +243,19 @@ export class AcsExecutor {
     } catch (err) {
       runError = err;
     } finally {
-      if (remoteDispatched && (!finalResponse || isRemoteUnknown(finalResponse) || leaseMonitor?.failure)) {
+      if (protectionState.remoteNeverStarted) {
+        // A synchronous spawn failure cannot have sent any bytes to a remote command.
+        remoteDispatched = false;
+        if (operation) operation.dispatched = false;
+      }
+      if (remoteDispatched && ((!finalResponse && !protectionState.runnerTerminalObserved) || isRemoteUnknown(finalResponse) || leaseMonitor?.failure)) {
         protectionState.preserveInvocationLease = true;
         finalResponse = remoteUnknownResponse('remote_unconfirmed');
         const entry = this.invocations.get(invocationKey);
         if (entry) entry.unresolved = true;
         await operation?.unknown('remote_unconfirmed').catch(() => undefined);
       }
-      if (leasePersisted && sandboxUid && backgroundShellRequested
+      if (remoteDispatched && leasePersisted && sandboxUid && backgroundShellRequested
         && !protectionState.backgroundMetadataObserved && !protectionState.recovery) {
         protectionState.preserveInvocationLease = true;
         protectionState.recovery = {
@@ -272,6 +268,7 @@ export class AcsExecutor {
         finalResponse = {
           status: 'error',
           error: '后台 Shell 启动结果不确定，ACS 正在保留 lease 并核对本地 worker。',
+          metadata: remoteUnknownResponse('background_launch_unconfirmed').metadata,
         };
         runError = undefined;
       }
@@ -337,6 +334,7 @@ export class AcsExecutor {
         finalResponse = {
           status: 'error',
           error: `ACS invocation aborted because persisted lease was lost: ${leaseFailure.message}`,
+          metadata: remoteUnknownResponse('lease_lost').metadata,
         };
         runError = undefined;
       }
@@ -353,8 +351,10 @@ export class AcsExecutor {
     return true;
   }
   backgroundRecoveryCount(): number {
-    return this.backgroundProtectionRecoveries.size + this.invocationCompletionRecoveries.size
-      + [...this.invocations.values()].filter((entry) => entry.unresolved).length;
+    return this.backgroundProtectionRecoveries.size + this.invocationCompletionRecoveries.size;
+  }
+  unresolvedInvocationCount(): number {
+    return [...this.invocations.values()].filter((entry) => entry.unresolved).length;
   }
   busySandboxNames(): Set<string> {
     return new Set(
@@ -390,6 +390,7 @@ export class AcsExecutor {
     state: InvocationProtectionState,
     ownedBackgroundTaskId: string | undefined,
   ): Promise<void> {
+    if (!isRemoteUnknown(response)) state.runnerTerminalObserved = true;
     const raw = response.metadata?.backgroundShell;
     if (!raw || typeof raw !== 'object') return;
     state.backgroundMetadataObserved = true;
@@ -794,7 +795,7 @@ export class AcsExecutor {
           if (output.kind === 'final') final = output.response;
           else if (output.chunk.type === 'completed') final = output.chunk.response;
         }
-        if (final) return final;
+        return final ?? remoteUnknownResponse('housekeeping_final_missing');
       }
       const child = this.spawnRunner(ref, input, controller);
       const closePromise = waitForClose(child);
@@ -876,7 +877,9 @@ export class AcsExecutor {
     protectionState: InvocationProtectionState,
     ownedBackgroundTaskId: string | undefined,
   ): AsyncIterable<ToolInvocationStreamChunk> {
-    const child = this.spawnRunner(ref, runnerInput, controller);
+    let child: ChildProcessWithoutNullStreams;
+    try { child = this.spawnRunner(ref, runnerInput, controller); }
+    catch (error) { protectionState.remoteNeverStarted = true; throw error; }
     const closePromise = waitForClose(child);
     this.invocations.set(invocationKey, { ...this.invocations.get(invocationKey), controller, child, sandboxName: ref.name, leaseKey });
     yield { type: 'progress', message: 'acs sandbox invocation accepted' };
@@ -919,49 +922,3 @@ export class AcsExecutor {
   }
 }
 
-function isBackgroundShellRequest(request: WireToolInvocationRequest): boolean {
-  return request.toolName === 'Shell'
-    && Boolean(request.input)
-    && typeof request.input === 'object'
-    && (request.input as Record<string, unknown>).mode === 'background';
-}
-
-export function toolNameForSandboxRunner(toolName: string): string {
-  switch (toolName) {
-    case 'Read':
-      return 'read_file';
-    case 'Write':
-      return 'write_file';
-    case 'Shell':
-      return 'run_shell';
-    default:
-      return toolName;
-  }
-}
-
-class OriginalSandboxGoneError extends Error {}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-async function unrefDelay(ms: number): Promise<void> {
-  // Recovery timers must not keep an otherwise drained process alive.
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
-}
-
-function protectionStateHasObservation(
-  state: InvocationProtectionState,
-): state is InvocationProtectionState & { observedBackgroundProtectionGeneration: string | null } {
-  return state.observedBackgroundProtectionGeneration !== undefined;
-}
-
-function addRunnerMetadata(
-  response: ToolInvocationResponse,
-  mode: 'persistent' | 'one-shot',
-): ToolInvocationResponse {
-  return { ...response, metadata: { ...(response.metadata ?? {}), acsRunner: { mode } } };
-}

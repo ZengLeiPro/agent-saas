@@ -11,6 +11,16 @@ export async function queryRemoteAttempt(input: {
   fence: RemoteAttemptFence;
   action: 'status' | 'cancel';
 }): Promise<RemoteAttemptReceipt | null> {
+  return (await queryRemoteAttemptEvidence(input))?.receipt ?? null;
+}
+
+export async function queryRemoteAttemptEvidence(input: {
+  config: AcsOrchestratorConfig;
+  kubectl: Kubectl;
+  sandboxName: string;
+  fence: RemoteAttemptFence;
+  action: 'status' | 'cancel';
+}): Promise<{ receipt: RemoteAttemptReceipt; envelope: unknown } | null> {
   const receiptKey = deriveRemoteReceiptKey(input.config.authToken, input.fence);
   const task = input.kubectl.run([
     'exec', '-i', input.sandboxName, '-c', input.config.sandboxContainerName, '--',
@@ -23,6 +33,7 @@ export async function queryRemoteAttempt(input: {
   if (result.exitCode !== 0 || result.remoteState === 'unknown') return null;
   try {
     const value = JSON.parse(result.stdout) as { protocolVersion?: unknown; receipt?: unknown };
-    return value.protocolVersion === 1 ? parseRemoteReceipt(value.receipt, input.fence, receiptKey) : null;
+    const receipt = value.protocolVersion === 1 ? parseRemoteReceipt(value.receipt, input.fence, receiptKey) : null;
+    return receipt ? { receipt, envelope: value.receipt } : null;
   } catch { return null; }
 }

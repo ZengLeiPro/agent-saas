@@ -68,7 +68,7 @@ export class OwnedSharedWork<T> {
             operation.phase(input.kind, () => input.work(operation), input.ownerTimeoutMs ?? input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs));
           if (operation.record.resource === 'unknown') throw new OwnershipBlockedError(operation.record.operationId);
           await operation.complete('success', {
-            kind: 'remote_receipt', attemptId: operation.record.attemptId, sandboxUid: operation.record.sandboxUid,
+            kind: 'coordinator_settled', attemptId: operation.record.attemptId,
           });
           return result;
         } catch (error) {

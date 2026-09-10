@@ -41,6 +41,7 @@ import { AlertDispatcher, type AcsAlert } from './alerts.js';
 import { SandboxLifecycleController } from './lifecycleController.js';
 import { handleSandboxLifecycleRoute, matchSandboxLifecycleRoute } from './sandboxLifecycleRoutes.js';
 import { DeploymentDrain } from './deploymentDrain.js';
+import { handleDwsReceiverRoute } from './dwsReceiverRoutes.js';
 const config = loadConfigFromEnv();
 
 const logger = {
@@ -101,6 +102,13 @@ const server = createServer((req, res) => {
     void handleHealth(res);
     return;
   }
+  if (handleDwsReceiverRoute(req, res, {
+    config,
+    executor,
+    authorize,
+    draining: () => draining,
+    run: withInflight,
+  })) return;
   // This response is issued before parsing/dispatching any mutation. Clients may
   // safely wait and resend this request; accepted streams and cancellation continue.
   if (draining && req.method !== 'GET' && !/^\/invocations\/[^/?#]+$/u.test(req.url ?? '')) {

@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const source = join(root, 'src', 'remote');
 const destination = join(root, 'dist', 'remote');
-const required = ['runner_daemon.py', 'attempt_supervisor.py', 'attempt_control.py', 'process_control.py', 'signed_receipts.py'];
+const required = [
+  'runner_daemon.py', 'attempt_supervisor.py', 'attempt_control.py', 'process_control.py', 'signed_receipts.py',
+  'dws_control.py', 'dws_receive_stream.py', 'dws_receiver.py', 'dws_receiver_state.py', 'dws_spool.py',
+];
 const files = readdirSync(source, { withFileTypes: true })
   .filter((entry) => entry.isFile() && entry.name.endsWith('.py') && !entry.name.startsWith('test_') && !entry.name.endsWith('_test.py'))
   .map((entry) => entry.name).sort();

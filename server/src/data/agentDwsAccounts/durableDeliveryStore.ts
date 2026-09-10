@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { randomUUID } from 'node:crypto';
 import { governanceTablePrefix, PgGovernanceMigrationRunner } from '../governance-schema/index.js';
 import type { AgentDwsAccountRecord } from './types.js';
 import { classifyDwsIntake } from '../../dws/durableEventValidation.js';
@@ -21,6 +22,24 @@ export interface PendingDwsIntake {
   sequence: number;
   bytes: Buffer;
   identity: DwsReceiverSource;
+}
+
+export interface DwsReceiverMigrationRecord {
+  migrationId: string;
+  accountId: string;
+  tenantId: string;
+  expectedRevision: number;
+  state: 'planned' | 'handoff_pending' | 'blocked' | 'activated' | 'aborted';
+  evidence: Record<string, unknown>;
+}
+
+export interface PrepareDwsReceiverMigration {
+  account: AgentDwsAccountRecord;
+  receiverId: string;
+  source: DwsReceiverSource;
+  workspace: DwsReceiverWorkspace;
+  actor: string;
+  evidence: Record<string, unknown>;
 }
 
 type Row = Record<string, unknown>;
@@ -52,6 +71,115 @@ export class PgDwsDeliveryStore {
       FROM ${this.ownersTable} WHERE tenant_id=$1 AND account_id=$2`, [tenantId, accountId]);
     const row = result.rows[0];
     return row ? { source: row.source_json, workspace: row.workspace_json, state: row.state } : null;
+  }
+
+  async prepareMigration(input: PrepareDwsReceiverMigration): Promise<DwsReceiverMigrationRecord> {
+    return this.transaction(async client => {
+      const account = await client.query(`SELECT * FROM ${this.accountsTable}
+        WHERE tenant_id=$1 AND account_id=$2 FOR UPDATE`, [input.account.tenantId, input.account.accountId]);
+      const row = account.rows[0];
+      const policy = row?.event_policy_json as Record<string, unknown> | undefined;
+      if (!row || Number(row.revision) !== input.account.revision) throw new DwsReceiverProtocolError('migration_revision_conflict');
+      if (row.status !== 'active' || row.profile_id !== input.source.profileId
+        || new Date(row.identity_updated_at as string | Date).toISOString() !== input.source.identityUpdatedAt
+        || policy?.identityCleanupPending || (policy?.deliveryProtocol !== undefined && policy.deliveryProtocol !== 'legacy')) {
+        throw new DwsReceiverProtocolError('migration_legacy_identity_required');
+      }
+      const active = await client.query(`SELECT migration_id FROM ${this.migrationsTable}
+        WHERE account_id=$1 AND state IN ('planned','handoff_pending','blocked')`, [input.account.accountId]);
+      if (active.rows[0]) throw new DwsReceiverProtocolError('migration_already_active');
+      const migrationId = `drm-${randomUUID()}`;
+      await client.query(`INSERT INTO ${this.ownersTable}
+        (account_id,tenant_id,receiver_id,source_json,workspace_json,account_revision,bridge_evidence_json)
+        VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7::jsonb)`, [input.account.accountId,
+        input.account.tenantId, input.receiverId, JSON.stringify(input.source), JSON.stringify(input.workspace),
+        input.account.revision, JSON.stringify(input.evidence)]);
+      const result = await client.query(`INSERT INTO ${this.migrationsTable}
+        (migration_id,account_id,tenant_id,expected_revision,state,evidence_json,created_by)
+        VALUES ($1,$2,$3,$4,'planned',$5::jsonb,$6) RETURNING *`, [migrationId, input.account.accountId,
+        input.account.tenantId, input.account.revision, JSON.stringify(input.evidence), input.actor]);
+      return migrationRecord(result.rows[0]);
+    });
+  }
+
+  async beginMigration(migrationId: string): Promise<DwsReceiverMigrationRecord> {
+    return this.transaction(async client => {
+      const migration = await this.lockMigration(client, migrationId);
+      if (migration.state !== 'planned') throw new DwsReceiverProtocolError('migration_not_planned');
+      const account = await client.query(`SELECT * FROM ${this.accountsTable}
+        WHERE tenant_id=$1 AND account_id=$2 FOR UPDATE`, [migration.tenant_id, migration.account_id]);
+      const row = account.rows[0];
+      const policy = row?.event_policy_json as Record<string, unknown> | undefined;
+      if (!row || Number(row.revision) !== Number(migration.expected_revision)
+        || (policy?.deliveryProtocol !== undefined && policy.deliveryProtocol !== 'legacy')) {
+        throw new DwsReceiverProtocolError('migration_revision_conflict');
+      }
+      const nextRevision = Number(row.revision) + 1;
+      await client.query(`UPDATE ${this.accountsTable}
+        SET event_policy_json=jsonb_set(COALESCE(event_policy_json,'{}'::jsonb),'{deliveryProtocol}',
+          '"handoff_pending"'::jsonb,TRUE),runtime_status='stopped',runtime_lease_owner=NULL,
+          runtime_lease_expires_at=NULL,revision=$2,updated_at=clock_timestamp()
+        WHERE account_id=$1`, [migration.account_id, nextRevision]);
+      await client.query(`UPDATE ${this.ownersTable} SET account_revision=$2,updated_at=clock_timestamp()
+        WHERE account_id=$1 AND state='registered' AND owner_id IS NULL`, [migration.account_id, nextRevision]);
+      const result = await client.query(`UPDATE ${this.migrationsTable}
+        SET state='handoff_pending',updated_at=clock_timestamp() WHERE migration_id=$1 RETURNING *`, [migrationId]);
+      return migrationRecord(result.rows[0]);
+    });
+  }
+
+  async blockMigration(migrationId: string, evidence: Record<string, unknown>): Promise<void> {
+    await this.pool.query(`UPDATE ${this.migrationsTable}
+      SET state='blocked',evidence_json=evidence_json || $2::jsonb,updated_at=clock_timestamp()
+      WHERE migration_id=$1 AND state IN ('handoff_pending','blocked')`, [migrationId, JSON.stringify(evidence)]);
+  }
+
+  async activateMigration(migrationId: string, evidence: Record<string, unknown>): Promise<DwsReceiverMigrationRecord> {
+    return this.transaction(async client => {
+      const migration = await this.lockMigration(client, migrationId);
+      if (!['handoff_pending', 'blocked'].includes(String(migration.state))) {
+        throw new DwsReceiverProtocolError('migration_not_handoff_pending');
+      }
+      const account = await client.query(`SELECT * FROM ${this.accountsTable}
+        WHERE tenant_id=$1 AND account_id=$2 FOR UPDATE`, [migration.tenant_id, migration.account_id]);
+      const owner = await client.query(`SELECT * FROM ${this.ownersTable} WHERE account_id=$1 FOR UPDATE`, [migration.account_id]);
+      const row = account.rows[0];
+      const registration = owner.rows[0];
+      if (!row || row.event_policy_json?.deliveryProtocol !== 'handoff_pending' || !registration
+        || Number(registration.account_revision) !== Number(row.revision) || registration.owner_id !== null
+        || Number(registration.received_cursor) !== 0 || Number(registration.acknowledged_cursor) !== 0
+        || registration.state !== 'registered') throw new DwsReceiverProtocolError('migration_activation_fence_failed');
+      const nextRevision = Number(row.revision) + 1;
+      await client.query(`UPDATE ${this.accountsTable}
+        SET event_policy_json=jsonb_set(event_policy_json,'{deliveryProtocol}','"durable-v1"'::jsonb,TRUE),
+          revision=$2,updated_at=clock_timestamp() WHERE account_id=$1`, [migration.account_id, nextRevision]);
+      await client.query(`UPDATE ${this.ownersTable}
+        SET account_revision=$2,bridge_evidence_json=bridge_evidence_json || $3::jsonb,updated_at=clock_timestamp()
+        WHERE account_id=$1`, [migration.account_id, nextRevision, JSON.stringify(evidence)]);
+      const result = await client.query(`UPDATE ${this.migrationsTable}
+        SET state='activated',evidence_json=evidence_json || $2::jsonb,updated_at=clock_timestamp()
+        WHERE migration_id=$1 RETURNING *`, [migrationId, JSON.stringify(evidence)]);
+      return migrationRecord(result.rows[0]);
+    });
+  }
+
+  async migration(tenantId: string, accountId: string): Promise<DwsReceiverMigrationRecord | null> {
+    const result = await this.pool.query(`SELECT * FROM ${this.migrationsTable}
+      WHERE tenant_id=$1 AND account_id=$2 ORDER BY created_at DESC LIMIT 1`, [tenantId, accountId]);
+    return result.rows[0] ? migrationRecord(result.rows[0]) : null;
+  }
+
+  async abortPlannedMigration(migrationId: string, actor: string): Promise<DwsReceiverMigrationRecord> {
+    return this.transaction(async client => {
+      const migration = await this.lockMigration(client, migrationId);
+      if (migration.state !== 'planned') throw new DwsReceiverProtocolError('migration_abort_unsafe');
+      await client.query(`DELETE FROM ${this.ownersTable} WHERE account_id=$1 AND owner_id IS NULL
+        AND state='registered' AND received_cursor=0 AND acknowledged_cursor=0`, [migration.account_id]);
+      const result = await client.query(`UPDATE ${this.migrationsTable}
+        SET state='aborted',evidence_json=evidence_json || jsonb_build_object('abortedBy',$2::text),
+          updated_at=clock_timestamp() WHERE migration_id=$1 RETURNING *`, [migrationId, actor]);
+      return migrationRecord(result.rows[0]);
+    });
   }
 
   async claim(account: AgentDwsAccountRecord, ownerId: string, purpose: 'consume' | 'stop' = 'consume'): Promise<DwsDeliverySession | null> {
@@ -149,18 +277,40 @@ export class PgDwsDeliveryStore {
       if (through > safeCursor(row.received_cursor) || through < safeCursor(row.acknowledged_cursor)) {
         throw new DwsReceiverProtocolError('uncommitted_ack_cursor');
       }
+      const uncommitted = await client.query(`SELECT 1 FROM ${this.inboxTable}
+        WHERE account_id=$1 AND receiver_id=$2 AND sequence <= $3 AND state='pending' LIMIT 1`,
+      [owner.accountId, owner.receiverId, through]);
+      if (uncommitted.rows[0]) throw new DwsReceiverProtocolError('uncommitted_ack_cursor');
       await client.query(`UPDATE ${this.ownersTable} SET acknowledged_cursor=$2,updated_at=clock_timestamp()
         WHERE account_id=$1`, [owner.accountId, through]);
     });
   }
 
   async pending(owner: DwsReceiverOwner): Promise<PendingDwsIntake[]> {
-    return this.fenced(owner, async (client, row) => {
+    return this.fenced(owner, async client => {
       const result = await client.query(`SELECT sequence,payload,account_identity_json FROM ${this.inboxTable}
-        WHERE account_id=$1 AND receiver_id=$2 AND state='pending' AND sequence <= $3
-        ORDER BY sequence LIMIT $4`, [owner.accountId, owner.receiverId, row.acknowledged_cursor, DWS_RECEIVER_LIMITS.pageRecords]);
+        WHERE account_id=$1 AND receiver_id=$2 AND state='pending'
+        ORDER BY sequence LIMIT $3`, [owner.accountId, owner.receiverId, DWS_RECEIVER_LIMITS.pageRecords]);
       return result.rows.map(item => ({ sequence: safeCursor(item.sequence), bytes: item.payload,
         identity: item.account_identity_json as DwsReceiverSource }));
+    });
+  }
+
+  async updateRuntimeStatus(owner: DwsReceiverOwner, status: AgentDwsAccountRecord['runtimeStatus'], error?: string): Promise<void> {
+    if (error !== undefined) validateCode(error);
+    await this.fenced(owner, async client => {
+      await client.query(`UPDATE ${this.accountsTable}
+        SET runtime_status=$2,last_error=$3,updated_at=clock_timestamp()
+        WHERE account_id=$1 AND revision=$4`, [owner.accountId, status, error ?? null, owner.revision]);
+    });
+  }
+
+  async markEvent(owner: DwsReceiverOwner, occurredAt: Date): Promise<void> {
+    if (!Number.isFinite(occurredAt.getTime())) throw new DwsReceiverProtocolError('invalid_event_time');
+    await this.fenced(owner, async client => {
+      await client.query(`UPDATE ${this.accountsTable}
+        SET last_event_at=GREATEST(COALESCE(last_event_at,'-infinity'::timestamptz),$2),updated_at=clock_timestamp()
+        WHERE account_id=$1 AND revision=$3`, [owner.accountId, occurredAt, owner.revision]);
     });
   }
 
@@ -169,6 +319,18 @@ export class PgDwsDeliveryStore {
       await client.query(`UPDATE ${this.inboxTable} SET state='forwarded',forwarded_at=clock_timestamp()
         WHERE account_id=$1 AND receiver_id=$2 AND sequence=$3 AND state='pending'`,
       [owner.accountId, owner.receiverId, safeCursor(sequence)]);
+    });
+  }
+
+  async ackableCursor(owner: DwsReceiverOwner): Promise<number> {
+    return this.fenced(owner, async (client, row) => {
+      const result = await client.query(`SELECT MIN(sequence)::text AS first_pending
+        FROM ${this.inboxTable} WHERE account_id=$1 AND receiver_id=$2 AND state='pending'
+          AND sequence > $3`, [owner.accountId, owner.receiverId, row.acknowledged_cursor]);
+      const firstPending = result.rows[0]?.first_pending;
+      return firstPending === null || firstPending === undefined
+        ? safeCursor(row.received_cursor)
+        : safeCursor(firstPending) - 1;
     });
   }
 
@@ -225,6 +387,12 @@ export class PgDwsDeliveryStore {
     return result.rows[0];
   }
 
+  private async lockMigration(client: pg.PoolClient, migrationId: string): Promise<Row> {
+    const result = await client.query(`SELECT * FROM ${this.migrationsTable} WHERE migration_id=$1 FOR UPDATE`, [migrationId]);
+    if (!result.rows[0]) throw new DwsReceiverProtocolError('migration_not_found', 404);
+    return result.rows[0];
+  }
+
   private assertAccount(row: Row, purpose: 'consume' | 'stop'): void {
     const policy = row.event_policy_json as Record<string, unknown> | null;
     if (!policy || !['durable-v1', 'handoff_pending'].includes(String(policy.deliveryProtocol))) {
@@ -271,6 +439,14 @@ export class PgDwsDeliveryStore {
     return { owner, source: request.source, workspace: request.workspace,
       receivedCursor: safeCursor(row.received_cursor), acknowledgedCursor: safeCursor(row.acknowledged_cursor), state: String(row.state) };
   }
+}
+
+function migrationRecord(row: Row): DwsReceiverMigrationRecord {
+  return {
+    migrationId: String(row.migration_id), accountId: String(row.account_id), tenantId: String(row.tenant_id),
+    expectedRevision: Number(row.expected_revision), state: row.state as DwsReceiverMigrationRecord['state'],
+    evidence: row.evidence_json as Record<string, unknown>,
+  };
 }
 
 function safeCursor(value: unknown): number {

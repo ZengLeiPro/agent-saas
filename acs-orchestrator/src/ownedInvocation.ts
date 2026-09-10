@@ -7,6 +7,7 @@ import type { WireToolInvocationRequest } from './protocol.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 import { isRemoteUnknown, remoteUnknownResponse } from './runnerTransport.js';
 import { OWNED_WAIT_BUDGETS } from './ownedWait.js';
+import { remoteReceiptFromResponse } from './remoteOwnership.js';
 
 interface OwnedInvocationInput {
   config: AcsOrchestratorConfig;
@@ -88,13 +89,18 @@ export async function* executeOwnedInvocation(input: OwnedInvocationInput): Asyn
           kind: 'never_dispatched', attemptId: operation.record.attemptId, sandboxUid: operation.record.sandboxUid,
         }, 'not_started');
       } else if (final) {
+        const remote = final.metadata?.remoteExecution as { state?: unknown } | undefined;
         const background = final.metadata?.backgroundShell as { protectedUntil?: unknown } | undefined;
-        const handedOff = final.status === 'success' && typeof background?.protectedUntil === 'string'
-          && Date.parse(background.protectedUntil) > Date.now();
+        const handedOff = remote?.state === 'background_owned'
+          || (final.status === 'success' && typeof background?.protectedUntil === 'string'
+            && Date.parse(background.protectedUntil) > Date.now());
+        const resource = handedOff ? 'background_owned'
+          : remote?.state === 'not_started' ? 'not_started' : 'stopped';
         await operation.complete(final.status === 'success' ? 'success' : 'failed', {
           kind: handedOff ? 'background_inventory' : 'remote_receipt', attemptId: operation.record.attemptId,
           sandboxUid: operation.record.sandboxUid,
-        }, handedOff ? 'background_owned' : 'stopped');
+          receipt: remoteReceiptFromResponse(final),
+        }, resource);
       }
     } catch {
       operation.markUncertain('finalization_unknown');

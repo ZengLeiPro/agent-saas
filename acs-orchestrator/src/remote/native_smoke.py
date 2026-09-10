@@ -10,6 +10,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from process_control import enable_subreaper, reap_children  # noqa: E402
 from signed_receipts import receipt_key, secure_control_process, sign_document, verify_document  # noqa: E402
+from dws_receiver_state import verified_receiver_handoff  # noqa: E402,F401
 
 
 def main() -> None:

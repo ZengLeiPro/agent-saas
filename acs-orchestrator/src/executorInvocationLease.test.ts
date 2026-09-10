@@ -89,8 +89,9 @@ describe('AcsExecutor persisted invocation lease, activity and ownership', () =>
         status: 'error',
         error: expect.stringContaining(expectedError),
       });
-      expect(registry.isBusy(ref.name)).toBe(false);
-      // A failed/pending renewal may complete late, so leave its lease to expire; do not race a clear.
+      expect(registry.isBusy(ref.name)).toBe(true);
+      expect(executor.unresolvedInvocationCount()).toBe(1);
+      // A failed/pending renewal may complete late, so retain both local and persisted ownership.
       expect(setActiveInvocationLease).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();

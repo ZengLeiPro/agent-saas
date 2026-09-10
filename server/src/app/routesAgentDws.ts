@@ -20,6 +20,7 @@ export function registerAgentDwsRoutes(app: Express, runtime: AppRuntime): void 
       isOrgAgentRuntimeV2Ready: runtime.isOrgAgentRuntimeV2Ready,
       authFlowService: runtime.agentDwsAuthFlowService,
       eventGateway: runtime.dwsPersonalEventGateway,
+      receiverMigrationService: runtime.dwsReceiverMigrationService,
       auditStore: runtime.governanceAuditStore,
       onContextPolicyUpdated: runtime.agentDwsContextPolicyUpdated,
       onGroupBindingUpdated: runtime.agentDwsGroupBindingUpdated,

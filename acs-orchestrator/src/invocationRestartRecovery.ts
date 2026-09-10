@@ -58,6 +58,14 @@ export async function reconcileInvocationRestartRecovery(
     // legacy executing lease) stopped. Preserve those owners for exact reconciliation.
     const backgroundCandidates = valid.filter((lease) => lease.state === 'background_pending');
     const unresolvedForeground = valid.some((lease) => lease.state === 'executing');
+    if (unresolvedForeground) {
+      sandboxFailed = true;
+      input.logger.warn(`invocation_restart_foreground_unknown_retained sandbox=${sandbox.name}`);
+    }
+    if (malformed.length > 0) {
+      sandboxFailed = true;
+      input.logger.warn(`invocation_restart_unknown_retained sandbox=${sandbox.name} count=${malformed.length}`);
+    }
 
     for (const lease of completionPending) {
       try {
@@ -75,7 +83,7 @@ export async function reconcileInvocationRestartRecovery(
     let unresolvedLease = unresolvedForeground || malformed.length > 0 || backgroundCandidates.some(
       (lease) => lease.state === 'background_pending' && !leaseExpired(lease, nowMs),
     );
-    if (backgroundCandidates.length > 0 || malformed.length > 0) {
+    if (backgroundCandidates.length > 0) {
       try {
         const ref = sandboxRef(input.sandboxManager, sandbox);
         if (!sandbox.uid) throw new Error('Sandbox lease snapshot 缺少 UID');
@@ -103,11 +111,6 @@ export async function reconcileInvocationRestartRecovery(
             continue;
           }
           await persistAndComplete(input, sandbox.name, sandbox.uid, lease.invocationKey, recoveredAt);
-        }
-        if (malformed.length > 0) {
-          // Empty background inventory says nothing about malformed/future foreground
-          // ownership. Keep the exact annotation and report a truthful blocker.
-          input.logger.warn(`invocation_restart_unknown_retained sandbox=${sandbox.name} count=${malformed.length}`);
         }
       } catch (err) {
         unresolvedLease = true;

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { governanceV47DwsDurableReceiverStatements } from '../governance-schema/v47DwsDurableReceiverMigration.js';
 import { PgDwsDeliveryStore } from './durableDeliveryStore.js';
 import type { AgentDwsAccountRecord } from './types.js';
-import type { DwsSpoolFrame } from '../../runtime/dwsReceiverProtocol.js';
+import type { DwsReceiverSource, DwsSpoolFrame } from '../../runtime/dwsReceiverProtocol.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (databaseUrl && !new URL(databaseUrl).pathname.toLowerCase().includes('test')) {
@@ -14,7 +14,7 @@ if (databaseUrl && !new URL(databaseUrl).pathname.toLowerCase().includes('test')
 const prefix = `drx_test_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
 const identity = '2026-09-10T00:00:00.000Z';
 const account = { accountId: 'fixture-account', tenantId: 'fixture-tenant', revision: 3 } as AgentDwsAccountRecord;
-const source = { accountId: account.accountId, receiverId: 'drx-fixture', profileId: 'corp:user',
+const source: DwsReceiverSource = { accountId: account.accountId, receiverId: 'drx-fixture', profileId: 'corp:user',
   identityUpdatedAt: identity, eventKinds: ['at_me'] };
 const workspace = { id: 'fixture-ws', sessionId: 'fixture-session', sandboxScopeId: 'fixture-scope', mountSubPath: 'fixtures/dws' };
 
@@ -36,13 +36,17 @@ describe.skipIf(!databaseUrl)('PgDwsDeliveryStore real database contracts', () =
     // Create only this test's account fixture and execute the actual additive DDL.
     await pool.query(`CREATE TABLE ${prefix}_agent_dws_accounts (
       account_id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,revision BIGINT NOT NULL,
-      status TEXT NOT NULL,profile_id TEXT,identity_updated_at TIMESTAMPTZ,event_policy_json JSONB)`);
+      status TEXT NOT NULL,profile_id TEXT,identity_updated_at TIMESTAMPTZ,event_policy_json JSONB,
+      runtime_status TEXT NOT NULL DEFAULT 'stopped',runtime_lease_owner TEXT,
+      runtime_lease_expires_at TIMESTAMPTZ,updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())`);
     for (const sql of governanceV47DwsDurableReceiverStatements(prefix)) await pool.query(sql);
   });
 
   beforeEach(async () => {
     await pool.query(`TRUNCATE ${store.accountsTable} CASCADE`);
-    await pool.query(`INSERT INTO ${store.accountsTable} VALUES ($1,$2,3,'active','corp:user',$3,'{"deliveryProtocol":"durable-v1"}')`,
+    await pool.query(`INSERT INTO ${store.accountsTable}
+      (account_id,tenant_id,revision,status,profile_id,identity_updated_at,event_policy_json)
+      VALUES ($1,$2,3,'active','corp:user',$3,'{"deliveryProtocol":"durable-v1"}')`,
     [account.accountId, account.tenantId, identity]);
     await pool.query(`INSERT INTO ${store.ownersTable}
       (account_id,tenant_id,receiver_id,source_json,workspace_json,account_revision,bridge_evidence_json)
@@ -65,6 +69,44 @@ describe.skipIf(!databaseUrl)('PgDwsDeliveryStore real database contracts', () =
     expect((await store.claim(account, 'worker-c'))!.owner.epoch).toBe('2');
   });
 
+  it('keeps legacy active until handoff and activates only through the fenced migration transaction', async () => {
+    await pool.query(`TRUNCATE ${store.accountsTable} CASCADE`);
+    await pool.query(`INSERT INTO ${store.accountsTable}
+      (account_id,tenant_id,revision,status,profile_id,identity_updated_at,event_policy_json)
+      VALUES ($1,$2,3,'active','corp:user',$3,'{}')`, [account.accountId, account.tenantId, identity]);
+    const planned = await store.prepareMigration({ account, receiverId: 'drx-fixture', source, workspace,
+      actor: 'platform-admin', evidence: { legacyInvocationId: 'legacy-one' } });
+    expect(planned.state).toBe('planned');
+    let persisted = await pool.query(`SELECT revision,event_policy_json FROM ${store.accountsTable}`);
+    expect(persisted.rows[0]).toMatchObject({ revision: '3', event_policy_json: {} });
+
+    expect((await store.beginMigration(planned.migrationId)).state).toBe('handoff_pending');
+    persisted = await pool.query(`SELECT revision,event_policy_json FROM ${store.accountsTable}`);
+    expect(persisted.rows[0]).toMatchObject({ revision: '4', event_policy_json: { deliveryProtocol: 'handoff_pending' } });
+    await expect(store.abortPlannedMigration(planned.migrationId, 'platform-admin')).rejects.toThrow('migration_abort_unsafe');
+
+    expect((await store.activateMigration(planned.migrationId, { legacyStopProof: { provenance: 'journal' } })).state)
+      .toBe('activated');
+    persisted = await pool.query(`SELECT a.revision,a.event_policy_json,r.account_revision,r.bridge_evidence_json
+      FROM ${store.accountsTable} a JOIN ${store.ownersTable} r USING(account_id)`);
+    expect(persisted.rows[0]).toMatchObject({ revision: '5', account_revision: '5',
+      event_policy_json: { deliveryProtocol: 'durable-v1' },
+      bridge_evidence_json: { legacyInvocationId: 'legacy-one', legacyStopProof: { provenance: 'journal' } } });
+  });
+
+  it('aborts only a pre-handoff plan without changing the legacy account', async () => {
+    await pool.query(`TRUNCATE ${store.accountsTable} CASCADE`);
+    await pool.query(`INSERT INTO ${store.accountsTable}
+      (account_id,tenant_id,revision,status,profile_id,identity_updated_at,event_policy_json)
+      VALUES ($1,$2,3,'active','corp:user',$3,'{}')`, [account.accountId, account.tenantId, identity]);
+    const planned = await store.prepareMigration({ account, receiverId: 'drx-fixture', source, workspace,
+      actor: 'platform-admin', evidence: {} });
+    expect((await store.abortPlannedMigration(planned.migrationId, 'platform-admin')).state).toBe('aborted');
+    expect((await pool.query(`SELECT COUNT(*)::int AS count FROM ${store.ownersTable}`)).rows[0].count).toBe(0);
+    expect((await pool.query(`SELECT revision,event_policy_json FROM ${store.accountsTable}`)).rows[0])
+      .toMatchObject({ revision: '3', event_policy_json: {} });
+  });
+
   it('an expired owner cannot renew or persist after a successor claim', async () => {
     const old = (await store.claim(account, 'old'))!.owner;
     await pool.query(`UPDATE ${store.ownersTable} SET lease_expires_at=clock_timestamp()-INTERVAL '1 second'`);
@@ -79,13 +121,15 @@ describe.skipIf(!databaseUrl)('PgDwsDeliveryStore real database contracts', () =
     const owner = (await store.claim(account, 'consumer'))!.owner;
     const first = frame(1);
     expect(await store.accept(owner, [first])).toBe(1);
-    expect(await store.pending(owner)).toEqual([]);
+    expect(await store.pending(owner)).toHaveLength(1);
+    expect(await store.ackableCursor(owner)).toBe(0);
+    await expect(store.acknowledged(owner, 1)).rejects.toThrow('uncommitted_ack_cursor');
     expect(await store.accept(owner, [first])).toBe(1);
     const count = await pool.query(`SELECT COUNT(*)::int AS count FROM ${store.inboxTable}`);
     expect(count.rows[0].count).toBe(1);
-    await store.acknowledged(owner, 1);
-    expect(await store.pending(owner)).toHaveLength(1);
     await store.forwarded(owner, 1);
+    expect(await store.ackableCursor(owner)).toBe(1);
+    await store.acknowledged(owner, 1);
     expect(await store.pending(owner)).toEqual([]);
   });
 
@@ -147,8 +191,8 @@ describe.skipIf(!databaseUrl)('PgDwsDeliveryStore real database contracts', () =
       (account_id,receiver_id,sequence,tenant_id,account_revision,account_identity_json,payload,
        payload_sha256,received_at_ms,state,reason_code)
       SELECT $1,'drx-retained',n,$2,3,'{}','x'::bytea,repeat('a',64),1,'dead_letter','fixture'
-      FROM generate_series(1,100000) AS n`, [account.accountId, account.tenantId]);
+      FROM generate_series(1,10000) AS n`, [account.accountId, account.tenantId]);
     await expect(store.accept(owner, [frame(1)])).rejects.toThrow('durable_inbox_quota_exhausted');
-    expect((await pool.query(`SELECT COUNT(*)::int AS count FROM ${store.inboxTable}`)).rows[0].count).toBe(100000);
+    expect((await pool.query(`SELECT COUNT(*)::int AS count FROM ${store.inboxTable}`)).rows[0].count).toBe(10000);
   }, 30_000);
 });

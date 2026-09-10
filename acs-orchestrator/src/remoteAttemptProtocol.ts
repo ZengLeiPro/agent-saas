@@ -124,7 +124,7 @@ function validBackground(value: unknown): value is NonNullable<RemoteAttemptRece
         && typeof task.taskId === 'string' && /^shell-bg-[A-Za-z0-9_-]{1,160}$/.test(task.taskId));
   }
   return value.kind === 'dws' && typeof value.receiverId === 'string'
-    && /^dws-rx-[A-Za-z0-9_-]{1,160}$/.test(value.receiverId) && processIdentity(value.source);
+    && /^drx-[A-Za-z0-9-]{1,100}$/.test(value.receiverId) && processIdentity(value.source);
 }
 
 /** An unsigned, malformed or foreign document can only retain a blocker. */

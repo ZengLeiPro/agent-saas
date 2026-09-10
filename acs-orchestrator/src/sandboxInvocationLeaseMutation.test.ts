@@ -123,15 +123,11 @@ describe('Sandbox invocation completion and background protection mutation fence
 
     await expect(manager.clearExpiredInvocationLeases(
       'as-pending', new Date('2026-08-30T00:05:00.000Z'),
-    )).resolves.toEqual({ active: true, removed: 1 });
-    const patchArgs = (run.mock.calls as unknown[][])[0]![0] as string[];
-    const patch = JSON.parse(patchArgs[4]!) as Array<{ path: string }>;
-    expect(patch.some((entry) => entry.path.includes(executing.replaceAll('/', '~1')))).toBe(true);
-    expect(patch.some((entry) => entry.path.includes(background.replaceAll('/', '~1')))).toBe(false);
-    expect(patch.some((entry) => entry.path.includes(completion.replaceAll('/', '~1')))).toBe(false);
+    )).resolves.toEqual({ active: true, removed: 0 });
+    expect(run).not.toHaveBeenCalled();
   });
 
-  it('batch-sweeps expired invocation leases with UID/resourceVersion conflict retry', async () => {
+  it('does not sweep expired or malformed owners even when another lease remains active', async () => {
     const expiredA = activeInvocationLeaseAnnotationKey('expired-a');
     const expiredB = activeInvocationLeaseAnnotationKey('expired-b');
     const active = activeInvocationLeaseAnnotationKey('active');
@@ -159,23 +155,14 @@ describe('Sandbox invocation completion and background protection mutation fence
 
     await expect(manager.clearExpiredInvocationLeases(
       'as-sweep', new Date('2026-08-30T00:05:00.000Z'),
-    )).resolves.toEqual({ active: true, removed: 2 });
-    expect(run).toHaveBeenCalledTimes(2);
-    const retryPatch = JSON.parse(run.mock.calls[1]![0][4]!) as Array<{ op: string; path: string; value?: unknown }>;
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(retryPatch).toEqual(expect.arrayContaining([
-      { op: 'test', path: '/metadata/uid', value: 'uid-1' },
-      { op: 'test', path: '/metadata/resourceVersion', value: 'rv-2' },
-      { op: 'remove', path: expect.stringContaining(expiredA.replaceAll('/', '~1')) },
-      { op: 'remove', path: expect.stringContaining(expiredB.replaceAll('/', '~1')) },
-    ]));
-    expect(retryPatch.some((entry) => entry.op === 'add')).toBe(false);
+    )).resolves.toEqual({ active: true, removed: 0 });
+    expect(run).not.toHaveBeenCalled();
 
     await expect(manager.clearExpiredInvocationLeases(
       'as-sweep', new Date('2026-08-30T00:05:00.000Z'),
     )).resolves.toEqual({ active: true, removed: 0 });
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(getStatus).toHaveBeenCalledTimes(3);
+    expect(run).not.toHaveBeenCalled();
+    expect(getStatus).toHaveBeenCalledTimes(2);
   });
 
   it('rejects protection writes and lease sweeps when the expected Sandbox UID was replaced', async () => {

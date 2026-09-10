@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { AcsOrchestratorConfig } from './config.js';
 import type { SandboxRef } from './sandboxManagerTypes.js';
+import { parseRemoteFence, type RemoteAttemptFence } from './remoteAttemptProtocol.js';
 
 export const OWNERSHIP_PROTOCOL = 1 as const;
 export const OWNERSHIP_JOURNAL_NAME = 'acs-operation-ownership-v1';
@@ -34,6 +35,10 @@ export interface OwnershipRecord {
   updatedAt: string;
   sandboxUid?: string;
   phaseDeadlineAt?: string;
+  /** An exact control-plane fence, persisted before dispatch. Contains no key. */
+  remoteFence?: RemoteAttemptFence;
+  /** A coordinator cannot release or forget its independently owned child work. */
+  parentOperationId?: string;
   /** Fixed diagnostic code, not raw exceptions, commands, output or environment. */
   reasonCode?: string;
 }
@@ -68,7 +73,7 @@ export function writableScope(config: AcsOrchestratorConfig, ref: SandboxRef): W
 }
 
 export function normalizeWritablePath(value: string): string {
-  if (!value || value.startsWith('/') || value.includes('\\') || value.includes('\0')) throw new OwnershipUnavailableError('Invalid writable scope');
+  if (!value || value.startsWith('/') || value.includes('\\') || /[\x00-\x1f\x7f]/.test(value)) throw new OwnershipUnavailableError('Invalid writable scope');
   const parts = value.split('/');
   if (parts.some((part) => part === '..')) throw new OwnershipUnavailableError('Invalid writable scope');
   const normalized = parts.filter((part) => part && part !== '.').join('/');
@@ -87,6 +92,10 @@ export function ownershipIsTerminal(record: OwnershipRecord): boolean {
   return record.resource === 'stopped' || record.resource === 'not_started';
 }
 
+function validIdentifier(value: unknown, maximum = 512): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximum && !/[\x00-\x1f\x7f]/.test(value);
+}
+
 export function validateOwnershipRecords(value: unknown): OwnershipRecord[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new OwnershipUnavailableError();
   const envelope = value as { protocolVersion?: unknown; records?: unknown };
@@ -100,22 +109,40 @@ export function validateOwnershipRecords(value: unknown): OwnershipRecord[] {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new OwnershipUnavailableError();
     const record = raw as OwnershipRecord;
     const strings = [record.operationId, record.attemptId, record.invocationId, record.ownerId, record.phase];
-    if (record.protocolVersion !== 1 || strings.some((part) => typeof part !== 'string' || part.length === 0 || part.length > 512)
+    if (record.protocolVersion !== 1 || strings.some((part) => !validIdentifier(part))
       || !Number.isSafeInteger(record.revision) || record.revision < 0
       || !resources.includes(record.resource) || !outcomes.includes(record.outcome) || !kinds.includes(record.kind)
       || !Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))
       || !record.scope || typeof record.scope !== 'object' || Array.isArray(record.scope)) throw new OwnershipUnavailableError();
     for (const key of ['storageId', 'mountSubPath', 'sandboxName', 'workspaceId', 'sessionId', 'sandboxScopeId'] as const) {
-      if (typeof record.scope[key] !== 'string' || record.scope[key].length === 0 || record.scope[key].length > 1024) throw new OwnershipUnavailableError();
+      if (!validIdentifier(record.scope[key], 1024)) throw new OwnershipUnavailableError();
     }
     normalizeWritablePath(record.scope.mountSubPath);
     if (ids.has(record.operationId)) throw new OwnershipUnavailableError();
     ids.add(record.operationId);
     if (record.reasonCode !== undefined && !/^[a-z0-9_:-]{1,128}$/.test(record.reasonCode)) throw new OwnershipUnavailableError();
-    if (record.sandboxUid !== undefined && (typeof record.sandboxUid !== 'string' || record.sandboxUid.length > 128)) throw new OwnershipUnavailableError();
+    if (record.sandboxUid !== undefined && !validIdentifier(record.sandboxUid, 128)) throw new OwnershipUnavailableError();
     if (record.phaseDeadlineAt !== undefined && !Number.isFinite(Date.parse(record.phaseDeadlineAt))) throw new OwnershipUnavailableError();
-    return record;
+    if (record.parentOperationId !== undefined && (!validIdentifier(record.parentOperationId) || record.parentOperationId === record.operationId)) throw new OwnershipUnavailableError();
+    if (record.remoteFence !== undefined) {
+      const fence = parseRemoteFence(record.remoteFence);
+      if (!fence || fence.operationId !== record.operationId || fence.attemptId !== record.attemptId
+        || fence.ownerId !== record.ownerId || fence.sandboxUid !== record.sandboxUid) throw new OwnershipUnavailableError();
+    }
+    return structuredClone(record);
   });
+  const byId = new Map(records.map((record) => [record.operationId, record]));
+  for (const record of records) {
+    const ancestors = new Set([record.operationId]);
+    let parent = record.parentOperationId;
+    while (parent) {
+      if (ancestors.has(parent)) throw new OwnershipUnavailableError('Ownership ancestry is cyclic');
+      ancestors.add(parent);
+      const item = byId.get(parent);
+      if (item && item.ownerId !== record.ownerId) throw new OwnershipUnavailableError('Ownership ancestry crosses owner generations');
+      parent = item?.parentOperationId;
+    }
+  }
   if (Buffer.byteLength(JSON.stringify(value)) > OWNERSHIP_LIMITS.bytes) throw new OwnershipUnavailableError('Ownership journal exceeds its byte budget');
   return records;
 }

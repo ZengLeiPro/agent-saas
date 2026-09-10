@@ -161,9 +161,9 @@ export function PersonalDebugModeSetting({ className = '', title = '显示详细
   const platformAllowed = user?.tenantFeatures?.debugModeAllowed === true;
   const organizationEnabled = user?.tenantFeatures?.debugModeEnabled === true;
   const unavailableGuidance = !platformAllowed
-    ? '需要平台管理员先在“平台管理 → 组织 → 组织配置”开启“调试模式授权”，再由组织管理员在“组织管理 → 功能与配额”开启“成员调试模式”。'
+    ? '需要平台管理员先在“平台运营 → 组织 → 右上角组织配置 → 选择目标组织并进入配置 → 授权与配额”开启“调试模式授权”，再由组织管理员在“组织管理 → 功能与配额 → 功能开关”开启“成员调试模式”。'
     : !organizationEnabled
-      ? '平台已授权；还需要组织管理员在“组织管理 → 功能与配额”开启“成员调试模式”。'
+      ? '平台已授权；还需要组织管理员在“组织管理 → 功能与配额 → 功能开关”开启“成员调试模式”。'
       : null;
 
   return (

@@ -92,10 +92,12 @@ export function OrganizationScopeBanner({
   route,
   dirtyController,
   settingsMode = false,
+  className,
 }: {
   route: GovernanceRouteState;
   dirtyController?: SettingsDirtyController;
   settingsMode?: boolean;
+  className?: string;
 }) {
   const { user, isPlatformAdmin } = useAuth();
   const { tenants } = useTenants();
@@ -107,7 +109,7 @@ export function OrganizationScopeBanner({
 
   if (!isPlatformAdmin) return null;
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-300/70 bg-amber-50 px-4 py-2 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+    <div className={cn("flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-300/70 bg-amber-50 px-4 py-2 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100", className)}>
       <EntityIcons.admin className="size-4 shrink-0" />
       <span className="font-medium">正在以平台管理员身份管理：{current?.name ?? currentId ?? "请选择组织"}</span>
       <AdminSelect

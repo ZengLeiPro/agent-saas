@@ -6,7 +6,11 @@ import type { ManagementSettingsAccess } from '@/hooks/useManagementSettingsAcce
 import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
 import { ManagementShell } from './ManagementShell';
 
-vi.mock('@/components/GovernanceConsole', () => ({ OrganizationScopeBanner: () => null }));
+vi.mock('@/components/GovernanceConsole', () => ({
+  OrganizationScopeBanner: ({ className }: { className?: string }) => (
+    <div className={className} data-testid="organization-scope-banner" />
+  ),
+}));
 vi.mock('@/lib/urlSync', () => ({ navigateGovernance: vi.fn() }));
 
 const access = {
@@ -75,6 +79,8 @@ describe('ManagementShell 统一布局', () => {
       </ManagementShell>,
     );
     expect(screen.getAllByRole('tab')).toHaveLength(4);
+    expect(screen.getByTestId('organization-scope-banner').className).toContain('mb-4');
+    expect(screen.getByTestId('organization-scope-banner').className).toContain('rounded-lg');
     fireEvent.click(screen.getByRole('tab', { name: 'MCP 服务' }));
   });
 });

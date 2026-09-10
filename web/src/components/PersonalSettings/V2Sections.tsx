@@ -90,13 +90,19 @@ export function MyPermissionsSection() {
 
 export function FilesStorageSection({ renderFiles }: { renderFiles?: () => ReactNode }) {
   return (
-    <Tabs defaultValue="files" className="flex h-full min-h-0 flex-col">
-      <TabsList className={PAGE_TABS_LIST_CLASS} aria-label="文件与存储">
-        <TabsTrigger value="files" className={PAGE_TAB_TRIGGER_CLASS}>文件</TabsTrigger>
-        <TabsTrigger value="storage" className={PAGE_TAB_TRIGGER_CLASS}>存储用量</TabsTrigger>
-      </TabsList>
-      <TabsContent value="files" className="mt-4 min-h-0 flex-1">{renderFiles?.() ?? null}</TabsContent>
-      <TabsContent value="storage" className="mt-4 min-h-0 flex-1"><AttachmentStorageSection /></TabsContent>
-    </Tabs>
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+      <SettingsPanelHeader
+        title="文件与存储"
+        description="浏览个人文件、查看存储用量并管理附件。"
+      />
+      <Tabs defaultValue="files" className="flex min-h-0 flex-1 flex-col">
+        <TabsList className={PAGE_TABS_LIST_CLASS} aria-label="文件与存储">
+          <TabsTrigger value="files" className={PAGE_TAB_TRIGGER_CLASS}>文件</TabsTrigger>
+          <TabsTrigger value="storage" className={PAGE_TAB_TRIGGER_CLASS}>存储用量</TabsTrigger>
+        </TabsList>
+        <TabsContent value="files" className="mt-4 min-h-0 flex-1">{renderFiles?.() ?? null}</TabsContent>
+        <TabsContent value="storage" className="mt-4 min-h-0 flex-1"><AttachmentStorageSection /></TabsContent>
+      </Tabs>
+    </div>
   );
 }

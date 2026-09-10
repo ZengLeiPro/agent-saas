@@ -184,6 +184,7 @@ export function ManagementShell({
               route={route}
               dirtyController={dirtyController}
               settingsMode={page.surface === 'config'}
+              className={page.tabs?.length ? 'mb-4 rounded-lg border' : undefined}
             />
           ) : null}
           <ManagementTabs route={route} />

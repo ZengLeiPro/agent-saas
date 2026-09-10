@@ -108,11 +108,12 @@ evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜
 单文件制品。升级使用固定 Staging SSH 主机指纹和当前 Runner 的临时 `/32` 入站授权，发布到不可变
 版本目录并原子切换；启动或 capability 校验失败时恢复上一版本。Writer 就绪后才能生成发布证据。
 
-`部署测试环境` 被人工触发后，Writer 保障阶段先完成上述 capability 检查或按需升级，随后
-`prepare-evidence` 锁定 dispatch 的完整 SHA，限时等待同 SHA 的 `main` push `App CI / Deploy`
-成功，验证唯一关联的已合并 GitHub PR，并使用与 ACS
-Workflow 相同的分类器决定 `ACS Impact Gate` 是否必要；必要时等待并验证同 SHA 的 ACS push run。
-`acs-sandbox.yml` 的 `main` push 顶层不使用 `paths`；`.github/scripts/acs-classify.sh` 是唯一影响
+`测试环境部署` 被人工触发后，Writer 保障阶段先完成 capability 检查或按需升级，随后
+`prepare-evidence` 锁定 dispatch 的完整 SHA，限时等待同 SHA 的 `main` push `CI` 成功，
+验证唯一关联的已合并 GitHub PR。分页读取同一个 CI run 的 latest jobs，要求
+`Build & Check` 与 `ACS Impact Gate` 都成功，并回读 run/attempt 防止证据采集期间重跑。
+不再读取任何独立 ACS workflow run。`CI` 的 `main` push 顶层不使用 `paths`；
+`.github/scripts/acs-classify.sh` 是唯一影响
 分类真源，并以 `.github/acs-bundle-inputs.txt` 作为制品输入契约。契约测试会现场生成三个
 Orchestrator entry 的 esbuild metafile，将输入规范化为仓库相对路径并与 `git ls-files` 取交集，
 逐项证明 `acs-orchestrator` 的真实生产源码、被引用的 `server/src/**`、`shared/src/**` 等全部仓库
@@ -200,7 +201,7 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   使用 `production` Environment，实际部署 job 使用 `staging` Environment；若缺少
   `RELEASE_EVIDENCE_WRITE_TOKEN` 或证据不一致，必须在构建 RC 前 fail closed，不得回退为人工伪造、
   复用只读 Token 或跳过生产基线读回。
-- `ci.yml` 与 `acs-sandbox.yml` 保留 `workflow_dispatch` 人工兼容入口且只接受
+- `ci.yml` 继续保留 `workflow_dispatch` 人工兼容入口且只接受
   `refs/heads/main`。App 入口已收窄为显式确认的 Web-only publish：计划必须证明生产 active ECS SHA
   到目标 SHA 不含 Server/API/Runtime Worker 影响；只要需要 ECS 变更或分类无法证明，就会在任何
   生产 mutation 前 fail closed，并要求走 RC + `promote-release.yml`。旧 `deploy-ecs` job 已从工作流移除，历史回滚脚本仅保留在 `scripts/release/fixtures/legacy-ecs-workflow.yml` 供恢复回归测试；
@@ -211,11 +212,15 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   原先是 present 还是 missing；present 内容和对象 headers/metadata 同时进入事务镜像，内容还要与 recovery Web 基线按字节核对。最终现场读回在 Web-only 路径中还必须先证明未发布的 API、Runtime Worker、ACS 与 mutation 前冻结 identity 完全一致；写入后 confirmed readback 再按忽略 `deployedAt` 的完整四组件矩阵与现场比较，不能只验证 Web。identity
   写入或确认读回失败时，必须恢复 present 键、删除事务新增的 missing 键，并恢复 recovery Web 与原
   identity；随后逐键证明 OSS/recovery 的内容、对象 metadata 或 404 状态，再完成权威 Production 读回。hash assets
-  先生成最终传输字节，再由独立 helper 只创建或精确复用；写入由仓库锁定的 `ali-oss` SDK 读取 runner 上权限收紧的临时凭据文件，使用规范化 `oss-<region>` endpoint，并发送真实 `x-oss-forbid-overwrite:true` 条件请求；固定 ossutil 2.1.2 只运行安装后已探测支持的 stat，不承担条件写，字节回读由同一 SDK 的 GET（不带 Accept-Encoding）完成——ossutil/aliyun `cp` 会对 `Content-Encoding: gzip` 对象透明解压并因 CRC 不一致失败；只有 SDK 精确返回 HTTP 409 `FileAlreadyExists` 才进入复用证明，并发同名创建或既有对象的字节/headers 漂移会在固定键 mutation 前 fail closed；recovery Web 的 `assets/**` 与 `workbox-*.js` 也会在复制和 symlink 切换前逐字节验证同名共享文件，冲突时保持 current/previous 不变且不写 `activated`。补偿或证明不完整则进入人工处置。ACS 通道在初始检查和实际生产
-  部署 mutation 前都会校验 latest main；即使 exact-SHA ACR build record 已进入 `PENDING`/`BUILDING`，
-  main 前进也会让旧 dispatch 在部署前 fail closed。两个入口都不能 dispatch 任意旧 commit/tag，也不生成不可变 RC、
-  Staging E2E、完整 Promotion receipt 或跨组件物理收敛证据。ACS 的 `main` push 只分类/测试，非 `main` dispatch 也不进入
-  `build-deploy`；push/PR 均只执行 CI，不自动部署生产。
+  先生成最终传输字节，再由独立 helper 只创建或精确复用；写入由仓库锁定的 `ali-oss` SDK 读取 runner 上权限收紧的临时凭据文件，使用规范化 `oss-<region>` endpoint，并发送真实 `x-oss-forbid-overwrite:true` 条件请求；固定 ossutil 2.1.2 只运行安装后已探测支持的 stat，不承担条件写，字节回读由同一 SDK 的 GET（不带 Accept-Encoding）完成——ossutil/aliyun `cp` 会对 `Content-Encoding: gzip` 对象透明解压并因 CRC 不一致失败；只有 SDK 精确返回 HTTP 409 `FileAlreadyExists` 才进入复用证明，并发同名创建或既有对象的字节/headers 漂移会在固定键 mutation 前 fail closed；recovery Web 的 `assets/**` 与 `workbox-*.js` 也会在复制和 symlink 切换前逐字节验证同名共享文件，冲突时保持 current/previous 不变且不写 `activated`。补偿或证明不完整则进入人工处置。
+  此兼容入口不生成不可变 RC、Staging E2E 或完整 Promotion receipt；push/PR 均只执行 CI，不自动部署生产。
+  独立 ACS Manual Deploy 已退役，ACS 仅经不可变 RC 晋级。
+- `生产环境发布` 的 `operation` 默认 `promote`，必须填写有效 `release_id` 和原因。
+  `web-recovery-audit` / `web-recovery-repair` 使用独立 `web_recovery` job，RC ID 必须留空，
+  不得混用 RC 的 `recovery_mode=repair`。冷备 repair 必须提交已审阅的 `expected_plan_digest`
+  并勾选 `confirm_recovery_only`。原 audit/repair 的生产锁、固定 SSH 身份、现场重读、失败补偿及审计附件不变。
+- 四个长期入口由 `config/github-workflow-inventory.json` 约束。绿色 main CI 才停用清单内已退役注册项，
+  以 ID、文件路径、显示名称三重核对；保留历史运行与发布证据，不删除其他分支、不取消正在执行的任务。
 - Production Promotion 的硬门禁仅包含不可变制品、确定性 Staging 部署证据、物理组件收敛、
   runtime identity 和逐组件 durable receipts。完整浏览器、Agent 与业务验收由独立的
   `测试环境验收` 手工 Workflow 承担，默认不运行、不阻断 Promotion，也不写入发布 attestation。

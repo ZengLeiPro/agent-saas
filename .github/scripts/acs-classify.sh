@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================================
-# ACS 影响分类（acs-sandbox.yml 的 changes job、bundle 输入清单与 build-deploy 门禁共用）
+# ACS 影响分类（统一 CI、bundle 输入清单及 RC 镜像准备共用）
 # ----------------------------------------------------------------------------
 # 用法: acs-classify.sh <changed_files_path> [base_sha]
 #   changed_files_path: 变更文件清单（每行一个仓库相对路径）
 #   base_sha:           package.json runtime 字段对比的基准 commit。
 #                       为空或不可读时保守判定 package.json 影响 ACS。
 # 输出（stdout, `key=value` 四行）:
-#   publish=true|false        需要 ACS 镜像发布（跑 gate, dispatch 时可部署）
+#   publish=true|false        需要 ACS 镜像制品（通过 RC 主链发布）
 #   contract_check=true|false 仅需契约门禁（typecheck + test, 不判定需部署）
 #   reason=...                publish/contract 命中原因（分号分隔; 无则 none）
 #   skipped=...               未命中 ACS 面的输入（分号分隔; 无则 none）

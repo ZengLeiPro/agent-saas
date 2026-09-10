@@ -32,6 +32,9 @@ import { createPersonalSkillGovernancePromotion } from '../services/personalSkil
 import { applyTenantLifecycleChange, type TenantLifecycleChange } from './tenantLifecycleEffects.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import type { MembershipCreateInput } from '../routes/governanceAccessValidation.js';
+import { scanPoolSkillsAsync } from '../data/skills/scanner.js';
+import { resolveAgentPath } from '../workspace/namespace.js';
+import type { PlatformSkillConfig } from '../data/skills/types.js';
 
 const scheduledOffboardingRuntimes = new WeakSet<AppRuntime>();
 
@@ -406,6 +409,18 @@ export function registerGovernanceRoutes(
         : {}),
       skills: runtime.skillGovernanceStore,
       ...(governedSkillServices ?? {}),
+      ...(runtime.skillConfigStore ? {
+        updatePlatformSkillSettings: async ({ skillId, settings }: {
+          skillId: string;
+          settings: PlatformSkillConfig;
+        }) => {
+          const poolDir = resolveAgentPath(runtime.sharedDir, 'skills-pool');
+          const poolSkillIds = new Set((await scanPoolSkillsAsync(poolDir)).map(skill => skill.id));
+          if (!poolSkillIds.has(skillId)) return false;
+          await runtime.skillConfigStore!.setPlatformSkillConfigs({ [skillId]: settings });
+          return true;
+        },
+      } : {}),
       connectors: runtime.connectorCatalogStore,
       credentials: runtime.credentialStore,
       environments: runtime.environmentStore,

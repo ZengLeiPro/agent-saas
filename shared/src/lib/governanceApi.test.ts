@@ -48,6 +48,22 @@ const effective = {
 describe('governanceApi fail closed', () => {
   beforeEach(() => mockAuthFetch.mockReset());
 
+  it('平台技能设置调用治理资源窄写入口', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({ ok: true, changed: true }));
+    await expect(governanceResourcesApi.updatePlatformSkillSettings('archive', {
+      enabled: true,
+      exposure: 'allow_tenants',
+      tenantIds: ['tenant-a'],
+    })).resolves.toMatchObject({ ok: true, changed: true });
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      '/api/governance/resources/skills/archive/platform-settings',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ enabled: true, exposure: 'allow_tenants', tenantIds: ['tenant-a'] }),
+      }),
+    );
+  });
+
   it('调用权威 evaluate endpoint 并只接受有效三轴结果', async () => {
     mockAuthFetch.mockResolvedValue(jsonResponse([effective]));
     await expect(evaluateAccess({ action: 'use', resource })).resolves.toHaveLength(1);

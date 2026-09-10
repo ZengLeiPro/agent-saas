@@ -204,8 +204,8 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           ...patch,
         },
       });
-    } catch {
-      alert("更新失败");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "更新失败");
     }
   }, [updatePlatformSettings]);
 

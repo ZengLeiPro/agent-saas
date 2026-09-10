@@ -41,6 +41,7 @@ async function rig(input: {
   skillImport?: ReturnType<typeof vi.fn>;
   personalSkillImport?: ReturnType<typeof vi.fn>;
   personalSkillPromotion?: ReturnType<typeof vi.fn>;
+  platformSkillSettingsUpdate?: ReturnType<typeof vi.fn>;
   listCredentials?: ReturnType<typeof vi.fn>;
   getCredential?: ReturnType<typeof vi.fn>;
   updateCredential?: ReturnType<typeof vi.fn>;
@@ -108,6 +109,7 @@ async function rig(input: {
     resource: { skillId: 'tenant-hash', tenantId: 'tenant-a', scope: 'tenant', status: 'published', revision: 2 },
     version: { versionId: 'skillv-tenant', skillId: 'tenant-hash', versionNumber: 1 },
   });
+  const platformSkillSettingsUpdate = input.platformSkillSettingsUpdate ?? vi.fn().mockResolvedValue(true);
   const connectorUpdateStatus = input.connectorUpdateStatus ?? vi.fn();
   const environmentRetire = input.environmentRetire ?? vi.fn();
   const updateCredential = input.updateCredential ?? vi.fn();
@@ -153,6 +155,7 @@ async function rig(input: {
     importTenantSkill: skillImport as never,
     importPersonalSkill: personalSkillImport as never,
     promotePersonalSkillToTenant: personalSkillPromotion as never,
+    updatePlatformSkillSettings: platformSkillSettingsUpdate as never,
     connectors: {
       get: vi.fn().mockResolvedValue({ connectorId: 'github', status: 'published' }),
       list: vi.fn().mockResolvedValue([]), updateStatus: connectorUpdateStatus,
@@ -212,6 +215,7 @@ async function rig(input: {
     auditAppend, agentCreate, agentPublish, agentSetStatus, agentArchive,
     skillCreate, skillPublishVersion, skillCreateCandidate, skillSubmitCandidate,
     skillReviewCandidate, skillPublishCandidate, skillImport, personalSkillImport, personalSkillPromotion, credentialCreate, updateCredential,
+    platformSkillSettingsUpdate,
     connectorUpdateStatus, environmentRetire, putSecret,
   };
 }
@@ -287,6 +291,65 @@ describe('typed governance resource routes', () => {
       actorUserId: 'platform-1',
       files: [expect.objectContaining({ originalname: 'SKILL.md' })],
     });
+  });
+
+  it.each([
+    ['all', ['tenant-a'], []],
+    ['allow_tenants', ['tenant-a', 'tenant-a'], ['tenant-a']],
+    ['deny_tenants', ['tenant-a'], ['tenant-a']],
+  ] as const)('平台管理员可通过治理入口设置技能开放范围 %s', async (exposure, tenantIds, expectedTenantIds) => {
+    const test = await rig({
+      platformAdmin: true,
+      user: { sub: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin' },
+      tenantExists: tenantId => tenantId === 'tenant-a',
+    });
+    const response = await test.request(
+      '/api/governance/resources/skills/archive/platform-settings',
+      json('PATCH', { enabled: true, exposure, tenantIds }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      changed: true,
+      skillId: 'archive',
+      settings: { enabled: true, exposure, tenantIds: expectedTenantIds },
+    });
+    expect(test.platformSkillSettingsUpdate).toHaveBeenCalledWith({
+      skillId: 'archive',
+      settings: { enabled: true, exposure, tenantIds: expectedTenantIds },
+    });
+  });
+
+  it('平台技能设置拒绝不存在的组织和技能，且普通成员不可写', async () => {
+    const platform = await rig({
+      platformAdmin: true,
+      user: { sub: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin' },
+      tenantExists: tenantId => tenantId === 'tenant-a',
+      platformSkillSettingsUpdate: vi.fn().mockResolvedValue(false),
+    });
+    const invalidTenant = await platform.request(
+      '/api/governance/resources/skills/archive/platform-settings',
+      json('PATCH', { enabled: true, exposure: 'allow_tenants', tenantIds: ['missing'] }),
+    );
+    expect(invalidTenant.status).toBe(400);
+    await expect(invalidTenant.json()).resolves.toMatchObject({ code: 'SKILL_PLATFORM_TENANT_NOT_FOUND' });
+    expect(platform.platformSkillSettingsUpdate).not.toHaveBeenCalled();
+
+    const missingSkill = await platform.request(
+      '/api/governance/resources/skills/missing/platform-settings',
+      json('PATCH', { enabled: true, exposure: 'all', tenantIds: [] }),
+    );
+    expect(missingSkill.status).toBe(404);
+    await expect(missingSkill.json()).resolves.toMatchObject({ code: 'PLATFORM_SKILL_NOT_FOUND' });
+
+    const member = await rig({});
+    const denied = await member.request(
+      '/api/governance/resources/skills/archive/platform-settings',
+      json('PATCH', { enabled: true, exposure: 'all', tenantIds: [] }),
+    );
+    expect(denied.status).toBe(403);
+    expect(member.platformSkillSettingsUpdate).not.toHaveBeenCalled();
   });
 
   it('组织管理员仅可上传到本组织，普通成员和跨组织请求均被拒绝', async () => {

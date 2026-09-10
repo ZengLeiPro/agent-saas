@@ -16,6 +16,7 @@ export async function verifyAcsPackage(directory, temporary) {
     `#!/bin/sh
 case "$*" in
   *"auth can-i"*) echo yes ;;
+  *"get configmap acs-operation-ownership-v1"*) : ;;
   *"-o json"*) echo '{"items":[]}' ;;
   *"get crd"*|*"get namespace"*) echo fixture ;;
   *) echo 'unsupported fixture Kubernetes command' >&2; exit 1 ;;

@@ -84,7 +84,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     expect(touch).not.toHaveBeenCalled();
   });
 
-  it('enforces strict reconciliation when lifecycle protection is scanned', async () => {
+  it('retains an expired executing owner without pretending background inventory proves it stopped', async () => {
     const sandboxRef = ref('as-protected-reconcile');
     const child = fakeChild();
     const setBackgroundShellProtection = vi.fn(async () => undefined);
@@ -110,22 +110,8 @@ describe('AcsExecutor background shell protection handoff', () => {
       { persistentRunner: false },
     );
 
-    const resultPromise = executor.reconcileBackgroundShellProtections();
-    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
-    const runnerInput = JSON.parse(String((spawn.mock.calls as unknown[][])[0]?.[1]
-      && ((spawn.mock.calls as unknown[][])[0]?.[1] as { input?: unknown }).input));
-    expect(runnerInput).toMatchObject({
-      toolName: '__BackgroundShellReconcile',
-      input: { fail_closed: true },
-    });
-    child.stdout.end(`${JSON.stringify({
-      kind: 'final', response: {
-        status: 'success', content: '{}', metadata: { backgroundShell: { activeTaskIds: [] } },
-      },
-    })}\n`);
-    child.emit('close', 0, null);
-
-    await expect(resultPromise).resolves.toEqual({ checked: 1, failed: 0 });
+    await expect(executor.reconcileBackgroundShellProtections()).resolves.toEqual({ checked: 1, failed: 1 });
+    expect(spawn).not.toHaveBeenCalled();
     expect(sandboxManager.clearExpiredInvocationLeases).not.toHaveBeenCalled();
   });
 

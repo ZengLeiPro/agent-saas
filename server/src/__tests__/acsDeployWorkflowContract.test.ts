@@ -8,9 +8,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const workflowPath = fileURLToPath(
-  new URL('../../../.github/workflows/acs-sandbox.yml', import.meta.url),
+  new URL('../../../.github/workflows/promote-release.yml', import.meta.url),
 );
 const workflow = readFileSync(workflowPath, 'utf8');
+const releaseSource = (path: string) => readFileSync(
+  new URL(`../../../scripts/release/${path}`, import.meta.url), 'utf8',
+);
+const imageWait = releaseSource('wait-for-acr-image.sh');
+const imageSupervisor = releaseSource('acr-image-supervisor.py');
+
 const acrRecordListHelper = readFileSync(
   fileURLToPath(new URL('../../../scripts/release/list-acr-build-records.sh', import.meta.url)),
   'utf8',
@@ -335,7 +341,7 @@ describe('ACS deployment and classifier contract', () => {
     }
   });
 
-  it('在统一 CI 与人工部署中保留完整 Server、Staging 与 Production lifecycle 契约', () => {
+  it('统一 CI 保留一份完整 Server、Staging 与 Production lifecycle 契约', () => {
     const serverContracts = [
       'acsDeployWorkflowContract',
       'dwsAuthFlow',
@@ -355,24 +361,24 @@ describe('ACS deployment and classifier contract', () => {
       'webChannelPersistentInteractionRecovery',
     ];
     expect(
-      (ciWorkflow + workflow).match(/- name: 测试服务端 ACS 生命周期与准入契约/gu),
-    ).toHaveLength(2);
+      ciWorkflow.match(/- name: 测试服务端 ACS 生命周期与准入契约/gu),
+    ).toHaveLength(1);
     for (const contract of serverContracts) {
       expect(
-        (ciWorkflow + workflow).match(new RegExp(`src/__tests__/${contract}\\.test\\.ts`, 'gu')),
-      ).toHaveLength(2);
+        ciWorkflow.match(new RegExp(`src/__tests__/${contract}\\.test\\.ts`, 'gu')),
+      ).toHaveLength(1);
     }
     for (const contract of [
       'src/context/sync/dwsContextRuntime.test.ts',
       'src/dws/businessToolProvider.test.ts',
       'src/dws/requesterIdentityResolver.test.ts',
     ])
-      expect((ciWorkflow + workflow).split(contract)).toHaveLength(3);
+      expect(ciWorkflow.split(contract)).toHaveLength(2);
     expect(
-      (ciWorkflow + workflow).match(/- name: 测试 ACS 测试及生产环境生命周期门禁/gu),
-    ).toHaveLength(2);
-    expect((ciWorkflow + workflow).match(/scripts\/release\/staging-workflow\.test\.mjs/gu)).toHaveLength(2);
-    expect((ciWorkflow + workflow).match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(2);
+      ciWorkflow.match(/- name: 测试 ACS 测试及生产环境生命周期门禁/gu),
+    ).toHaveLength(1);
+    expect(ciWorkflow.match(/scripts\/release\/staging-workflow\.test\.mjs/gu)).toHaveLength(1);
+    expect(ciWorkflow.match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(1);
   });
 
   it('由 PostgreSQL 快速合约与 Server coverage 双重验证 sandboxScopeActivity', () => {
@@ -394,96 +400,52 @@ describe('ACS deployment and classifier contract', () => {
     expect(preflight).toContain('src/__tests__/sandboxScopeActivity.pg.test.ts');
   });
 
-  it('在等待镜像前拒绝落后 main 的 dispatch，并在确认后打包 managed unit', () => {
-    const checkoutIndex = workflow.indexOf('- name: 检出手动触发的精确提交');
-    const verifyIndex = workflow.indexOf('- name: 确认手动触发仍指向最新 main');
-    const waitIndex = workflow.indexOf('- name: 等待 ACR 自动构建 HEAD（每 30 秒轮询）');
-    const packIndex = workflow.indexOf(
-      '- name: 打包并标识编排器及托管单元版本',
-    );
-
-    expect(checkoutIndex).toBeGreaterThan(-1);
-    expect(verifyIndex).toBeGreaterThan(checkoutIndex);
-    expect(waitIndex).toBeGreaterThan(verifyIndex);
-    expect(packIndex).toBeGreaterThan(waitIndex);
-    expect(workflow).toContain('git fetch --quiet --no-tags origin main');
-    expect(workflow).toContain(
-      'This run targets $GITHUB_SHA, but origin/main is now $latest_main_sha',
-    );
-    expect(workflow).toContain(
-      'main advanced to $latest_main_sha before an ACR build record appeared',
-    );
+  it('只晋级来自 main 的不可变 RC，生产不再等待或打包源码 HEAD', () => {
+    expect(workflow).toContain("needs.dispatch.outputs.operation == 'promote'");
+    expect(workflow).toContain('gh release download "$RELEASE_ID"');
+    expect(workflow).toContain('git merge-base --is-ancestor "$release_sha" origin/main');
+    expect(workflow).toContain('prefetch-promotion-artifacts.mjs');
+    expect(workflow).toContain('verify-selected-release-artifacts.mjs');
+    expect(workflow).toContain('verify-promotion-acs-selection.mjs');
+    expect(workflow).not.toContain('等待 ACR 自动构建 HEAD');
+    expect(workflow).not.toContain('scripts/deploy-acs-orchestrator.sh');
   });
 
-  it('发现 exact SHA 构建记录后继续等待，但在实际部署前再次拒绝 main 漂移', () => {
-    expect(workflow).toContain('build_record_found=false');
-    expect(workflow).toContain('if [ "$build_record_found" = "true" ]; then');
-    expect(workflow).toContain('ACR build record disappeared');
-    expect(workflow).toContain('build_record_found=true');
-    expect(workflow).toContain('实际部署前的独立门禁会拒绝这个旧 dispatch');
-    const deployStart = workflow.indexOf('- name: 部署编排器并执行排空与冒烟检查');
-    const cleanupStart = workflow.indexOf('- name: 清理已封存的 ACS 生产暂存区');
-    const deployStep = workflow.slice(deployStart, cleanupStart);
-    expect(deployStep).toContain('git fetch --no-tags origin main');
-    expect(deployStep).toContain('if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then');
-    expect(deployStep.indexOf('latest_main_sha=')).toBeLessThan(deployStep.indexOf('bash -s'));
-  });
-
-  it('与其他生产写入口全局串行且不取消正在进行的发布', () => {
+  it('与 CI 兼容生产写入口全局串行且不取消正在进行的发布', () => {
     expect(workflow).toContain('group: production-runtime');
     expect(workflow).toContain('cancel-in-progress: false');
-    expect(workflow).not.toContain('group: acs-production-deploy');
+    expect(workflow).toContain('environment: production');
+    expect(ciWorkflow).toContain("github.event_name == 'workflow_dispatch' && 'production-runtime'");
   });
 
-  it('先按 6 位 tag 选候选，再用 GIT_CLONE 日志绑定完整 SHA', () => {
-    const waitStep = workflow.slice(
-      workflow.indexOf('- name: 等待 ACR 自动构建 HEAD（每 30 秒轮询）'),
-      workflow.indexOf('- name: 解析不可变 ACS 镜像'),
-    );
-    expect(workflow).toContain('SHA6="${GITHUB_SHA:0:6}"');
-    expect(workflow).toContain('MAX_MISSING_POLLS=6');
-    expect(workflow).toContain('MAX_QUERY_ERRORS=3');
-    expect(workflow).toContain('secrets.ACR_READ_ACCESS_KEY_ID');
-    expect(workflow).toContain('secrets.ACR_READ_ACCESS_KEY_SECRET');
-    expect(workflow).toContain("data.get('Code') != 'success'");
-    expect(workflow).toContain("data.get('IsSuccess') is not True");
-    expect(workflow).toContain('Unable to query ACR build records');
-    expect(waitStep).not.toContain('2>/dev/null || true');
-    expect(workflow).toContain(".endswith('-' + sha6)");
-    expect(workflow).toContain("record.get('BuildRecordId')");
-    expect(workflow).toContain('ListRepoBuildRecordLog');
-    expect(workflow).toContain('scripts/release/verify-acr-build-revision.mjs');
-    expect(workflow).toContain('if len(matches) > 1:');
-    expect(workflow).toContain('selected_build_record_id');
-    expect(workflow).toContain('acr-build-records-confirmed.json');
-    expect(workflow).toContain('scripts/release/list-acr-build-records.sh');
+  it('Staging 镜像解析先按短 tag 选候选，再用 GIT_CLONE 日志绑定完整 SHA', () => {
+    expect(imageWait).toContain('short_sha="${RELEASE_SHA:0:6}"');
+    expect(imageWait).toContain('Multiple ACR records match the release SHA prefix');
+    expect(imageWait).toContain('The selected ACR build record changed while polling');
+    expect(imageWait).toContain('ListRepoBuildRecordLog');
+    expect(imageWait).toContain('verify-acr-build-revision.mjs "$logs" "$RELEASE_SHA" main');
+    expect(imageWait).toContain('scripts/release/list-acr-build-records.sh');
+    expect(imageWait).toContain('ACR tag no longer has one successful selected BuildRecordId');
+    expect(imageWait).toContain('test "${first_digest#sha256:}" = "${confirmed_digest#sha256:}"');
     expect(acrRecordListHelper).toContain('page_size=100');
     expect(acrRecordListHelper).toContain('total changed during pagination');
     expect(acrRecordListHelper).toContain('records.length !== expectedTotal');
-    expect(workflow).toContain('ACR tag no longer has one selected BuildRecordId');
-    expect(workflow).toContain('test "$confirmed_digest" = "$image_digest"');
-    expect(workflow).toContain("GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT'");
-    expect(workflow.indexOf('ListRepoBuildRecordLog')).toBeLessThan(
-      workflow.indexOf('echo "image_tag=$btag"'),
-    );
-    expect(workflow).toContain('a later image will not be substituted');
-    expect(workflow).not.toContain('for i in $(seq 1 60)');
+    expect(imageWait.indexOf('verify-acr-build-revision.mjs')).toBeLessThan(imageWait.indexOf('GetRepoTag'));
   });
 
-  it('只在 deploy 脚本持有 promotion.lock 时刷新 ACS trusted identity', () => {
-    expect(workflow).not.toContain('- name: Refresh trusted Production identity');
-    expect(workflow).not.toContain('production-identity-${GITHUB_RUN_ID}');
-    expect(workflow).toContain('scripts/release/write-live-production-identity.mjs');
+  it('RC ACS 阶段绑定清单与托管单元，最终身份经过受保护的读回收敛', () => {
+    expect(workflow).toContain('PHASE=acs');
+    expect(workflow).toContain("EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST'");
+    expect(workflow).toContain("ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template'");
+    expect(workflow).toContain('run-with-production-lock-guard.sh');
+    expect(workflow).toContain('production-confirmed.json');
   });
 
-  it('为 ACR 排队和实际构建保留独立等待预算', () => {
-    expect(workflow).toContain('timeout-minutes: 75');
-    expect(workflow).toContain('MAX_PENDING_POLLS=40');
-    expect(workflow).toContain('MAX_BUILDING_POLLS=60');
-    expect(workflow).toContain('pending_polls=$((pending_polls + 1))');
-    expect(workflow).toContain('building_polls=$((building_polls + 1))');
-    expect(workflow).toContain('ACR build queue timeout');
-    expect(workflow).toContain('ACR build timeout');
-    expect(workflow).not.toContain('MAX_POLLS=40');
+  it('ACR supervisor 有总时限、阶段时限和有界重试而不是无限等待', () => {
+    expect(imageWait).toContain('exec python3 scripts/release/acr-image-supervisor.py');
+    expect(imageSupervisor).toContain('deadline = started + 45 * 60');
+    expect(imageSupervisor).toContain('ACR overall 45-minute deadline exceeded');
+    expect(imageSupervisor).toContain('ACR {phase} deadline exceeded');
+    expect(imageSupervisor).toContain('bounded retry');
   });
 });

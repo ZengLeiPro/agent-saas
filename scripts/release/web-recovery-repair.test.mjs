@@ -17,10 +17,10 @@ test('recovery audit, verified repair, refusal and compensation contracts', () =
 });
 
 test('recovery workflow is manual, protected, locked and does not loosen the ordinary deploy gate', async () => {
-  const workflow = await readFile(new URL('.github/workflows/repair-web-recovery.yml', root), 'utf8');
+  const workflow = await readFile(new URL('.github/workflows/promote-release.yml', root), 'utf8');
   assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /\n  (?:push|pull_request):/);
-  for (const contract of ['default: audit', 'environment: production', 'group: production-runtime',
+  for (const contract of ['web-recovery-audit', 'web-recovery-repair', 'environment: production', 'group: production-runtime',
     'cancel-in-progress: false', "github.ref == 'refs/heads/main'", 'EXPECTED_PLAN_DIGEST',
     'test "$CONFIRM_RECOVERY_ONLY" = true', 'PRODUCTION_SSH_HOST_KEY_SHA256',
     'run-with-production-lock-guard.sh', 'web-recovery-report.json']) assert.ok(workflow.includes(contract), contract);

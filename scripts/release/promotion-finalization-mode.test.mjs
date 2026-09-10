@@ -75,7 +75,9 @@ test('收尾模式跳过全部部署动作，沿用生产锁与同一次审批',
     /finalization_mode="\$\(node scripts\/release\/promotion-finalization-mode\.mjs/u,
   );
   assert.doesNotMatch(workflow, /echo "PROMOTION_FINALIZATION_MODE=\$\(node/u);
-  assert.equal(workflow.match(/environment: production/gu)?.length, 1);
+  const promote = workflow.slice(workflow.indexOf('  promote:\n'), workflow.indexOf('  web_recovery:\n'));
+  assert.equal(promote.match(/environment: production/gu)?.length, 1);
+  assert.match(promote, /needs.dispatch.outputs.operation == 'promote'/u);
   assert.match(workflow, /awaiting_expand_confirmation\) state=in_progress/u);
   assert.match(workflow, /steps\.finalize_expand\.outcome.*success/u);
   assert.equal(

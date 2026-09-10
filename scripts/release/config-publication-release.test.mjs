@@ -96,7 +96,6 @@ test('all configuration identity transport manifests carry the shared signature 
     '.github/workflows/ci.yml',
     '.github/workflows/promote-release.yml',
     '.github/workflows/deploy-staging.yml',
-    '.github/workflows/acs-sandbox.yml',
     'scripts/release/finalize-expand-migration.sh',
     '.github/acs-runtime-inputs.txt',
   ]) {

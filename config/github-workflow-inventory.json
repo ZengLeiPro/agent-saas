@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "workflows": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "name": "CI"
+    },
+    {
+      "path": ".github/workflows/deploy-staging.yml",
+      "name": "测试环境部署"
+    },
+    {
+      "path": ".github/workflows/staging-acceptance.yml",
+      "name": "测试环境验收"
+    },
+    {
+      "path": ".github/workflows/promote-release.yml",
+      "name": "生产环境发布"
+    }
+  ],
+  "retiredWorkflows": [
+    {
+      "id": 304456182,
+      "path": ".github/workflows/acs-sandbox.yml",
+      "name": "ACS Manual Deploy"
+    },
+    {
+      "id": 354549951,
+      "path": ".github/workflows/acs-repair-python-contracts.yml",
+      "name": "ACS remote Python contracts"
+    },
+    {
+      "id": 354101773,
+      "path": ".github/workflows/acs-repair-evidence.yml",
+      "name": "ACS repair evidence"
+    },
+    {
+      "id": 353595801,
+      "path": ".github/workflows/repair-web-recovery.yml",
+      "name": "Production Web Recovery Repair"
+    },
+    {
+      "id": 354139042,
+      "path": ".github/workflows/acs-repair-authoring.yml",
+      "name": "ACS isolated branch authoring"
+    },
+    {
+      "id": 354197542,
+      "path": ".github/workflows/prepare-unified-ci.yml",
+      "name": "Prepare unified CI (branch-only)"
+    }
+  ]
+}

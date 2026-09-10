@@ -60,6 +60,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 校验长期 Workflow 入口清单
+        run: node scripts/release/workflow-inventory.mjs
+
       - name: 校验 PR 变更与发布组件的映射
         if: github.event_name == 'pull_request'
         env:
@@ -93,7 +96,7 @@ jobs:
   acs-impact-gate:
     name: ACS Impact Gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     needs: ci_plan
     if: ${{ !cancelled() }}
     permissions:
@@ -114,10 +117,12 @@ jobs:
           fi
 
       - name: 检出代码
+        id: acs_checkout
         if: needs.ci_plan.outputs.acs_required == 'true'
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: 配置 pnpm
         if: needs.ci_plan.outputs.acs_required == 'true'
@@ -131,18 +136,68 @@ jobs:
           cache: pnpm
 
       - name: 安装依赖
+        id: acs_install
         if: needs.ci_plan.outputs.acs_required == 'true'
         run: pnpm install --frozen-lockfile
+
+      - name: 记录实际受测源码与工具链
+        if: needs.ci_plan.outputs.acs_required == 'true'
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/acs-ci-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/acs-ci-evidence/source-sha.txt"
+          node --version > "$RUNNER_TEMP/acs-ci-evidence/toolchain.txt"
+          pnpm --version >> "$RUNNER_TEMP/acs-ci-evidence/toolchain.txt"
+          python3 --version >> "$RUNNER_TEMP/acs-ci-evidence/toolchain.txt"
+          sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/acs-ci-evidence/lockfile-sha256.txt"
+          find acs-orchestrator/src/remote -maxdepth 1 -name '*.py' -type f -print0 |
+            sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/acs-ci-evidence/native-source-sha256.txt"
+          node --input-type=module - <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          const e = process.env;
+          writeFileSync(`${e.RUNNER_TEMP}/acs-ci-evidence/run.json`, JSON.stringify({
+            sourceSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+            prHeadSha: e.PR_HEAD_SHA || null,
+            event: e.GITHUB_EVENT_NAME, runId: e.GITHUB_RUN_ID, attempt: e.GITHUB_RUN_ATTEMPT,
+            productionActions: false,
+          }, null, 2));
+          NODE
 
       - name: 检查服务端与编排器类型
         if: needs.ci_plan.outputs.acs_required == 'true'
         run: |
-          pnpm -F server typecheck
-          pnpm -F acs-orchestrator typecheck
+          set -euo pipefail
+          (pnpm -F server typecheck && pnpm -F acs-orchestrator typecheck) 2>&1 |
+            tee "$RUNNER_TEMP/acs-ci-evidence/typecheck.log"
 
       - name: 测试编排器
         if: needs.ci_plan.outputs.acs_required == 'true'
-        run: pnpm -F acs-orchestrator test
+        run: |
+          set -euo pipefail
+          pnpm -F acs-orchestrator test --reporter=default --reporter=json \
+            --outputFile="$RUNNER_TEMP/acs-ci-evidence/orchestrator-tests.json" 2>&1 |
+            tee "$RUNNER_TEMP/acs-ci-evidence/orchestrator-tests.log"
+
+      # Native Python processes are not run by Vitest. Preserve this gate explicitly.
+      - name: 测试真实 Python 远程进程契约
+        if: ${{ !cancelled() && needs.ci_plan.outputs.acs_required == 'true' && steps.acs_checkout.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/acs-ci-evidence"
+          timeout 120s python3 -B -m unittest discover -s acs-orchestrator/src/remote -p 'test_*.py' -v 2>&1 |
+            tee "$RUNNER_TEMP/acs-ci-evidence/native-processes.log"
+
+      - name: 验证编排器生产构建并记录摘要
+        if: ${{ !cancelled() && needs.ci_plan.outputs.acs_required == 'true' && steps.acs_install.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/acs-ci-evidence"
+          pnpm -F acs-orchestrator build 2>&1 | tee "$RUNNER_TEMP/acs-ci-evidence/bundle.log"
+          find acs-orchestrator/dist -type f -print0 | sort -z | xargs -0 sha256sum \
+            > "$RUNNER_TEMP/acs-ci-evidence/bundle-sha256.txt"
 
       - name: 测试服务端 ACS 生命周期与准入契约
         if: needs.ci_plan.outputs.acs_required == 'true'
@@ -183,6 +238,15 @@ jobs:
           python3 -m unittest
           scripts/test_acs_operational_scripts.py
           scripts/test_acr_webhook_redelivery.py
+
+      - name: 无论成功失败均保存 ACS 检查证据
+        if: ${{ always() && needs.ci_plan.outputs.acs_required == 'true' && steps.acs_checkout.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: acs-ci-evidence-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/acs-ci-evidence/
+          if-no-files-found: error
+          retention-days: 14
 
   preflight_checks:
     name: 预检 / 静态检查
@@ -1560,3 +1624,21 @@ jobs:
         run: |
           echo "trusted Production identity commit/readback failed; locked compensation completed" >&2
           exit 1
+
+  retire_legacy_workflows:
+    name: 清理已退役 Workflow 注册项
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: 停用清单中已从 main 移除的旧入口（保留全部历史证据）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/retire-legacy-workflows.mjs --apply

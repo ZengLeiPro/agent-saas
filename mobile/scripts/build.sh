@@ -115,6 +115,8 @@ if [ -z "$MANIFEST_VERSION" ] || { $PLATFORM_ANDROID && [ -z "$ANDROID_VERSION_C
 fi
 
 IPA_PATH="$BUILDS_DIR/AgentSaaS-${MANIFEST_VERSION}.ipa"
+IOS_BUILD_NUMBER="${MOBILE_IOS_BUILD_NUMBER:-$(node -p 'require(process.argv[1]).version.iosBuildNumber' "$MOBILE_DIR/release-manifest.json")}"
+export MOBILE_IOS_BUILD_NUMBER="$IOS_BUILD_NUMBER"
 STORE_AAB_PATH="$BUILDS_DIR/AgentSaaS-store-${ANDROID_VERSION_CODE}.aab"
 ENTERPRISE_APK_PATH="$BUILDS_DIR/AgentSaaS-enterprise-${ANDROID_VERSION_CODE}.apk"
 
@@ -187,11 +189,11 @@ if $PLATFORM_IOS; then
     EXIT_CODE=1
   fi
   echo "Building iOS production IPA..."
-  if [ "$EXIT_CODE" -eq 0 ] && MOBILE_BUILD_PLATFORM=ios MOBILE_ANDROID_DISTRIBUTION= EAS_SKIP_AUTO_FINGERPRINT=1 pnpm exec eas build -p ios -e production --local --output "$IPA_PATH" --non-interactive && [ -f "$IPA_PATH" ]; then
+  if [ "$EXIT_CODE" -eq 0 ] && MOBILE_BUILD_PLATFORM=ios MOBILE_ANDROID_DISTRIBUTION= bash "$MOBILE_DIR/scripts/build-ios-native.sh" "$IPA_PATH" "$SOURCE_GIT_SHA" "$IOS_BUILD_NUMBER" && [ -f "$IPA_PATH" ]; then
     IOS_SOURCE_PATH="$IPA_PATH.source.json"
     IOS_VERIFICATION_PATH="$IPA_PATH.verification.json"
     ARTIFACT_IDENTITY="$(node "$MOBILE_DIR/scripts/verify-release-manifest.mjs" --profile production --platform ios --git-sha "$SOURCE_GIT_SHA" --print-artifact-identity)"
-    printf '%s\n' "$ARTIFACT_IDENTITY" | jq -S '{profile:"ios-store",sourceGitSha:.sourceGitSha,appId:.identity.iosBundleIdentifier,iosTeamId:.identity.iosAppleTeamId,iosAppGroup:.identity.iosAppGroupIdentifier,version:.version.marketingVersion,buildNumber:.version.iosBuildNumber,versionCode:null}' > "$IOS_SOURCE_PATH"
+    printf '%s\n' "$ARTIFACT_IDENTITY" | jq -S '{profile:"ios-store",sourceGitSha:.sourceGitSha,appId:.identity.iosBundleIdentifier,iosTeamId:.identity.iosAppleTeamId,iosAppGroup:.identity.iosAppGroupIdentifier,version:.version.marketingVersion,buildNumber:(.version.iosBuildNumber|tostring),versionCode:null}' > "$IOS_SOURCE_PATH"
     if bash "$MOBILE_DIR/scripts/verify-mobile-release-artifact.sh" ios-store "$IPA_PATH" "$IOS_SOURCE_PATH" "$IOS_VERIFICATION_PATH"; then
       IOS_OK=true
       echo "iOS build and signature verification complete: $IPA_PATH"

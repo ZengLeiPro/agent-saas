@@ -1193,7 +1193,7 @@ test('expand confirmation runs automatically with the existing release-bound evi
   assert.match(attestationCli, /confirmation-evidence/u);
   assert.match(attestationCli, /currentState === 'awaiting_expand_confirmation'/u);
   assert.match(attestationCli, /confirmationEvidenceDigest !== evidenceDigest/u);
-  assert.match(releaseDocs, /GitHub 上四个 Workflow/u);
+  assert.match(releaseDocs, /GitHub 上五个 Workflow/u);
   assert.match(releaseDocs, /自动收尾/u);
   assert.match(releaseDocs, /2 小时确认窗口和 5 分钟现场\/证据新鲜度/u);
   assert.match(releaseDocs, /psql 反斜杠元命令均拒绝/u);

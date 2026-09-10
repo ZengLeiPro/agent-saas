@@ -25,11 +25,11 @@ function fixture(t) {
   return root;
 }
 
-test('only four reviewed entrypoints remain; temporary authoring workflows are retired too', () => {
+test('only five reviewed entrypoints remain; temporary authoring workflows are retired too', () => {
   const inventory = checkWorkflowInventory();
   assert.deepEqual(
     inventory.workflows.map((item) => item.name),
-    ['CI', '测试环境部署', '测试环境验收', '生产环境发布'],
+    ['CI', 'iOS 构建与发布', '测试环境部署', '测试环境验收', '生产环境发布'],
   );
   assert.equal(inventory.retiredWorkflows.length, 6);
   assert(ci.includes('run: node scripts/release/workflow-inventory.mjs'));

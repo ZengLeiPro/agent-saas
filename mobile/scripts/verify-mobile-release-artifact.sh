@@ -117,12 +117,14 @@ if [ "$profile" = ios-store ]; then
   extension="${appex[0]}"
   extension_id="$(plutil -extract CFBundleIdentifier raw -o - "$extension/Info.plist")"
   test "$extension_id" = "$expected_app.share-extension" || { echo '[M60-04] Share Extension bundle identifier mismatch' >&2; exit 1; }
+  test "$(plutil -extract CFBundleVersion raw -o - "$extension/Info.plist")" = "$build_number" || { echo '[M60-04] Share Extension build number mismatch' >&2; exit 1; }
   codesign --verify --strict "$extension" >/dev/null
   codesign -d --entitlements :- "$extension" > "$work/extension-entitlements.plist" 2>/dev/null
   verify_ios_store_profile "$extension" "$expected_app.share-extension" "$work/extension-entitlements.plist" "$work/extension-profile.plist" share-extension "$expected_team" "$expected_app_group" absent
   extension_permissions="$(plutil -convert json -o - "$work/extension-entitlements.plist" | jq -S -c .)"
   printf '%s' "$extension_permissions" | jq -e --arg group "$expected_app_group" '.["com.apple.security.application-groups"] | index($group) != null' >/dev/null || { echo '[M60-04] Share Extension App Group entitlement mismatch' >&2; exit 1; }
   version_code=null
+  build_number_json="$(printf '%s' "$build_number" | jq -R .)"
 else
   command -v java >/dev/null && command -v keytool >/dev/null || { echo '[M60-04] Java signing tools are required' >&2; exit 1; }
   if [ "$profile" = android-store ]; then
@@ -154,13 +156,14 @@ else
   signer_record="$(keytool -printcert -jarfile "$artifact" 2>&1)"; reject_debug_subject "$signer_record"
   signer="$(printf '%s\n' "$signer_record" | grep -m1 'SHA256:' | normalize_fp)"
   build_number=null
+  build_number_json=null
 fi
 
 test "$signer" != 'sha256:' && printf '%s' "$signer" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo '[M60-04] signer fingerprint unavailable' >&2; exit 1; }
 permissions_hash="sha256:$(printf '%s' "$permissions" | shasum -a 256 | awk '{print $1}')"
 jq -nS \
   --arg profile "$profile" --arg appId "$app_id" --arg version "$version" \
-  --argjson buildNumber "$build_number" --argjson versionCode "$version_code" \
+  --argjson buildNumber "$build_number_json" --argjson versionCode "$version_code" \
   --arg artifactSha256 "$artifact_hash" --argjson size "$artifact_size" \
   --arg signerFingerprint "$signer" --arg permissionsSha256 "$permissions_hash" \
   '{profile:$profile,appId:$appId,version:$version,buildNumber:$buildNumber,versionCode:$versionCode,artifactSha256:$artifactSha256,size:$size,signerFingerprint:$signerFingerprint,permissionsSha256:$permissionsSha256}' > "$output"

@@ -1,4 +1,7 @@
 # sha256 of pnpm standalone release binaries used by .github/actions/setup-pnpm.
 # Format: <sha256>  <asset>@<version>. Add a line whenever package.json packageManager is bumped:
 #   curl -fsSL -o pnpm https://github.com/pnpm/pnpm/releases/download/v<version>/<asset> && sha256sum pnpm
+# macOS digests verified against the official v10.18.3 release asset metadata.
 042fdc373cccacbc9a305c7578bd13862512760bc7ed47c0edc1e3bd7bdc35e1  pnpm-linux-x64@10.18.3
+7cf378c3a55d2aa3734007e4fdce5252291a4f1315966b0a996cffcff6aa2a74  pnpm-macos-arm64@10.18.3
+fd9380941b1eac83b6e6a8660e9ca341eb8bc5a294c26d510e356c7bdf51a255  pnpm-macos-x64@10.18.3

@@ -9,7 +9,8 @@ App 与 ACS 检查仍是独立、可并行查看日志的 job，不合成一个�
 前者现在包含后者的结果；当前 Ruleset 无需修改，历史规则、发布证据字段和制品 workflow 身份不变。
 此次不更改 `config/github-main-ruleset.json`，也不修改 GitHub 上的规则或生产环境配置。
 
-长期入口只保留 `CI`、`测试环境部署`、`测试环境验收`、`生产环境发布`。
+长期入口保留 `CI`、`iOS 构建与发布`、`测试环境部署`、`测试环境验收`、`生产环境发布`。
+其中 iOS 是独立商店发布链，不改变 App/ACS/RC 四个核心入口的职责。
 按维护者决定，`ci.yml` **继续保留原有手动 Web-only 兼容生产发布**：显式确认、main 限制、
 production Environment、生产写锁和失败补偿均不变；PR/push 不自动部署生产。
 独立 ACS Manual Deploy 已退役，ACS 发布统一使用 Staging 不可变 RC → Production Promotion。

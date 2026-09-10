@@ -6,6 +6,10 @@
       "name": "CI"
     },
     {
+      "path": ".github/workflows/mobile-ios-release.yml",
+      "name": "iOS 构建与发布"
+    },
+    {
       "path": ".github/workflows/deploy-staging.yml",
       "name": "测试环境部署"
     },

@@ -2,14 +2,15 @@
 
 ## 目标与明确保留项
 
-长期只保留四个文件，显示名称/路径保持不变：
+长期保留五个受审入口；原 App/ACS/RC 四个入口保持不变，另加入独立 iOS 商店发布入口：
 
-| 名称         | 文件                                       | 边界                                                         |
-| ------------ | ------------------------------------------ | ------------------------------------------------------------ |
-| CI           | `.github/workflows/ci.yml`                 | PR/main 检查、制品；**继续保留原手动 Web-only 兼容生产发布** |
-| 测试环境部署 | `.github/workflows/deploy-staging.yml`     | 手动准备不可变 RC、部署 Staging、确定性门禁                  |
-| 测试环境验收 | `.github/workflows/staging-acceptance.yml` | 手动、可选浏览器与 Agent 验收                                |
-| 生产环境发布 | `.github/workflows/promote-release.yml`    | 手动晋级 RC；互斥模式审计或修复 Web 冷备                     |
+| 名称           | 文件                                       | 边界                                                         |
+| -------------- | ------------------------------------------ | ------------------------------------------------------------ |
+| CI             | `.github/workflows/ci.yml`                 | PR/main 检查、制品；**继续保留原手动 Web-only 兼容生产发布** |
+| iOS 构建与发布 | `.github/workflows/mobile-ios-release.yml` | 手动构建签名 IPA、送审及审核通过后自动发布                   |
+| 测试环境部署   | `.github/workflows/deploy-staging.yml`     | 手动准备不可变 RC、部署 Staging、确定性门禁                  |
+| 测试环境验收   | `.github/workflows/staging-acceptance.yml` | 手动、可选浏览器与 Agent 验收                                |
+| 生产环境发布   | `.github/workflows/promote-release.yml`    | 手动晋级 RC；互斥模式审计或修复 Web 冷备                     |
 
 不改变 main Ruleset 的 `Build & Check` / `ACS Impact Gate`、RC 身份、制品命名与证据校验，
 不把测试环境部署改为自动，也不把可选验收变成生产必经门禁。保留 CI 的
@@ -55,14 +56,14 @@ Environment、生产服务和正在进行的其他开发分支不在本次删除
 PR 不修改 main，不提前停用仍在 main 使用的旧生产/检查入口。
 合并后，通过 `Build & Check` 的 main push CI 执行 `retire_legacy_workflows`：
 
-1. 验证本次源码确实只含允许的四个入口，核对当前 main 仍等于本次 SHA；落后的 main CI 延后给新 CI 处理。
+1. 验证本次源码确实只含允许的五个入口，核对当前 main 仍等于本次 SHA；落后的 main CI 延后给新 CI 处理。
 2. 分页读取 GitHub 注册项；保留项必须仍 active；待退役项 ID、路径、名称全部匹配才允许停用。
 3. 仅调用六个已知旧项的 disable API，然后逐项读回 disabled_manually。记录缺失/已停用时幂等跳过，未知或改名的身份不擅自修改。
 4. 不取消在途运行，不删除 workflow run、artifact、Release、RC tag、旧证据或任何别人的分支。
 
 该 job 只拥有 contents:read 与 actions:write，不读取生产 Secrets、不部署。
 清单漂移/API 拒绝/读回失败会明确失败，修复后可重跑；不伪报注册项已清理。
-历史已停用条目可能继续在 Actions 的历史筛选中显示；“四个活动入口”不等于抹掉审计历史。
+历史已停用条目可能继续在 Actions 的历史筛选中显示；“五个活动入口”不等于抹掉审计历史。
 需要物理删除历史 run 时必须另外审查 RC/事故证据引用，不能用批量删除隐藏结果。
 
 ## 回归与维护
@@ -70,6 +71,6 @@ PR 不修改 main，不提前停用仍在 main 使用的旧生产/检查入口�
 - `node scripts/release/workflow-inventory.mjs`：文件、名称、重复/缺失和额外入口检查。
 - `pnpm test:release-contracts`：包括操作互斥/确认/摘要拒绝、退役 API 幂等及漂移、CI 兼容入口保留和发布安全回归。
 - CI 的完整 Orchestrator 测试、Python 原生进程测试、真实 bundle 构建均为硬门禁；证据上传不会覆盖失败结论。
-- 新增长期工作流（包括其他 PR 的移动端发布）必须显式评审并更新清单，不能无意间重新引入临时修复或 authoring 入口。
+- 新增长期工作流必须显式评审并更新清单，不能无意间重新引入临时修复或 authoring 入口。
 
 PR 通过 CI 仅证明代码与自动化回归通过，不等于已经部署 Staging、发布生产或执行了线上冷备修复。

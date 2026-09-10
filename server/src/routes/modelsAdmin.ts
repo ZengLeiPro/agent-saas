@@ -405,6 +405,8 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
     ].filter((revision): revision is string => Boolean(revision));
     try {
       const result = await configMutationService.mutate({
+        operation: { id: 'models.save' },
+        ...(requestContext.operationId ? { operationId: requestContext.operationId } : {}),
         actor: requestContext.actor,
         productionConfirmation: typeof req.body?.productionConfirmation === 'string' ? req.body.productionConfirmation : undefined,
         expectedRevision: expectedRevisions[0],

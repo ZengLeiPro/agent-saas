@@ -427,11 +427,20 @@ async function persistUpdatedSettings(
   expectedConfigText: string,
   nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>,
   onCommitted?: (candidateText: string) => Promise<void>,
+  operation: { id: 'tool-controls.save' } | { id: 'tool-controls.tool'; target: string } = { id: 'tool-controls.save' },
+  prepareCandidate?: (
+    currentRaw: Record<string, unknown>,
+  ) => Promise<Pick<AppConfig, 'toolControls' | 'webTools'>>,
 ): Promise<{ settings: Pick<AppConfig, 'toolControls' | 'webTools'>; revision: string }> {
   const requestContext = mutationRequestContext(req);
   const expectedRevisions = configRequestRevisions(req);
   const result = await configMutationService.mutate({
+    operation,
     actor: requestContext.actor,
+    ...(requestContext.productionConfirmation
+      ? { productionConfirmation: requestContext.productionConfirmation }
+      : {}),
+    ...(requestContext.operationId ? { operationId: requestContext.operationId } : {}),
     expectedRevision: expectedRevisions[0],
     changedPaths: ['toolControls', 'webTools'],
     validateBaseline: (currentText) => {
@@ -440,11 +449,12 @@ async function persistUpdatedSettings(
         throw revisionConflict(currentText);
       }
     },
-    buildCandidate: (configText) => {
-      const withWebTools = applyEdits(configText, modify(configText, ['webTools'], nextSettings.webTools, {
+    buildCandidate: async (configText, currentRaw) => {
+      const candidateSettings = prepareCandidate ? await prepareCandidate(currentRaw) : nextSettings;
+      const withWebTools = applyEdits(configText, modify(configText, ['webTools'], candidateSettings.webTools, {
         formattingOptions: { insertSpaces: true, tabSize: 2 },
       }));
-      return applyEdits(withWebTools, modify(withWebTools, ['toolControls'], nextSettings.toolControls, {
+      return applyEdits(withWebTools, modify(withWebTools, ['toolControls'], candidateSettings.toolControls, {
         formattingOptions: { insertSpaces: true, tabSize: 2 },
       }));
     },
@@ -470,10 +480,11 @@ async function persistUpdatedSettings(
   };
 }
 
-function catalogResponse(settings: Pick<AppConfig, 'toolControls' | 'webTools'>, revision: string, descriptions?: ToolDescriptionSnapshot) {
+function catalogResponse(settings: Pick<AppConfig, 'toolControls' | 'webTools'>, revision: string, descriptions?: ToolDescriptionSnapshot, writePolicy?: ReturnType<AdminConfigMutationService['getWritePolicy']>) {
   const controls = descriptions ? mergeToolDescriptionOverrides(settings.toolControls, descriptions.overrides) : settings.toolControls;
   return {
     revision,
+    ...(writePolicy ? { writePolicy } : {}),
     ...(descriptions ? { descriptionRevision: descriptions.revision } : {}),
     toolControls: sanitizeToolControlsConfig(controls),
     tools: toolCatalogWithState(controls),
@@ -500,7 +511,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       const revision = configRevision(configText);
       res.setHeader('ETag', `"${revision}"`);
       res.setHeader('Cache-Control', 'no-store');
-      res.json(catalogResponse(diskConfig, revision, await options.toolDescriptionStore?.get()));
+      res.json(catalogResponse(diskConfig, revision, await options.toolDescriptionStore?.get(), configMutationService.getWritePolicy()));
     } catch (error) {
       sendConfigMutationError(res, error);
     }
@@ -509,7 +520,11 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
   router.put('/', async (req, res) => {
     const configPath = getAppConfigPath(options.processCwd);
     let configText: string; let nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>;
-    const secretMutation = new RouteSecretRefMutation(options.secretVault, SEARCH_SECRET_WRITER);
+    const secretMutation = new RouteSecretRefMutation(
+      options.secretVault,
+      SEARCH_SECRET_WRITER,
+      { preservePreviousOnCommit: configMutationService.isControlledProductionPublisher() },
+    );
 
     try {
       configText = readFileSync(configPath, 'utf-8');
@@ -519,7 +534,6 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       const latestText = readFileSync(configPath, 'utf-8');
       if (latestText !== configText) throw revisionConflict(latestText);
       const rawConfig = parseJsonc(configText);
-      secretMutation.trackPrevious(webSearchSecretRefs(parseAppConfig(rawConfig)));
       // The whole-config form carries effective descriptions. Keep the release baseline
       // intact; only the dedicated single-tool save writes dynamic descriptions.
       let requestedControls = req.body?.toolControls;
@@ -534,9 +548,6 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
         }
       }
       nextSettings = validateToolSettingsUpdate(rawConfig, requestedControls, req.body?.webTools);
-      nextSettings = await persistSearchCredential(nextSettings, secretMutation);
-      // 与运行时相同，验证 hook 只接收已去明文且可实际解析的 SecretVault ref 配置。
-      await options.validateToolSettingsConfig?.(nextSettings);
     } catch (error) {
       const message = secretMutation.redactError(error, submittedWebSearchSecrets(req.body));
       await secretMutation.failed(error, webSearchSecretRefs(nextSettings!));
@@ -556,10 +567,17 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
           const committedConfig = parseAppConfig(parseJsonc(candidateText));
           await secretMutation.committed(webSearchSecretRefs(committedConfig));
         },
+        { id: 'tool-controls.save' },
+        async (freshRaw) => {
+          secretMutation.trackPrevious(webSearchSecretRefs(parseAppConfig(freshRaw)));
+          nextSettings = await persistSearchCredential(nextSettings, secretMutation);
+          await options.validateToolSettingsConfig?.(nextSettings);
+          return nextSettings;
+        },
       );
       auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.settings.toolControls));
       res.setHeader('ETag', `"${persisted.revision}"`);
-      res.json(catalogResponse(persisted.settings, persisted.revision, await options.toolDescriptionStore?.get()));
+      res.json(catalogResponse(persisted.settings, persisted.revision, await options.toolDescriptionStore?.get(), configMutationService.getWritePolicy()));
     } catch (error) {
       const message = secretMutation.redactError(error, [
         ...submittedWebSearchSecrets(req.body),
@@ -600,7 +618,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
         const override = next.toolControls?.tools?.[toolId]?.descriptionOverride ?? null;
         const saved = await options.toolDescriptionStore.update(toolId, override, snapshot.revision, mutationRequestContext(req).actor);
         auditLog(req, 'tool_controls_updated', `${toolId}：${override ? `描述覆盖(${override.mode})` : '清除描述覆盖'}`);
-        res.json(catalogResponse(diskConfig, revision, saved));
+        res.json(catalogResponse(diskConfig, revision, saved, configMutationService.getWritePolicy()));
       } catch (error) {
         if (error instanceof ToolDescriptionConflictError) {
           res.status(409).json({ error: error.message, code: error.code });
@@ -652,10 +670,12 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
         req,
         configText,
         nextSettings,
+        undefined,
+        { id: 'tool-controls.tool', target: toolId },
       );
       auditLog(req, 'tool_controls_updated', `${toolId}：${describeToolEntry(persisted.settings.toolControls, toolId)}`);
       res.setHeader('ETag', `"${persisted.revision}"`);
-      res.json(catalogResponse(persisted.settings, persisted.revision, await options.toolDescriptionStore?.get()));
+      res.json(catalogResponse(persisted.settings, persisted.revision, await options.toolDescriptionStore?.get(), configMutationService.getWritePolicy()));
     } catch (error) {
       sendRevisionMutationError(res, error);
     }

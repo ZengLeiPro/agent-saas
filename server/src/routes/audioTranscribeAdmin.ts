@@ -12,7 +12,7 @@ import {
   ConfigConflictError,
   configFingerprint,
 } from '../config/adminConfigMutationService.js';
-import { mutationRequestContext } from '../config/adminConfigMutationHttp.js';
+import { adminConfigReadMetadata, mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import { ConfigWriteConflictError } from './configWriteLock.js';
 import { RouteSecretRefMutation } from './secretRefMutation.js';
@@ -238,54 +238,43 @@ export function createAudioTranscribeAdminRouter(
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
-    res.json(adminView(options.config));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ...adminView(options.config),
+      ...adminConfigReadMetadata(options.processCwd, configMutationService),
+    });
   });
 
   router.put('/', async (req, res) => {
-    const configPath = getAppConfigPath(options.processCwd);
-    let configText: string;
-    let rawRecord: RawObject;
     let staged: SttConfig | undefined = undefined;
-    const secretMutation = new RouteSecretRefMutation(options.secretVault, SECRET_WRITER);
-
-    try {
-      configText = readFileSync(configPath, 'utf-8');
-      if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) {
-        throw new Error('当前配置基线未完整应用，拒绝写入');
-      }
-      if (readFileSync(configPath, 'utf-8') !== configText) {
-        throw new ConfigWriteConflictError('配置已被并发修改，请刷新后重试');
-      }
-      const merged = mergeRequestedStt(parseJsonc(configText), req.body);
-      rawRecord = merged.rawRecord;
-      secretMutation.trackPrevious(sttSecretRefs(parseAppConfig(rawRecord).stt));
-      // 先整份校验，确保非法价格等错误不会产生 SecretVault 或磁盘副作用。
-      staged = parseAppConfig({ ...rawRecord, stt: merged.staged }).stt;
-      assertEnabledCredentialsComplete(staged);
-      staged = await persistSubmittedSecrets(staged, req.body, secretMutation);
-      // ref 替换 inline 后再次按整份 AppConfig 校验，并执行运行时预检。
-      staged = parseAppConfig({ ...rawRecord, stt: staged }).stt;
-      await options.validate?.(staged);
-    } catch (error) {
-      const message = secretMutation.redactError(error);
-      await secretMutation.failed(error, sttSecretRefs(staged));
-      res.status(error instanceof ConfigWriteConflictError ? 409 : 400)
-        .json({ error: safeErrorMessage(new Error(message), staged, req.body) });
-      return;
-    }
+    const secretMutation = new RouteSecretRefMutation(
+      options.secretVault,
+      SECRET_WRITER,
+      { preservePreviousOnCommit: configMutationService.isControlledProductionPublisher() },
+    );
 
     try {
       const result = await configMutationService.mutate({
         ...mutationRequestContext(req),
+        operation: { id: 'stt.save' },
         changedPaths: ['stt'],
-        validateBaseline: (freshText) => {
-          if (freshText !== configText) {
-            throw new ConfigConflictError(configFingerprint(parseJsonc(freshText)));
+        validateBaseline: async (freshText) => {
+          if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(freshText)) {
+            throw new Error('当前配置基线未完整应用，拒绝写入');
           }
         },
-        buildCandidate: (freshText) => applyEdits(freshText, modify(freshText, ['stt'], staged, {
-          formattingOptions: { insertSpaces: true, tabSize: 2 },
-        })),
+        buildCandidate: async (freshText, freshRaw) => {
+          const merged = mergeRequestedStt(freshRaw, req.body);
+          secretMutation.trackPrevious(sttSecretRefs(parseAppConfig(merged.rawRecord).stt));
+          staged = parseAppConfig({ ...merged.rawRecord, stt: merged.staged }).stt;
+          assertEnabledCredentialsComplete(staged);
+          staged = await persistSubmittedSecrets(staged, req.body, secretMutation);
+          staged = parseAppConfig({ ...merged.rawRecord, stt: staged }).stt;
+          await options.validate?.(staged);
+          return applyEdits(freshText, modify(freshText, ['stt'], staged, {
+            formattingOptions: { insertSpaces: true, tabSize: 2 },
+          }));
+        },
         applyRuntime: async (candidate) => {
           options.config.stt = candidate.stt;
           await options.onUpdated?.(candidate.stt);
@@ -299,14 +288,18 @@ export function createAudioTranscribeAdminRouter(
           }
         },
       });
-      res.json(adminView(result.config));
+      res.json({
+        ...adminView(result.config),
+        ...adminConfigReadMetadata(options.processCwd, configMutationService),
+      });
     } catch (error) {
       const message = secretMutation.redactError(error, sttSecretRefs(staged));
       await secretMutation.failed(error, sttSecretRefs(staged));
-      res.status(
-        error instanceof ConfigWriteConflictError || error instanceof ConfigConflictError ? 409 : 500,
-      )
-        .json({ error: safeErrorMessage(new Error(message), staged, req.body) });
+      if (error instanceof ConfigWriteConflictError) {
+        res.status(409).json({ error: safeErrorMessage(new Error(message), staged, req.body) });
+      } else {
+        sendConfigMutationError(res, error);
+      }
     }
   });
 

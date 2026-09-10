@@ -8,9 +8,14 @@ import type { CodexCredentialManager } from '../runtime/responses/codexCredentia
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import {
   AdminConfigMutationService,
+  ConfigMutationCommittedError,
   RuntimeRestoreFailedError,
 } from '../config/adminConfigMutationService.js';
-import { mutationRequestContext } from '../config/adminConfigMutationHttp.js';
+import {
+  adminConfigReadMetadata,
+  mutationRequestContext,
+  sendConfigMutationError,
+} from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
 export interface CreateCodexSubscriptionAdminRouterOptions {
@@ -51,9 +56,11 @@ async function persistConfig(
   configMutationService: AdminConfigMutationService,
   req: Request,
   next: CodexSubscriptionConfig,
+  operation: 'codex.settings' | 'codex.order' | 'codex.complete' | 'codex.remove' | 'codex.disconnect',
 ): Promise<CodexSubscriptionConfig> {
   const result = await configMutationService.mutate({
     ...mutationRequestContext(req),
+    operation: { id: operation },
     changedPaths: ['codexSubscription'],
     buildCandidate: (configText, raw) => {
       const parsed = parseAppConfig({ ...raw, codexSubscription: next });
@@ -74,10 +81,14 @@ async function persistConfig(
   return result.config.codexSubscription!;
 }
 
-async function publicState(options: CreateCodexSubscriptionAdminRouterOptions) {
+async function publicState(
+  options: CreateCodexSubscriptionAdminRouterOptions,
+  service?: AdminConfigMutationService,
+) {
   const configuration = options.credentialManager.getConfiguration();
   const credentials = await options.credentialManager.getStatuses();
   return {
+    ...(service ? adminConfigReadMetadata(options.processCwd, service) : {}),
     config: {
       enabled: configuration.enabled,
       websocketEnabled: configuration.websocketEnabled,
@@ -110,7 +121,8 @@ export function createCodexSubscriptionAdminRouter(
   router.use(requirePlatformAdmin);
 
   router.get('/', async (_req, res) => {
-    res.json(await publicState(options));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(await publicState(options, configMutationService));
   });
 
   router.put('/', async (req, res) => {
@@ -129,6 +141,10 @@ export function createCodexSubscriptionAdminRouter(
     const quotaCooldownMinutes = typeof requestedQuotaCooldownMinutes === 'number'
       ? requestedQuotaCooldownMinutes
       : current.quotaCooldownMinutes;
+    if (!Number.isInteger(quotaCooldownMinutes) || quotaCooldownMinutes < 1 || quotaCooldownMinutes > 10_080) {
+      res.status(400).json({ error: 'quotaCooldownMinutes 必须是 1 到 10080 之间的整数' });
+      return;
+    }
     if (enabled && refs.length === 0) {
       res.status(409).json({ error: '请先完成至少一个 Codex 账号授权，再启用订阅 transport' });
       return;
@@ -139,10 +155,10 @@ export function createCodexSubscriptionAdminRouter(
         enabled,
         websocketEnabled: requestedWebsocketEnabled,
         quotaCooldownMinutes,
-      }));
-      res.json(await publicState(options));
+      }), 'codex.settings');
+      res.json(await publicState(options, configMutationService));
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
     }
   });
 
@@ -164,10 +180,10 @@ export function createCodexSubscriptionAdminRouter(
     }
 
     try {
-      await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, requested));
-      res.json(await publicState(options));
+      await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, requested), 'codex.order');
+      res.json(await publicState(options, configMutationService));
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
     }
   });
 
@@ -194,66 +210,90 @@ export function createCodexSubscriptionAdminRouter(
     try {
       const existingCompletion = deviceCompletionTasks.get(req.params.sessionId);
       if (existingCompletion) {
-        res.json({ status: 'completed', ...(await existingCompletion) });
+        res.json({ status: 'applied', ...(await existingCompletion) });
         return;
       }
-      const result = await options.deviceAuthService.poll(req.params.sessionId);
-      if (result.status === 'pending') {
-        res.json(result);
-        return;
-      }
-      if (result.status === 'expired') {
-        res.status(410).json(result);
-        return;
-      }
-      const completedResult = result;
-      let completion = deviceCompletionTasks.get(req.params.sessionId);
-      if (!completion) {
-        completion = (async () => {
-          const current = options.credentialManager.getConfiguration();
-          const currentRefs = credentialRefs(options);
-          const replaceCredentialRef = completedResult.replaceCredentialRef;
-          if (replaceCredentialRef && !currentRefs.includes(replaceCredentialRef)) {
-            throw new Error('待重授权的 Codex 账号已被移除，请重新发起授权');
-          }
-          const persisted = await options.credentialManager.persistLogin(
-            completedResult.tokens,
-            replaceCredentialRef,
-          );
-          const nextRefs = replaceCredentialRef
-            ? currentRefs.map((ref) => (
-              ref === replaceCredentialRef ? persisted.credentialRef : ref
-            ))
-            : [...currentRefs, persisted.credentialRef];
-          try {
-            await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, nextRefs, {
-              enabled: true,
-              websocketEnabled: current.websocketEnabled,
-            }));
-          } catch (error) {
-            if (error instanceof RuntimeRestoreFailedError) {
-              options.deviceAuthService.complete(req.params.sessionId);
-            } else if (!replaceCredentialRef || persisted.credentialRef !== replaceCredentialRef) {
-              await options.credentialManager.revoke(persisted.credentialRef).catch(() => undefined);
-              options.deviceAuthService.complete(req.params.sessionId);
-            }
-            throw error;
-          }
-          if (replaceCredentialRef) options.closeWebSockets?.([replaceCredentialRef]);
-          options.deviceAuthService.complete(req.params.sessionId);
-          return publicState(options);
-        })();
-        deviceCompletionTasks.set(req.params.sessionId, completion);
-        const clearCompletion = () => {
-          if (deviceCompletionTasks.get(req.params.sessionId) === completion) {
-            deviceCompletionTasks.delete(req.params.sessionId);
-          }
-        };
-        void completion.then(clearCompletion, clearCompletion);
-      }
-      res.json({ status: 'completed', ...(await completion) });
+      const result = options.deviceAuthService.status(req.params.sessionId);
+      res.status(result.status === 'expired' ? 410 : 200).json(result);
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/device/:sessionId/poll', async (req, res) => {
+    try {
+      const result = await options.deviceAuthService.poll(req.params.sessionId);
+      if (result.status === 'completed') {
+        res.json({
+          status: 'authorized_pending_publication',
+          ...(result.replaceCredentialRef ? { replaceCredentialRef: result.replaceCredentialRef } : {}),
+        });
+        return;
+      }
+      res.status(result.status === 'expired' ? 410 : 200).json(result);
+    } catch (error) {
+      res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/device/:sessionId/complete', async (req, res) => {
+    const prior = deviceCompletionTasks.get(req.params.sessionId);
+    if (prior) {
+      res.json({ status: 'applied', ...(await prior) });
+      return;
+    }
+    let candidateRef: string | undefined;
+    const completion = (async () => {
+      const authorized = options.deviceAuthService.completedResult(req.params.sessionId);
+      const result = await configMutationService.mutate({
+        ...mutationRequestContext(req),
+        operation: { id: 'codex.complete' },
+        changedPaths: ['codexSubscription'],
+        buildCandidate: async (configText, raw) => {
+          const persistedConfig = parseAppConfig(raw);
+          const current = persistedConfig.codexSubscription;
+          if (!current) throw new Error('codexSubscription 配置无效');
+          const currentRefs = current.credentialRefs?.length
+            ? [...current.credentialRefs]
+            : current.credentialRef ? [current.credentialRef] : [];
+          if (authorized.replaceCredentialRef && !currentRefs.includes(authorized.replaceCredentialRef)) {
+            throw new Error('待重授权的 Codex 账号已被移除，请重新发起授权');
+          }
+          const candidate = await options.credentialManager.persistLogin(authorized.tokens);
+          candidateRef = candidate.credentialRef;
+          const nextRefs = authorized.replaceCredentialRef
+            ? currentRefs.map((ref) => ref === authorized.replaceCredentialRef ? candidate.credentialRef : ref)
+            : [...currentRefs, candidate.credentialRef];
+          const next = {
+            ...current,
+            enabled: true,
+            websocketEnabled: current.websocketEnabled === true,
+            credentialRef: nextRefs[0],
+            credentialRefs: nextRefs,
+          };
+          const parsed = parseAppConfig({ ...raw, codexSubscription: next });
+          return applyEdits(configText, modify(configText, ['codexSubscription'], parsed.codexSubscription, {
+            formattingOptions: { insertSpaces: true, tabSize: 2 },
+          }));
+        },
+        applyRuntime: (candidate) => {
+          if (!candidate.codexSubscription) throw new Error('codexSubscription 配置无效');
+          options.config.codexSubscription = candidate.codexSubscription;
+        },
+      });
+      if (authorized.replaceCredentialRef) options.closeWebSockets?.([authorized.replaceCredentialRef]);
+      options.deviceAuthService.complete(req.params.sessionId);
+      return { ...await publicState(options, configMutationService), revision: result.revision };
+    })();
+    deviceCompletionTasks.set(req.params.sessionId, completion);
+    try {
+      res.json({ status: 'applied', ...(await completion) });
+    } catch (error) {
+      deviceCompletionTasks.delete(req.params.sessionId);
+      if (candidateRef && !(error instanceof RuntimeRestoreFailedError) && !(error instanceof ConfigMutationCommittedError)) {
+        await options.credentialManager.discardLoginCandidate(candidateRef);
+      }
+      sendConfigMutationError(res, error);
     }
   });
 
@@ -270,9 +310,9 @@ export function createCodexSubscriptionAdminRouter(
       await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, nextRefs, {
         enabled: nextRefs.length > 0 ? current.enabled : false,
         websocketEnabled: nextRefs.length > 0 ? current.websocketEnabled : false,
-      }));
+      }), 'codex.remove');
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
       return;
     }
 
@@ -283,7 +323,7 @@ export function createCodexSubscriptionAdminRouter(
       warning = 'transport 已更新，但旧 SecretVault 凭据清理失败，请检查凭据存储';
     }
     res.json({
-      ...(await publicState(options)),
+      ...(await publicState(options, configMutationService)),
       ...(warning ? { warning } : {}),
     });
   });
@@ -295,9 +335,9 @@ export function createCodexSubscriptionAdminRouter(
       await persistConfig(options, configMutationService, _req, configWithCredentialRefs(current, [], {
         enabled: false,
         websocketEnabled: false,
-      }));
+      }), 'codex.disconnect');
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
       return;
     }
 
@@ -311,7 +351,7 @@ export function createCodexSubscriptionAdminRouter(
       }
     }
     res.json({
-      ...(await publicState(options)),
+      ...(await publicState(options, configMutationService)),
       ...(warnings.length > 0 ? { warning: warnings.join('；') } : {}),
     });
   });

@@ -9,6 +9,7 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
+import { useAdminConfigWritePolicy, type AdminConfigResponseMetadata } from "@/hooks/useAdminConfigWritePolicy";
 
 type PromptCategory = "main" | "subagent" | "utility";
 
@@ -23,7 +24,7 @@ interface SystemPromptItem {
   overridden: boolean;
 }
 
-interface SystemPromptsResponse {
+interface SystemPromptsResponse extends AdminConfigResponseMetadata {
   prompts: SystemPromptItem[];
 }
 
@@ -35,6 +36,7 @@ const CATEGORY_LABELS: Record<PromptCategory, string> = {
 
 export function SystemPromptsManager(): JSX.Element {
   const { platformReadOnly } = useAuth();
+  const { acceptMetadata, bodyMetadata, confirmMutation, deleteHeaders, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "系统提示语");
   const [prompts, setPrompts] = useState<SystemPromptItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [draft, setDraft] = useState("");
@@ -49,13 +51,14 @@ export function SystemPromptsManager(): JSX.Element {
   const dirty = !!selected && draft !== selected.content;
 
   const applyResponse = useCallback((data: SystemPromptsResponse, preferredId?: string) => {
+    acceptMetadata(data);
     setPrompts(data.prompts);
     const nextSelected = data.prompts.find((item) => item.id === preferredId)
       ?? data.prompts[0]
       ?? null;
     setSelectedId(nextSelected?.id ?? "");
     setDraft(nextSelected?.content ?? "");
-  }, []);
+  }, [acceptMetadata]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,14 +92,15 @@ export function SystemPromptsManager(): JSX.Element {
       setMessage({ kind: "error", text: "系统提示语不能为空" });
       return;
     }
-    if (!window.confirm(`保存后「${selected.label}」将在后续模型调用中立即生效，确定继续吗？`)) return;
+    const productionConfirmation = confirmMutation();
+    if (productionConfirmation === null) return;
     setSaving(true);
     setMessage(null);
     try {
       const response = await authFetch(`/api/admin/system-prompts/${encodeURIComponent(selected.id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: draft }),
+        body: JSON.stringify({ content: draft, ...bodyMetadata(productionConfirmation) }),
       });
       const data = await readJson<SystemPromptsResponse>(response);
       applyResponse(data, selected.id);
@@ -106,7 +110,7 @@ export function SystemPromptsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [applyResponse, draft, selected]);
+  }, [applyResponse, bodyMetadata, confirmMutation, draft, selected]);
 
   const reset = useCallback(async () => {
     if (!selected) return;
@@ -115,11 +119,14 @@ export function SystemPromptsManager(): JSX.Element {
       return;
     }
     if (!window.confirm(`确定恢复「${selected.label}」的系统默认提示语吗？恢复后立即生效。`)) return;
+    const productionConfirmation = confirmMutation();
+    if (productionConfirmation === null) return;
     setSaving(true);
     setMessage(null);
     try {
       const response = await authFetch(`/api/admin/system-prompts/${encodeURIComponent(selected.id)}`, {
         method: "DELETE",
+        headers: deleteHeaders(productionConfirmation),
       });
       const data = await readJson<SystemPromptsResponse>(response);
       applyResponse(data, selected.id);
@@ -129,7 +136,7 @@ export function SystemPromptsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [applyResponse, selected]);
+  }, [applyResponse, confirmMutation, deleteHeaders, selected]);
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
@@ -142,7 +149,7 @@ export function SystemPromptsManager(): JSX.Element {
               <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
               刷新
             </Button>
-            <Button size="sm" onClick={() => void save()} disabled={platformReadOnly || loading || saving || !dirty || !draft.trim()}>
+            <Button size="sm" onClick={() => void save()} disabled={readOnly || loading || saving || !dirty || !draft.trim()}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               保存并热更新
             </Button>
@@ -219,7 +226,7 @@ export function SystemPromptsManager(): JSX.Element {
                       variant="outline"
                       size="sm"
                       onClick={() => void reset()}
-                      disabled={platformReadOnly || saving || (!selected.overridden && draft === selected.defaultContent)}
+                      disabled={readOnly || saving || (!selected.overridden && draft === selected.defaultContent)}
                     >
                       <RotateCcw className="size-3.5" />恢复默认
                     </Button>
@@ -240,7 +247,7 @@ export function SystemPromptsManager(): JSX.Element {
                   className="min-h-[28rem] flex-1 resize-y font-mono text-xs leading-5"
                   value={draft}
                   onChange={(event) => { setDraft(event.target.value); setMessage(null); }}
-                  disabled={platformReadOnly || loading || saving}
+                  disabled={readOnly || loading || saving}
                   maxLength={200_000}
                   spellCheck={false}
                 />

@@ -51,6 +51,17 @@ function rawConfig() {
 
 const servers: Server[] = [];
 
+async function pollAndComplete(baseUrl: string, sessionId: string): Promise<Response> {
+  const poll = await fetch(`${baseUrl}/device/${sessionId}/poll`, { method: 'POST' });
+  expect(poll.status).toBe(200);
+  expect(await poll.json()).toMatchObject({ status: 'authorized_pending_publication' });
+  return fetch(`${baseUrl}/device/${sessionId}/complete`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+}
+
 describe('Codex subscription admin router', () => {
   beforeEach(() => {
     vi.stubEnv('NODE_ENV', 'development');
@@ -144,11 +155,11 @@ describe('Codex subscription admin router', () => {
     expect(started.userCode).toBe('ABCD-EFGH');
     expect(started).not.toHaveProperty('deviceAuthId');
 
-    const pollResponse = await fetch(`${baseUrl}/device/${started.sessionId}`);
+    const pollResponse = await pollAndComplete(baseUrl, started.sessionId);
     expect(pollResponse.status).toBe(200);
     const connected = await pollResponse.json() as any;
     expect(connected).toMatchObject({
-      status: 'completed',
+      status: 'applied',
       config: { enabled: true, websocketEnabled: false, originator: 'kaiyan-agent' },
       credential: {
         configured: true,
@@ -291,7 +302,7 @@ describe('Codex subscription admin router', () => {
     const startOne = await fetch(`${baseUrl}/device/start`, { method: 'POST' });
     expect(startOne.status).toBe(201);
     const sessionOne = await startOne.json() as { sessionId: string };
-    const completeOne = await fetch(`${baseUrl}/device/${sessionOne.sessionId}`);
+    const completeOne = await pollAndComplete(baseUrl, sessionOne.sessionId);
     expect(completeOne.status).toBe(200);
     const oneState = await completeOne.json() as any;
     expect(oneState.credentials).toHaveLength(1);
@@ -299,7 +310,7 @@ describe('Codex subscription admin router', () => {
     const startTwo = await fetch(`${baseUrl}/device/start`, { method: 'POST' });
     expect(startTwo.status).toBe(201);
     const sessionTwo = await startTwo.json() as { sessionId: string };
-    const completeTwo = await fetch(`${baseUrl}/device/${sessionTwo.sessionId}`);
+    const completeTwo = await pollAndComplete(baseUrl, sessionTwo.sessionId);
     expect(completeTwo.status).toBe(200);
     const twoState = await completeTwo.json() as any;
     expect(twoState.credentials).toHaveLength(2);
@@ -368,6 +379,13 @@ describe('Codex subscription admin router', () => {
           expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
         },
       }),
+      completedResult: vi.fn().mockReturnValue({
+        replaceCredentialRef: missingRef,
+        tokens: {
+          accessToken: jwt('acct-repaired'), refreshToken: 'refresh-repaired',
+          idToken: jwt('acct-repaired'), expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+        },
+      }),
       complete: vi.fn(),
     } as unknown as CodexDeviceAuthService;
     const closeWebSockets = vi.fn();
@@ -387,8 +405,12 @@ describe('Codex subscription admin router', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('failed to bind test server');
 
-    const url = `http://127.0.0.1:${address.port}/api/admin/codex-subscription/device/repair-session`;
-    const [firstResponse, secondResponse] = await Promise.all([fetch(url), fetch(url)]);
+    const baseUrl = `http://127.0.0.1:${address.port}/api/admin/codex-subscription`;
+    const poll = await fetch(`${baseUrl}/device/repair-session/poll`, { method: 'POST' });
+    expect(poll.status).toBe(200);
+    const url = `${baseUrl}/device/repair-session/complete`;
+    const request = () => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const [firstResponse, secondResponse] = await Promise.all([request(), request()]);
     expect(firstResponse.status).toBe(200);
     expect(secondResponse.status).toBe(200);
     const state = await firstResponse.json() as any;
@@ -449,13 +471,24 @@ describe('Codex subscription admin router', () => {
           expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
         },
       }),
+      completedResult: vi.fn().mockReturnValue({
+        replaceCredentialRef: missingRef,
+        tokens: {
+          accessToken: jwt('acct-repaired'), refreshToken: 'refresh-repaired',
+          idToken: jwt('acct-repaired'), expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+        },
+      }),
       complete: vi.fn(),
     } as unknown as CodexDeviceAuthService;
     const configMutationService = {
-      mutate: vi.fn().mockRejectedValue(new RuntimeRestoreFailedError(
-        new Error('apply runtime failed'),
-        new Error('restore runtime failed'),
-      )),
+      mutate: vi.fn().mockImplementation(async (input: Parameters<AdminConfigMutationService['mutate']>[0]) => {
+        const text = JSON.stringify(initial, null, 2);
+        await input.buildCandidate(text, initial);
+        throw new RuntimeRestoreFailedError(
+          new Error('apply runtime failed'),
+          new Error('restore runtime failed'),
+        );
+      }),
     } as unknown as AdminConfigMutationService;
     const app = express();
     app.use(express.json());
@@ -474,10 +507,11 @@ describe('Codex subscription admin router', () => {
     if (!address || typeof address === 'string') throw new Error('failed to bind test server');
 
     const response = await fetch(
-      `http://127.0.0.1:${address.port}/api/admin/codex-subscription/device/repair-session`,
+      `http://127.0.0.1:${address.port}/api/admin/codex-subscription/device/repair-session/complete`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
     );
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(500);
     expect(replacementRef).toBeTruthy();
     await expect(vault.getSecret(replacementRef!, {
       actor: 'system',
@@ -485,7 +519,6 @@ describe('Codex subscription admin router', () => {
       scopes: ['secret:codex_subscription_oauth:read'],
     })).resolves.toContain('refresh-repaired');
     expect(revoke).not.toHaveBeenCalled();
-    expect(deviceAuthService.complete).toHaveBeenCalledTimes(1);
-    expect(deviceAuthService.complete).toHaveBeenCalledWith('repair-session');
+    expect(deviceAuthService.complete).not.toHaveBeenCalled();
   });
 });

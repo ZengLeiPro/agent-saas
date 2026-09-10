@@ -1,10 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import {
   getConfigWritePolicy,
-  parseConfigWritePolicy,
   PRODUCTION_CONFIG_PUBLISH_REQUIRED,
-  type ConfigWritePolicy,
 } from '@agent/shared/configWritePolicy';
+import { useAdminConfigWritePolicy } from '@/hooks/useAdminConfigWritePolicy';
 
 const UNKNOWN_POLICY = '尚未取得服务端配置写入策略，暂不可修改。请刷新后重试。';
 const PRODUCTION_NOTICE =
@@ -12,17 +11,18 @@ const PRODUCTION_NOTICE =
 
 /** UI capability is read from this endpoint, never inferred from hostname or NODE_ENV. */
 export function useModelWritePolicy(accountReadOnly: boolean) {
-  const [policy, setPolicy] = useState<ConfigWritePolicy | null>(null);
+  const common = useAdminConfigWritePolicy(accountReadOnly, '模型配置');
+  const policy = common.policy;
   const acceptPolicy = useCallback((value: unknown) => {
-    setPolicy(parseConfigWritePolicy(value));
-  }, []);
+    common.acceptMetadata({ writePolicy: value as never });
+  }, [common]);
   const acceptFailure = useCallback((value: { code?: string }) => {
     if (value.code === PRODUCTION_CONFIG_PUBLISH_REQUIRED) {
       // Preserve the local draft; only withdraw permission after an authoritative denial.
-      setPolicy(getConfigWritePolicy('production'));
+      common.acceptMetadata({ writePolicy: getConfigWritePolicy('production') });
     }
-  }, []);
-  const readOnly = accountReadOnly || policy?.canSave !== true;
+  }, [common]);
+  const readOnly = common.readOnly;
   const notice = accountReadOnly
     ? '当前账号只有查看权限，不能保存模型配置。'
     : !policy

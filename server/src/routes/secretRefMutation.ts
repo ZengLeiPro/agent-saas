@@ -19,6 +19,7 @@ export class RouteSecretRefMutation {
   constructor(
     private readonly vault: SecretVault | undefined,
     private readonly caller: VaultCaller,
+    private readonly policy: { preservePreviousOnCommit?: boolean } = {},
   ) {}
 
   get available(): boolean {
@@ -49,6 +50,7 @@ export class RouteSecretRefMutation {
     const obsolete = [...this.previous].filter((ref) => !referenced.has(ref));
     this.previous.clear();
     this.created.clear();
+    if (this.policy.preservePreviousOnCommit) return 0;
     return this.revoke(obsolete);
   }
 

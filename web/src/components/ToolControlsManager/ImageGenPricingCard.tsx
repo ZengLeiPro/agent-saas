@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminConfigWritePolicy, type AdminConfigResponseMetadata } from "@/hooks/useAdminConfigWritePolicy";
 
 /**
  * GenerateImage per-engine 生图定价卡片（2026-07-15 批次）。
@@ -36,7 +37,7 @@ export interface ImageGenPlatformStatus {
   configuredEngines: string[];
 }
 
-export interface ImageGenPricingAdminResponse {
+export interface ImageGenPricingAdminResponse extends AdminConfigResponseMetadata {
   /** 生效视图：管理员覆盖合并到内置默认（扣费实际使用的表）。 */
   pricing: ImageGenPricingTable;
   /** 管理员显式配置（null = 全部走内置默认）。 */
@@ -111,6 +112,7 @@ function formatPricing(entry: ImageGenEnginePricing | undefined): string {
 export function ImageGenPricingCard() {
   // 只读平台 admin：保存定价 disabled
   const { platformReadOnly } = useAuth();
+  const { acceptMetadata, bodyMetadata, confirmMutation, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "生图定价");
   const [data, setData] = useState<ImageGenPricingAdminResponse | null>(null);
   const [drafts, setDrafts] = useState<DraftTable>({});
   const [loading, setLoading] = useState(true);
@@ -120,10 +122,11 @@ export function ImageGenPricingCard() {
   const [error, setError] = useState<string | null>(null);
 
   const hydrate = useCallback((next: ImageGenPricingAdminResponse) => {
+    acceptMetadata(next);
     setData(next);
     setDrafts(hydrateDrafts(next));
     setDirty(false);
-  }, []);
+  }, [acceptMetadata]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -181,11 +184,13 @@ export function ImageGenPricingCard() {
   const save = useCallback(async () => {
     setSaving(true);
     try {
+      const productionConfirmation = confirmMutation();
+      if (productionConfirmation === null) return;
       const pricing = buildPricingPayload(drafts);
       const res = await authFetch("/api/admin/image-gen-pricing", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pricing }),
+        body: JSON.stringify({ pricing, ...bodyMetadata(productionConfirmation) }),
       });
       const body = (await res.json().catch(() => ({}))) as Partial<ImageGenPricingAdminResponse> & { error?: string };
       if (!res.ok || !body.pricing) throw new Error(body.error || `HTTP ${res.status}`);
@@ -197,7 +202,7 @@ export function ImageGenPricingCard() {
     } finally {
       setSaving(false);
     }
-  }, [drafts, hydrate]);
+  }, [bodyMetadata, confirmMutation, drafts, hydrate]);
 
   const engines = data ? listEngines(data) : [];
 
@@ -212,7 +217,7 @@ export function ImageGenPricingCard() {
             <RefreshCw className="size-3.5" />
             刷新
           </Button>
-          <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || saving || !dirty}>
+          <Button size="sm" onClick={() => { void save(); }} disabled={readOnly || saving || !dirty}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
             保存定价
           </Button>

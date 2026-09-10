@@ -177,7 +177,6 @@ import type { SkillMaterializationRequest } from '../workspace/materialization/t
 import type { RawRuntimeRunDispatchConfig, SkillsDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import type { SkillEntry } from '../agent/skillToolProvider.js';
 import {
-  createTenantRemoteHandAuthTokenResolver,
   selectTenantRemoteHandsForRegistration,
 } from '../runtime/tenantRemoteHandResolver.js';
 import { createDefaultExecutionTransportRegistry } from '../agent/toolRuntime.js';
@@ -193,6 +192,8 @@ import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
 import { initializeToolDescriptionStore } from '../data/toolDescriptionStore.js'; import { createToolDescriptionRuntimeRefresh } from './toolDescriptionRuntimeRefresh.js';
 import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js'; import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js'; import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js'; import { createVoiceTranscriptionConfigRefresher } from './voiceConfigRefresh.js';
+import { createImageGenRuntimeUpdatePreparer } from './imageGenRuntimeUpdate.js';
+import { createTenantRemoteHandsRuntimeState } from './tenantRemoteHandsRuntimeUpdate.js';
 import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
@@ -1471,15 +1472,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryIndexServices.add(initialMemoryIndexService);
     serverLogger.info('Memory index service created (hybrid search enabled)');
   }
-  const tenantRemoteHandResolver = createTenantRemoteHandAuthTokenResolver({
-    tenantRemoteHands: () => config.tenantRemoteHands?.hands,
+  const tenantRemoteHandsRuntime = createTenantRemoteHandsRuntimeState({
+    initial: config.tenantRemoteHands,
     vault: secretVault,
     logger: serverLogger.child('TenantHand'),
   });
+  const tenantRemoteHandResolver = tenantRemoteHandsRuntime.resolver;
   const sandboxWarmupService = new SandboxWarmupService({
     agentCwd,
     sessionCatalog, handStore: pgHandStore,
-    tenantRemoteHands: () => config.tenantRemoteHands?.hands,
+    tenantRemoteHands: tenantRemoteHandsRuntime.getHands,
     tenantRemoteHandResolver,
     isExecutionEnabled: isRuntimeExecutionEnabled,
     ...(artifactShareStore ? { withSessionAdmissionLock: <T>(sessionId: string, operation: () => Promise<T>) => artifactShareStore!.withSessionLock(sessionId, operation) } : {}),
@@ -1492,7 +1494,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       agentCwd,
       store: new PgSandboxLifecycleStore(pgRunStore.pool, pgRunStore.runsTable, pgRunStore.steeringInputsTable),
       runStore: pgRunStore, sessionCatalog, handStore: pgHandStore,
-      tenantRemoteHands: () => config.tenantRemoteHands?.hands, tenantRemoteHandResolver,
+      tenantRemoteHands: tenantRemoteHandsRuntime.getHands, tenantRemoteHandResolver,
       ...(resolvedServerRemote ? { serverRemote: resolvedServerRemote } : {}),
       resolveServerRemoteAuthToken: authTokenRef => secretVault.getSecret(authTokenRef, {
         actor: 'system', userId: '__system__', scopes: ['secret:server_remote:read'],
@@ -1500,9 +1502,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('SandboxLifecycle'),
     });
   }
-  const connectorAcsConfigured = hasAcsConnector(config.tenantRemoteHands?.hands);
+  const connectorAcsConfigured = hasAcsConnector(tenantRemoteHandsRuntime.getHands());
   const resolveConnectorServerRemote = createConnectorServerRemoteResolver({ defaultRemote: resolvedServerRemote,
-    eligibleHands: user => selectTenantRemoteHandsForRegistration(config.tenantRemoteHands?.hands, {
+    eligibleHands: user => selectTenantRemoteHandsForRegistration(tenantRemoteHandsRuntime.getHands(), {
       userId: user.id, username: user.username, userTenantId: user.tenantId }),
     resolveHand: hand => tenantRemoteHandResolver.resolveForRegister(hand) });
   const resolvedWebTools = await resolveWebToolsConfig(config.webTools, secretVault);
@@ -1526,6 +1528,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let prepareToolControlsRuntimeUpdate!: ReturnType<typeof createToolControlsRuntimeUpdatePreparer>;
   let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>;
   let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
+  let prepareImageGenRuntimeUpdate!: ReturnType<typeof createImageGenRuntimeUpdatePreparer>;
   let applyMemoryPollingRuntimeUpdate: ((polling: NonNullable<AppConfig['memory']>['polling']) => void) | undefined;
   let publishMemoryIndexService: (service: MemoryIndexService | null) => void = () => {};
   const prepareMemoryIndexRuntimeUpdate = createMemoryIndexRuntimeUpdatePreparer({
@@ -1547,6 +1550,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     prepareSttUpdate: (next) => prepareSttRuntimeUpdate(next),
     prepareMemoryPollingUpdate: (next) => () => applyMemoryPollingRuntimeUpdate?.(next),
     prepareMemoryIndexUpdate: prepareMemoryIndexRuntimeUpdate,
+    prepareImageGenUpdate: (next) => prepareImageGenRuntimeUpdate(next),
+    prepareTenantRemoteHandsUpdate: (next) => tenantRemoteHandsRuntime.prepare(next),
+    requireRuntimeConsumers: true,
     onCodexSubscriptionUpdated: (refs) => {
       if (refs) codexWebSocketPool.closeCredentialRefs(refs);
       else codexWebSocketPool.close();
@@ -1750,7 +1756,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(pgEventStore ? {
       appendPlatformEvent: (event, ctx) => appendTenantPlatformEvent(pgEventStore, event, ctx),
     } : {}),
-    tenantRemoteHands: () => config.tenantRemoteHands?.hands,
+    tenantRemoteHands: tenantRemoteHandsRuntime.getHands,
     secretVault,
     tenantRemoteHandResolver,
     // Wake-time workspace provisioner — 修 P0 BUG #2（2026-06-21）。
@@ -1803,6 +1809,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     webChannelTarget: voiceTranscriptionOptions,
     secretVault,
   }); const refreshVoiceTranscriptionConfig = createVoiceTranscriptionConfigRefresher({ config, secretVault, refreshSharedConfig: () => refreshPublishedConfig(true), prepareSttUpdate: prepareSttRuntimeUpdate });
+  prepareImageGenRuntimeUpdate = createImageGenRuntimeUpdatePreparer({
+    target: rawRuntimeConfig,
+    secretVault,
+  });
   await alignProductionConfigStartup({ processCwd, refresher: sharedConfigRefresher, identity: configIdentityAssembly });
   const applyWebToolsRuntimeUpdate = createWebToolsRuntimeUpdater({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
   const updateToolSettingsConfig = createToolSettingsUpdater({ config, target: rawRuntimeConfig, applyWebTools: applyWebToolsRuntimeUpdate });
@@ -2855,6 +2865,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     config, processCwd, processRole, secretVault, refresher: sharedConfigRefresher,
     identity: configIdentityAssembly, logger: serverLogger,
   });
+  codexCredentialManager.setCredentialRotationCoordinator(
+    productionModelPublication?.coordinateCredentialRotation,
+  );
   return {
     config, processRole, processCwd,
     providerQuotaService: providerQuotaRuntime?.service,

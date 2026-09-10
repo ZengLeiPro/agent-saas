@@ -390,13 +390,18 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-  registerModelProviderAdminRoutes(app, runtime, { processCwd, config, configMutationService });
+  const controlledConfigMutationService = runtime.productionModelMutationService ?? configMutationService;
+  registerModelProviderAdminRoutes(app, runtime, {
+    processCwd,
+    config,
+    configMutationService: controlledConfigMutationService,
+  });
   app.use(
     '/api/admin/tenant-remote-hands',
     createTenantRemoteHandsAdminRouter({
       processCwd,
       config,
-      configMutationService, secretVault: runtime.secretVault,
+      configMutationService: controlledConfigMutationService, secretVault: runtime.secretVault,
       ...(runtime.validateSharedConfigCandidate ? { validateConfigReload: runtime.validateSharedConfigCandidate } : {}),
     }),
   );
@@ -414,7 +419,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createToolControlsAdminRouter({
       processCwd,
       config,
-      configMutationService,
+      configMutationService: controlledConfigMutationService,
       requireRevision: true, ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
       secretVault: runtime.secretVault, // 配置版本 CAS 防止旧页面恢复已禁用工具
       validateToolSettingsConfig: runtime.validateToolSettingsConfig, onToolSettingsUpdated: runtime.updateToolSettingsConfig, toolDescriptionStore: runtime.toolDescriptionStore,
@@ -442,7 +447,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       processCwd,
       config,
       registry: runtime.systemPromptRegistry,
-      configMutationService,
+      configMutationService: controlledConfigMutationService,
     }),
   );
   app.use(
@@ -459,7 +464,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createImageGenPricingAdminRouter({
       processCwd,
       config,
-      configMutationService,
+      configMutationService: controlledConfigMutationService,
       secretVault: runtime.secretVault,
       onPricingUpdated: (pricing) => configureImageGenPricing(pricing),
       validateImageGenToolsConfig: runtime.validateImageGenToolsConfig,
@@ -467,7 +472,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   // AudioTranscribe 服务配置与固定按次定价：SecretVault 托管凭据，保存后热更新。
-  registerAudioTranscribeAdminRoute(app, runtime, processCwd, configMutationService);
+  registerAudioTranscribeAdminRoute(app, runtime, processCwd, controlledConfigMutationService);
   // 网络出口（代理 / 国内镜像源，2026-07-25）：server 段落盘即生效（dispatcher 按
   // configVersion 懒重建）；sandbox 段另行 PATCH 给 acs-orchestrator，只对新建容器生效。
   if (runtime.egressConfigStore) {
@@ -486,7 +491,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createMemoryPollingAdminRouter({
       processCwd,
       config,
-      configMutationService,
+      configMutationService: controlledConfigMutationService,
       onPollingUpdated: runtime.updateMemoryPollingConfig,
       getConsolidationScannerStatus: runtime.getMemoryConsolidationScannerStatus,
     }),

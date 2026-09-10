@@ -147,6 +147,7 @@ export class LocalCodexCredentialLock implements CodexCredentialLock {
 }
 
 export class CodexCredentialManager {
+  private credentialRotationCoordinator?: (credentialRef: string) => Promise<void>;
   private readonly refreshInFlight = new Map<string, Promise<CodexTokenBundle>>();
   private readonly telemetry = new CodexSubscriptionTelemetry();
   private readonly runtimeStateStore: CodexCredentialRuntimeStateStore;
@@ -158,9 +159,15 @@ export class CodexCredentialManager {
     lock?: CodexCredentialLock;
     fetchImpl?: typeof fetch;
     runtimeStateStore?: CodexCredentialRuntimeStateStore;
+    credentialRotationCoordinator?: (credentialRef: string) => Promise<void>;
   }) {
     this.runtimeStateStore = options.runtimeStateStore ?? new InMemoryCodexCredentialRuntimeStateStore();
     this.lock = options.lock ?? new LocalCodexCredentialLock();
+    this.credentialRotationCoordinator = options.credentialRotationCoordinator;
+  }
+
+  setCredentialRotationCoordinator(coordinator: ((credentialRef: string) => Promise<void>) | undefined): void {
+    this.credentialRotationCoordinator = coordinator;
   }
 
   getCredentialRefs(): string[] {
@@ -326,6 +333,12 @@ export class CodexCredentialManager {
     return { credentialRef: ref.id, bundle };
   }
 
+  /** 管理端授权候选未发布时只撤销本地新 ref，不触发供应商 refresh token revoke。 */
+  async discardLoginCandidate(credentialRef: string): Promise<void> {
+    await this.discardCreatedCredential(credentialRef);
+    await this.runtimeStateStore.clear(credentialRef);
+  }
+
   async revoke(credentialRef: string): Promise<{ remoteWarning?: string }> {
     let remoteWarning: string | undefined;
     try {
@@ -486,6 +499,7 @@ export class CodexCredentialManager {
           JSON.stringify(next),
           systemVaultCaller('rotate'),
         );
+        await this.credentialRotationCoordinator?.(credentialRef);
         return { bundle: next, refreshed: true };
       } catch (error) {
         this.telemetry.recordRefreshFailure(error);

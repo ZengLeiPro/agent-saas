@@ -34,10 +34,15 @@ import {
   ConfigConflictError,
   ConfigMutationCommittedError,
   RuntimeRestoreFailedError,
+  ProductionConfirmationError,
   configFingerprint,
   type AdminConfigMutationResult,
   type MutationInput,
 } from './adminConfigMutationService.js';
+import {
+  adminConfigOperationAuditPath,
+  assertAdminConfigOperationScope,
+} from './adminConfigOperationRegistry.js';
 
 export interface PublicationTarget {
   role: 'ws-only' | 'runtime-worker';
@@ -61,30 +66,14 @@ export interface ProductionPublisher {
   /** Caller owns the existing deployment/config OS fence for the ENTIRE call. */
   mutate(input: MutationInput): Promise<AdminConfigMutationResult>;
   recover(): Promise<void>;
+  /** 仅供受信运行时在既有受管 Codex ref 正常 rotate 后推进签名身份。 */
+  coordinateCredentialRotation?(credentialRef: string): Promise<void>;
 }
 
-const ALLOWED = new Set([
-  'models',
-  'memory.index',
-  'titleGenerator',
-  'guardrail',
-  'systemPrompts.utility.title',
+const LEGACY_MODEL_PATHS = new Set([
+  'models', 'memory.index', 'titleGenerator', 'guardrail', 'systemPrompts.utility.title',
 ]);
-function withoutModelSettings(value: Record<string, unknown>): string {
-  const copy = structuredClone(value);
-  for (const key of ['models', 'titleGenerator', 'guardrail']) delete copy[key];
-  for (const [key, field] of [
-    ['memory', 'index'],
-    ['systemPrompts', 'utility.title'],
-  ]) {
-    const section = copy[key];
-    if (section && typeof section === 'object' && !Array.isArray(section)) {
-      delete (section as Record<string, unknown>)[field];
-      if (Object.keys(section).length === 0) delete copy[key];
-    }
-  }
-  return canonical(copy);
-}
+
 function asIdentity(value: {
   schemaVersion: number;
   digest: string;
@@ -262,6 +251,62 @@ export class ProductionModelPublisher implements ProductionPublisher {
     return this.fenced(() => this.recoverLocked());
   }
 
+  async coordinateCredentialRotation(credentialRef: string): Promise<void> {
+    return this.fenced(async () => {
+      await this.recoverLocked();
+      const state = assertPublishedDisk(this.options.configPath, this.state())!;
+      if (state.phase !== 'committed' || state.releaseId !== this.options.releaseId) {
+        throw new Error('凭据轮换时生产配置权威不可用');
+      }
+      const currentText = readFileSync(this.options.configPath, 'utf8');
+      const currentRaw = parseJsonc(currentText) as Record<string, unknown>;
+      const config = parseAppConfig(currentRaw);
+      const refs = config.codexSubscription?.credentialRefs?.length
+        ? config.codexSubscription.credentialRefs
+        : config.codexSubscription?.credentialRef ? [config.codexSubscription.credentialRef] : [];
+      if (!refs.includes(credentialRef)) throw new Error('拒绝为未登记的 Codex 凭据推进签名身份');
+      const identity = await this.identity(config);
+      if (canonical(identity) === canonical(this.expected(state))) return;
+      const targets = this.options.targets();
+      this.assertTargets(targets);
+      const intent: ConfigPublication = {
+        ...state,
+        phase: 'applying',
+        sequence: state.sequence + 1,
+        revision: randomUUID(),
+        rawRevision: rawRevision(currentText),
+        identity,
+        previous: {
+          revision: state.revision,
+          rawRevision: state.rawRevision,
+          identity: this.expected(state),
+        },
+        owner: processIdentity(),
+        actor: 'system:codex-token-refresh',
+        changedPaths: ['runtime-credential-rotation:codexSubscription'],
+        updatedAt: new Date(this.now()).toISOString(),
+      };
+      try {
+        writePublication(this.options.configPath, intent);
+        await this.wait(intent, targets);
+        const committed = this.transition(intent, 'committed');
+        await this.wait(committed, targets);
+      } catch (error) {
+        try {
+          const latest = this.state();
+          if (latest.revision === intent.revision && latest.phase !== 'committed') {
+            this.transition(latest, 'recovery_required');
+          }
+        } catch {
+          /* 已签名的 applying head 本身会保持 fail-closed。 */
+        }
+        throw new ConfigMutationCommittedError(
+          new Error('Codex token 已刷新，但签名身份确认未完成；配置写入已阻断等待恢复', { cause: error }),
+        );
+      }
+    });
+  }
+
   private async recoverLocked(): Promise<void> {
     const state = readPublication(this.options.configPath);
     if (!state || state.phase === 'committed') return;
@@ -339,9 +384,14 @@ export class ProductionModelPublisher implements ProductionPublisher {
       throw new ConfigConflictError(beforeFingerprint, beforeRevision);
     }
     if (input.productionConfirmation !== beforeRevision)
-      throw new Error('请确认对当前版本的生产配置进行修改');
-    if (input.changedPaths.some((path) => !ALLOWED.has(path)))
-      throw new Error('生产在线发布仅允许模型配置范围');
+      throw new ProductionConfirmationError();
+    // #593 内部调用兼容：只对原有模型固定集合推导 models.save；其他操作必须显式绑定。
+    const operation = input.operation ?? (
+      input.changedPaths.length > 0 && input.changedPaths.every((path) => LEGACY_MODEL_PATHS.has(path))
+        ? { id: 'models.save' as const }
+        : undefined
+    );
+    if (!operation) throw new Error('生产配置发布缺少服务端操作策略');
     const targets = this.options.targets();
     await this.wait(state, targets);
     const previousConfig = parseAppConfig(currentRaw);
@@ -351,8 +401,7 @@ export class ProductionModelPublisher implements ProductionPublisher {
     await input.validateBaseline?.(currentText, previousConfig);
     const candidateText = await input.buildCandidate(currentText, currentRaw);
     const candidateRaw = parseJsonc(candidateText) as Record<string, unknown>;
-    if (withoutModelSettings(currentRaw) !== withoutModelSettings(candidateRaw))
-      throw new Error('模型保存不允许修改其他配置段');
+    assertAdminConfigOperationScope(operation, currentRaw, candidateRaw);
     const config = parseAppConfig(candidateRaw);
     await input.validateCandidate?.(config);
     const candidateIdentity = await this.identity(config);
@@ -392,7 +441,7 @@ export class ProductionModelPublisher implements ProductionPublisher {
       },
       owner: processIdentity(),
       actor: input.actor,
-      changedPaths: [...new Set(input.changedPaths)].sort(),
+      changedPaths: [adminConfigOperationAuditPath(operation)],
       updatedAt: new Date(this.now()).toISOString(),
     };
     try {

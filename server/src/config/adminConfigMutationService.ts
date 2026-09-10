@@ -1,4 +1,5 @@
 import type { ProductionPublisher } from './productionModelPublisher.js';
+import type { AdminConfigOperation } from './adminConfigOperationRegistry.js';
 import { getConfigWritePolicy, PRODUCTION_CONFIG_PUBLISH_MESSAGE, PRODUCTION_CONFIG_PUBLISH_REQUIRED, type ConfigWritePolicy } from '@agent/shared/configWritePolicy';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -160,6 +161,15 @@ export class ConfigConflictError extends Error {
   }
 }
 
+export class ProductionConfirmationError extends Error {
+  readonly code = 'PRODUCTION_CONFIG_CONFIRMATION_REQUIRED';
+
+  constructor() {
+    super('请确认对当前版本的生产配置进行修改');
+    this.name = 'ProductionConfirmationError';
+  }
+}
+
 /** Production 的 expected ConfigIdentity 绑定 release；在线改盘必须改走受控配置发布。 */
 export class ProductionConfigPublishRequiredError extends Error {
   readonly code = PRODUCTION_CONFIG_PUBLISH_REQUIRED;
@@ -235,6 +245,10 @@ export interface AdminConfigMutationResult {
 }
 
 export interface MutationInput {
+  /** 具体路由在服务端绑定的操作策略；生产发布器据此验证真实 raw diff。 */
+  operation?: AdminConfigOperation;
+  /** 浏览器提交的幂等键；不作为 scope、环境或目标选择器。 */
+  operationId?: string;
   productionConfirmation?: string;
   actor: string;
   changedPaths: string[];

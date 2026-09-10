@@ -31,6 +31,11 @@ export type CodexDevicePollResult =
   | { status: 'completed'; tokens: CodexOAuthTokens; replaceCredentialRef?: string }
   | { status: 'expired' };
 
+export type CodexDevicePublicStatus =
+  | { status: 'pending'; retryAfterMs: number }
+  | { status: 'authorized_pending_publication'; replaceCredentialRef?: string }
+  | { status: 'expired' };
+
 export class CodexDeviceAuthService {
   private readonly sessions = new Map<string, DeviceSession>();
 
@@ -175,6 +180,35 @@ export class CodexDeviceAuthService {
       return { status: 'pending', retryAfterMs: session.intervalMs };
     }
     throw new Error(`Codex device login 轮询失败（HTTP ${response.status}）`);
+  }
+
+  /** 只读状态查询：不请求供应商、不交换 token，也不写平台配置。 */
+  status(sessionId: string): CodexDevicePublicStatus {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error('Codex device login 会话不存在或已结束');
+    const now = Date.now();
+    if (session.expiresAt <= now) {
+      this.sessions.delete(sessionId);
+      return { status: 'expired' };
+    }
+    if (session.completedTokens) {
+      return {
+        status: 'authorized_pending_publication',
+        ...(session.replaceCredentialRef ? { replaceCredentialRef: session.replaceCredentialRef } : {}),
+      };
+    }
+    return { status: 'pending', retryAfterMs: Math.max(0, session.nextPollAt - now) };
+  }
+
+  /** complete POST 的服务端专用读取；token 从不进入 GET/前端响应。 */
+  completedResult(sessionId: string): Extract<CodexDevicePollResult, { status: 'completed' }> {
+    const session = this.sessions.get(sessionId);
+    if (!session?.completedTokens) throw new Error('Codex 授权尚未完成，不能登记平台配置');
+    return {
+      status: 'completed',
+      tokens: session.completedTokens,
+      ...(session.replaceCredentialRef ? { replaceCredentialRef: session.replaceCredentialRef } : {}),
+    };
   }
 
   complete(sessionId: string): void {

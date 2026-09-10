@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
 import { Router } from 'express';
-import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
+import { applyEdits, modify } from 'jsonc-parser';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { isToolEnabled } from '../agent/toolRuntime.js';
@@ -12,8 +11,15 @@ import {
 } from '../data/usage/imageGenPricing.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
-import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
+import { adminConfigReadMetadata, mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
+import { RouteSecretRefMutation } from './secretRefMutation.js';
+
+const IMAGE_SECRET_WRITER = {
+  actor: 'system' as const,
+  userId: 'image_gen_config_admin',
+  scopes: ['secret:image_gen_tools:write', 'secret:image_gen_tools:revoke'],
+};
 
 /**
  * GenerateImage per-engine 生图定价平台管理 API（2026-07-15 批次）。
@@ -102,27 +108,22 @@ function validateEngineConfigUpdate(currentRaw: unknown, configBody: unknown): A
 
 async function persistEngineCredentials(
   imageGenTools: AppConfig['imageGenTools'],
-  secretVault?: SecretVault,
+  secretMutation: RouteSecretRefMutation,
 ): Promise<AppConfig['imageGenTools']> {
   if (!imageGenTools) return imageGenTools;
   const next = { ...imageGenTools };
   for (const key of IMAGE_GEN_ENGINE_KEYS) {
     const engine = next[key];
     if (!engine?.apiKey) continue;
-    if (!secretVault) throw new Error('SecretVault 未配置，不能保存生图 API Key');
+    if (!secretMutation.available) throw new Error('SecretVault 未配置，不能保存生图 API Key');
     const { apiKey, ...safeEngine } = engine;
-    const ref = await secretVault.putSecret(
+    const ref = await secretMutation.put(
       GLOBAL_OWNER_ID,
       'image_gen_tools',
       apiKey,
-      {
-        actor: 'system',
-        userId: 'image_gen_config_admin',
-        scopes: ['secret:image_gen_tools:write'],
-      },
       { engine: key, purpose: 'image-generation' },
     );
-    next[key] = { ...safeEngine, apiKeyRef: ref.id };
+    next[key] = { ...safeEngine, apiKeyRef: ref };
   }
   return next;
 }
@@ -186,13 +187,18 @@ export function createImageGenPricingAdminRouter(options: CreateImageGenPricingA
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
-    res.json(pricingView(options.config));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ...pricingView(options.config),
+      ...adminConfigReadMetadata(options.processCwd, configMutationService),
+    });
   });
 
   router.put('/', async (req, res) => {
     try {
       await configMutationService.mutate({
         ...mutationRequestContext(req),
+        operation: { id: 'image-gen.pricing' },
         changedPaths: ['imageGenTools.pricing'],
         buildCandidate: (configText, rawConfig) => {
           const nextImageGenTools = validatePricingUpdate(rawConfig, req.body?.pricing);
@@ -208,7 +214,10 @@ export function createImageGenPricingAdminRouter(options: CreateImageGenPricingA
           options.onPricingUpdated?.(candidate.imageGenTools?.pricing);
         },
       });
-      res.json(pricingView(options.config));
+      res.json({
+        ...pricingView(options.config),
+        ...adminConfigReadMetadata(options.processCwd, configMutationService),
+      });
     } catch (error) {
       if (error instanceof Error && /pricing|价格|imageGenTools/u.test(error.message)) {
         res.status(400).json({ error: error.message });
@@ -219,36 +228,48 @@ export function createImageGenPricingAdminRouter(options: CreateImageGenPricingA
   });
 
   router.put('/config', async (req, res) => {
-    const configPath = getAppConfigPath(options.processCwd);
-    let configText: string;
     let nextImageGenTools: AppConfig['imageGenTools'];
-
-    try {
-      configText = readFileSync(configPath, 'utf-8');
-      const rawConfig = parseJsonc(configText);
-      nextImageGenTools = validateEngineConfigUpdate(rawConfig, req.body?.config);
-      nextImageGenTools = await persistEngineCredentials(nextImageGenTools, options.secretVault);
-      await options.validateImageGenToolsConfig?.(nextImageGenTools);
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-      return;
-    }
+    const secretMutation = new RouteSecretRefMutation(
+      options.secretVault,
+      IMAGE_SECRET_WRITER,
+      { preservePreviousOnCommit: configMutationService.isControlledProductionPublisher() },
+    );
 
     try {
       await configMutationService.mutate({
         ...mutationRequestContext(req),
+        operation: { id: 'image-gen.config' },
         changedPaths: ['imageGenTools'],
-        buildCandidate: (freshText) => applyEdits(freshText, modify(freshText, ['imageGenTools'], nextImageGenTools, {
-          formattingOptions: { insertSpaces: true, tabSize: 2 },
-        })),
+        buildCandidate: async (freshText, freshRaw) => {
+          const current = parseAppConfig(freshRaw).imageGenTools;
+          secretMutation.trackPrevious(IMAGE_GEN_ENGINE_KEYS.map((key) => current?.[key]?.apiKeyRef));
+          nextImageGenTools = validateEngineConfigUpdate(freshRaw, req.body?.config);
+          nextImageGenTools = await persistEngineCredentials(nextImageGenTools, secretMutation);
+          await options.validateImageGenToolsConfig?.(nextImageGenTools);
+          return applyEdits(freshText, modify(freshText, ['imageGenTools'], nextImageGenTools, {
+            formattingOptions: { insertSpaces: true, tabSize: 2 },
+          }));
+        },
         applyRuntime: async (candidate) => {
           options.config.imageGenTools = candidate.imageGenTools;
           await options.onImageGenToolsUpdated?.(candidate.imageGenTools);
         },
+        onCommitted: async () => {
+          await secretMutation.committed(
+            IMAGE_GEN_ENGINE_KEYS.map((key) => nextImageGenTools?.[key]?.apiKeyRef),
+          );
+        },
       });
 
-      res.json(pricingView(options.config));
+      res.json({
+        ...pricingView(options.config),
+        ...adminConfigReadMetadata(options.processCwd, configMutationService),
+      });
     } catch (error) {
+      await secretMutation.failed(
+        error,
+        IMAGE_GEN_ENGINE_KEYS.map((key) => nextImageGenTools?.[key]?.apiKeyRef),
+      );
       sendConfigMutationError(res, error);
     }
   });

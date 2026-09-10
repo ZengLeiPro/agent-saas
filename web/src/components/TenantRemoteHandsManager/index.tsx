@@ -312,7 +312,7 @@ export function TenantRemoteHandsManager() {
   // 只读平台 admin：保存并生效/新增池/删除池 disabled；「健康检查」是服务端白名单放行的只读探测，保留可用
   const { platformReadOnly } = useAuth();
   const [dirty, setDirty] = useState(false);
-  const { config, loading, saving, error, savedAt, healthById, refresh, save, probeHealth } = useTenantRemoteHands(dirty);
+  const { config, loading, saving, readOnly, error, savedAt, healthById, refresh, save, probeHealth } = useTenantRemoteHands(dirty, platformReadOnly);
   const { users, loading: usersLoading } = useUsers();
   const { tenants, loading: tenantsLoading } = useTenants();
   const [draftHands, setDraftHands] = useState<EditableTenantRemoteHand[]>([]);
@@ -442,7 +442,7 @@ export function TenantRemoteHandsManager() {
             {dirty && <Badge variant="outline">有未保存更改</Badge>}
             {savedAt && !dirty && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存并热生效</Badge>}
             <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading || saving || dirty}><RefreshCw className="size-3.5" />刷新</Button>
-            <Button size="sm" onClick={() => { void saveDraft().catch(() => undefined); }} disabled={platformReadOnly || saving}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
+            <Button size="sm" onClick={() => { void saveDraft().catch(() => undefined); }} disabled={readOnly || saving}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
           </>
         )}
       />
@@ -462,7 +462,7 @@ export function TenantRemoteHandsManager() {
           <Card className="h-fit">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-3 pt-4">
               <CardTitle className="text-base">池列表</CardTitle>
-              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addHand} disabled={platformReadOnly}><Plus className="size-3.5" /></Button>
+              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={addHand} disabled={readOnly}><Plus className="size-3.5" /></Button>
             </CardHeader>
             <CardContent className="space-y-2 px-4 pb-4 pt-0">
               {draftHands.length === 0 && (
@@ -517,7 +517,7 @@ export function TenantRemoteHandsManager() {
                   <CardTitle className="text-base">基础信息</CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">ID 是凭据保留的锚点，保存后不建议修改。</p>
                 </div>
-                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={removeSelected} disabled={platformReadOnly}>
+                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={removeSelected} disabled={readOnly}>
                   <Trash2 className="size-3.5" />删除
                 </Button>
               </CardHeader>

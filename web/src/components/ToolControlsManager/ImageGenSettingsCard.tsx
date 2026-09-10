@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminConfigWritePolicy, type AdminConfigResponseMetadata } from "@/hooks/useAdminConfigWritePolicy";
 
 type EngineKey = "gptImage2" | "seedream";
 
@@ -25,7 +26,7 @@ interface ImageGenConfigView {
   seedream: ImageGenEngineConfigView | null;
 }
 
-interface ImageGenConfigResponse {
+interface ImageGenConfigResponse extends AdminConfigResponseMetadata {
   config: ImageGenConfigView;
   error?: string;
 }
@@ -115,6 +116,7 @@ function buildEnginePayload(key: EngineKey, draft: EngineDraft, platformEnabled:
 export function ImageGenSettingsCard() {
   // 只读平台 admin：保存引擎配置与引擎开关 disabled
   const { platformReadOnly } = useAuth();
+  const { acceptMetadata, bodyMetadata, confirmMutation, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "生图引擎配置");
   const [draft, setDraft] = useState<ImageGenDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -123,9 +125,10 @@ export function ImageGenSettingsCard() {
   const [error, setError] = useState<string | null>(null);
 
   const hydrate = useCallback((body: ImageGenConfigResponse) => {
+    acceptMetadata(body);
     setDraft(hydrateDraft(body.config));
     setDirty(false);
-  }, []);
+  }, [acceptMetadata]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -163,10 +166,13 @@ export function ImageGenSettingsCard() {
     if (!draft) return;
     setSaving(true);
     try {
+      const productionConfirmation = confirmMutation();
+      if (productionConfirmation === null) return;
       const response = await authFetch("/api/admin/image-gen-pricing/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...bodyMetadata(productionConfirmation),
           config: {
             enabled: draft.enabled,
             gptImage2: buildEnginePayload("gptImage2", draft.gptImage2, draft.enabled),
@@ -185,7 +191,7 @@ export function ImageGenSettingsCard() {
     } finally {
       setSaving(false);
     }
-  }, [draft, hydrate]);
+  }, [bodyMetadata, confirmMutation, draft, hydrate]);
 
   return (
     <Card>
@@ -197,7 +203,7 @@ export function ImageGenSettingsCard() {
           <Button variant="outline" size="sm" onClick={() => { void refresh(); }} disabled={loading || saving}>
             <RefreshCw className="size-3.5" />刷新
           </Button>
-          <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || saving || !dirty || !draft}>
+          <Button size="sm" onClick={() => { void save(); }} disabled={readOnly || saving || !dirty || !draft}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存引擎配置
           </Button>
         </div>
@@ -224,7 +230,7 @@ export function ImageGenSettingsCard() {
               </div>
               <Switch
                 checked={draft.enabled}
-                disabled={platformReadOnly}
+                disabled={readOnly}
                 onCheckedChange={(checked) => { setDraft((current) => current ? { ...current, enabled: checked } : current); markDirty(); }}
                 aria-label="启用平台生图能力"
               />
@@ -248,7 +254,7 @@ export function ImageGenSettingsCard() {
                       </div>
                       <Switch
                         checked={engine.enabled}
-                        disabled={platformReadOnly || !draft.enabled}
+                        disabled={readOnly || !draft.enabled}
                         onCheckedChange={(checked) => updateEngine(key, { enabled: checked })}
                         aria-label={`启用 ${labels.title}`}
                       />

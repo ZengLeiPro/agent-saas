@@ -1,5 +1,6 @@
 import { authFetch } from './authFetch';
 import { parseJsonResponse } from './parseJsonResponse';
+import type { ConfigWritePolicy } from '../configWritePolicy';
 
 export type WebSearchProvider = 'brave' | 'volcengine' | 'tencent_wsa' | 'zhipu' | 'tavily';
 
@@ -92,6 +93,7 @@ export interface ToolCatalogItem {
 
 export interface ToolControlsAdminResponse {
   revision?: string;
+  writePolicy?: ConfigWritePolicy;
   descriptionRevision?: string;
   toolControls: ToolControlsConfig | null;
   tools: ToolCatalogItem[];
@@ -101,6 +103,8 @@ export interface ToolControlsAdminResponse {
 
 export interface UpdateToolControlsRequest {
   expectedRevision?: string;
+  productionConfirmation?: string;
+  operationId?: string;
   toolControls: ToolControlsConfig | null;
   webTools: WebToolsConfig | null;
 }
@@ -113,6 +117,8 @@ export interface UpdateToolControlsRequest {
  */
 export interface UpdateSingleToolRequest {
   expectedRevision?: string;
+  productionConfirmation?: string;
+  operationId?: string;
   expectedDescriptionRevision?: string;
   enabled?: boolean;
   descriptionOverride?: ToolDescriptionOverride | null;

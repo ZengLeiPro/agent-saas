@@ -51,6 +51,8 @@ export interface TenantRemoteHandsConfig {
 
 export interface TenantRemoteHandsResponse {
   tenantRemoteHands: TenantRemoteHandsConfig;
+  revision?: string;
+  writePolicy?: import("@agent/shared/configWritePolicy").ConfigWritePolicy;
   error?: string;
 }
 

@@ -11,6 +11,7 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { authFetch } from "@/lib/authFetch";
 import { useAuth } from "@/contexts/AuthContext";
 import type { ModelList } from "@/types/models";
+import { useAdminConfigWritePolicy, type AdminConfigResponseMetadata } from "@/hooks/useAdminConfigWritePolicy";
 
 interface MemoryPollingDraft {
   enabled: boolean;
@@ -23,7 +24,7 @@ interface MemoryPollingDraft {
   model: string;
 }
 
-interface MemoryPollingAdminView {
+interface MemoryPollingAdminView extends AdminConfigResponseMetadata {
   polling: Omit<MemoryPollingDraft, "model"> & { model: string | null };
   configured: boolean;
   defaultModel: string | null;
@@ -89,6 +90,7 @@ function Field({
 export function MemoryPollingManager() {
   // 只读平台 admin：保存配置与总开关 disabled
   const { platformReadOnly } = useAuth();
+  const { acceptMetadata, bodyMetadata, confirmMutation, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "记忆轮询配置");
   const [view, setView] = useState<MemoryPollingAdminView | null>(null);
   const [draft, setDraft] = useState<MemoryPollingDraft>(EMPTY_DRAFT);
   const [modelList, setModelList] = useState<ModelList | null>(null);
@@ -115,6 +117,7 @@ export function MemoryPollingManager() {
         ? await modelsResponse.json() as { publicModelList?: ModelList }
         : {};
       setView(nextView);
+      acceptMetadata(nextView);
       setDraft(draftFromView(nextView));
       setModelList(modelsData.publicModelList ?? null);
       setDirty(false);
@@ -124,7 +127,7 @@ export function MemoryPollingManager() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [acceptMetadata]);
 
   useEffect(() => {
     void load();
@@ -138,10 +141,13 @@ export function MemoryPollingManager() {
     }
     setSaving(true);
     try {
+      const productionConfirmation = confirmMutation();
+      if (productionConfirmation === null) return;
       const response = await authFetch("/api/admin/memory-polling", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...bodyMetadata(productionConfirmation),
           polling: {
             ...draft,
             timezone: draft.timezone.trim(),
@@ -151,6 +157,7 @@ export function MemoryPollingManager() {
       });
       const nextView = await readJson<MemoryPollingAdminView>(response);
       setView(nextView);
+      acceptMetadata(nextView);
       setDraft(draftFromView(nextView));
       setDirty(false);
       setMessage("配置已保存并应用");
@@ -159,7 +166,7 @@ export function MemoryPollingManager() {
     } finally {
       setSaving(false);
     }
-  }, [draft]);
+  }, [acceptMetadata, bodyMetadata, confirmMutation, draft]);
 
   const maxHoursSpan = Math.max(1, Math.min(12, 24 - draft.hour));
   const windowLabel = useMemo(() => {
@@ -178,7 +185,7 @@ export function MemoryPollingManager() {
               <RefreshCw className={loading ? "size-3.5 animate-spin" : "size-3.5"} />
               刷新
             </Button>
-            <Button size="sm" onClick={() => void save()} disabled={platformReadOnly || loading || saving || !dirty}>
+            <Button size="sm" onClick={() => void save()} disabled={readOnly || loading || saving || !dirty}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               保存配置
             </Button>
@@ -208,7 +215,7 @@ export function MemoryPollingManager() {
                 <Switch
                   checked={draft.enabled}
                   onCheckedChange={(enabled) => updateDraft({ enabled })}
-                  disabled={platformReadOnly || loading}
+                  disabled={readOnly || loading}
                   aria-label="平台记忆轮询总开关"
                 />
               </div>

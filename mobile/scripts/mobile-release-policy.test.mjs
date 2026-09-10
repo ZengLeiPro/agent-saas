@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { validateMobileSubmitCredentials } from './mobile-submit-credential-policy.mjs';
+import { validateProtection } from './ios-actions-policy.mjs';
 import './ios-actions.test.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -139,4 +140,31 @@ test('M60-04 EAS profiles pin exact CLI and immutable cloud images', () => {
   );
   assert.equal(eas.build['production-store'].android.buildType, 'app-bundle');
   assert.equal(eas.build['production-enterprise'].android.buildType, 'apk');
+});
+
+test('iOS approval accepts the documented REST response without inventing a bypass field', () => {
+  const environment = {
+    id: 7, name: 'mobile-build-production',
+    protection_rules: [{ type: 'required_reviewers', prevent_self_review: true,
+      reviewers: [{ type: 'User', reviewer: { login: 'reviewer' } }] }],
+    deployment_branch_policy: { protected_branches: true, custom_branch_policies: false },
+  };
+  const approval = { state: 'approved', user: { login: 'Reviewer' },
+    environments: [{ id: 7, name: environment.name }] };
+  const expected = { environment: environment.name, actor: 'author', triggeringActor: 'rerunner' };
+  assert.doesNotThrow(() => validateProtection(environment, [approval], expected));
+  assert.throws(() => validateProtection(environment, [{ ...approval, user: { login: 'unlisted-admin' } }], expected));
+  assert.throws(() => validateProtection(environment, [approval], { ...expected, actor: 'REVIEWER' }));
+  const team = structuredClone(environment);
+  team.protection_rules[0].reviewers = [{ type: 'Team', reviewer: { slug: 'release' } }];
+  assert.throws(() => validateProtection(team, [approval], expected), /named User/u);
+  assert.throws(() => validateProtection(environment, [], expected), /No independent named/u);
+});
+
+test('iOS dependency-free contract and planning jobs do not cache nonexistent stores', () => {
+  const workflow = readFileSync(resolve(root, '.github/workflows/mobile-ios-release.yml'), 'utf8');
+  const contracts = workflow.split('  contract:')[1].split('  plan:')[0];
+  const planning = workflow.split('  plan:')[1].split('  build_ios:')[0];
+  assert.match(contracts, /package-manager-cache: false/u);
+  assert.match(planning, /package-manager-cache: false/u);
 });

@@ -51,6 +51,13 @@
 - CI 将 UserStore 判入生产迁移依赖闭包后严格阻断。该文件不执行 SQL 或结构迁移，因此没有伪造 expand；已为清单中的 40 个历史生产基线补齐两端摘要绑定的 `no-schema-change` 审核，新增审核说明和测试证据，使源码或证据变化时门禁自动失效并要求重新审核。历史审核清单已接近 Node 子进程默认 1 MiB 缓冲区，校验脚本现使用显式 8 MiB 上限读取提交内清单，未放宽任何分类或 postcondition 规则。
 - 本地 `check-reviewed-migrations` 已逐一重放 40 个历史基线并全部通过；未修改 Workflow。权威 CI 仍需在整改提交推送后重新执行并读回。
 
+### 2026-09-10 PR #614 最新 main 冲突整改
+
+- 最新 `main` 前进到 `a7da7be10303c701e4ef49e6f2162d9da7155e13` 后，PR 在迁移审核清单和历史审核脚本产生内容冲突；已通过合并提交人工整合，保留 main 的 V47/DWS 审核和 8 MiB 有界读取实现。
+- UserStore 的 40 个既有历史基线条目全部保留，并新增第 41 条 `a7da7be10` 精确基线审核；新条目绑定 UserStore 两端摘要以及身份存储审核文档、单进程并发、双进程并发和损坏存储测试摘要。
+- 合并提交后本地验证：41/41 历史迁移审核通过；迁移分类/审核契约 167 项通过；AgentStore 双进程 20 轮竞态及损坏存储 6 项通过；Server TypeScript、生产构建、ratchet 通过。
+- 使用独立本地测试数据库运行 PostgreSQL 门禁：catalog 5 项、Server 141 项、KY App Server 13 项全部通过。未修改 Workflow，仍需以推送后新 SHA 的 CI 作为当前合并门禁。
+
 ## 本地端到端证据
 
 ### Server 数据路径

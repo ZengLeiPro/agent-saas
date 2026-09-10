@@ -392,18 +392,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     );
   }
   const controlledConfigMutationService = runtime.productionModelMutationService ?? configMutationService;
-  app.use('/api/admin/config-operations', createAdminConfigOperationsRouter(controlledConfigMutationService));
-  registerModelProviderAdminRoutes(app, runtime, {
-    processCwd,
-    config,
-    configMutationService: controlledConfigMutationService,
-  });
+  app.use('/api/admin/config-operations', createAdminConfigOperationsRouter(controlledConfigMutationService)); registerModelProviderAdminRoutes(app, runtime, { processCwd, config, configMutationService: controlledConfigMutationService });
   app.use(
     '/api/admin/tenant-remote-hands',
     createTenantRemoteHandsAdminRouter({
-      processCwd,
-      config,
-      configMutationService: controlledConfigMutationService, secretVault: runtime.secretVault,
+      processCwd, config, configMutationService: controlledConfigMutationService, secretVault: runtime.secretVault,
       ...(runtime.validateSharedConfigCandidate ? { validateConfigReload: runtime.validateSharedConfigCandidate } : {}),
     }),
   );

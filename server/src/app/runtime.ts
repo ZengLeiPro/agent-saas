@@ -192,8 +192,7 @@ import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
 import { initializeToolDescriptionStore } from '../data/toolDescriptionStore.js'; import { createToolDescriptionRuntimeRefresh } from './toolDescriptionRuntimeRefresh.js';
 import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js'; import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js'; import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js'; import { createVoiceTranscriptionConfigRefresher } from './voiceConfigRefresh.js';
-import { createImageGenRuntimeUpdatePreparer } from './imageGenRuntimeUpdate.js';
-import { createTenantRemoteHandsRuntimeState } from './tenantRemoteHandsRuntimeUpdate.js';
+import { createImageGenRuntimeUpdatePreparer } from './imageGenRuntimeUpdate.js'; import { createTenantRemoteHandsRuntimeState } from './tenantRemoteHandsRuntimeUpdate.js';
 import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
@@ -1472,11 +1471,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryIndexServices.add(initialMemoryIndexService);
     serverLogger.info('Memory index service created (hybrid search enabled)');
   }
-  const tenantRemoteHandsRuntime = createTenantRemoteHandsRuntimeState({
-    initial: config.tenantRemoteHands,
-    vault: secretVault,
-    logger: serverLogger.child('TenantHand'),
-  });
+  const tenantRemoteHandsRuntime = createTenantRemoteHandsRuntimeState({ initial: config.tenantRemoteHands, vault: secretVault, logger: serverLogger.child('TenantHand') });
   const tenantRemoteHandResolver = tenantRemoteHandsRuntime.resolver;
   const sandboxWarmupService = new SandboxWarmupService({
     agentCwd,
@@ -1527,8 +1522,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 安全入口解析前先对齐磁盘，让 runtime-worker 感知 ws-only 写入（见 modelResolvers.ts）。
   let prepareToolControlsRuntimeUpdate!: ReturnType<typeof createToolControlsRuntimeUpdatePreparer>;
   let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>;
-  let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
-  let prepareImageGenRuntimeUpdate!: ReturnType<typeof createImageGenRuntimeUpdatePreparer>;
+  let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>; let prepareImageGenRuntimeUpdate!: ReturnType<typeof createImageGenRuntimeUpdatePreparer>;
   let applyMemoryPollingRuntimeUpdate: ((polling: NonNullable<AppConfig['memory']>['polling']) => void) | undefined;
   let publishMemoryIndexService: (service: MemoryIndexService | null) => void = () => {};
   const prepareMemoryIndexRuntimeUpdate = createMemoryIndexRuntimeUpdatePreparer({
@@ -1550,9 +1544,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     prepareSttUpdate: (next) => prepareSttRuntimeUpdate(next),
     prepareMemoryPollingUpdate: (next) => () => applyMemoryPollingRuntimeUpdate?.(next),
     prepareMemoryIndexUpdate: prepareMemoryIndexRuntimeUpdate,
-    prepareImageGenUpdate: (next) => prepareImageGenRuntimeUpdate(next),
-    prepareTenantRemoteHandsUpdate: (next) => tenantRemoteHandsRuntime.prepare(next),
-    requireRuntimeConsumers: true,
+    prepareImageGenUpdate: (next) => prepareImageGenRuntimeUpdate(next), prepareTenantRemoteHandsUpdate: (next) => tenantRemoteHandsRuntime.prepare(next), requireRuntimeConsumers: true,
     onCodexSubscriptionUpdated: (refs) => {
       if (refs) codexWebSocketPool.closeCredentialRefs(refs);
       else codexWebSocketPool.close();
@@ -1809,10 +1801,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     webChannelTarget: voiceTranscriptionOptions,
     secretVault,
   }); const refreshVoiceTranscriptionConfig = createVoiceTranscriptionConfigRefresher({ config, secretVault, refreshSharedConfig: () => refreshPublishedConfig(true), prepareSttUpdate: prepareSttRuntimeUpdate });
-  prepareImageGenRuntimeUpdate = createImageGenRuntimeUpdatePreparer({
-    target: rawRuntimeConfig,
-    secretVault,
-  });
+  prepareImageGenRuntimeUpdate = createImageGenRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault });
   await alignProductionConfigStartup({ processCwd, refresher: sharedConfigRefresher, identity: configIdentityAssembly });
   const applyWebToolsRuntimeUpdate = createWebToolsRuntimeUpdater({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
   const updateToolSettingsConfig = createToolSettingsUpdater({ config, target: rawRuntimeConfig, applyWebTools: applyWebToolsRuntimeUpdate });
@@ -2865,9 +2854,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     config, processCwd, processRole, secretVault, refresher: sharedConfigRefresher,
     identity: configIdentityAssembly, logger: serverLogger,
   });
-  codexCredentialManager.setCredentialRotationCoordinator(
-    productionModelPublication?.coordinateCredentialRotation,
-  );
+  codexCredentialManager.setCredentialRotationCoordinator(productionModelPublication?.coordinateCredentialRotation);
   return {
     config, processRole, processCwd,
     providerQuotaService: providerQuotaRuntime?.service,

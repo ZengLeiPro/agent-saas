@@ -901,19 +901,6 @@ function hasSqlShape(value) {
   );
 }
 
-// Source diffs also contain ordinary TypeScript identifiers such as update/delete.  Bare SQL
-// keywords are useful while inspecting string literals, but treating those identifiers as SQL
-// makes a JSON/file store look like a database migration.  For executable source lines, require
-// an actual SQL statement shape or a query/execute call; static literals are compared separately.
-function hasExecutableSqlShape(value) {
-  const normalized = normalizeSqlForClassification(value);
-  return (
-    MIGRATION_PROVIDER_SQL_PATTERN.test(normalized) ||
-    DYNAMIC_SQL_PATTERN.test(normalized) ||
-    UNKNOWN_SQL_PATTERN.test(normalized)
-  );
-}
-
 // 提取整份源码里全部呈 SQL 形态的静态字面量（含带插值模板的原始文本），按序列化后比较，
 // 用于回答「本次变更有没有动过任何 SQL」。基线侧与目标侧都要跑，缺一侧就无法比较。
 // 返回 null 表示无法判定（非脚本文件或解析失败），调用方必须回退到严格逻辑。
@@ -973,7 +960,7 @@ function isSqlNeutralDependencyChange({
     baselineSignature = staticSqlLiteralSignature(baselineContent, path);
   if (targetSignature === null || baselineSignature === null) return false;
   if (targetSignature !== baselineSignature) return false;
-  if (hasExecutableSqlShape(`${additions}\n${deletions}`)) return false;
+  if (hasSqlShape(`${additions}\n${deletions}`)) return false;
   if (changeTouchesTopLevelExecutableStatement(content, path, changedSourceLines(diff, '+')))
     return false;
   const deletedLines = changedSourceLines(diff, '-');

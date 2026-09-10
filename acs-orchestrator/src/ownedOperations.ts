@@ -6,16 +6,19 @@ import {
   OWNERSHIP_LIMITS, OwnershipBlockedError, OwnershipUnavailableError, ownershipIsTerminal, scopesOverlap,
   type OperationKind, type OperationOutcome, type OwnershipRecord, type ResourceOwnership, type WritableScope,
 } from './ownershipState.js';
+import { parseRemoteFence, parseRemoteReceipt, sameRemoteFence, type RemoteAttemptFence } from './remoteAttemptProtocol.js';
 import { waitForOwned, OWNED_WAIT_BUDGETS, OwnedWaitEndedError } from './ownedWait.js';
 
 export interface OperationProof {
-  kind: 'never_dispatched' | 'remote_receipt' | 'background_inventory';
+  kind: 'never_dispatched' | 'remote_receipt' | 'background_inventory' | 'coordinator_settled';
   attemptId: string;
   sandboxUid?: string;
+  /** Must authenticate against the fence reserved before the remote launch. */
+  receipt?: unknown;
 }
 
 type StatePatch = Partial<Pick<OwnershipRecord,
-  'resource' | 'outcome' | 'phase' | 'phaseDeadlineAt' | 'sandboxUid' | 'reasonCode'>>;
+  'resource' | 'outcome' | 'phase' | 'phaseDeadlineAt' | 'sandboxUid' | 'reasonCode' | 'remoteFence'>>;
 
 export class OwnedOperation {
   readonly controller = new AbortController();
@@ -26,10 +29,11 @@ export class OwnedOperation {
   private transition: Promise<unknown> = Promise.resolve();
   private acknowledged: OwnershipRecord;
   private uncertain = false;
-  private callerOutcome: OperationOutcome = 'pending';
+  private callerOutcome: OperationOutcome;
 
   constructor(readonly registry: OwnedOperations, public record: OwnershipRecord) {
     this.acknowledged = structuredClone(record);
+    this.callerOutcome = record.outcome;
   }
 
   acceptReservation(record: OwnershipRecord): void {
@@ -38,8 +42,9 @@ export class OwnedOperation {
     this.durable = true;
   }
 
-  /** Synchronous local fence; it remains sticky after any late transport completion. */
+  /** A later observation cannot erase a durably proved terminal resource. */
   markUncertain(reasonCode: string): void {
+    if (ownershipIsTerminal(this.record) && this.durable) return;
     this.uncertain = true;
     this.durable = false;
     this.record = { ...this.record, resource: 'unknown', reasonCode };
@@ -47,17 +52,15 @@ export class OwnedOperation {
 
   async phase<T>(name: string, work: () => Promise<T>, timeoutMs: number, options: { ignoreCancellation?: boolean } = {}): Promise<T> {
     await this.update({ phase: name, phaseDeadlineAt: new Date(Date.now() + timeoutMs).toISOString() });
-    if (!options.ignoreCancellation && this.controller.signal.aborted) {
-      throw new OwnedWaitEndedError('wait_cancelled', name);
-    }
+    if (!options.ignoreCancellation && this.controller.signal.aborted) throw new OwnedWaitEndedError('wait_cancelled', name);
     const pending = work();
     try {
-      return await waitForOwned(pending, {
-        phase: name, timeoutMs, signal: options.ignoreCancellation ? undefined : this.controller.signal,
-      });
+      return await waitForOwned(pending, { phase: name, timeoutMs,
+        signal: options.ignoreCancellation ? undefined : this.controller.signal });
     } catch (error) {
       if (error instanceof OwnedWaitEndedError) {
-        // The owner promise remains observed, not evicted or interpreted as stopped.
+        // Observe the real owner promise after the caller detaches. Its timeout
+        // is not permission to discard either local or durable ownership.
         this.markUncertain(error.code);
         await this.unknown(error.code).catch(() => undefined);
       }
@@ -65,36 +68,67 @@ export class OwnedOperation {
     }
   }
 
+  async bindRemoteFence(value: RemoteAttemptFence): Promise<void> {
+    const fence = parseRemoteFence(value);
+    if (!fence || fence.operationId !== this.record.operationId || fence.attemptId !== this.record.attemptId
+      || fence.ownerId !== this.record.ownerId || this.dispatched || this.uncertain
+      || (this.record.remoteFence && !sameRemoteFence(this.record.remoteFence, fence))) {
+      throw new OwnershipBlockedError(this.record.operationId);
+    }
+    this.registry.receiptKey(fence);
+    await this.update({ remoteFence: fence, sandboxUid: fence.sandboxUid, phase: 'remote_reserved' });
+  }
+
   async dispatch(sandboxUid: string): Promise<void> {
     if (this.controller.signal.aborted) throw new OwnedWaitEndedError('wait_cancelled', 'dispatch');
-    if (this.uncertain) throw new OwnershipBlockedError(this.record.operationId);
+    if (this.uncertain || (this.record.remoteFence && this.record.remoteFence.sandboxUid !== sandboxUid)) {
+      throw new OwnershipBlockedError(this.record.operationId);
+    }
     await this.update({ resource: 'running', sandboxUid, phase: 'dispatch' });
     if (this.controller.signal.aborted) throw new OwnedWaitEndedError('wait_cancelled', 'dispatch');
     this.dispatched = true;
   }
 
   async unknown(reasonCode: string): Promise<void> {
+    if (ownershipIsTerminal(this.record) && this.durable) return;
     this.markUncertain(reasonCode);
-    if (this.callerOutcome === 'pending') this.callerOutcome = this.controller.signal.aborted ? 'cancelled' : 'failed';
+    if (this.callerOutcome === 'pending') this.callerOutcome = this.controller.signal.aborted
+      ? 'cancelled' : reasonCode === 'wait_timed_out' ? 'timed_out' : 'failed';
     await this.persist({ resource: 'unknown', outcome: this.callerOutcome, reasonCode });
   }
 
-  async complete(outcome: Exclude<OperationOutcome, 'pending'>, proof: OperationProof, resource: 'stopped' | 'not_started' | 'background_owned' = 'stopped'): Promise<void> {
+  async complete(outcome: Exclude<OperationOutcome, 'pending'>, proof: OperationProof,
+    resource: 'stopped' | 'not_started' | 'background_owned' = 'stopped'): Promise<void> {
     if (proof.attemptId !== this.record.attemptId
-      || (this.record.sandboxUid && proof.sandboxUid !== this.record.sandboxUid)
-      || (proof.kind === 'never_dispatched' && (this.dispatched || this.uncertain))
-      || (resource === 'background_owned' && proof.kind !== 'background_inventory')) {
+      || (this.record.sandboxUid && proof.sandboxUid !== this.record.sandboxUid)) {
       throw new OwnershipBlockedError(this.record.operationId);
     }
-    // A cancel request is not a settled outcome. A final already observed can win.
-    // Once a caller outcome settles, a late receipt changes only resource ownership.
+    if (proof.kind === 'never_dispatched') {
+      if (this.dispatched || this.uncertain || resource !== 'not_started') throw new OwnershipBlockedError(this.record.operationId);
+    } else if (proof.kind === 'coordinator_settled') {
+      if (this.dispatched || this.uncertain || this.record.remoteFence || resource !== 'stopped'
+        || this.registry.hasUnresolvedChildren(this.record.operationId)) throw new OwnershipBlockedError(this.record.operationId);
+    } else {
+      const fence = this.record.remoteFence;
+      let valid = false;
+      try {
+        const receipt = fence ? parseRemoteReceipt(proof.receipt, fence, this.registry.receiptKey(fence)) : null;
+        valid = Boolean(receipt && receipt.resource === resource
+          && (resource !== 'background_owned' || proof.kind === 'background_inventory'));
+      } catch { /* An unavailable verifier is a blocker, not a successful stop. */ }
+      if (!valid) throw new OwnershipBlockedError(this.record.operationId);
+    }
+    // Once settled, a caller outcome never changes. A late authenticated receipt
+    // can still reconcile its resource without replaying or rerunning the task.
     if (this.callerOutcome === 'pending') this.callerOutcome = outcome;
     await this.persist({ resource, outcome: this.callerOutcome, phase: resource, phaseDeadlineAt: undefined }, true);
     this.registry.compact();
   }
 
   requestCancel(): { requested: boolean; resource: ResourceOwnership } {
-    if (ownershipIsTerminal(this.record)) return { requested: false, resource: this.record.resource };
+    if (ownershipIsTerminal(this.record) || this.record.resource === 'background_owned') {
+      return { requested: false, resource: this.record.resource };
+    }
     if (this.controller.signal.aborted) return { requested: true, resource: this.record.resource };
     this.controller.abort();
     if (!this.uncertain) this.record = { ...this.record, resource: 'stop_requested' };
@@ -113,6 +147,9 @@ export class OwnedOperation {
     if (patch.resource === 'stopped' || patch.resource === 'not_started' || patch.resource === 'background_owned') {
       throw new OwnershipBlockedError(this.record.operationId);
     }
+    if (patch.remoteFence && (this.dispatched || (this.record.remoteFence && !sameRemoteFence(patch.remoteFence, this.record.remoteFence)))) {
+      throw new OwnershipBlockedError(this.record.operationId);
+    }
     await this.persist(patch);
   }
 
@@ -122,18 +159,14 @@ export class OwnedOperation {
       const previous = this.acknowledged;
       if (ownershipIsTerminal(previous) && !proved) return;
       const resource = this.uncertain && !proved ? 'unknown' : patch.resource ?? this.record.resource;
-      const next: OwnershipRecord = {
-        ...previous, ...patch, resource, outcome: this.callerOutcome,
-        revision: previous.revision + 1, updatedAt: new Date().toISOString(),
-      };
+      const next: OwnershipRecord = { ...previous, ...patch, resource, outcome: this.callerOutcome,
+        revision: previous.revision + 1, updatedAt: new Date().toISOString() };
       try {
-        const committed = this.registry.journal
-          ? await this.registry.journal.update(next, previous.revision) : next;
+        const committed = this.registry.journal ? await this.registry.journal.update(next, previous.revision) : next;
         this.acknowledged = structuredClone(committed);
         if (proved && !waitExpired) this.uncertain = false;
         this.record = this.uncertain
-          ? { ...committed, resource: 'unknown', reasonCode: this.record.reasonCode ?? 'persistence_unknown' }
-          : committed;
+          ? { ...committed, resource: 'unknown', reasonCode: this.record.reasonCode ?? 'persistence_unknown' } : committed;
         this.durable = Boolean(this.registry.journal) && !waitExpired && !this.uncertain;
       } catch (error) {
         this.markUncertain('persistence_unknown');
@@ -141,9 +174,8 @@ export class OwnedOperation {
       }
     });
     this.transition = task.catch(() => undefined);
-    try {
-      await waitForOwned(task, { phase: 'ownership_persist', timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs });
-    } catch (error) {
+    try { await waitForOwned(task, { phase: 'ownership_persist', timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs }); }
+    catch (error) {
       waitExpired = true;
       this.markUncertain('persistence_unknown');
       throw error;
@@ -157,18 +189,35 @@ export class OwnedOperations {
   readonly context = new AsyncLocalStorage<OwnedOperation>();
   private readonly owners = new Map<string, OwnedOperation>();
 
-  constructor(readonly journal?: OwnershipJournal) {}
+  constructor(readonly journal?: OwnershipJournal,
+    private readonly authority?: { receiptKey(fence: RemoteAttemptFence): string }) {}
 
-  async begin(input: { kind: OperationKind; invocationId: string; attemptId: string; scope: WritableScope }): Promise<OwnedOperation> {
+  receiptKey(fence: RemoteAttemptFence): string {
+    if (!this.authority) throw new OwnershipUnavailableError('Remote receipt verification is unavailable');
+    return this.authority.receiptKey(fence);
+  }
+
+  async begin(input: { kind: OperationKind; invocationId: string; attemptId: string; scope: WritableScope;
+    parentOperation?: OwnedOperation }): Promise<OwnedOperation> {
     this.compact();
     if (this.owners.size >= OWNERSHIP_LIMITS.records) throw new OwnershipUnavailableError('Local ownership capacity exhausted');
+    const parent = input.parentOperation;
+    if (parent && (this.owners.get(parent.record.operationId) !== parent || parent.controller.signal.aborted
+      || ownershipIsTerminal(parent.record) || ['unknown', 'stop_requested', 'background_owned'].includes(parent.record.resource))) {
+      throw new OwnershipBlockedError(parent.record.operationId);
+    }
     const now = new Date().toISOString();
     const record: OwnershipRecord = {
       protocolVersion: 1, operationId: randomUUID(), attemptId: input.attemptId, invocationId: input.invocationId,
       ownerId: this.ownerId, revision: 0, kind: input.kind, scope: input.scope,
       resource: 'reserved', outcome: 'pending', phase: 'reserved', createdAt: now, updatedAt: now,
+      ...(parent ? { parentOperationId: parent.record.operationId } : {}),
     };
-    const conflict = (other: OwnershipRecord) => this.blocksAdmission(other, record.scope, record.invocationId, record.operationId);
+    const conflict = (other: OwnershipRecord) => {
+      if (parent && this.isAncestor(other.operationId, parent.record.operationId)
+        && !['unknown', 'stop_requested'].includes(other.resource)) return false;
+      return this.blocksAdmission(other, record.scope, record.invocationId, record.operationId);
+    };
     for (const owner of this.owners.values()) if (conflict(owner.record)) throw new OwnershipBlockedError(owner.record.operationId);
     const operation = new OwnedOperation(this, record);
     this.owners.set(record.operationId, operation);
@@ -187,10 +236,30 @@ export class OwnedOperations {
     return operation;
   }
 
+  private isAncestor(ancestorId: string, descendantId: string): boolean {
+    const seen = new Set<string>();
+    let id: string | undefined = descendantId;
+    while (id && !seen.has(id)) {
+      if (id === ancestorId) return true;
+      seen.add(id);
+      id = this.owners.get(id)?.record.parentOperationId;
+    }
+    return false;
+  }
+
+  hasUnresolvedChildren(operationId: string): boolean {
+    const records = new Map((this.journal?.snapshot().records ?? []).map((record) => [record.operationId, record]));
+    for (const owner of this.owners.values()) records.set(owner.record.operationId, owner.record);
+    return [...records.values()].some((record) => record.parentOperationId === operationId
+      && !ownershipIsTerminal(record) && !(record.resource === 'background_owned'
+        && (this.owners.get(record.operationId)?.durable ?? true)));
+  }
+
   blocksAdmission(record: OwnershipRecord, scope: WritableScope, invocationId?: string, ignoreOperationId?: string): boolean {
     if (record.operationId === ignoreOperationId || ownershipIsTerminal(record) || !scopesOverlap(record.scope, scope)) return false;
     if (record.resource === 'unknown' || record.resource === 'stop_requested') return true;
     if (record.resource === 'background_owned') return false;
+    if (ignoreOperationId && record.ownerId === this.ownerId && this.isAncestor(record.operationId, ignoreOperationId)) return false;
     if (record.ownerId !== this.ownerId || !this.owners.has(record.operationId)) return true;
     return record.kind === 'provision' || record.kind === 'ensure' || (invocationId !== undefined && record.invocationId === invocationId);
   }
@@ -202,6 +271,9 @@ export class OwnedOperations {
 
   current(): OwnedOperation | undefined { return this.context.getStore(); }
   get(operationId: string): OwnedOperation | undefined { return this.owners.get(operationId); }
+  findAttempt(attemptId: string): OwnedOperation | undefined {
+    return [...this.owners.values()].find((owner) => owner.record.attemptId === attemptId);
+  }
   records(): OwnershipRecord[] { return [...this.owners.values()].map((owner) => structuredClone(owner.record)); }
 
   drainBlockers(): number {
@@ -218,6 +290,7 @@ export class OwnedOperations {
   snapshot() {
     return [...this.owners.values()].map((owner) => ({
       operationId: owner.record.operationId, attemptId: owner.record.attemptId, invocationId: owner.record.invocationId,
+      parentOperationId: owner.record.parentOperationId ?? null,
       kind: owner.record.kind, phase: owner.record.phase, resource: owner.record.resource, outcome: owner.record.outcome,
       sandboxName: owner.record.scope.sandboxName, workspaceId: owner.record.scope.workspaceId,
       elapsedMs: Math.max(0, Math.floor(performance.now() - owner.startedMonotonic)),
@@ -227,7 +300,9 @@ export class OwnedOperations {
   }
 
   compact(): void {
-    const terminal = [...this.owners.entries()].filter(([, owner]) => ownershipIsTerminal(owner.record));
+    const parents = new Set([...this.owners.values()].filter((owner) => !ownershipIsTerminal(owner.record))
+      .map((owner) => owner.record.parentOperationId));
+    const terminal = [...this.owners.entries()].filter(([id, owner]) => ownershipIsTerminal(owner.record) && !parents.has(id));
     for (const [id] of terminal.slice(0, Math.max(0, terminal.length - 16))) this.owners.delete(id);
   }
 }

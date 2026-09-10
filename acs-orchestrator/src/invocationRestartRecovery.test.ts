@@ -55,7 +55,7 @@ describe('persisted invocation restart recovery and strict fail-closed sweep', (
     );
   });
 
-  it('takes completion activity time only after strict inventory returns', async () => {
+  it('retains an expired foreground owner because background inventory cannot prove its stop', async () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date('2026-09-02T02:00:00.000Z'));
@@ -71,19 +71,17 @@ describe('persisted invocation restart recovery and strict fail-closed sweep', (
         clearMalformedInvocationLeases: vi.fn(async () => 0),
       } as unknown as SandboxManager;
 
-      await reconcileInvocationRestartRecovery({
-        config: baseConfig(), sandboxManager: manager, logger: noopLogger,
-        inventory: vi.fn(async () => {
-          vi.setSystemTime(new Date('2026-09-02T03:00:00.000Z'));
-          return { activeTaskIds: [] };
-        }),
-        reconcilePersistedProtection: vi.fn(async () => undefined),
+      const inventory = vi.fn(async () => {
+        vi.setSystemTime(new Date('2026-09-02T03:00:00.000Z'));
+        return { activeTaskIds: [] };
       });
-
-      expect(setActiveInvocationLease).toHaveBeenCalledWith(
-        ref.name, 'lease-restart', expect.any(String), 'uid-1', undefined,
-        'completion_pending', '2026-09-02T03:00:00.000Z',
-      );
+      await expect(reconcileInvocationRestartRecovery({
+        config: baseConfig(), sandboxManager: manager, logger: noopLogger,
+        inventory,
+        reconcilePersistedProtection: vi.fn(async () => undefined),
+      })).resolves.toEqual({ checked: 1, failed: 1 });
+      expect(inventory).not.toHaveBeenCalled();
+      expect(setActiveInvocationLease).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -194,7 +192,7 @@ describe('persisted invocation restart recovery and strict fail-closed sweep', (
     expect(clearMalformedInvocationLeases).not.toHaveBeenCalled();
   });
 
-  it('touches before clearing a malformed lease after strict inventory proves no worker', async () => {
+  it('retains a malformed lease because empty background inventory is not foreground proof', async () => {
     const events: string[] = [];
     const manager = {
       listManagedSandboxes: vi.fn(async () => [{
@@ -212,7 +210,7 @@ describe('persisted invocation restart recovery and strict fail-closed sweep', (
       inventory: vi.fn(async () => { events.push('inventory'); return { activeTaskIds: [] }; }),
       reconcilePersistedProtection: vi.fn(async () => undefined),
       now: new Date('2026-09-02T01:00:00.000Z'),
-    })).resolves.toEqual({ checked: 1, failed: 0 });
-    expect(events).toEqual(['inventory', 'touch', 'clear']);
+    })).resolves.toEqual({ checked: 1, failed: 1 });
+    expect(events).toEqual([]);
   });
 });

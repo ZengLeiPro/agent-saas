@@ -311,7 +311,8 @@ jobs:
           # marker, receipts, and every production mutation.
           node scripts/release/promotion-config-identity-state.mjs assert-write-gate \
             --manifest "$RUNNER_TEMP/manifest.json" \
-            --production-state "$RUNNER_TEMP/production-before.json"
+            --production-state "$RUNNER_TEMP/production-before.json" \
+            --recovery-mode "$PRODUCTION_RECOVERY_MODE"
           pnpm exec tsx server/src/release/promotionGateCli.ts \
             --manifest "$RUNNER_TEMP/manifest.json" --attestation-root "$RUNNER_TEMP/attestations" \
             --production-state "$RUNNER_TEMP/production-before.json" \

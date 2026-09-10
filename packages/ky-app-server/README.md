@@ -17,7 +17,7 @@ pnpm add @kaiyan/ky-app-server        # 需要 hono ^4 才能用参考适配器�
 | `sat/`                       | `verifySat` / `VerifiedIdentity` / `MemoryJtiStore` / `PgJtiStore`                                     | §3.1       |
 | `local/`                     | `deriveInstallationKeys` / `createAttestationIssuer` / `issueLocalToken` / `verifyLocalToken`          | §3.2       |
 | `breakGlass/`                | `createBreakGlass` / `MemoryBreakGlassStore` / `PgBreakGlassStore`                                     | §3.5       |
-| `directory/`                 | `createDirectoryClient` / `directoryStalenessGate` / `MemoryDirectoryStore` / `PgDirectoryStore`       | §3.4、§3.6 |
+| `directory/`                 | `createDirectoryClient` / `createManagedDirectorySync` / `PgDirectorySyncCoordinator` / 本地目录存储   | §3.4、§3.6 |
 | `events/`                    | `createEventsHandler` / `MemoryInstallationStateStore` / `PgInstallationStateStore`                    | §3.7       |
 | `capabilities/`              | `defineCapabilities` / `MemoryExecutionStore` / `PgExecutionStore` / `validateAgainstCapabilitySchema` | §4.3、§4.4 |
 | `me/`                        | `buildMe` / `localModeUserRoles`                                                                       | §4.2、§9.2 |
@@ -26,6 +26,8 @@ pnpm add @kaiyan/ky-app-server        # 需要 hono ^4 才能用参考适配器�
 | `@kaiyan/ky-app-server/hono` | `createKyAppRouter` / `requireUser` / `securityHeaders` / `requireIdentity`                            | §3.3、§5.1 |
 
 错误统一用 `KyAppError`（携带 §6.5 的错误码与 HTTP 状态），`toErrorResponse()` 转成附录 D 结构。
+
+目录消费建议由 SDK 托管，而不是由每个业务系统自行创建 Cron。`createManagedDirectorySync()` 会在启动时立即同步，之后默认每 5 分钟兜底同步；失败使用有界指数退避，同进程并发触发会合并。多副本部署应传入 `PgDirectorySyncCoordinator`，以 PostgreSQL advisory lock 保证同一安装实例单飞。`createDirectoryClient()` 的单次网络请求默认 10 秒超时，平台暂时不可达不会无限阻塞业务进程关停。
 
 ## 配置项（只在 `config/` 模块读 `process.env`）
 

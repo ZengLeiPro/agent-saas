@@ -1,3 +1,6 @@
+import type { DwsDeliveryProtocol } from './deliveryProtocol.js';
+export * from './deliveryProtocol.js';
+
 export type AgentDwsAccountStatus = 'draft' | 'authorizing' | 'active' | 'paused' | 'error';
 export type AgentDwsRuntimeStatus = 'stopped' | 'starting' | 'ready' | 'error';
 export type AgentDwsAuthorizationMode = 'reauthorize' | 'replace_identity';
@@ -56,6 +59,8 @@ export interface AgentDwsAccountRecord {
   profileId?: string;
   status: AgentDwsAccountStatus;
   runtimeStatus: AgentDwsRuntimeStatus;
+  /** Missing only on pre-reader snapshots; every PG lease UPDATE also checks the persisted protocol. */
+  deliveryProtocol?: DwsDeliveryProtocol;
   /** Snapshot at record read time; absent in legacy/in-memory callers means unknown. */
   runtimeLeaseActive?: boolean;
   eventKinds: AgentDwsEventKind[];

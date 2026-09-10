@@ -1,3 +1,5 @@
+import type { KyAppFeature } from './constants.js';
+
 /** 附录 C：`GET /ky/v1/me` 的 TypeScript 形态。 */
 
 export interface MenuBadge {
@@ -48,6 +50,8 @@ export interface HealthReadyResponse {
   appVersion: string;
   manifestDigest: string;
   installationState: InstallationState;
+  /** 可选协议能力；用于兼容旧 SDK 的通知协商。 */
+  features: KyAppFeature[];
   deps: {
     db: boolean;
     executionStore: boolean;

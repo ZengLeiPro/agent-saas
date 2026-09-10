@@ -9,6 +9,7 @@ import {
   type HealthLiveResponse,
   type HealthReadyResponse,
   type InstallationState,
+  type KyAppFeature,
 } from '@kaiyan/ky-app-contract';
 
 export interface HealthLiveInput {
@@ -37,6 +38,8 @@ export interface HealthReadyInput {
   manifestDigest: string;
   installationState: InstallationState;
   maintenance?: boolean;
+  /** 应用实际完成接线的可选协议能力；未传时不宣称支持。 */
+  features?: readonly KyAppFeature[];
   deps: HealthReadyDeps;
   /** 目录消费位点与陈旧度（§3.4）。 */
   directorySync: () => Promise<{ checkpoint: number; ageSeconds: number }>;
@@ -71,6 +74,7 @@ export async function buildHealthReady(input: HealthReadyInput): Promise<HealthR
     appVersion: input.appVersion,
     manifestDigest: input.manifestDigest,
     installationState: input.installationState,
+    features: [...(input.features ?? [])],
     deps: { db, executionStore, jtiStore, directorySync },
     jwksKids: input.jwksKids(),
   };

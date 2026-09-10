@@ -94,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     identityRef.current = next;
     setIdentityState(next);
     setMobileMessageCacheIdentity(next.identity);
+    fileCacheService.setIdentity(next.identity);
     await AsyncStorage.setItem(IDENTITY_META_KEY, JSON.stringify(next));
     return next.identity;
   }, []);
@@ -210,6 +211,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const parsed = JSON.parse(storedIdentity) as IdentityState;
             if (typeof parsed.generation === 'number') {
               identityRef.current = parsed;
+              fileCacheService.setIdentity(parsed.identity);
               if (!cancelled) setIdentityState(parsed);
             }
           } catch { await AsyncStorage.removeItem(IDENTITY_META_KEY); }

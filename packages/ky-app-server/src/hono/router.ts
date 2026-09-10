@@ -124,6 +124,7 @@ export function createKyAppRouter(options: KyAppRouterConfig): {
     await authenticate(c);
     const ready = await buildHealthReady({
       appVersion: options.health.appVersion,
+      features: options.health.features,
       manifestDigest: runtime.manifestDigest,
       installationState: await runtime.installationState(),
       maintenance: options.health.maintenance?.() === true,

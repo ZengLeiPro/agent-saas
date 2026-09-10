@@ -88,6 +88,67 @@ test('V46 binding generation catalog rejects incomplete expand schema', { skip: 
   }
 });
 
+test('V47 DWS durable receiver catalog rejects incomplete owner, inbox and migration schema', { skip: !url }, async () => {
+  const prefix = `ky47_${process.pid}_${Date.now().toString(36)}`;
+  const accounts = `${prefix}_agent_dws_accounts`;
+  const owners = `${prefix}_dws_receiver_owners`;
+  const inbox = `${prefix}_dws_receiver_inbox`;
+  const migrations = `${prefix}_dws_receiver_migrations`;
+  const pool = new Pool({ connectionString: url });
+  const catalog = JSON.parse(await readFile(new URL('../../config/release-migration-postconditions.json', import.meta.url), 'utf8'));
+  const entry = catalog.entries.find(
+    (item) => item.path === 'server/src/data/governance-schema/v47DwsDurableReceiverMigration.ts',
+  );
+  assert.ok(entry?.checks.length, 'V47 postconditions must be registered');
+  const postconditions = entry.checks;
+  const manifest = { releaseId: 'rc-20260910-01', digest: `sha256:${'a'.repeat(64)}`, migrationPlan: { phase: 'expand', planDigest: `sha256:${'b'.repeat(64)}`, postconditions, postconditionsDigest: digestBuffer(canonicalJson(postconditions)) } };
+  const readback = () => readMigrationPostconditions({ manifest, config: { runtimeEventStore: { connectionString: url, tablePrefix: prefix } }, environment: 'staging', Pool });
+  try {
+    await assert.rejects(readback(), /Database postcondition failed/);
+    await pool.query(`CREATE TABLE ${accounts} (account_id TEXT PRIMARY KEY);
+      CREATE TABLE ${owners} (
+        account_id TEXT PRIMARY KEY REFERENCES ${accounts}(account_id), tenant_id TEXT NOT NULL,
+        receiver_id TEXT NOT NULL UNIQUE, owner_epoch BIGINT NOT NULL, received_cursor BIGINT NOT NULL,
+        acknowledged_cursor BIGINT NOT NULL, bridge_evidence_json JSONB NOT NULL
+      );
+      CREATE TABLE ${inbox} (
+        account_id TEXT NOT NULL REFERENCES ${accounts}(account_id), receiver_id TEXT NOT NULL,
+        sequence BIGINT NOT NULL, tenant_id TEXT NOT NULL, account_revision BIGINT NOT NULL,
+        account_identity_json JSONB NOT NULL, payload BYTEA NOT NULL, payload_sha256 TEXT NOT NULL,
+        received_at_ms BIGINT NOT NULL, event_id TEXT, state TEXT NOT NULL,
+        PRIMARY KEY (account_id,receiver_id,sequence)
+      );
+      CREATE INDEX ${prefix}_dws_receiver_inbox_pending_idx ON ${inbox}(account_id,receiver_id,sequence) WHERE state='pending';
+      CREATE INDEX ${prefix}_dws_receiver_inbox_event_idx ON ${inbox}(account_id,event_id) WHERE event_id IS NOT NULL;
+      CREATE TABLE ${migrations} (
+        migration_id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES ${accounts}(account_id),
+        tenant_id TEXT NOT NULL, expected_revision BIGINT NOT NULL, state TEXT NOT NULL,
+        evidence_json JSONB NOT NULL, created_by TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX ${prefix}_dws_receiver_migration_active_idx ON ${migrations}(account_id)
+        WHERE state IN ('planned','handoff_pending','blocked')`);
+    assert.equal((await readback()).status, 'passed');
+
+    await pool.query(`ALTER TABLE ${owners} ALTER COLUMN bridge_evidence_json DROP NOT NULL`);
+    await assert.rejects(readback(), /Database postcondition failed/);
+    await pool.query(`ALTER TABLE ${owners} ALTER COLUMN bridge_evidence_json SET NOT NULL`);
+    assert.equal((await readback()).status, 'passed');
+
+    await pool.query(`DROP INDEX ${prefix}_dws_receiver_inbox_event_idx;
+      CREATE INDEX ${prefix}_dws_receiver_inbox_event_idx ON ${inbox}(account_id,sequence)`);
+    await assert.rejects(readback(), /Database postcondition failed/);
+    await pool.query(`DROP INDEX ${prefix}_dws_receiver_inbox_event_idx;
+      CREATE INDEX ${prefix}_dws_receiver_inbox_event_idx ON ${inbox}(account_id,event_id) WHERE event_id IS NOT NULL`);
+    assert.equal((await readback()).status, 'passed');
+
+    await pool.query(`DROP INDEX ${prefix}_dws_receiver_migration_active_idx`);
+    await assert.rejects(readback(), /Database postcondition failed/);
+  } finally {
+    await pool.query(`DROP TABLE IF EXISTS ${inbox}, ${migrations}, ${owners}, ${accounts} CASCADE`);
+    await pool.end();
+  }
+});
+
 test(
   'D-03: PostgreSQL checks real column types, index readiness and backfill; readback cannot write',
   { skip: !url },

@@ -72,6 +72,9 @@ export const DIRECTORY_STALENESS_SECONDS = {
 } as const;
 /** 目录轮询默认间隔（秒，§3.4 默认 5 分钟）。 */
 export const DIRECTORY_POLL_INTERVAL_SECONDS = 5 * 60;
+/** ready 能力协商：平台只向显式声明的业务系统发送对应可选通知。 */
+export const KY_APP_FEATURES = ['directory.changed.v1'] as const;
+export type KyAppFeature = (typeof KY_APP_FEATURES)[number];
 
 /** HTTP 头（§4、§3.4）。 */
 export const HTTP_HEADERS = {

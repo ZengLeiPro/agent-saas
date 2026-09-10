@@ -134,6 +134,7 @@ case "$task" in
       src/__tests__/taskboardOnReadyTrigger.pg.test.ts \
       src/__tests__/pushDeliveryClaim.pg.test.ts \
       src/__tests__/entitlementScopeBaseline.pg.test.ts \
+      src/data/agentDwsAccounts/durableDeliveryStore.pg.test.ts \
       src/kyapp/systems/store.pg.test.ts \
       src/kyapp/gateway/snapshotStore.pg.test.ts \
       src/kyapp/__tests__/kyAppStores.pg.test.ts \

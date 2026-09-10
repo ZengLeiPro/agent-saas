@@ -152,6 +152,7 @@ describe('platform 行', () => {
         'appVersion',
         'contractVersion',
         'deps',
+        'features',
         'installationState',
         'jwksKids',
         'manifestDigest',

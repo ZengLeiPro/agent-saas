@@ -58,6 +58,62 @@ test('生产写入拒绝缺失或不一致的身份，即使本轮将部署 API'
   );
 });
 
+test('repair 仅允许完全解析的 credential-only drift 且必须同时替换 API 和 Worker', () => {
+  const expected = {
+    schemaVersion: 1,
+    digest: `sha256:${'a'.repeat(64)}`,
+    credentialVersionDigest: `sha256:${'b'.repeat(64)}`,
+  };
+  const observed = {
+    schemaVersion: 1,
+    digest: expected.digest,
+    credentialVersionDigest: `sha256:${'c'.repeat(64)}`,
+    versionResolution: 'resolved',
+    secretRefCount: 1,
+  };
+  const productionState = {
+    configIdentity: { schemaVersion: 1, status: 'drifted', expected, observed },
+  };
+  assert.deepEqual(
+    assertPromotionConfigIdentityWriteGate({
+      manifest: fixture.manifest,
+      productionState,
+      recoveryMode: 'repair',
+    }),
+    { configIdentityConfirmed: false, credentialOnlyDriftRepair: true },
+  );
+  for (const change of [
+    () => ({ recoveryMode: 'normal' }),
+    () => ({
+      productionState: {
+        configIdentity: {
+          ...productionState.configIdentity,
+          observed: { ...observed, digest: `sha256:${'d'.repeat(64)}` },
+        },
+      },
+    }),
+    () => ({
+      productionState: {
+        configIdentity: {
+          ...productionState.configIdentity,
+          observed: { ...observed, versionResolution: 'partial' },
+        },
+      },
+    }),
+  ]) {
+    assert.throws(
+      () =>
+        assertPromotionConfigIdentityWriteGate({
+          manifest: fixture.manifest,
+          productionState,
+          recoveryMode: 'repair',
+          ...change(),
+        }),
+      /require a consistent ConfigIdentity/u,
+    );
+  }
+});
+
 test('App switched before Web failure is recoverable only in retry baseline', () => {
   const { productionState } = fixture.retries.find(({ failedStage }) => failedStage === 'web');
   const selected = selectLiveConfigIdentity({

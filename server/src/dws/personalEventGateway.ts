@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import {
   hasExactAgentDwsProfile,
+  canRunLegacyDwsListener,
   type AgentDwsAccountRecord,
   type AgentDwsAccountStore,
 } from '../data/agentDwsAccounts/index.js';
@@ -42,7 +43,15 @@ export interface DwsPersonalEvent {
   raw: Record<string, unknown>;
 }
 
-export class DwsPersonalEventGateway {
+export interface DwsEventGateway {
+  startAll(): Promise<void>;
+  startAccount(account: AgentDwsAccountRecord): Promise<void>;
+  stopTenant(tenantId: string): Promise<void>;
+  stopAccount(accountId: string, account?: AgentDwsAccountRecord): Promise<void>;
+  stop(): Promise<void>;
+}
+
+export class DwsPersonalEventGateway implements DwsEventGateway {
   private readonly active = new Map<string, { controller: AbortController; leaseOwner: string; task: Promise<void> }>();
   private reconcileTimer?: NodeJS.Timeout;
   private readonly retryByAccount = new Map<string, DwsRetryState>();
@@ -89,6 +98,7 @@ export class DwsPersonalEventGateway {
 
   async startAccount(account: AgentDwsAccountRecord): Promise<void> {
     if (this.stopped || account.status !== 'active' || !hasExactAgentDwsProfile(account)) return;
+    if (!canRunLegacyDwsListener(account)) return;
     if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) return;
     if (this.active.has(account.accountId)) return;
     const retry = this.retryByAccount.get(account.accountId);

@@ -78,6 +78,54 @@ describe("UserStore user ids", () => {
   });
 });
 
+describe("UserStore concurrent mutation transaction", () => {
+  it("allows only one of 50 concurrent creates for the same normalized username", async () => {
+    const { store } = await tempUserStore();
+    const results = await Promise.allSettled(
+      Array.from({ length: 50 }, (_, index) =>
+        store.create({
+          username: index % 2 === 0 ? "ConcurrentUser" : "concurrentuser",
+          password: "password123",
+          role: "user",
+          createdBy: "system",
+          tenantId: "kaiyan",
+        }),
+      ),
+    );
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(49);
+    expect(store.listAll().filter((user) => user.username.toLowerCase() === "concurrentuser")).toHaveLength(1);
+  });
+
+  it("reloads inside the shared lock so an older instance cannot overwrite another user", async () => {
+    const { store: seed, filePath } = await tempUserStore();
+    const first = await seed.create({
+      username: "first-user",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+    });
+    const second = await seed.create({
+      username: "second-user",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+    });
+    const olderSnapshot = new UserStore(filePath);
+    const otherWriter = new UserStore(filePath);
+
+    await otherWriter.updatePreferences(first.id, { defaultModel: "provider/model-a" });
+    await olderSnapshot.updatePreferences(second.id, { defaultModel: "provider/model-b" });
+
+    const reloaded = new UserStore(filePath);
+    expect(reloaded.findById(first.id)?.preferences?.defaultModel).toBe("provider/model-a");
+    expect(reloaded.findById(second.id)?.preferences?.defaultModel).toBe("provider/model-b");
+  });
+});
+
 describe("UserStore debug mode cascade", () => {
   it("首次加载旧 users 文件时幂等清理成员 debugMode=true，显式新值不受影响", async () => {
     const { filePath } = await tempUserStore();

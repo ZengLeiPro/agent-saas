@@ -7,6 +7,7 @@ export const PLATFORM_EVENT_TYPES = [
   'jwks.rotated',
   'jwks.revoke',
   'jwks.probe',
+  'directory.changed',
 ] as const;
 
 export type PlatformEventType = (typeof PLATFORM_EVENT_TYPES)[number];
@@ -49,6 +50,12 @@ export interface JwksProbeEvent extends PlatformEventBase {
   payload: { kid: string; probeSat: string };
 }
 
+/** 仅提示目录水位已推进；不携带任何用户资料，消费端仍按 checkpoint 增量拉取。 */
+export interface DirectoryChangedEvent extends PlatformEventBase {
+  type: 'directory.changed';
+  payload: { targetSeq: number };
+}
+
 /** 按 `type` 判别的联合类型。 */
 export type PlatformEvent =
   | InstallationDisabledEvent
@@ -56,7 +63,8 @@ export type PlatformEvent =
   | InstallationDeletedEvent
   | JwksRotatedEvent
   | JwksRevokeEvent
-  | JwksProbeEvent;
+  | JwksProbeEvent
+  | DirectoryChangedEvent;
 
 /** 事件 ack。`jwks.probe` 验签成功后回 verifiedKid。 */
 export interface PlatformEventAck {

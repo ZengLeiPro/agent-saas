@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const retry = vi.fn();
 const governanceError = Object.assign(new Error("private backend detail"), { status: 503 });
 const authState = vi.hoisted(() => ({
-  user: null as { username?: string } | null,
+  user: null as {
+    username?: string;
+    debugMode?: boolean;
+    tenantFeatures?: { debugModeAllowed?: boolean; debugModeEnabled?: boolean };
+  } | null,
 }));
 
 vi.mock("@/hooks/useEffectiveResources", () => ({
@@ -12,7 +16,7 @@ vi.mock("@/hooks/useEffectiveResources", () => ({
 }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => authState }));
 
-import { MyAgentSection, MyPermissionsSection } from "./V2Sections";
+import { FilesStorageSection, MyAgentSection, MyPermissionsSection } from "./V2Sections";
 
 describe("我的 Agent", () => {
   it("人格定义不再作为跳转 Tab，资料卡负责打开编辑弹窗", () => {
@@ -36,5 +40,27 @@ describe("我的权限 fail-closed", () => {
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("暂时无法加载我的权限");
     expect(alert.textContent).not.toContain("private backend detail");
+  });
+
+  it("不再重复展示调试模式区域，唯一开关留在对话与模型", () => {
+    authState.user = {
+      debugMode: false,
+      tenantFeatures: { debugModeAllowed: true, debugModeEnabled: true },
+    };
+    render(<MyPermissionsSection />);
+
+    expect(screen.queryByText("个人调试模式")).toBeNull();
+    expect(screen.queryByText("详细执行过程")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+  });
+});
+
+describe("文件与存储", () => {
+  it("展示与其他个人设置页一致的标准页头", () => {
+    render(<FilesStorageSection renderFiles={() => <div>文件列表</div>} />);
+
+    expect(screen.getByRole("heading", { level: 2, name: "文件与存储" })).toBeTruthy();
+    expect(screen.getByText("文件列表")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "存储用量" })).toBeTruthy();
   });
 });

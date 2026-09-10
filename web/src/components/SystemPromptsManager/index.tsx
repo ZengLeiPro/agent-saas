@@ -237,7 +237,7 @@ export function SystemPromptsManager(): JSX.Element {
               <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-4">
                 <Textarea
                   aria-label={`${selected.label}内容`}
-                  className="min-h-0 flex-1 resize-none font-mono text-xs leading-5"
+                  className="min-h-[28rem] flex-1 resize-y font-mono text-xs leading-5"
                   value={draft}
                   onChange={(event) => { setDraft(event.target.value); setMessage(null); }}
                   disabled={platformReadOnly || loading || saving}

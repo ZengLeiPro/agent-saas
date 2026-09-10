@@ -88,7 +88,6 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   },
   {
     id: "runtime", label: "运行与可观测", routes: [
-      route("platform", "runtime", "business-system-operations", "业务系统运营", ["platform-console", "runtime", "business-system-operations"], { entity: "optional" }),
       route("platform", "runtime", "system-deliveries", "系统交付", ["platform-console", "runtime", "system-deliveries"], { entity: "optional" }),
       route("platform", "runtime", "sessions", "会话", ["platform-console", "runtime", "sessions"], { entity: "optional" }),
       route("platform", "runtime", "runs", "运行", ["platform-console", "runtime", "runs"], { entity: "optional" }),
@@ -361,6 +360,16 @@ export function governanceRoute(routeId: string, options: Partial<Pick<Governanc
 
 export function governanceRouteDefinition(routeId: string): GovernanceRouteDefinition | null {
   return routesById.get(routeId) ?? null;
+}
+
+/** 详情页统一返回所属列表，并保留进入详情时携带的查询条件与组织范围。 */
+export function governanceCollectionRoute(current: GovernanceRouteState): GovernanceRouteState | null {
+  if (!current.entityId) return null;
+  const currentDefinition = routesById.get(current.routeId);
+  if (!currentDefinition) throw new Error(`Unknown governance route: ${current.routeId}`);
+  const target = currentDefinition.parentId ? routesById.get(currentDefinition.parentId) : currentDefinition;
+  if (!target || target.entity === "required") return null;
+  return makeState(target, { orgId: current.orgId, search: current.search });
 }
 
 function parseRegistered(parts: readonly string[], params: URLSearchParams): GovernanceParseResult | null {

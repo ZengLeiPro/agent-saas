@@ -101,8 +101,8 @@ describe("AdminShells V2 内容适配", () => {
     });
   });
 
-  it("新版用量页面可切换到组织预算面板", async () => {
-    window.history.replaceState({}, "", "/tenant-admin/governance/usage?org=acme");
+  it("预算导航参数直接渲染预算面板，不再嵌套第二层页签", () => {
+    window.history.replaceState({}, "", "/tenant-admin/governance/usage?org=acme&usageSection=billing");
     render(
       <TenantAdminShell
         {...commonTenantProps}
@@ -111,11 +111,9 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
 
-    expect(screen.getByText("复用 TenantAnalytics")).toBeTruthy();
-    expect(screen.queryByText(/组织预算面板/)).toBeNull();
-    await userEvent.click(screen.getByRole("tab", { name: "预算与计费" }));
-    expect(await screen.findByText("组织预算面板 acme Acme")).toBeTruthy();
-    expect(window.location.search).toContain("usageSection=billing");
+    expect(screen.getByText("组织预算面板 acme Acme")).toBeTruthy();
+    expect(screen.queryByText("复用 TenantAnalytics")).toBeNull();
+    expect(screen.queryByRole("tab")).toBeNull();
   });
 
   it("平台管理员未选择 org 时不默认使用首个业务组织", () => {

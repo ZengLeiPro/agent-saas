@@ -119,7 +119,7 @@ export function TenantInstructionsSection({ tenantId, tenantName }: TenantInstru
   });
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="自定义规则"
         description={
@@ -164,7 +164,7 @@ export function TenantInstructionsSection({ tenantId, tenantName }: TenantInstru
           placeholder={PLACEHOLDER}
           maxLength={MAX_LENGTH}
           readOnly={readOnly}
-          className="min-h-0 flex-1 resize-none font-mono text-sm"
+          className="min-h-[28rem] flex-1 resize-y font-mono text-sm"
         />
       ) : (
         <MarkdownReadonly content={content} />

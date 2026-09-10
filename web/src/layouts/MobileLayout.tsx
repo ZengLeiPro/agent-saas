@@ -59,7 +59,7 @@ const SuspenseFallback = (
 export function MobileLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, renameSession, autoTitleSession,
-    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, setActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, refreshSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, setActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
@@ -413,6 +413,12 @@ export function MobileLayout(props: LayoutProps) {
               onLoadGroupSessions={loadGroupSessions}
               onPreviewTrashSession={(id) => { if (id) closeDrawer(); previewTrashSession(id); }}
               trashPreviewSessionId={trashPreviewSessionId}
+              onSessionRestored={async (id) => {
+                await refreshSessions();
+                previewTrashSession(null);
+                selectSession(id);
+                return true;
+              }}
               personalAgentEnabled={personalAgentEnabled || orgAgentIdentityLoading}
               renderCronManager={() => <Suspense fallback={SuspenseFallback}><CronManager /></Suspense>}
               renderTenantManager={() => <Suspense fallback={SuspenseFallback}><TenantManager /></Suspense>}

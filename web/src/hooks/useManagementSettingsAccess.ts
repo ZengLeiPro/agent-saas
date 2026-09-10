@@ -114,20 +114,30 @@ export function useManagementSettingsAccess({
     const entering = previous !== null && active && !previous.active;
     const sequenceChanged = previous !== null && previous.sequence !== requestTrigger.sequence;
     const shouldRequest = contextChanged || entering || sequenceChanged;
-    triggerRef.current = { contextKey, active, sequence: requestTrigger.sequence };
+    const marker = { contextKey, active, sequence: requestTrigger.sequence };
+    triggerRef.current = marker;
     if (!shouldRequest) return;
 
     let current = true;
+    let settled = false;
+    const cleanup = () => {
+      current = false;
+      // React StrictMode immediately tears down and re-runs mount effects in development.
+      // Restore the prior trigger only while this request is unsettled so the second setup
+      // still performs the authoritative fetch instead of leaving access stuck on loading.
+      if (!settled && triggerRef.current === marker) triggerRef.current = previous;
+    };
     const preserveReady = !contextChanged
       && (entering || (sequenceChanged && requestTrigger.preserveReady))
       && mayRefresh(stateRef.current, contextKey);
     setState((existing) => preserveReady
       ? { ...existing, status: "refreshing" }
       : { status: "loading", ...CLOSED_ACCESS, contextKey });
-    if (authLoading) return () => { current = false; };
+    if (authLoading) return cleanup;
     if (!authEnabled || !user?.id || !user.tenantId) {
       setState({ status: "ready", ...CLOSED_ACCESS, contextKey });
-      return () => { current = false; };
+      settled = true;
+      return cleanup;
     }
     void import("@agent/shared/lib/governanceApi")
       .then(({ fetchManagementSnapshot }) => fetchManagementSnapshot({
@@ -154,8 +164,9 @@ export function useManagementSettingsAccess({
         } else {
           setState({ status: "error", ...CLOSED_ACCESS, contextKey });
         }
-      });
-    return () => { current = false; };
+      })
+      .finally(() => { settled = true; });
+    return cleanup;
   }, [active, authEnabled, authLoading, contextKey, requestTrigger, user?.id, user?.tenantId]);
 
   const previousTrigger = triggerRef.current;

@@ -48,6 +48,22 @@ const effective = {
 describe('governanceApi fail closed', () => {
   beforeEach(() => mockAuthFetch.mockReset());
 
+  it('平台技能设置调用治理资源窄写入口', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({ ok: true, changed: true }));
+    await expect(governanceResourcesApi.updatePlatformSkillSettings('archive', {
+      enabled: true,
+      exposure: 'allow_tenants',
+      tenantIds: ['tenant-a'],
+    })).resolves.toMatchObject({ ok: true, changed: true });
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      '/api/governance/resources/skills/archive/platform-settings',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ enabled: true, exposure: 'allow_tenants', tenantIds: ['tenant-a'] }),
+      }),
+    );
+  });
+
   it('调用权威 evaluate endpoint 并只接受有效三轴结果', async () => {
     mockAuthFetch.mockResolvedValue(jsonResponse([effective]));
     await expect(evaluateAccess({ action: 'use', resource })).resolves.toHaveLength(1);
@@ -90,6 +106,13 @@ describe('governanceApi fail closed', () => {
     expect(governanceApiErrorMessage(new GovernanceApiError(
       'GOVERNANCE_PARTIAL_CHANGE', 'partial', 500, 'req-partial',
     ))).toContain('禁止盲目重试。 请求 ID：req-partial');
+
+    const dependencyMessage = governanceApiErrorMessage(new GovernanceApiError(
+      'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE', 'Dependency impact authority unavailable', 503,
+    ));
+    expect(dependencyMessage).toContain('暂时无法确认这次变更会影响哪些成员或资源');
+    expect(dependencyMessage).not.toContain('AUTHORITY');
+    expect(dependencyMessage).not.toContain('权威');
   });
 
   it('2xx 错误 envelope 也抛错，不降级为本地 allow', async () => {

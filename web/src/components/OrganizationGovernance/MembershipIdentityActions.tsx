@@ -80,7 +80,7 @@ export function MembershipIdentityActions({
       }, tenantId));
     } catch (cause) {
       setPreview(null);
-      setError(cause instanceof Error ? cause.message : "无法取得权威预览");
+      setError(cause instanceof Error ? cause.message : "无法取得变更预览");
     } finally { setBusy(false); }
   };
   const commit = async () => {
@@ -110,7 +110,7 @@ export function MembershipIdentityActions({
     id: `organization-membership:${tenantId}:${target.userId}`,
     label: `${target.directoryProfile?.displayName ?? target.userId} 身份变更`,
     dirty: Boolean(action && !receipt && (reason || preview)),
-    save: async () => { if (!preview) { setError("请先生成权威预览，再保存并离开。"); throw new Error("Membership preview required"); } if (!await commit()) throw new Error("Membership commit failed"); },
+    save: async () => { if (!preview) { setError("请先生成变更预览，再保存并离开。"); throw new Error("Membership preview required"); } if (!await commit()) throw new Error("Membership commit failed"); },
     discard: close,
     draft: { actionId: action?.id, reason },
   });
@@ -123,10 +123,10 @@ export function MembershipIdentityActions({
     <div className="flex flex-wrap gap-1">{actions.map(item => <Button key={item.id} type="button" size="sm" variant="outline" onClick={() => { setAction(item); setPreview(null); setReceipt(null); setError(null); }}>{item.label}</Button>)}</div>
     <Dialog open={action !== null} onOpenChange={(open) => { if (!open) requestClose(); }}>
       <DialogContent>
-        <DialogHeader><DialogTitle>{action?.label}</DialogTitle><DialogDescription>目标成员：{target.directoryProfile?.displayName ?? target.userId}{target.directoryProfile?.username ? `（${target.directoryProfile.username}）` : ""}；稳定 ID：{target.userId}。身份变更必须先生成与当前版本绑定的权威预览。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{action?.label}</DialogTitle><DialogDescription>目标成员：{target.directoryProfile?.displayName ?? target.userId}{target.directoryProfile?.username ? `（${target.directoryProfile.username}）` : ""}。身份变更必须先生成与当前版本绑定的变更预览。</DialogDescription></DialogHeader>
         <div className="space-y-3">
           <label className="grid gap-1 text-sm"><span>变更原因</span><Input value={reason} onChange={(event) => { setReason(event.target.value); setPreview(null); }} placeholder="至少 3 个字符" disabled={busy} /></label>
-          {preview ? <div className="space-y-2 rounded-lg border bg-muted/30 p-3 text-xs"><div className="font-medium">权威影响</div><div>{preview.impact.from.persona}/{preview.impact.from.status}{preview.impact.from.isOwner ? "/Owner" : ""} → {preview.impact.to.persona}/{preview.impact.to.status}{preview.impact.to.isOwner ? "/Owner" : ""}</div><div>生效方式：{preview.impact.effectiveMode} · {preview.impact.reversible ? "可逆" : "不可逆"}</div>{preview.impact.blockers.length ? <div className="rounded border border-destructive/30 p-2 text-destructive">阻断：{preview.impact.blockers.join("、")}</div> : <div>阻断项：无</div>}<div>基线：{preview.baselineDigest.slice(0, 12)}… · 有效期至 {new Date(preview.expiresAt).toLocaleString()}</div></div> : null}
+          {preview ? <div className="space-y-2 rounded-lg border bg-muted/30 p-3 text-xs"><div className="font-medium">变更影响</div><div>{preview.impact.from.persona}/{preview.impact.from.status}{preview.impact.from.isOwner ? "/Owner" : ""} → {preview.impact.to.persona}/{preview.impact.to.status}{preview.impact.to.isOwner ? "/Owner" : ""}</div><div>生效方式：{preview.impact.effectiveMode} · {preview.impact.reversible ? "可逆" : "不可逆"}</div>{preview.impact.blockers.length ? <div className="rounded border border-destructive/30 p-2 text-destructive">阻断：{preview.impact.blockers.join("、")}</div> : <div>阻断项：无</div>}<div>预览有效期至 {new Date(preview.expiresAt).toLocaleString()}</div></div> : null}
           {receipt ? <div className="space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs"><div className="font-medium">变更回执</div><div>changeId：{receipt.changeId}</div><div>auditId：{receipt.auditId}{receipt.auditCompletion === "pending" ? "（终态审计排队中）" : ""}</div><div>生效时间：{new Date(receipt.effectiveAt).toLocaleString()} · Membership v{receipt.version}</div><div>投影：{receipt.projectionStatus}{receipt.projectionId ? ` · ${receipt.projectionId}` : ""}</div></div> : null}
           {error ? <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{error}</div> : null}
         </div>

@@ -18,12 +18,12 @@ export async function updateAgentProfile(
   username: string,
   data: { name?: string; signature?: string; avatar?: string },
 ): Promise<AgentProfile> {
-  const res = await authFetch(`/api/agents/${username}`, {
+  const res = await authFetch(`/api/agents/${username}/profile`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`Failed to update agent profile: ${res.status}`);
+  if (!res.ok) throw new Error(await agentApiError(res, '保存 Agent 资料失败'));
   return res.json() as Promise<AgentProfile>;
 }
 
@@ -63,7 +63,7 @@ export async function uploadAgentAvatar(username: string, file: File | Blob | { 
   const formData = new FormData();
   // React Native FormData 需要 { uri, type, name } 对象而非 Blob
   formData.append('avatar', file as any);
-  const res = await authFetch(`/api/agents/${username}/avatar`, {
+  const res = await authFetch(`/api/agents/${username}/profile/avatar`, {
     method: 'POST',
     body: formData,
   });
@@ -77,6 +77,11 @@ export async function uploadAgentAvatar(username: string, file: File | Blob | { 
   }
   const data = await res.json() as { avatar: string };
   return data.avatar;
+}
+
+async function agentApiError(response: Response, fallback: string): Promise<string> {
+  const body = await response.json().catch(() => ({})) as { error?: string };
+  return body.error || `${fallback}（HTTP ${response.status}）`;
 }
 
 /** 判断 avatar 是 emoji 还是文件路径（个人 agent-avatars/ 与企业专家 org-agent-avatars/ 两种路径前缀） */

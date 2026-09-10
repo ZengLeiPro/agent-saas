@@ -109,7 +109,7 @@ export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionP
   });
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="公司信息"
         description={
@@ -154,7 +154,7 @@ export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionP
           placeholder="当前组织公司信息（Markdown）..."
           maxLength={MAX_LENGTH}
           readOnly={readOnly}
-          className="min-h-0 flex-1 resize-none font-mono text-sm"
+          className="min-h-[28rem] flex-1 resize-y font-mono text-sm"
         />
       ) : (
         <MarkdownReadonly content={content} />

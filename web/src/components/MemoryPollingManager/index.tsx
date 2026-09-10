@@ -168,7 +168,7 @@ export function MemoryPollingManager() {
   }, [draft.hour, draft.hoursSpan]);
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="记忆轮询"
         description="管理平台每日记忆整理任务的调度、活动范围和执行参数。组织是否启用及是否扣积分仍由各组织的能力配置控制。"

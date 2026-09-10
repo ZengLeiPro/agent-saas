@@ -32,6 +32,9 @@ import { createPersonalSkillGovernancePromotion } from '../services/personalSkil
 import { applyTenantLifecycleChange, type TenantLifecycleChange } from './tenantLifecycleEffects.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import type { MembershipCreateInput } from '../routes/governanceAccessValidation.js';
+import { scanPoolSkillsAsync } from '../data/skills/scanner.js';
+import { resolveAgentPath } from '../workspace/namespace.js';
+import type { PlatformSkillConfig } from '../data/skills/types.js';
 
 const scheduledOffboardingRuntimes = new WeakSet<AppRuntime>();
 
@@ -318,6 +321,11 @@ export function registerGovernanceRoutes(
           if (input.kind === 'scope' && input.resourceType === 'model') {
             return resolveRuntimeModelScopeImpact(runtime, input.tenantId);
           }
+          if (input.kind === 'scope' || input.kind === 'entitlement') {
+            // 其余组织级资源范围同样影响活跃成员与 Agent；使用统一运行时主体清单，
+            // 避免复用范围编辑器时因资源类型未单独分支而错误返回 503。
+            return resolveRuntimeModelScopeImpact(runtime, input.tenantId);
+          }
           if (input.kind === 'tenant' && input.action) {
             return resolveRuntimeTenantLifecycleImpact(runtime, input.tenantId, input.action);
           }
@@ -401,6 +409,18 @@ export function registerGovernanceRoutes(
         : {}),
       skills: runtime.skillGovernanceStore,
       ...(governedSkillServices ?? {}),
+      ...(runtime.skillConfigStore ? {
+        updatePlatformSkillSettings: async ({ skillId, settings }: {
+          skillId: string;
+          settings: PlatformSkillConfig;
+        }) => {
+          const poolDir = resolveAgentPath(runtime.sharedDir, 'skills-pool');
+          const poolSkillIds = new Set((await scanPoolSkillsAsync(poolDir)).map(skill => skill.id));
+          if (!poolSkillIds.has(skillId)) return false;
+          await runtime.skillConfigStore!.setPlatformSkillConfigs({ [skillId]: settings });
+          return true;
+        },
+      } : {}),
       connectors: runtime.connectorCatalogStore,
       credentials: runtime.credentialStore,
       environments: runtime.environmentStore,

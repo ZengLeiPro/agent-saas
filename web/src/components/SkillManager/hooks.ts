@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   fetchSkillPool,
-  updatePoolSkillSettings,
   fetchCustomSkills,
   promoteSkill,
   deleteCustomSkill,
@@ -9,6 +8,7 @@ import {
   updateCustomSkillDocument,
   syncSkillsApi,
 } from "@agent/shared";
+import { governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 import type { PoolSkillInfo, CustomSkillsResponse, SkillDocumentResponse } from "@agent/shared";
 import type { PlatformSkillSettings } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
@@ -65,7 +65,9 @@ export function useSkillAdmin() {
   }, [refresh]);
 
   const updatePlatformSettings = useCallback(async (updates: Record<string, PlatformSkillSettings>) => {
-    await updatePoolSkillSettings(updates);
+    await Promise.all(Object.entries(updates).map(([skillId, settings]) =>
+      governanceResourcesApi.updatePlatformSkillSettings(skillId, settings),
+    ));
     await refreshPool();
   }, [refreshPool]);
 

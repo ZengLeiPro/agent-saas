@@ -180,4 +180,28 @@ describe("TenantSettingsPanel model-tools 别名编辑", () => {
     await screen.findByText("模型别名 / 展示名称");
     expect(screen.getAllByLabelText("展示名称")).toHaveLength(2);
   });
+
+  it("品牌字段清空时提交空字符串，确保后端覆盖旧值", async () => {
+    mocks.getTenantSettings.mockResolvedValue({
+      ...tenantSettingsResponse,
+      settings: {
+        ...baseSettings,
+        branding: {
+          displayName: "旧组织名",
+          logoUrl: "https://example.com/old-logo.png",
+          primaryColor: "#123456",
+        },
+      },
+    });
+
+    render(<TenantSettingsPanel tenantId="tenant-a" section="brand" />);
+    fireEvent.change(await screen.findByLabelText("显示名称"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Logo 地址"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("主色"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+
+    await waitFor(() => expect(mocks.updateTenantSettings).toHaveBeenCalledTimes(1));
+    const command = mocks.updateTenantSettings.mock.calls[0]![1] as { settings: typeof baseSettings };
+    expect(command.settings.branding).toEqual({ displayName: "", logoUrl: "", primaryColor: "" });
+  });
 });

@@ -261,7 +261,7 @@ export function ConnectorDictionaryManager() {
   const readOnly = platformReadOnly;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="连接器映射"
         description="把命令行还原成客户读得懂的业务语言：系统名、模块名、动作动词。只有写操作才会被标成「动了外部系统」并展示回执。"

@@ -99,7 +99,7 @@ export function SessionOrganizationSettings() {
   });
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="会话智能整理"
         description="设置个人标题风格和智能分组习惯。个人要求会追加在平台规则之后。"

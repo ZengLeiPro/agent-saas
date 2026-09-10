@@ -10,6 +10,7 @@ import {
   buildOrganizationSwitchUrl,
   canonicalGovernanceUrl,
   filterCustomerOrganizations,
+  governanceCollectionRoute,
   governanceRoute,
   isCustomerOrganizationId,
   parseGovernanceUrl,
@@ -24,6 +25,30 @@ function expectRoute(input: string, routeId: string, canonicalPath: string | nul
 }
 
 describe("governance navigation registry", () => {
+  it("详情页统一返回所属列表并保留组织范围与列表查询", () => {
+    expect(governanceCollectionRoute(governanceRoute("platform.org-business.users", {
+      entityId: "user-1", search: "?q=王&tenantId=acme",
+    }))).toMatchObject({ routeId: "platform.org-business.users", entityId: null, search: "?q=王&tenantId=acme" });
+    expect(governanceCollectionRoute(governanceRoute("organization.members.member", {
+      orgId: "acme", entityId: "user-1", tab: "access", search: "?status=active",
+    }))).toMatchObject({ routeId: "organization.members.list", orgId: "acme", entityId: null, search: "?status=active" });
+    expect(governanceCollectionRoute(governanceRoute("platform.org-business.users"))).toBeNull();
+  });
+
+  it("所有注册实体详情路由都有确定的列表返回目标", () => {
+    for (const definition of GOVERNANCE_ROUTES.filter((item) => item.entity !== "none")) {
+      const current = governanceRoute(definition.id, {
+        entityId: "entity-1",
+        orgId: definition.area === "organization" ? "acme" : null,
+        search: "?q=kept",
+      });
+      const collection = governanceCollectionRoute(current);
+      expect(collection, definition.id).not.toBeNull();
+      expect(collection, definition.id).toMatchObject({ entityId: null, search: "?q=kept" });
+      expect(() => buildGovernanceUrl(collection!)).not.toThrow();
+    }
+  });
+
   it("只暴露平台/组织各五个工作区，并完整登记本地叶子与八个个人设置页", () => {
     expect(GOVERNANCE_NAVIGATION.platform.map((item) => item.id)).toEqual([
       "overview", "org-business", "resource-center", "runtime", "governance",
@@ -31,7 +56,7 @@ describe("governance navigation registry", () => {
     expect(GOVERNANCE_NAVIGATION.organization.map((item) => item.id)).toEqual([
       "overview", "members", "agents", "governance", "settings",
     ]);
-    expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(28);
+    expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(27);
     expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(28);
     expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(8);
   });
@@ -179,6 +204,7 @@ describe("legacy URL canonical adapters", () => {
 describe("invalid route and scope safety", () => {
   it.each([
     ["/platform-console/runtime/not-real", "unknown-route"],
+    ["/platform-console/runtime/business-system-operations", "unknown-route"],
     ["/platform-console/runtime/runs/r1/extra", "unexpected-entity"],
     ["/platform-console/org-business/tenants/t1/not-a-tab", "invalid-tab"],
     ["/tenant-admin/members/member?org=acme", "missing-entity"],

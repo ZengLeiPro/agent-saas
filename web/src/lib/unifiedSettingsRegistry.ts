@@ -63,7 +63,7 @@ export const SETTINGS_REGISTRY = defineSettingsRegistry([
   { scope: "personal", id: "chat-model", label: "对话与模型", description: "默认模型与对话展示偏好。", group: "preferences", iconKey: "message-square", accessAction: "settings.personal.view", dirtyPolicy: "guarded", routeId: "settings.preferences.chat-model" },
   { scope: "personal", id: "session-organization", label: "会话智能整理", description: "配置自动标题与智能分组偏好。", group: "preferences", iconKey: "sparkles", accessAction: "settings.personal.view", dirtyPolicy: "guarded", routeId: "settings.preferences.session-organization" },
   { scope: "personal", id: "appearance-layout", label: "外观与布局", description: "侧边栏、会话列表和界面偏好。", group: "preferences", iconKey: "palette", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.preferences.appearance-layout" },
-  { scope: "personal", id: "my-permissions", label: "我的权限", description: "服务端权威有效资源与权限解释。", group: "access", iconKey: "admin", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.access.my-permissions" },
+  { scope: "personal", id: "my-permissions", label: "我的权限", description: "查看当前有效资源、权限与开通方式。", group: "access", iconKey: "admin", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.access.my-permissions" },
   { scope: "personal", id: "files-storage", label: "文件与存储", description: "浏览文件、查看用量并清理附件。", group: "data", iconKey: "hard-drive", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.data.files-storage" },
   { scope: "personal", id: "trash", label: "回收站", description: "恢复或彻底清理已删除会话。", group: "data", iconKey: "trash", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.data.trash" },
 

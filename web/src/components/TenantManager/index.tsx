@@ -158,7 +158,7 @@ export function TenantModelPolicyPanel({
     <div className="space-y-4">
       <div>
         <h3 className="text-base font-semibold">模型策略</h3>
-        <p className="text-sm text-muted-foreground">配置 {tenant.name} 的可用模型范围；其余模型策略暂按权威投影只读展示。</p>
+        <p className="text-sm text-muted-foreground">配置 {tenant.name} 的可用模型范围；其余模型策略暂为只读。</p>
       </div>
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
@@ -913,7 +913,7 @@ export function TenantManager() {
   };
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="组织管理"
         description="管理平台组织与成员归属。"

@@ -124,7 +124,7 @@ export function AttachmentStorageSection() {
   const busy = loading || cleaning || purging;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="附件存储"
         description="查看个人工作区附件用量；未发送附件超过 24 小时会自动清理，已发送附件不会自动删除。"

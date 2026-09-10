@@ -172,7 +172,8 @@ describe('ResourceAccessEditors', () => {
       ),
     );
     fireEvent.click(screen.getByRole('button', { name: '确认提交' }));
-    expect(await screen.findByText('changeId：change-cleanup')).toBeTruthy();
+    expect(await screen.findByText('设置已保存')).toBeTruthy();
+    expect(screen.queryByText(/change-cleanup/)).toBeNull();
     await waitFor(() => expect(screen.queryByText('已退出目录')).toBeNull());
   });
 
@@ -234,7 +235,7 @@ describe('ResourceAccessEditors', () => {
       />,
     );
 
-    expect(await screen.findByText('Assignment v3')).toBeTruthy();
+    expect(await screen.findByText('配置已同步')).toBeTruthy();
     expect((screen.getByLabelText('业务系统授权资源') as HTMLSelectElement).value).toBe('iid-1');
   });
 

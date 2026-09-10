@@ -221,7 +221,7 @@ export function TenantConnectorDictionaryPanel({
   const busy = loading || saving;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="连接器映射"
         description={`平台词典是默认基线；${tenantName ?? "本组织"}保存的条目按连接器整条覆盖平台默认，只对本组织的会话生效。`}

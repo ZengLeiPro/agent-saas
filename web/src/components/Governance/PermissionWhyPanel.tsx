@@ -63,7 +63,7 @@ export function PermissionWhyPanel({ evaluation, className = '' }: PermissionWhy
   return (
     <section className={`rounded-lg border border-border bg-card p-5 text-card-foreground ${className}`} aria-labelledby={`permission-why-${access.decisionId}`}>
       <header>
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">权威治理结论</p>
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">当前权限结论</p>
         <h2 id={`permission-why-${access.decisionId}`} className="mt-1 text-lg font-semibold">
           {evaluation.primaryResult.label}
         </h2>
@@ -111,7 +111,7 @@ export function PermissionWhyPanel({ evaluation, className = '' }: PermissionWhy
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{layerLabel[layer]}</span>
-                    {step ? <GovernanceStatusBadge label={resultLabel[step.result]} tone={resultTone[step.result]} /> : <GovernanceStatusBadge label="权威响应未返回此层" />}
+                    {step ? <GovernanceStatusBadge label={resultLabel[step.result]} tone={resultTone[step.result]} /> : <GovernanceStatusBadge label="暂未返回此层结果" />}
                   </div>
                   {step ? <p className="mt-1 text-muted-foreground">{step.label} · {step.code}</p> : null}
                 </div>

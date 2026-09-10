@@ -93,7 +93,7 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
   };
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title={tenantName ? `${tenantName} · 成员管理` : "用户管理"}
         description={tenantIdScope ? `管理组织 ${tenantIdScope} 下的用户账号与权限。` : "管理组织下的用户账号与权限。"}

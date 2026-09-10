@@ -3,6 +3,7 @@ import { Boxes, TriangleAlert } from "lucide-react";
 
 import { TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
+import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { OrganizationEntitlementScopeEditor } from "@/components/OrganizationGovernance/ResourceAccessEditors";
 import { PlatformBillingManager } from '@/components/BillingManager';
 import { Badge } from "@/components/ui/badge";
@@ -124,7 +125,7 @@ function Empty({ children }: { children: string }) {
 }
 
 function Header({ title, description }: { title: string; description: string }) {
-  return <div className="mb-5"><h2 className="text-xl font-semibold">{title}</h2><p className="mt-1 text-sm text-muted-foreground">{description}</p></div>;
+  return <SettingsPanelHeader title={title} description={description} />;
 }
 
 function Receipt({ value }: { value: GovernanceReceipt }) {
@@ -152,10 +153,10 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
   if (receipt && (loading || error || !data)) return <div className="space-y-3">
     <Receipt value={receipt} />
     {loading
-      ? <div className="text-sm text-muted-foreground">{receipt.propagationStatus === "pending" ? "组织状态已保存，正在重试跨实例生效并刷新权威状态…" : "变更已生效，正在刷新组织权威状态…"}</div>
+      ? <div className="text-sm text-muted-foreground">{receipt.propagationStatus === "pending" ? "组织状态已保存，正在重试跨实例生效并刷新状态…" : "变更已生效，正在刷新组织状态…"}</div>
       : error
         ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">{receipt.propagationStatus === "pending" ? "组织状态已保存，跨实例生效仍在重试，且状态刷新失败" : "变更已生效，但组织状态刷新失败"}：{error.message}</div>
-        : <div className="text-sm text-muted-foreground">{receipt.propagationStatus === "pending" ? "组织状态已保存，跨实例生效仍在重试。" : "变更已生效，组织权威状态暂不可用。"}</div>}
+        : <div className="text-sm text-muted-foreground">{receipt.propagationStatus === "pending" ? "组织状态已保存，跨实例生效仍在重试。" : "变更已生效，组织状态暂不可用。"}</div>}
   </div>;
   if (loading) return <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">正在读取生命周期…</div>;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
@@ -210,7 +211,7 @@ function TenantLifecyclePanel({ tenantId }: { tenantId: string }) {
       </div>
       <div className="text-xs text-muted-foreground">生效方式：{localizedValue(preview.impact.effectiveMode, effectiveModeLabels)} · 基线 {preview.baselineDigest.slice(0, 12)}… · 有效期至 {new Date(preview.expiresAt).toLocaleString()}</div>
       <div className="text-xs">
-        <div className="font-medium">权威影响资源（{affectedResources.length}）</div>
+        <div className="font-medium">影响资源（{affectedResources.length}）</div>
         {visibleResources.length ? <ul className="mt-1 space-y-1 text-muted-foreground">{visibleResources.map(resource => <li key={`${resource.type}:${resource.id}`}>{localizedValue(resource.type, resourceTypeLabels)}：<code>{resource.id}</code> · v{resource.version}</li>)}</ul> : <div className="mt-1 text-muted-foreground">当前没有活动成员身份受影响。</div>}
         {affectedResources.length > visibleResources.length ? <div className="mt-1 text-muted-foreground">另有 {affectedResources.length - visibleResources.length} 项未展开。</div> : null}
       </div>
@@ -237,7 +238,7 @@ function EntitlementActions({ tenantId, entitlement, actions, onChanged }: {
   const runPreview = async () => {
     setBusy(true); setError(""); setReceipt(null);
     try { setPreview(await governanceAccessApi.previewEntitlements<EntitlementPreview>(change, tenantId)); }
-    catch { setError("权益预览失败，请刷新权威基线后重试。"); }
+    catch { setError("权益预览失败，请刷新页面后重试。"); }
     finally { setBusy(false); }
   };
   const commit = async () => {
@@ -287,9 +288,9 @@ export function PlatformOrganizationGovernance({ tenantId, route }: { tenantId: 
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
   const entitlement = data?.entitlement;
 
-  if (tab === "entitlements") return <div className="space-y-5"><Header title="权益与配额" description="展示治理权威值、来源与版本；无权威预览时不开放编辑。" />
+  if (tab === "entitlements") return <div className="space-y-5"><Header title="权益与配额" description="展示组织当前权益、配额与来源；修改前会先展示影响预览。" />
     <TenantDebugModeSetting tenantId={tenantId} level="platform" />
-    {!entitlement ? <Empty>该组织尚无治理 Entitlement。</Empty> : <div className="space-y-4">
+    {!entitlement ? <Empty>该组织尚未配置权益。</Empty> : <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Fact label="状态" value={localizedValue(entitlement.status, statusLabels)} /><Fact label="来源" value={localizedValue(entitlement.source, sourceLabels)} /><Fact label="版本" value={`v${entitlement.version}`} /><Fact label="到期" value={entitlement.effectiveTo ? new Date(entitlement.effectiveTo).toLocaleString() : "未设置"} /></div>
       <div className="rounded-xl border bg-card p-4"><div className="mb-3 font-medium">硬上限</div>{Object.keys(entitlement.limits).length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(entitlement.limits).map(([key, value]) => <Fact key={key} label={key} value={String(value)} compact />)}</div> : <span className="text-sm text-muted-foreground">未配置覆盖上限</span>}</div>
     </div>}

@@ -596,7 +596,7 @@ export function ModelManager() {
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="模型管理"
         description="这里维护平台模型上下文、自动压缩触发线、成本价与模型解析配置；客户售价、积分倍率和组织毛利不在此处配置。"

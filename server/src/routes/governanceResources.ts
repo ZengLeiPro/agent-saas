@@ -43,6 +43,10 @@ import {
   expectedRevisionSchema, publishCandidateSchema, publishSchema, reviewSchema, statusSchema,
   userOffboardingJobSchema, userOffboardingPreviewSchema,
 } from './governanceResourceSchemas.js';
+import {
+  registerGovernancePlatformSkillRoutes,
+  type UpdatePlatformSkillSettings,
+} from './governancePlatformSkillRoutes.js';
 
 const createSkillPromotionSchema = z.object({
   tenantId: z.string().min(1).max(128),
@@ -136,6 +140,7 @@ export function createGovernanceResourcesRouter(deps: {
     sourceUsername: string;
     skillId: string;
   }) => Promise<TenantSkillGovernanceUploadResult>;
+  updatePlatformSkillSettings?: UpdatePlatformSkillSettings;
   connectors: PgConnectorCatalogStore;
   credentials: PgCredentialStore;
   environments: PgEnvironmentStore;
@@ -599,6 +604,13 @@ export function createGovernanceResourcesRouter(deps: {
         }
       })();
     });
+  });
+
+  registerGovernancePlatformSkillRoutes({
+    router,
+    personaFor: req => personas.get(req),
+    ...(deps.tenantExists ? { tenantExists: deps.tenantExists } : {}),
+    ...(deps.updatePlatformSkillSettings ? { updatePlatformSkillSettings: deps.updatePlatformSkillSettings } : {}),
   });
 
   router.post('/skills/promote-to-tenant', async (req, res) => {

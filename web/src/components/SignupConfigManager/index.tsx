@@ -265,7 +265,7 @@ export function SignupConfigManager() {
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="注册管理"
         description="配置自助注册开关、赠送积分、短信通道与风控限流；保存后即时生效，无需重启。"

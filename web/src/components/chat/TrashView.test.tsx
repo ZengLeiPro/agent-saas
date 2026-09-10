@@ -69,4 +69,38 @@ describe("TrashView", () => {
     expect(screen.queryByRole("dialog", { name: "清空回收站" })).toBeNull();
     expect(authFetch).toHaveBeenCalledTimes(1);
   });
+
+  it("恢复后先刷新权威列表并打开会话，再从回收站移除", async () => {
+    vi.mocked(authFetch)
+      .mockResolvedValueOnce(jsonResponse({ sessions: [
+        { sessionId: "session-restore", title: "待恢复会话", updatedAtMs: 1 },
+      ] }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, restored: true }));
+    const onSessionRestored = vi.fn().mockResolvedValue(true);
+    render(<TrashView onClose={vi.fn()} onSessionRestored={onSessionRestored} showHeader={false} />);
+
+    expect(await screen.findByText("待恢复会话")).toBeTruthy();
+    fireEvent.click(screen.getByTitle("恢复"));
+
+    await waitFor(() => expect(onSessionRestored).toHaveBeenCalledWith("session-restore"));
+    expect(screen.getByText("回收站为空")).toBeTruthy();
+  });
+
+  it("恢复接口失败时显示服务端原因且保留条目", async () => {
+    vi.mocked(authFetch)
+      .mockResolvedValueOnce(jsonResponse({ sessions: [
+        { sessionId: "session-fail", title: "恢复失败会话", updatedAtMs: 1 },
+      ] }))
+      .mockResolvedValueOnce(jsonResponse({ error: "会话恢复冲突" }, 409))
+      .mockResolvedValueOnce(jsonResponse({ sessions: [
+        { sessionId: "session-fail", title: "恢复失败会话", updatedAtMs: 1 },
+      ] }));
+    render(<TrashView onClose={vi.fn()} showHeader={false} />);
+
+    expect(await screen.findByText("恢复失败会话")).toBeTruthy();
+    fireEvent.click(screen.getByTitle("恢复"));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("会话恢复冲突");
+    expect(screen.getByText("恢复失败会话")).toBeTruthy();
+  });
 });

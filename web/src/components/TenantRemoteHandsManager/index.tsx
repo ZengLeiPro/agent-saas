@@ -433,7 +433,7 @@ export function TenantRemoteHandsManager() {
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="执行环境池"
         description="管理 Agent 执行命令、读写文件的执行环境池。每个池按租户/用户灰度，按需拉起具体的执行环境（如 ACS 沙箱、未来的客户端等）。保存后写回 config.json 并热生效。"

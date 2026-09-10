@@ -6,7 +6,7 @@ import type {
   ManagementSnapshotRequestV1,
   ManagementSnapshotResponseV1,
 } from '../types/governance';
-import type { GovernanceSkillImportResponse } from '../types/skill';
+import type { GovernanceSkillImportResponse, PlatformSkillSettings } from '../types/skill';
 import {
   accessDecisionSchema,
   assertGovernanceUiSafe,
@@ -608,6 +608,8 @@ export const governanceResourcesApi = {
   getAgent: <T = unknown>(agentId: string, tenantId?: string) =>
     request<T>(withQuery(`${RESOURCE_BASE}/agents/${id(agentId)}`, tenant(tenantId))),
   getSkill: <T = unknown>(skillId: string) => request<T>(`${RESOURCE_BASE}/skills/${id(skillId)}`),
+  updatePlatformSkillSettings: <T = unknown>(skillId: string, command: PlatformSkillSettings) =>
+    request<T>(`${RESOURCE_BASE}/skills/${id(skillId)}/platform-settings`, body('PATCH', command)),
   listConnectors: <T = unknown>() => request<T>(`${RESOURCE_BASE}/connectors`),
   listCredentials: <T = unknown>(tenantId?: string) =>
     request<T>(withQuery(`${RESOURCE_BASE}/credentials`, tenant(tenantId)), undefined, schemaFor<T>(credentialListSchema)),

@@ -31,7 +31,7 @@ export function AllAgentsList() {
   if (!user) return null;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="所有 Agent"
         description="浏览所有用户的 Agent 列表。"

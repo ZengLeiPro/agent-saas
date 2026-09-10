@@ -60,6 +60,7 @@ interface MobileSessionListProps {
   onLoadGroupSessions?: (groupId: string) => Promise<void>;
   onPreviewTrashSession?: (id: string | null) => void;
   trashPreviewSessionId?: string | null;
+  onSessionRestored?: (sessionId: string) => Promise<boolean | void>;
   personalAgentEnabled?: boolean;
 }
 export function MobileSessionList({
@@ -94,6 +95,7 @@ export function MobileSessionList({
   onLoadGroupSessions,
   onPreviewTrashSession,
   trashPreviewSessionId,
+  onSessionRestored,
   personalAgentEnabled = true,
 }: MobileSessionListProps) {
   const { user: authUser, logout, authEnabled, updateAvatar } = useAuth();
@@ -762,6 +764,11 @@ export function MobileSessionList({
                 onClose={() => { setShowTrash(false); onPreviewTrashSession?.(null); }}
                 onPreviewSession={(id) => onPreviewTrashSession?.(id)}
                 activePreviewId={trashPreviewSessionId}
+                onSessionRestored={async (id) => {
+                  const result = await onSessionRestored?.(id);
+                  if (result !== false) setShowTrash(false);
+                  return result;
+                }}
               />
             ) : (<>
 
@@ -885,6 +892,11 @@ export function MobileSessionList({
                 onClose={() => onTabChange?.("chat")}
                 onPreviewSession={(id) => onPreviewTrashSession?.(id)}
                 activePreviewId={trashPreviewSessionId}
+                onSessionRestored={async (id) => {
+                  const result = await onSessionRestored?.(id);
+                  if (result !== false) onTabChange?.("chat");
+                  return result;
+                }}
               />
             </div>
 

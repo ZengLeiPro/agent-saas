@@ -198,7 +198,7 @@ export function AgentDocEditor({
           onChange={(e) => setContent(e.target.value)}
           placeholder={config.placeholder}
           maxLength={config.maxLength}
-          className="min-h-0 flex-1 resize-none font-mono text-sm"
+          className="min-h-[28rem] flex-1 resize-y font-mono text-sm"
         />
       ) : (
         <MarkdownReadonly content={content} />

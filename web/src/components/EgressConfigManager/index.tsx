@@ -181,7 +181,7 @@ export function EgressConfigManager() {
   const busy = loading || saving;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="网络出口"
         description="配置平台与容器访问外部网络的路径。分流规则由代理服务端的规则引擎负责，这里只决定「哪些流量交给代理」。"

@@ -28,7 +28,7 @@ export { AllAgentsList } from "./AllAgentsList";
  */
 export function SkillsSection() {
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SkillSelector
         headerTitle="技能"
         headerDescription="为我的通用 Agent 选择启用的技能，新会话生效。"
@@ -45,7 +45,7 @@ export function MemorySection() {
   const { user } = useAuth();
   if (!user?.username) return null;
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <AgentDocEditor
         username={user.username}
         kind="memory"
@@ -170,7 +170,7 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
   // =================== 子视图：Skills / 人格定义 / 记忆 ===================
   if (subView) {
     return (
-      <div className="mx-auto flex h-full w-full max-w-5xl flex-col">
+      <div className="mx-auto flex h-full w-full max-w-6xl flex-col">
         {subView === "skills" ? (
           <SkillSelector
             targetUsername={editing || undefined}
@@ -191,7 +191,7 @@ export function AgentProfile({ editingUsername, onEditingChange }: AgentProfileP
 
   // =================== 编辑视图 ===================
   return (
-    <div className="mx-auto flex h-full w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full w-full max-w-6xl flex-col">
       {/* 顶部导航：editing 模式显示「返回所有 Agent」；非 editing 显示标准 header */}
       {editing ? (
         <div className="mb-4 flex shrink-0 items-center gap-3">

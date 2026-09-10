@@ -130,8 +130,7 @@ describe('SkillManager 技能操作可访问名称', () => {
     expect(screen.getByRole('button', { name: '编辑技能文档 组织自有技能' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '提升技能 组织自有技能 到平台技能池' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '删除技能 组织自有技能' })).toBeTruthy();
-    expect(screen.getByText('Assignment 权威授权')).toBeTruthy();
-    expect(screen.getByText('Entitlement + Assignment 权威授权')).toBeTruthy();
+    expect(screen.getAllByText('平台统一授权')).toHaveLength(2);
     expect(screen.queryByRole('switch', { name: '启用技能 组织自有技能' })).toBeNull();
   });
 

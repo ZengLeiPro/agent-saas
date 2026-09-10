@@ -8,6 +8,10 @@ const Tabs = TabsPrimitive.Root;
 const BRAND_SEGMENTED_TABS_LIST_CLASS = "h-10 w-full rounded-[10px] bg-brand-50 p-1";
 const BRAND_SEGMENTED_TAB_TRIGGER_CLASS =
   "h-full rounded-[7px] data-[state=active]:bg-transparent data-[state=active]:font-semibold data-[state=active]:text-brand-700 data-[state=active]:shadow-none";
+const PAGE_TABS_LIST_CLASS =
+  "h-auto w-full justify-start gap-6 overflow-x-auto rounded-none border-b bg-transparent p-0";
+const PAGE_TAB_TRIGGER_CLASS =
+  "relative shrink-0 rounded-none border-b-2 border-transparent px-0.5 pb-2.5 pt-0 text-sm font-medium text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none";
 
 const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,
@@ -61,4 +65,6 @@ export {
   TabsContent,
   BRAND_SEGMENTED_TABS_LIST_CLASS,
   BRAND_SEGMENTED_TAB_TRIGGER_CLASS,
+  PAGE_TABS_LIST_CLASS,
+  PAGE_TAB_TRIGGER_CLASS,
 };

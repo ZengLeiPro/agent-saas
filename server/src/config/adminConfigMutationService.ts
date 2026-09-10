@@ -68,7 +68,48 @@ function isProcessAlive(pid: number | undefined): boolean {
 
 class ConfigLockGuardBusyError extends Error {}
 
+async function acquireDirectoryGuard(path: string): Promise<() => Promise<void>> {
+  const guardPath = `${path}.d`;
+  await mkdir(dirname(guardPath), { recursive: true, mode: 0o700 });
+  const token = randomUUID();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await mkdir(guardPath, { mode: 0o700 });
+      try {
+        await writeFile(
+          join(guardPath, 'owner.json'),
+          JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString(), token }),
+          { flag: 'wx', mode: 0o600 },
+        );
+      } catch (error) {
+        await rm(guardPath, { recursive: true, force: true });
+        throw error;
+      }
+      return async () => {
+        const owner = await readLockOwner(guardPath);
+        if (owner?.token === token) await rm(guardPath, { recursive: true, force: true });
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const guardStat = await stat(guardPath).catch(() => undefined);
+      const owner = await readLockOwner(guardPath);
+      if (
+        attempt === 0
+        && guardStat
+        && Date.now() - guardStat.mtimeMs > LOCK_STALE_MS
+        && !isProcessAlive(owner?.pid)
+      ) {
+        await rm(guardPath, { recursive: true, force: true });
+        continue;
+      }
+      throw new ConfigLockGuardBusyError();
+    }
+  }
+  throw new ConfigLockGuardBusyError();
+}
+
 export async function acquireFileGuard(path: string): Promise<() => Promise<void>> {
+  if (process.platform !== 'linux') return acquireDirectoryGuard(path);
   const child = spawn(
     'flock',
     ['--nonblock', path, 'sh', '-c', 'printf "acquired\\n"; cat >/dev/null'],

@@ -69,7 +69,7 @@ const SuspenseFallback = (
 export function DesktopLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
-    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, refreshSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
@@ -395,6 +395,12 @@ export function DesktopLayout(props: LayoutProps) {
         onCollapse={settingsMode || analysisMode ? undefined : responsiveSidebarOverlayOpen ? () => setResponsiveSidebarRevealed(false) : toggleSidebar}
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
+        onSessionRestored={async (id) => {
+          await refreshSessions();
+          previewTrashSession(null);
+          selectSession(id);
+          return true;
+        }}
         sidebarLayout={sidebarLayout}
         personalAgentEnabled={personalAgentEnabled || orgAgentIdentityLoading}
         responsiveMode={responsiveSidebarMode}
@@ -700,6 +706,12 @@ export function DesktopLayout(props: LayoutProps) {
               onClose={() => { setActiveTab("chat"); previewTrashSession(null); }}
               onPreviewSession={(id) => previewTrashSession(id)}
               activePreviewId={trashPreviewSessionId}
+              onSessionRestored={async (id) => {
+                await refreshSessions();
+                previewTrashSession(null);
+                selectSession(id);
+                return true;
+              }}
             />
           </div>
         )}
@@ -793,6 +805,12 @@ export function DesktopLayout(props: LayoutProps) {
                       onPreviewSession={(id) => previewTrashSession(id)}
                       activePreviewId={trashPreviewSessionId}
                       showHeader={false}
+                      onSessionRestored={async (id) => {
+                        await refreshSessions();
+                        handleCloseUnifiedSettings();
+                        selectSession(id);
+                        return true;
+                      }}
                     />
                   )}
                 />

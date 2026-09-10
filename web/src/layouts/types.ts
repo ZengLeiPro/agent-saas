@@ -50,6 +50,7 @@ export interface LayoutProps {
   autoTitleSession: (sessionId: string) => Promise<boolean>;
   compactSession: () => Promise<void>;
   isLoadingSessions: boolean;
+  refreshSessions: () => Promise<void>;
   activeTab: AppTab;
   governanceRoute: GovernanceRouteState | null;
   platformAdminSection: PlatformAdminSection;

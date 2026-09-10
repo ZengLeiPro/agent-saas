@@ -12,6 +12,7 @@ interface TrashViewProps {
   onPreviewSession?: (sessionId: string | null) => void;
   activePreviewId?: string | null;
   showHeader?: boolean;
+  onSessionRestored?: (sessionId: string) => Promise<boolean | void>;
 }
 
 function formatDeletedTime(iso: string): string {
@@ -28,13 +29,14 @@ function formatDeletedTime(iso: string): string {
   return d.toLocaleDateString("zh-CN");
 }
 
-export function TrashView({ onClose, onPreviewSession, activePreviewId, showHeader = true }: TrashViewProps) {
+export function TrashView({ onClose, onPreviewSession, activePreviewId, showHeader = true, onSessionRestored }: TrashViewProps) {
   const [sessions, setSessions] = useState<ApiSessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [permanentDeleteId, setPermanentDeleteId] = useState<string | null>(null);
   const [clearAllOpen, setClearAllOpen] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadTrash = useCallback(async () => {
     try {
@@ -55,20 +57,25 @@ export function TrashView({ onClose, onPreviewSession, activePreviewId, showHead
 
   const handleRestore = useCallback(async (sessionId: string) => {
     setActionLoading(sessionId);
+    setActionError(null);
     try {
       const res = await authFetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, { method: "POST" });
       if (res.ok) {
+        const visible = await onSessionRestored?.(sessionId);
+        if (visible === false) throw new Error("会话已恢复，但会话列表回读尚未确认，请刷新后重试");
         setSessions(prev => prev.filter(s => s.sessionId !== sessionId));
         if (activePreviewId === sessionId) onPreviewSession?.(null);
       } else {
-        alert("恢复失败");
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || `恢复失败（HTTP ${res.status}）`);
       }
-    } catch {
-      alert("恢复失败");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "恢复失败");
+      await loadTrash();
     } finally {
       setActionLoading(null);
     }
-  }, [activePreviewId, onPreviewSession]);
+  }, [activePreviewId, loadTrash, onPreviewSession, onSessionRestored]);
 
   const handlePermanentDelete = useCallback(async () => {
     if (!permanentDeleteId) return;
@@ -182,7 +189,7 @@ export function TrashView({ onClose, onPreviewSession, activePreviewId, showHead
   );
 
   return (
-    <div className={showHeader ? "flex min-h-0 flex-1 flex-col" : "mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col"}>
+    <div className={showHeader ? "flex min-h-0 flex-1 flex-col" : "mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col"}>
       {showHeader ? (
         <div className="flex items-center gap-2 border-b px-4 py-3">
           <button
@@ -212,6 +219,7 @@ export function TrashView({ onClose, onPreviewSession, activePreviewId, showHead
           </div>
         </div>
       )}
+      {actionError ? <div className="mt-3 text-sm text-destructive" role="alert">{actionError}</div> : null}
 
       {/* Permanent delete confirmation dialog */}
       <Dialog open={permanentDeleteId !== null} onOpenChange={(open) => { if (!open) setPermanentDeleteId(null); }}>

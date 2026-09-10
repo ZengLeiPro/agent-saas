@@ -431,7 +431,7 @@ export function ToolControlsManager(): JSX.Element {
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title="工具开关"
         description="统一管理平台内建工具是否向模型暴露。点击任意工具进入详情页可查看契约、覆盖 description、配置运行时参数。"
@@ -523,13 +523,16 @@ export function ToolControlsManager(): JSX.Element {
                       : isToolEnabledInDraft(toolControlsDraft, tool);
                     const overridden = !!toolControlsDraft.tools?.[tool.id]?.descriptionOverride;
                     return (
-                      <button
-                        type="button"
+                      <div
                         key={tool.id}
-                        onClick={() => setSelectedToolId(tool.id)}
-                        className="flex w-full items-center justify-between gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted"
+                        className="flex w-full items-center justify-between gap-3 rounded-lg border p-3 transition-colors hover:bg-muted"
                       >
-                        <div className="min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedToolId(tool.id)}
+                          className="min-w-0 flex-1 text-left"
+                          aria-label={`${tool.name} ${draftEnabled ? "开启" : "关闭"}，打开详情`}
+                        >
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="break-all font-mono text-sm font-medium">{tool.name}</span>
                             <Badge variant={draftEnabled ? "secondary" : "outline"}>{draftEnabled ? "开启" : "关闭"}</Badge>
@@ -538,18 +541,24 @@ export function ToolControlsManager(): JSX.Element {
                             {overridden && <Badge variant="outline">已覆盖描述</Badge>}
                           </div>
                           <div className="mt-1 text-xs text-muted-foreground">{tool.label}</div>
-                        </div>
+                        </button>
                         <div className="flex items-center gap-2">
                           <Switch
                             checked={switchChecked}
                             disabled={platformReadOnly || saving || toolControlsDraft.enabled === false}
                             onCheckedChange={(checked) => updateTool(tool.id, checked)}
-                            onClick={(e) => e.stopPropagation()}
                             aria-label={`启用 ${tool.name}`}
                           />
-                          <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                          <button
+                            type="button"
+                            onClick={() => setSelectedToolId(tool.id)}
+                            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                            aria-label={`打开 ${tool.name} 详情`}
+                          >
+                            <ChevronRight className="size-4" />
+                          </button>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </CardContent>

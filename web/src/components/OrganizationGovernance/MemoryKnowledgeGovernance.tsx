@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
+import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Badge } from "@/components/ui/badge";
 import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { Button } from "@/components/ui/button";
@@ -78,12 +79,12 @@ function RuleEditor({ resourceId, rules, catalog, onChange }: {
           <option value="allow">允许</option><option value="deny">拒绝</option>
         </select>
         {rule.assigneeType === "everyone" ? <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm">全部 active membership</div> : <select aria-label={`${resourceId}规则${index + 1}主体`} className="rounded-md border bg-background px-2 py-2 text-sm" value={rule.assigneeId ?? ""} onChange={event => update(index, { ...rule, assigneeId: event.target.value || undefined, origin: undefined })}>
-          <option value="">请选择权威主体</option>{!hasCurrent && rule.assigneeId ? <option value={rule.assigneeId}>{rule.assigneeId}（当前值）</option> : null}{options.map(option => <option key={option.id} value={option.id}>{option.label}（{option.id}）</option>)}
+          <option value="">请选择授权对象</option>{!hasCurrent && rule.assigneeId ? <option value={rule.assigneeId}>{rule.assigneeId}（当前值）</option> : null}{options.map(option => <option key={option.id} value={option.id}>{option.label}（{option.id}）</option>)}
         </select>}
         <div className="flex items-center justify-end gap-2">{rule.origin ? <Badge variant="outline">来源：{rule.origin}</Badge> : null}<Button type="button" size="sm" variant="outline" onClick={() => onChange(rules.filter((_, i) => i !== index))}>删除</Button></div>
       </div>;
     }) : <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">没有规则，表示显式无人可用。</div>}
-    <Button type="button" size="sm" variant="outline" onClick={() => onChange([...rules, { assigneeType: "everyone", effect: "allow" }])}>新增 Assignment 规则</Button>
+    <Button type="button" size="sm" variant="outline" onClick={() => onChange([...rules, { assigneeType: "everyone", effect: "allow" }])}>新增授权规则</Button>
   </div>;
 }
 
@@ -163,7 +164,7 @@ function ResourceEditor({ tenantId, type, item, catalog, catalogError, onCommitt
       <select aria-label={`${resourceId || "新"}记忆状态`} className="rounded-md border bg-background px-3 py-2 text-sm" value={status} onChange={event => { setStatus(event.target.value as "enabled" | "disabled"); resetPreview(); }}><option value="enabled">启用</option><option value="disabled">停用</option></select>
       <input aria-label={`${resourceId || "新"}记忆变更原因`} className="rounded-md border bg-background px-3 py-2 text-sm" placeholder="变更原因（至少 3 个字符）" value={reason} onChange={event => { setReason(event.target.value); resetPreview(); }} />
     </div> : null}
-    {catalogError ? <div role="alert" className="text-xs text-destructive">权威成员、群组或 Agent 目录不可用：{catalogError.message}</div> : <RuleEditor resourceId={resourceId} rules={rules} catalog={catalog} onChange={changeRules} />}
+    {catalogError ? <div role="alert" className="text-xs text-destructive">成员、群组或 Agent 目录暂不可用：{catalogError.message}</div> : <RuleEditor resourceId={resourceId} rules={rules} catalog={catalog} onChange={changeRules} />}
     {invalidRules ? <div role="alert" className="text-xs text-destructive">每条规则必须选择主体，且不能重复。</div> : null}
     <div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy || !catalog || invalidRules || !resourceId || (isMemory && (!name || reason.trim().length < 3))} onClick={() => void runPreview()}>生成签名预览</Button>{preview ? <Button size="sm" disabled={busy || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>确认提交</Button> : null}</div>
     {preview ? <div className="text-xs text-muted-foreground">预览已绑定 v{item?.version ?? 0} 基线，有效至 {new Date(preview.expiresAt).toLocaleString()}<details className="mt-1"><summary className="cursor-pointer">签名详情</summary><div className="break-all font-mono">{preview.previewId}<br />{preview.baselineDigest}</div></details></div> : null}
@@ -208,12 +209,12 @@ export function MemoryKnowledgeGovernance({ tenantId, onNavigate }: {
   const { data, loading, error, retry } = useGovernanceRequest(request, `memory-knowledge:${tenantId}`);
   const subjects = useGovernanceRequest(subjectsRequest, `memory-knowledge-subjects:${tenantId}`);
   const [suiteReceipt, setSuiteReceipt] = useState<BatchReceipt | null>(null);
-  const persistentReceipt = suiteReceipt ? <div role="status" className="rounded-lg border border-success/30 bg-success/10 p-3 text-sm">最近一次 Assignment 已提交：{suiteReceipt.sets.map(set => `${set.resourceId} v${set.version}`).join("；")}。权威数据刷新期间仍保留此回执。</div> : null;
-  if (loading) return <div className="space-y-3">{persistentReceipt}<div className="py-8 text-sm text-muted-foreground">正在读取权威治理数据…</div></div>;
+  const persistentReceipt = suiteReceipt ? <div role="status" className="rounded-lg border border-success/30 bg-success/10 p-3 text-sm">最近一次授权已提交，配置刷新期间仍保留此结果。</div> : null;
+  if (loading) return <div className="space-y-3">{persistentReceipt}<div className="py-8 text-sm text-muted-foreground">正在读取组织配置…</div></div>;
   if (error) return <div className="space-y-3">{persistentReceipt}<GovernanceUnavailable error={error} onRetry={retry} /></div>;
   if (!data) return persistentReceipt;
   return <div className="space-y-5">
-    <div><h2 className="text-lg font-semibold">企业上下文配置</h2><p className="mt-1 text-sm text-muted-foreground">管理员只需决定接入什么数据、谁能使用，以及如何确认生效；Collection 与复杂 Assignment 保留在高级配置。</p></div>
+    <SettingsPanelHeader title="企业上下文配置" description="管理员只需决定接入什么数据、谁能使用，以及如何确认生效；复杂授权规则保留在高级配置。" />
     <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl border p-4 text-sm">组织知识策略：{data.effective.organizationKnowledge ? "启用" : "禁用"}</div><div className="rounded-xl border p-4 text-sm">组织记忆策略：{data.effective.organizationMemory ? "启用" : "禁用"}</div></div>
     {data.accessMode !== "effective_only" && data.suites.length ? <KnowledgeSuiteSetup tenantId={tenantId} suites={data.suites}
       manageable={data.accessMode === "manage"} receipt={suiteReceipt} onReceipt={setSuiteReceipt} onCommitted={retry} onNavigate={onNavigate} /> : null}

@@ -204,8 +204,8 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           ...patch,
         },
       });
-    } catch {
-      alert("更新失败");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "更新失败");
     }
   }, [updatePlatformSettings]);
 
@@ -333,7 +333,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
       <SettingsPanelHeader
         title={isTenantMode && tenantName ? `${tenantName} · 技能管理` : "技能管理"}
         description={isTenantMode ? "管理当前组织可用的 Agent 技能与用户自建技能。" : "管理平台全局 Agent 技能池，支持启用、禁用和同步。"}
@@ -497,7 +497,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           >
                             <Trash2 className="size-3.5" />
                           </Button>
-                          <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Assignment 权威授权</span>
+                          <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">平台统一授权</span>
                         </div>
                       </div>
                     </div>
@@ -532,7 +532,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                       >
                         <Languages className="size-3.5" />
                       </Button>
-                      <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Entitlement + Assignment 权威授权</span>
+                      <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">平台统一授权</span>
                     </div>
                   </div>
                 </div>

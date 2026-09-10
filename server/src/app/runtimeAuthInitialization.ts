@@ -22,15 +22,20 @@ export async function initializeRuntimeAuth(input: {
   if (!config.auth?.enabled || !config.auth.jwtSecret) return {};
 
   const usersFilePath = resolve(processCwd, config.auth.usersFile || './data/users.json');
-  const userStore = new UserStore(usersFilePath);
+  const identityPgConfig = config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore : undefined;
+  const userStore = new UserStore(usersFilePath, identityPgConfig ? {
+    withLock: <T>(operation: () => Promise<T>) => withPgAdvisoryLock(
+      identityPgConfig.connectionString,
+      `${identityPgConfig.tablePrefix ?? 'agent_saas'}:user-store`,
+      operation,
+    ),
+  } : {});
   const authEpochAuthority = new AuthEpochAuthority(
     join(dirname(usersFilePath), 'auth-epochs.json'),
     (event) => logger.info(JSON.stringify({ category: 'auth_lifecycle', ...event })),
   );
   const tenantsFilePath = join(dirname(usersFilePath), 'tenants.json');
-  const tenantPgConfig = config.runtimeEventStore?.backend === 'pg'
-    ? config.runtimeEventStore
-    : undefined;
+  const tenantPgConfig = identityPgConfig;
   const tenantStore = new TenantStore(tenantsFilePath, tenantPgConfig ? {
     withLock: <T>(operation: () => Promise<T>) => withPgAdvisoryLock(
       tenantPgConfig.connectionString,

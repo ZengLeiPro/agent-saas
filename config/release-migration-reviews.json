@@ -5,6 +5,13 @@
       "baselineSha": "892ab5ef212ac3ce51f62dc4d73475bfaeac683a",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:4119f49b801fcaabbf6ce975f9fbafe8e1ef284cb628d9994311d98e931aa74f",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -463,6 +470,13 @@
     {
       "baselineSha": "9f8531e697e68f39d07e846872586dad841125ca",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -1570,6 +1584,13 @@
       "baselineSha": "77592b55171df5ee16516d3fdb5c590b0576c1ed",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -2432,6 +2453,13 @@
       "baselineSha": "eecb62e30551a8e5e53ecfba8943d3b6e4db4735",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -3256,6 +3284,13 @@
     {
       "baselineSha": "011205c25f4da7bc9383d8e9c10070b7a6cea207",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -4082,6 +4117,13 @@
       "baselineSha": "25ab3a2327be76aace6b6b17bbdcc75952dd0994",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -4884,6 +4926,13 @@
     {
       "baselineSha": "c5625dc28d47b3d09bf389ab91ea8b01e9be0e7a",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -5688,6 +5737,13 @@
       "baselineSha": "e3543efa881f203b9093499a5aa577bcf403baf6",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -6490,6 +6546,13 @@
     {
       "baselineSha": "8288fc2fc4af3fd096ecea6b7cd2e76ed363bac0",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -7593,6 +7656,13 @@
       "baselineSha": "de5fa851ce50f1d60e9fa143e88d7ebca11492d3",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -8422,6 +8492,13 @@
     {
       "baselineSha": "bb035b45c02e649ecc2a3ef6bc9d6cb7029aac6e",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -9259,6 +9336,13 @@
       "baselineSha": "3b375feb81e150f9aa034ed197f5b0ce2f18b62d",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -10095,6 +10179,13 @@
       "baselineSha": "0934f1b4bd208900bf02714381dedd05dc729033",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -10858,6 +10949,13 @@
     {
       "baselineSha": "6024c85ef342186fd78afabc5f018ff3d9da6ca2",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -11623,6 +11721,13 @@
       "baselineSha": "c7f26fa5514d44c650c7c7a18252e84979aa52d1",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -12386,6 +12491,13 @@
     {
       "baselineSha": "fd0809dd40174c92f63ca703f65f2a49a61b601e",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -13151,6 +13263,13 @@
       "baselineSha": "8cd1254e53f27154148a8d9a30916ce4295a3e8a",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -13896,6 +14015,13 @@
     {
       "baselineSha": "99b7496f75467595ac53da16cdf338770846f35b",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -14643,6 +14769,13 @@
       "baselineSha": "e15876744f281f50012148cc0d80a19dd2f22f71",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -15313,6 +15446,13 @@
       "baselineSha": "9aaaaee1d2c1aeee2e2b8bf9cc0aecbdc2583d39",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -15972,6 +16112,13 @@
       "baselineSha": "cf510cca08f1280333b05686b7a0c5f2182353f8",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -16622,6 +16769,13 @@
     {
       "baselineSha": "71885eb2e0fc08a773565660fe3b9016089d27dd",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -17274,6 +17428,13 @@
       "baselineSha": "28ae4428a2e4aa9b4e9865aea570f8b89264aef1",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -17925,6 +18086,13 @@
       "baselineSha": "a0974846d62d4b7893cc93feae8d8ce73d227b05",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -18540,6 +18708,13 @@
       "baselineSha": "bf1fee74b5fa5aac998598d6c522ddaa16a2a3ff",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -19149,6 +19324,13 @@
       "baselineSha": "c0e90279d5db012f6dc13a3d95790321dde7ddc7",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -19713,6 +19895,13 @@
     {
       "baselineSha": "f06c468e9ef80eaeae8757b0c89b548884c103c8",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -20279,6 +20468,13 @@
       "baselineSha": "da26fd288eff82ffa1458de25174d33b9581d31a",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -20786,6 +20982,13 @@
       "baselineSha": "1e5c9bc0500d2d43f2299c7422ecb631553b3f5b",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -21285,6 +21488,13 @@
       "baselineSha": "9f6131c6a173b20b7395f95453e44545ae5ee200",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -21758,6 +21968,13 @@
       "baselineSha": "3b8e92291e59fd1feccc4f3db39e7e74ce62898c",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -22226,6 +22443,13 @@
     {
       "baselineSha": "03237fdcfbf9495c5fc091b583a0dab6a37b86e2",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -22700,6 +22924,13 @@
       "baselineSha": "6acfd79253c20db2b46f01ddd56570c51f25c8cc",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -23157,6 +23388,13 @@
     {
       "baselineSha": "d94cc5970d84deacb21ba69d6da120d35fa7658e",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:915d7fb4988ac2c1b587dc7801f7e4cc13e8125a2583b16bd77baf5ab1746098",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -23616,6 +23854,13 @@
       "baselineSha": "cb9d615cd0f6a3aa99ad1c200dec46e80833337c",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:4119f49b801fcaabbf6ce975f9fbafe8e1ef284cb628d9994311d98e931aa74f",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -24062,6 +24307,13 @@
     {
       "baselineSha": "a6b6865eba98cb0b4c08bf8f0359e8200aec7768",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:4119f49b801fcaabbf6ce975f9fbafe8e1ef284cb628d9994311d98e931aa74f",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -24522,6 +24774,13 @@
       "baselineSha": "dbb486cce9803055c6d9ed36bb1a5a747c9b3dab",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:4119f49b801fcaabbf6ce975f9fbafe8e1ef284cb628d9994311d98e931aa74f",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -24980,6 +25239,13 @@
     {
       "baselineSha": "02c38729ca549234f6c47ac2bed327941b6985e1",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:4119f49b801fcaabbf6ce975f9fbafe8e1ef284cb628d9994311d98e931aa74f",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -25440,6 +25706,13 @@
       "baselineSha": "6f900cdd113cbc485bfd3455eeb8c021787c38ac",
       "files": [
         {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:4119f49b801fcaabbf6ce975f9fbafe8e1ef284cb628d9994311d98e931aa74f",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        },
+        {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
           "targetDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -25819,6 +26092,13 @@
     {
       "baselineSha": "b4b5968740dba7a9e7dc2681c1c8a6d012d32fa5",
       "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:4119f49b801fcaabbf6ce975f9fbafe8e1ef284cb628d9994311d98e931aa74f",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务。PostgreSQL 模式仅注入已有 advisory lock 回调，本文件不导入数据库驱动、不执行 SQL、DDL、数据回填或启动建表。"
+        },
         {
           "path": "server/src/agent/connectorCommand.ts",
           "baselineDigest": "sha256:b466cc23b4d1bdf050b081f1405a35e6a3f77a63112aff44768778c4182df900",
@@ -26248,6 +26528,36 @@
         {
           "path": "server/src/dws/durableReceiverMigration.test.ts",
           "digest": "sha256:9bf79b1fc32b4ada6b52065ad4604605161e043da32ca0a9dc9a7dedf1a3bc26"
+        }
+      ]
+    },
+    {
+      "baselineSha": "a7da7be10303c701e4ef49e6f2162d9da7155e13",
+      "files": [
+        {
+          "path": "server/src/data/users/store.ts",
+          "baselineDigest": "sha256:4119f49b801fcaabbf6ce975f9fbafe8e1ef284cb628d9994311d98e931aa74f",
+          "targetDigest": "sha256:fcbfc33f372eadf20f01f732d8ed86a3d30404dadf5b1670183b9aa58b3cd0fb",
+          "classification": "no-schema-change",
+          "reason": "UserStore 仍只读写版本 1 的 users.json；本次将查重、权限校验和原子 rename 纳入跨进程锁内重读事务，不执行 SQL、DDL、数据回填或启动建表。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/身份JSON存储并发锁无结构变更审核-20260910.md",
+          "digest": "sha256:d878adea5f4a6c6ab1a9d8e10fd233cc5db63560c34b77466caf6316b34df4ab"
+        },
+        {
+          "path": "server/src/__tests__/userStore.test.ts",
+          "digest": "sha256:88b6c8c5f68fdd41500a3fe39111ceb046cf24954d374e7cf0dcc734669cf11f"
+        },
+        {
+          "path": "server/src/__tests__/userStoreProcessE2e.test.ts",
+          "digest": "sha256:31b2f141bd3948c1ee52ea7eed76f2a9cf4e2e70b5b768f14cba7338f975e48e"
+        },
+        {
+          "path": "server/src/__tests__/identityJsonStoreCorruption.test.ts",
+          "digest": "sha256:3b7f6fd0a92062efddf1d89ff5e691245e6e4f604138e3359987c0a3423ce367"
         }
       ]
     }

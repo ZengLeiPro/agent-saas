@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
+import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Badge } from "@/components/ui/badge";
 import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { Button } from "@/components/ui/button";
@@ -213,7 +214,7 @@ export function MemoryKnowledgeGovernance({ tenantId, onNavigate }: {
   if (error) return <div className="space-y-3">{persistentReceipt}<GovernanceUnavailable error={error} onRetry={retry} /></div>;
   if (!data) return persistentReceipt;
   return <div className="space-y-5">
-    <div><h2 className="text-lg font-semibold">企业上下文配置</h2><p className="mt-1 text-sm text-muted-foreground">管理员只需决定接入什么数据、谁能使用，以及如何确认生效；Collection 与复杂 Assignment 保留在高级配置。</p></div>
+    <SettingsPanelHeader title="企业上下文配置" description="管理员只需决定接入什么数据、谁能使用，以及如何确认生效；Collection 与复杂 Assignment 保留在高级配置。" />
     <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl border p-4 text-sm">组织知识策略：{data.effective.organizationKnowledge ? "启用" : "禁用"}</div><div className="rounded-xl border p-4 text-sm">组织记忆策略：{data.effective.organizationMemory ? "启用" : "禁用"}</div></div>
     {data.accessMode !== "effective_only" && data.suites.length ? <KnowledgeSuiteSetup tenantId={tenantId} suites={data.suites}
       manageable={data.accessMode === "manage"} receipt={suiteReceipt} onReceipt={setSuiteReceipt} onCommitted={retry} onNavigate={onNavigate} /> : null}

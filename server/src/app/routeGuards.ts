@@ -3,9 +3,25 @@ import type { NextFunction, Request, Response } from "express";
 import type { TenantStore } from "../data/tenants/store.js";
 import type { AppRuntime } from "./runtime.js";
 
+const OFFBOARDING_FENCE_READ_ONLY_POST_PATHS = new Set([
+  "/access/management-snapshot",
+  "/access/evaluate",
+  "/execution/preflight",
+]);
+
+function isReadOnlyPost(req: Request): boolean {
+  if (req.method !== "POST") return false;
+  const path = req.path.startsWith("/api/") ? req.path.slice(4) : req.path;
+  return OFFBOARDING_FENCE_READ_ONLY_POST_PATHS.has(path);
+}
+
 export function activeOffboardingWriteFence(runtime: AppRuntime) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    if (!req.user || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+    if (
+      !req.user
+      || !["POST", "PUT", "PATCH", "DELETE"].includes(req.method)
+      || isReadOnlyPost(req)
+    ) return next();
     if (!runtime.governanceChangeJobStore) {
       res.status(503).json({
         error: 'Offboarding authority unavailable',

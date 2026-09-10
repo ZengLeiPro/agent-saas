@@ -599,21 +599,24 @@ describe('registerRoutes', () => {
 });
 
 describe('activeOffboardingWriteFence', () => {
-  it('store 缺失时相关写请求 fail-closed，读取与未认证请求仍放行', async () => {
+  it('store 缺失时相关写请求 fail-closed，读取、只读 POST 与未认证请求仍放行', async () => {
     const middleware = activeOffboardingWriteFence({} as any);
     const status = vi.fn().mockReturnThis();
     const json = vi.fn();
     const next = vi.fn();
     const user = { sub: 'user-1', tenantId: 'tenant-a' };
 
-    await middleware({ method: 'POST', user } as any, { status, json } as any, next);
+    await middleware({ method: 'POST', path: '/sessions', user } as any, { status, json } as any, next);
     expect(status).toHaveBeenCalledWith(503);
     expect(json).toHaveBeenCalledWith(expect.objectContaining({ code: 'OFFBOARDING_AUTHORITY_UNAVAILABLE' }));
     expect(next).not.toHaveBeenCalled();
 
-    await middleware({ method: 'GET', user } as any, { status, json } as any, next);
-    await middleware({ method: 'POST' } as any, { status, json } as any, next);
-    expect(next).toHaveBeenCalledTimes(2);
+    await middleware({ method: 'GET', path: '/sessions', user } as any, { status, json } as any, next);
+    await middleware({ method: 'POST', path: '/access/management-snapshot', user } as any, { status, json } as any, next);
+    await middleware({ method: 'POST', path: '/api/access/evaluate', user } as any, { status, json } as any, next);
+    await middleware({ method: 'POST', path: '/execution/preflight', user } as any, { status, json } as any, next);
+    await middleware({ method: 'POST', path: '/sessions' } as any, { status, json } as any, next);
+    expect(next).toHaveBeenCalledTimes(5);
   });
 
   it('活跃离职流程阻止该用户继续写入 API，读取请求仍放行', async () => {
@@ -624,12 +627,13 @@ describe('activeOffboardingWriteFence', () => {
     const next = vi.fn();
     const user = { sub: 'user-1', tenantId: 'tenant-a' };
 
-    await middleware({ method: 'POST', user } as any, { status, json } as any, next);
+    await middleware({ method: 'POST', path: '/sessions', user } as any, { status, json } as any, next);
     expect(status).toHaveBeenCalledWith(409);
     expect(json).toHaveBeenCalledWith(expect.objectContaining({ code: 'USER_OFFBOARDING_ACTIVE' }));
     expect(next).not.toHaveBeenCalled();
 
-    await middleware({ method: 'GET', user } as any, { status, json } as any, next);
-    expect(next).toHaveBeenCalledTimes(1);
+    await middleware({ method: 'GET', path: '/sessions', user } as any, { status, json } as any, next);
+    await middleware({ method: 'POST', path: '/access/management-snapshot', user } as any, { status, json } as any, next);
+    expect(next).toHaveBeenCalledTimes(2);
   });
 });

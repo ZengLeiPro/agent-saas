@@ -3,6 +3,7 @@ import { RefreshCw, TriangleAlert, UserPlus } from "lucide-react";
 
 import { MemberDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
+import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { MembershipIdentityActions } from "@/components/OrganizationGovernance/MembershipIdentityActions";
 import { MemberAccountSecurity } from '@/components/OrganizationGovernance/MemberAccountSecurity';
 import { LazyMemberPasswordResetAction } from '@/components/OrganizationGovernance/LazyMemberPasswordResetAction';
@@ -217,13 +218,7 @@ function Loading() {
 }
 
 function SectionTitle({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
-  return <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-    <div>
-      <h2 className="text-xl font-semibold">{title}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-    </div>
-    {action}
-  </div>;
+  return <SettingsPanelHeader title={title} description={description} actions={action} />;
 }
 
 function Empty({ text }: { text: string }) {

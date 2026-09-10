@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { StrictMode, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GovernancePersona, ManagementSnapshotResponseV1 } from "@agent/shared/types/governance";
 
@@ -62,6 +63,20 @@ afterEach(() => {
 });
 
 describe("useManagementSettingsAccess", () => {
+  it("在 StrictMode 重放 mount effect 后仍完成权威权限验证", async () => {
+    governanceApiMocks.fetchManagementSnapshot.mockResolvedValue(
+      snapshot("platform_admin", user, false, true, true),
+    );
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <StrictMode>{children}</StrictMode>
+    );
+    const { result } = renderHook(() => useManagementSettingsAccess(options()), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current).toMatchObject({ tenantEntryAllowed: true, platformEntryAllowed: true });
+    expect(governanceApiMocks.fetchManagementSnapshot).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["member", false, false, false, false, false],
     ["org_admin", true, false, false, true, false],

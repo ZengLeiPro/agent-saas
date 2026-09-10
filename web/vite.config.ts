@@ -54,6 +54,7 @@ export default defineConfig({
       "@agent/shared": fileURLToPath(new URL("../shared/src/index.ts", import.meta.url)),
       "@kaiyan/ky-app-contract/validation": fileURLToPath(new URL("../packages/ky-app-contract/src/manifest.ts", import.meta.url)),
       "@kaiyan/ky-app-contract/browser": fileURLToPath(new URL("../packages/ky-app-contract/src/browser.ts", import.meta.url)),
+      "@kaiyan/ky-app-browser": fileURLToPath(new URL("../packages/ky-app-browser/src/index.ts", import.meta.url)),
       "react/jsx-dev-runtime": hoistedReactJsxDevRuntime,
       "react/jsx-runtime": hoistedReactJsxRuntime,
       "react-dom/client": hoistedReactDomClient,

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, FilePlus2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
 import {
   Dialog,
   DialogContent,
@@ -34,14 +35,11 @@ function SystemCatalog() {
   }>('/systems');
   if (!resource.data) return <ResourceState error={resource.error} retry={resource.reload} />;
   return (
-    <section className="space-y-5 p-4">
-      <header>
-        <h2 className="flex items-center gap-2 font-semibold">
-          <EntityIcons.businessSystem className="h-5 w-5" />
-          业务系统
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">登记系统配置，并跟踪各组织的接入进度。</p>
-      </header>
+    <section className="space-y-5">
+      <SettingsPanelHeader
+        title="业务系统"
+        description="登记系统配置，并跟踪各组织的接入进度。"
+      />
       {resource.data.allowedActions?.includes('register_version') && (
         <ManifestUpload
           onRegistered={(id) => navigateGovernance(governanceRoute(routeId, { entityId: id }))}

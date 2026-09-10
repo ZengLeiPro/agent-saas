@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
 import { governanceRoute } from '@/lib/governanceNavigation';
 import { navigateGovernance } from '@/lib/urlSync';
 import type {
@@ -39,19 +40,17 @@ export function OrganizationSystemsPage({
       />
     );
   return (
-    <section className="space-y-4 p-4">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">业务系统</h2>
-          <p className="text-sm text-muted-foreground">
-            查看页面、Agent 能力和授权状态，并按提示完成接入。
-          </p>
-        </div>
-        <Button onClick={() => setInstalling((value) => !value)}>
-          <Plus className="h-4 w-4" />
-          接入业务系统
-        </Button>
-      </header>
+    <section className="space-y-4">
+      <SettingsPanelHeader
+        title="业务系统"
+        description="查看页面、Agent 能力和授权状态，并按提示完成接入。"
+        actions={(
+          <Button onClick={() => setInstalling((value) => !value)}>
+            <Plus className="h-4 w-4" />
+            接入业务系统
+          </Button>
+        )}
+      />
       {installing && <InstallableSystems tenantId={tenantId} onInstalled={open} />}
       <InstallationList tenantId={tenantId} onOpen={open} />
     </section>

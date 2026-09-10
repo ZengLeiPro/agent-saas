@@ -3,6 +3,7 @@ import { Boxes, TriangleAlert } from "lucide-react";
 
 import { TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
+import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { OrganizationEntitlementScopeEditor } from "@/components/OrganizationGovernance/ResourceAccessEditors";
 import { PlatformBillingManager } from '@/components/BillingManager';
 import { Badge } from "@/components/ui/badge";
@@ -124,7 +125,7 @@ function Empty({ children }: { children: string }) {
 }
 
 function Header({ title, description }: { title: string; description: string }) {
-  return <div className="mb-5"><h2 className="text-xl font-semibold">{title}</h2><p className="mt-1 text-sm text-muted-foreground">{description}</p></div>;
+  return <SettingsPanelHeader title={title} description={description} />;
 }
 
 function Receipt({ value }: { value: GovernanceReceipt }) {

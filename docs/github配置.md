@@ -31,7 +31,7 @@ Workflow、部署服务或修改云资源。
   `.permissions.admin` 为 `true`。
 - 先只读盘点，再执行变更；发现与本文档不一致的已有配置时停止，不得覆盖或删除未知配置。
 - 不修改 `.github/workflows/` 下任何文件。
-- 不关闭 `App CI / Deploy` 和 `ACS CI / Deploy` 两个旧人工部署入口。
+- 保留 `CI` 的手动 Web-only 兼容发布；ACS 旧直发及其他临时入口按 `config/github-workflow-inventory.json` 在合并后由绿色 CI 停用，不删除历史运行。
 - 生产凭据只允许保存在 `production` Environment；迁移完成并核对全部生产 Secret 读取 job 的
   Environment 绑定后，必须删除同名 Repository/organization Secret，禁止把高层级 Secret 当兜底。
 - 不执行 `workflow_dispatch`，不创建 Release，不创建 RC tag，不 push，不部署。
@@ -442,20 +442,20 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 
 可选恢复凭据：
 
-- `ACS_WEBHOOK_REDELIVERY_TOKEN`：只在 ACS compatibility 找不到当前 SHA 的 ACR 自动构建记录时，
+- `ACS_WEBHOOK_REDELIVERY_TOKEN`：只在 Staging 的 ACS 镜像准备找不到当前 SHA 的 ACR 自动构建记录时，
   用于补投一次 GitHub webhook。正常命中构建记录时不需要；需要补投但未配置时 Workflow fail closed。
   该 token 必须仅授权 `ZengLeiPro/agent-saas`，Repository permissions 仅设 `Webhooks: write`。
 
 要求：
 
 - 使用生产专用、最小权限的 RAM 与 SSH 身份；`ACR_READ_ACCESS_KEY_ID/SECRET` 只允许读取 build record、build-record 日志与 image metadata，不得写入或删除镜像。
-- ACR repository 的 tag 写权限只能授予受控自动构建身份，必须移除人工账号及其他自动化的 tag 覆盖权限。build-record API 不返回该 record 的产物 digest；因此全分页、完整 SHA 与稳定 digest 读回不能替代这项现场权限前提，未完成权限审计时禁止触发 ACS Production compatibility。
+- ACR repository 的 tag 写权限只能授予受控自动构建身份，必须移除人工账号及其他自动化的 tag 覆盖权限。build-record API 不返回该 record 的产物 digest；因此全分页、完整 SHA 与稳定 digest 读回不能替代这项现场权限前提，未完成权限审计时禁止发布相关 ACS 制品。
 - `PRODUCTION_OBSERVATION_TOKEN` 必须是 Evidence Service 的只读 Token，当前仅用于
   `部署测试环境` 的 `prepare-evidence` 前置 job 写后回读。
 - `RELEASE_EVIDENCE_WRITE_TOKEN` 必须是同一 Evidence Service 的独立写 Token，仅供
   `prepare-evidence` 前置 job 使用；禁止与只读 Token 相同，也禁止进入实际 Staging 部署 job。
 - GitHub 不允许读取已保存 Secret 的明文；必须从可信凭据源重新写入 Environment Secret。
-- `deploy_plan`、`deploy-ecs`、`deploy-web-oss` 与 ACS `build-deploy` 均从 `production`
+- CI 的 `deploy_plan`、`deploy-web-oss`，以及生产发布的 `promote`、`web_recovery` 均从 `production`
   Environment 取生产凭据，不依赖 Repository Secret。
 - Environment 迁移并完成 job 绑定核对后，必须删除同名 Repository/organization Secret；静态代码
   无法证明现场已删除，管理员必须在 GitHub 配置侧审计。
@@ -649,7 +649,7 @@ Environment 配置值：
 - 未运行任何 Workflow
 - 未部署 Staging 或 Production
 - 未创建/更新/删除云资源
-- 未关闭 App CI / Deploy 或 ACS CI / Deploy
+- 未关闭 CI 的手动 Web-only 兼容发布；退役项状态按清单单独报告
 
 尚未满足的外部条件：
 - <逐项列出，不得省略>

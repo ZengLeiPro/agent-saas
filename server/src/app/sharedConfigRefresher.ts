@@ -34,6 +34,8 @@ import {
 import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
 import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
 import type { ToolControlsRuntimeUpdateCommit } from './toolControlsRuntimeUpdate.js';
+import type { ImageGenRuntimeUpdateCommit } from './imageGenRuntimeUpdate.js';
+import type { TenantRemoteHandsRuntimeUpdateCommit } from './tenantRemoteHandsRuntimeUpdate.js';
 import {
   finalizeSharedConfigTransaction,
   type SharedConfigCommitStep,
@@ -68,6 +70,8 @@ type ConfigChanges = {
   webTools: boolean;
   memoryPolling: boolean;
   memoryIndex: boolean;
+  imageGenTools: boolean;
+  tenantRemoteHands: boolean;
 };
 type ConfigChangeKey = keyof ConfigChanges;
 type PreparationOutcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
@@ -80,6 +84,10 @@ type PreparationResults = [
   PreparationOutcome<SttRuntimeUpdateCommit | undefined>,
   PreparationOutcome<SttRuntimeUpdateCommit | undefined>,
   PreparationOutcome<MemoryIndexRuntimeTransaction | undefined>,
+  PreparationOutcome<ImageGenRuntimeUpdateCommit | undefined>,
+  PreparationOutcome<ImageGenRuntimeUpdateCommit | undefined>,
+  PreparationOutcome<TenantRemoteHandsRuntimeUpdateCommit | undefined>,
+  PreparationOutcome<TenantRemoteHandsRuntimeUpdateCommit | undefined>,
 ];
 
 const MODEL_CHANGE_KEYS: ConfigChangeKey[] = ['models', 'titleGenerator', 'guardrail'];
@@ -95,6 +103,8 @@ const CHANGE_LABELS: Record<ConfigChangeKey, string> = {
   webTools: 'WebTools',
   memoryPolling: 'memory polling',
   memoryIndex: 'memory index',
+  imageGenTools: 'image generation',
+  tenantRemoteHands: 'tenant remote hands',
 };
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {
@@ -203,6 +213,16 @@ export function createSharedConfigRefresher(params: {
   prepareMemoryPollingUpdate?: (
     next: NonNullable<AppConfig['memory']>['polling'],
   ) => () => void;
+  /** 生图客户端与实际计价 getter 的两阶段切换。 */
+  prepareImageGenUpdate?: (
+    next: AppConfig['imageGenTools'],
+  ) => ImageGenRuntimeUpdateCommit | Promise<ImageGenRuntimeUpdateCommit>;
+  /** 环境池先解析候选凭据，再为新 dispatch 原子切换池快照。 */
+  prepareTenantRemoteHandsUpdate?: (
+    next: AppConfig['tenantRemoteHands'],
+  ) => TenantRemoteHandsRuntimeUpdateCommit | Promise<TenantRemoteHandsRuntimeUpdateCommit>;
+  /** 生产双端回执装配必须显式具备所有发生变化的真实消费者。 */
+  requireRuntimeConsumers?: boolean;
   /** 共享恢复门 dirty 时所有 config 推进与发布 fail closed。 */
   recoveryGate?: ConfigRuntimeRecoveryGate;
   /** config 文件解析成功并应用后的回调（TASK-318：重算 observed identity）。 */
@@ -229,6 +249,9 @@ export function createSharedConfigRefresher(params: {
     onModelsUpdated,
     prepareMemoryPollingUpdate,
     prepareMemoryIndexUpdate,
+    prepareImageGenUpdate,
+    prepareTenantRemoteHandsUpdate,
+    requireRuntimeConsumers = false,
     recoveryGate,
     onConfigReloaded,
     validateConfigReload,
@@ -291,6 +314,10 @@ export function createSharedConfigRefresher(params: {
       memoryPolling:
         JSON.stringify(config.memory?.polling ?? null) !==
         JSON.stringify(nextConfig.memory?.polling ?? null),
+      imageGenTools:
+        JSON.stringify(config.imageGenTools ?? null) !== JSON.stringify(nextConfig.imageGenTools ?? null),
+      tenantRemoteHands:
+        JSON.stringify(config.tenantRemoteHands ?? null) !== JSON.stringify(nextConfig.tenantRemoteHands ?? null),
     };
     for (const key of dirtyConfigChanges) changes[key] = true;
     return changes;
@@ -309,6 +336,8 @@ export function createSharedConfigRefresher(params: {
     else if (label === 'web tools') dirtyConfigChanges.add('webTools');
     else if (label === 'memory polling') dirtyConfigChanges.add('memoryPolling');
     else if (label === 'memory index') dirtyConfigChanges.add('memoryIndex');
+    else if (label === 'image generation') dirtyConfigChanges.add('imageGenTools');
+    else if (label === 'tenant remote hands') dirtyConfigChanges.add('tenantRemoteHands');
     else if (label === 'AppConfig') {
       for (const key of Object.keys(changes) as ConfigChangeKey[]) {
         if (changes[key]) dirtyConfigChanges.add(key);
@@ -360,6 +389,14 @@ export function createSharedConfigRefresher(params: {
     if (changes.memoryPolling) {
       config.memory = { ...(config.memory ?? {}), polling: source.memory?.polling };
     }
+    if (changes.imageGenTools) {
+      if (source.imageGenTools) config.imageGenTools = source.imageGenTools;
+      else delete config.imageGenTools;
+    }
+    if (changes.tenantRemoteHands) {
+      if (source.tenantRemoteHands) config.tenantRemoteHands = source.tenantRemoteHands;
+      else delete config.tenantRemoteHands;
+    }
   }
 
   function publishConfigFile(
@@ -408,6 +445,8 @@ export function createSharedConfigRefresher(params: {
       );
     }
     if (changes.memoryPolling) logger?.info('[SharedConfig] 已从磁盘热更新 memory polling 配置');
+    if (changes.imageGenTools) logger?.info('[SharedConfig] 已从磁盘热更新生图执行配置与价格');
+    if (changes.tenantRemoteHands) logger?.info('[SharedConfig] 已从磁盘热更新执行环境池');
 
     const repairedDirtyChanges = dirtyChangeLabels();
     dirtyConfigChanges.clear();
@@ -446,6 +485,10 @@ export function createSharedConfigRefresher(params: {
     rollbackMemoryIndex?: () => void;
     candidateMemoryPolling?: () => void;
     rollbackMemoryPolling?: () => void;
+    candidateImageGen?: ImageGenRuntimeUpdateCommit;
+    rollbackImageGen?: ImageGenRuntimeUpdateCommit;
+    candidateTenantRemoteHands?: TenantRemoteHandsRuntimeUpdateCommit;
+    rollbackTenantRemoteHands?: TenantRemoteHandsRuntimeUpdateCommit;
   }): boolean {
     const steps: SharedConfigCommitStep[] = [];
     const addStep = (label: string, commit?: () => void, rollback?: () => void): void => {
@@ -458,6 +501,8 @@ export function createSharedConfigRefresher(params: {
     addStep('web tools', params.candidateWebTools, params.rollbackWebTools);
     addStep('memory polling', params.candidateMemoryPolling, params.rollbackMemoryPolling);
     addStep('memory index', params.candidateMemoryIndex, params.rollbackMemoryIndex);
+    addStep('image generation', params.candidateImageGen, params.rollbackImageGen);
+    addStep('tenant remote hands', params.candidateTenantRemoteHands, params.rollbackTenantRemoteHands);
     steps.push({
       label: 'AppConfig',
       commit: () => applyConfigSlices(params.nextConfig, params.changes),
@@ -533,6 +578,19 @@ export function createSharedConfigRefresher(params: {
       }
       previousConfig = { ...config } as AppConfig;
       changes = getConfigChanges(nextConfig);
+      if (requireRuntimeConsumers) {
+        const missing = [
+          changes.systemPrompts && !prepareSystemPromptOverridesUpdate ? 'systemPrompts' : undefined,
+          changes.toolControls && !prepareToolControlsUpdate ? 'toolControls' : undefined,
+          changes.webTools && !prepareWebToolsUpdate ? 'webTools' : undefined,
+          changes.stt && !prepareSttUpdate ? 'stt' : undefined,
+          changes.memoryPolling && !prepareMemoryPollingUpdate ? 'memory.polling' : undefined,
+          changes.imageGenTools && !prepareImageGenUpdate ? 'imageGenTools' : undefined,
+          changes.tenantRemoteHands && !prepareTenantRemoteHandsUpdate ? 'tenantRemoteHands' : undefined,
+          changes.codexSubscription && !params.onCodexSubscriptionUpdated ? 'codexSubscription' : undefined,
+        ].filter((value): value is string => Boolean(value));
+        if (missing.length > 0) throw new Error(`共享配置缺少运行时消费者：${missing.join(', ')}`);
+      }
       if (dirtyConfigChanges.size > 0) {
         logger?.info(
           `[SharedConfig] 检测到脏执行切面，强制重放：${dirtyChangeLabels().join(', ')}`,
@@ -585,6 +643,10 @@ export function createSharedConfigRefresher(params: {
       resolvedCandidateStt?: SttRuntimeUpdateCommit,
       resolvedRollbackStt?: SttRuntimeUpdateCommit,
       memoryIndexTransaction?: MemoryIndexRuntimeTransaction,
+      candidateImageGen?: ImageGenRuntimeUpdateCommit,
+      rollbackImageGen?: ImageGenRuntimeUpdateCommit,
+      candidateTenantRemoteHands?: TenantRemoteHandsRuntimeUpdateCommit,
+      rollbackTenantRemoteHands?: TenantRemoteHandsRuntimeUpdateCommit,
     ): boolean => {
       if (recoveryGate?.isDirty()) {
         configRefreshNeedsRetry = true;
@@ -614,6 +676,10 @@ export function createSharedConfigRefresher(params: {
         rollbackMemoryPolling,
         candidateMemoryIndex: memoryIndexTransaction?.commit,
         rollbackMemoryIndex: memoryIndexTransaction?.rollback,
+        candidateImageGen,
+        rollbackImageGen,
+        candidateTenantRemoteHands,
+        rollbackTenantRemoteHands,
       });
     };
 
@@ -642,6 +708,22 @@ export function createSharedConfigRefresher(params: {
       changes.memoryIndex && prepareMemoryIndexUpdate
         ? startControlledPreparation(() => prepareMemoryIndexUpdate(nextConfig.memory?.index))
         : { ok: true as const, value: undefined },
+      changes.imageGenTools && prepareImageGenUpdate
+        ? startControlledPreparation(() => prepareImageGenUpdate(nextConfig.imageGenTools))
+        : requireRuntimeConsumers && changes.imageGenTools
+          ? { ok: false as const, error: new Error('生图运行时消费者未装配') }
+          : { ok: true as const, value: undefined },
+      changes.imageGenTools && prepareImageGenUpdate
+        ? startControlledPreparation(() => prepareImageGenUpdate(previousConfig.imageGenTools))
+        : { ok: true as const, value: undefined },
+      changes.tenantRemoteHands && prepareTenantRemoteHandsUpdate
+        ? startControlledPreparation(() => prepareTenantRemoteHandsUpdate(nextConfig.tenantRemoteHands))
+        : requireRuntimeConsumers && changes.tenantRemoteHands
+          ? { ok: false as const, error: new Error('执行环境池运行时消费者未装配') }
+          : { ok: true as const, value: undefined },
+      changes.tenantRemoteHands && prepareTenantRemoteHandsUpdate
+        ? startControlledPreparation(() => prepareTenantRemoteHandsUpdate(previousConfig.tenantRemoteHands))
+        : { ok: true as const, value: undefined },
     ] as const;
     const completePreparations = (results: PreparationResults): boolean => {
       const memory = results[6].ok ? results[6].value : undefined;
@@ -659,6 +741,10 @@ export function createSharedConfigRefresher(params: {
         results[4].ok ? results[4].value : undefined,
         results[5].ok ? results[5].value : undefined,
         memory,
+        results[7].ok ? results[7].value : undefined,
+        results[8].ok ? results[8].value : undefined,
+        results[9].ok ? results[9].value : undefined,
+        results[10].ok ? results[10].value : undefined,
       );
       if (applied) memory?.complete();
       else memory?.dispose();

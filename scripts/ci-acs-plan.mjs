@@ -33,6 +33,14 @@ export function planAcsCi(eventName, files = null, baseSha = '') {
     return { required: true, reason: `${eventName} always verifies the complete ACS suite` };
   }
   assert(Array.isArray(files), 'PR changed files unavailable; refusing to skip ACS checks');
+  // Former repair-evidence and native-contract workflows also covered all Server changes.
+  // This widens test selection only, not component publication or ACS image selection.
+  if (files.some((path) => /^(?:server\/|acs-orchestrator\/|docs\/engineering\/acs-repair\/)/u.test(path)
+    || path === 'config/github-workflow-inventory.json'
+    || path === 'scripts/ci-acs-plan.mjs'
+    || path.startsWith('.github/workflows/'))) {
+    return { required: true, reason: 'Unified ACS regression and native-process evidence' };
+  }
   const directory = mkdtempSync(join(tmpdir(), 'ci-acs-plan-'));
   try {
     const path = join(directory, 'changed-files.txt');

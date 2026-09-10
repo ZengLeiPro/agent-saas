@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/authFetch";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
+import { useAdminConfigWritePolicy } from "@/hooks/useAdminConfigWritePolicy";
 import type {
   AcsRuntimeConfig,
   AcsRuntimeConfigResponse,
@@ -87,7 +88,8 @@ export function useAcsRuntimeConfig(refreshBlocked = false) {
   return { config, loading, saving, error, savedAt, refresh, save };
 }
 
-export function useTenantRemoteHands(refreshBlocked = false) {
+export function useTenantRemoteHands(refreshBlocked = false, accountReadOnly = false) {
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(accountReadOnly);
   const [config, setConfig] = useState<TenantRemoteHandsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -115,6 +117,7 @@ export function useTenantRemoteHands(refreshBlocked = false) {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       if (generation !== requestGenerationRef.current || refreshBlockedRef.current) return;
+      acceptMetadata(data);
       setConfig(data.tenantRemoteHands);
       setHealthById({});
       setError(null);
@@ -126,7 +129,7 @@ export function useTenantRemoteHands(refreshBlocked = false) {
     } finally {
       if (generation === requestGenerationRef.current) setLoading(false);
     }
-  }, []);
+  }, [acceptMetadata]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -136,21 +139,24 @@ export function useTenantRemoteHands(refreshBlocked = false) {
   }, [refresh]);
 
   const save = useCallback(async (hands: TenantRemoteHandUpdate[]) => {
+    const productionConfirmation = confirmMutation();
+    if (productionConfirmation === null) throw new Error("已取消生产配置保存");
     saveInFlightRef.current = true;
     requestGenerationRef.current += 1;
     setLoading(false);
     setSaving(true);
     try {
-      const res = await authFetch(API_BASE, {
+      const res = await mutationFetch(API_BASE, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantRemoteHands: { hands } }),
+        body: JSON.stringify({ tenantRemoteHands: { hands }, ...bodyMetadata(productionConfirmation) }),
       });
       const data = (await res.json().catch(() => ({}))) as Partial<TenantRemoteHandsResponse>;
       if (!res.ok || !data.tenantRemoteHands) {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       setConfig(data.tenantRemoteHands);
+      acceptMetadata(data);
       setHealthById({});
       setSavedAt(Date.now());
       setError(null);
@@ -162,7 +168,7 @@ export function useTenantRemoteHands(refreshBlocked = false) {
       saveInFlightRef.current = false;
       setSaving(false);
     }
-  }, []);
+  }, [acceptMetadata, bodyMetadata, confirmMutation, mutationFetch]);
 
   const probeHealth = useCallback(async (id: string) => {
     setHealthById((current) => ({ ...current, [id]: { status: "checking" } }));
@@ -188,6 +194,7 @@ export function useTenantRemoteHands(refreshBlocked = false) {
     config,
     loading,
     saving,
+    readOnly,
     error,
     savedAt,
     healthById,

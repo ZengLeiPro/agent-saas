@@ -1,13 +1,19 @@
 name: 生产环境发布
 
-# 与 CI/ACS 兼容直发共享互斥组，覆盖基线读取、分阶段切换和最终 readback。
+# 与 CI Web-only 兼容发布共享互斥组；RC 晋级与冷备恢复是互斥操作，不共享部署逻辑。
 
 on:
   workflow_dispatch:
     inputs:
-      release_id:
-        description: '已通过 Staging 确定性门禁的 RC ID'
+      operation:
+        description: 'promote 晋级 RC；web-recovery-audit 审计冷备；web-recovery-repair 按已审阅计划修复冷备'
+        type: choice
+        default: promote
         required: true
+        options: [promote, web-recovery-audit, web-recovery-repair]
+      release_id:
+        description: 'promote 必填：已通过 Staging 确定性门禁的 RC ID；冷备操作必须留空'
+        required: false
         type: string
       recovery_mode:
         description: 'normal 正常晋级；repair 允许旧 App 未就绪但安装字节与配置必须可验证'
@@ -16,16 +22,26 @@ on:
         default: normal
         options: [normal, repair]
       reason:
-        description: '生产晋级原因与人工验收结论（写入 approval attestation）'
+        description: '操作原因；RC 晋级时包含人工验收结论并写入 approval attestation'
         required: true
         type: string
+      expected_plan_digest:
+        description: 'web-recovery-repair 必填：已审阅 audit 报告中的 planDigest'
+        type: string
+        default: ''
+        required: false
+      confirm_recovery_only:
+        description: '仅冷备修复时勾选；不修改 OSS、DNS、API 或可信身份'
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: write
   actions: read
   deployments: write
 
-# 生产切换与自动收尾共用本次锁，并与 compatibility App/ACS 串行。
+# 生产切换、自动收尾及冷备恢复共用本次锁，并与 CI Web-only 兼容发布串行。
 concurrency:
   group: production-runtime
   cancel-in-progress: false
@@ -40,9 +56,27 @@ env:
   ACR_REPOSITORY: agent-saas/acs-sandbox
 
 jobs:
+  dispatch:
+    name: 校验生产操作与互斥参数
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      operation: ${{ steps.validate.outputs.operation }}
+      recovery_mode: ${{ steps.validate.outputs.recovery_mode }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: 在读取生产凭据前拒绝无效或混用的参数
+        id: validate
+        run: node scripts/release/production-operation.mjs
+
   promote:
     name: 晋级已批准的不可变产物
-    if: github.ref == 'refs/heads/main'
+    needs: dispatch
+    if: github.ref == 'refs/heads/main' && needs.dispatch.outputs.operation == 'promote'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: production
@@ -478,6 +512,7 @@ jobs:
           mkdir -p "$upload_root/artifacts"
           cp "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-production-release.sh scripts/release/write-production-identity.mjs \
+            scripts/release/write-live-production-identity.mjs \
             scripts/release/acs-deployment-drain.sh \
             scripts/release/verify-installed-release.mjs \
             scripts/release/read-live-production-components.mjs scripts/release/read-production-state.mjs \
@@ -1207,12 +1242,26 @@ jobs:
           fi
           identity_lock_ready_confirmed=true
 
-          run_identity_ssh "sudo node '$remote/read-live-production-components.mjs' --config-identity-stage '$config_identity_readback_stage'" \
+          run_identity_ssh "sudo node '$remote/read-live-production-components.mjs' --config-identity-stage '$config_identity_readback_stage' --output '$remote/production-after.json'" \
             > "$RUNNER_TEMP/production-after.json"
           jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
             "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
           if ! diff -u <(jq -S .components "$RUNNER_TEMP/production-after.json") \
               <(jq -S . "$RUNNER_TEMP/production-target.json"); then
+            # 某个已提交组件成功、后续组件失败时，在线矩阵可以合法地部分收敛。
+            # 先把独立回读的真实矩阵固化为可信基线，避免下一次 RC 回退到旧 checkpoint，
+            # 再保留 target_match=false 让本次发布按 partial_failed 收口。
+            if [ -n "${PRODUCTION_DEPLOYMENT_ID:-}" ]; then
+              run_identity_ssh \
+                "sudo node '$remote/write-live-production-identity.mjs' --input '$remote/production-after.json'"
+            fi
+            run_identity_ssh \
+              "sudo node '$remote/read-production-state.mjs' --config-identity-stage steady-state" \
+              > "$RUNNER_TEMP/production-partial-confirmed.json"
+            test "$(jq -r .configIdentity.status "$RUNNER_TEMP/production-partial-confirmed.json")" = consistent
+            identity_projection='{web:{gitSha:.components.web.gitSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.gitSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.gitSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.gitSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}'
+            diff -u <(jq -S "$identity_projection" "$RUNNER_TEMP/production-partial-confirmed.json") \
+              <(jq -S "$identity_projection" "$RUNNER_TEMP/production-after.json")
             echo 'target_match=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -1461,3 +1510,119 @@ jobs:
             ${{ runner.temp }}/production-live*.json
             ${{ runner.temp }}/production-api-ready*.json
             ${{ runner.temp }}/attestations/
+
+  web_recovery:
+    name: 审计或修复生产 Web 冷备
+    needs: dispatch
+    if: github.ref == 'refs/heads/main' && (needs.dispatch.outputs.operation == 'web-recovery-audit' || needs.dispatch.outputs.operation == 'web-recovery-repair')
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 25
+    env:
+      RECOVERY_MODE: ${{ needs.dispatch.outputs.recovery_mode }}
+      EXPECTED_PLAN_DIGEST: ${{ inputs.expected_plan_digest }}
+      CONFIRM_RECOVERY_ONLY: ${{ inputs.confirm_recovery_only }}
+      OSS_ACCESS_KEY_ID: ${{ secrets.OSS_WEB_DEPLOY_AK_ID }}
+      OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_WEB_DEPLOY_AK_SECRET }}
+      ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
+      PRODUCTION_LOCK_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}-web-recovery-repair
+      PRODUCTION_LOCK_SCRIPT: /run/agent-saas-locks/web-recovery-${{ github.run_id }}-${{ github.run_attempt }}.sh
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-pnpm
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.1'
+          cache: pnpm
+      - name: Install dependencies for the ali-oss readback helper
+        run: pnpm install --frozen-lockfile
+      - name: Validate repair confirmation and run offline regression tests
+        run: |
+          set -euo pipefail
+          node scripts/release/put-web-asset-create-only.mjs --self-check
+          case "$RECOVERY_MODE" in
+            audit) ;;
+            repair)
+              test "$CONFIRM_RECOVERY_ONLY" = true
+              printf '%s' "$EXPECTED_PLAN_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
+              ;;
+            *) exit 1 ;;
+          esac
+          node --test scripts/release/web-recovery-repair.test.mjs
+      - name: Install release clients and pin recovery SSH identity
+        run: |
+          set -euo pipefail
+          bash scripts/release/install-aliyun-cli.sh
+          curl -fLsS https://gosspublic.alicdn.com/ossutil/v2/2.1.2/ossutil-2.1.2-linux-amd64.zip -o "$RUNNER_TEMP/ossutil.zip"
+          unzip -oq "$RUNNER_TEMP/ossutil.zip" -d "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/ossutil-2.1.2-linux-amd64/ossutil" /usr/local/bin/ossutil
+          ossutil version | grep -Fx '2.1.2'
+          : "${OSS_ACCESS_KEY_ID:?Missing OSS_ACCESS_KEY_ID}"
+          : "${OSS_ACCESS_KEY_SECRET:?Missing OSS_ACCESS_KEY_SECRET}"
+          # Stored-bytes readback helper reads a runner-private credentials file, never argv or env.
+          (
+            umask 077
+            jq -n --arg accessKeyId "$OSS_ACCESS_KEY_ID" --arg accessKeySecret "$OSS_ACCESS_KEY_SECRET" \
+              '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$RUNNER_TEMP/web-oss-sdk-credentials.json"
+          )
+          : "${ECS_HOST:?Missing ECS_HOST}"
+          : "${ECS_USER:?Missing ECS_USER}"
+          : "${ECS_SSH_KEY:?Missing ECS_SSH_KEY}"
+          : "${PRODUCTION_SSH_HOST_KEY_SHA256:?Missing pinned SSH fingerprint}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/web_recovery_key
+          chmod 600 ~/.ssh/web_recovery_key
+          ssh-keyscan -T 10 -t ed25519 -H "$ECS_HOST" > "$RUNNER_TEMP/recovery-host-key"
+          test "$(ssh-keygen -lf "$RUNNER_TEMP/recovery-host-key" -E sha256 | awk '{print $2}')" = "$PRODUCTION_SSH_HOST_KEY_SHA256"
+          cat "$RUNNER_TEMP/recovery-host-key" >> ~/.ssh/known_hosts
+          echo "PRODUCTION_LOCK_SSH_KEY=$HOME/.ssh/web_recovery_key" >> "$GITHUB_ENV"
+      - name: Acquire the shared Production host lock before observing any baseline
+        run: |
+          set -euo pipefail
+          upload="/tmp/web-recovery-lock-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
+          scp -i "$PRODUCTION_LOCK_SSH_KEY" scripts/release/production-lock-lease.sh "$ECS_USER@$ECS_HOST:$upload"
+          ssh -i "$PRODUCTION_LOCK_SSH_KEY" "$ECS_USER@$ECS_HOST" \
+            "sudo mkdir -p /run/agent-saas-locks; sudo install -m 0500 '$upload' '$PRODUCTION_LOCK_SCRIPT'; rm -f '$upload'; \
+             nohup sudo env PRODUCTION_LOCK_TIMEOUT_SECONDS=1800 bash '$PRODUCTION_LOCK_SCRIPT' hold '$PRODUCTION_LOCK_TOKEN' \
+             >'/tmp/$PRODUCTION_LOCK_TOKEN.log' 2>&1 </dev/null &"
+          for _ in $(seq 1 60); do
+            if ssh -i "$PRODUCTION_LOCK_SSH_KEY" "$ECS_USER@$ECS_HOST" \
+              "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'" >/dev/null 2>&1; then
+              echo "RECOVERY_LOCK_ACQUIRED=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+      - name: Audit or repair only the cold-standby Web
+        run: |
+          set -euo pipefail
+          bash scripts/release/run-with-production-lock-guard.sh \
+            python3 scripts/release/repair-web-recovery.py
+      - name: Retain bounded, content-free audit evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-recovery-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/web-recovery-report.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Release only this transaction's Production host lock
+        if: always() && env.RECOVERY_LOCK_ACQUIRED == 'true'
+        run: |
+          set -euo pipefail
+          ssh -i "$PRODUCTION_LOCK_SSH_KEY" "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' release '$PRODUCTION_LOCK_TOKEN'"
+          ssh -i "$PRODUCTION_LOCK_SSH_KEY" "$ECS_USER@$ECS_HOST" \
+            "sudo rm -f '$PRODUCTION_LOCK_SCRIPT'; rm -f '/tmp/$PRODUCTION_LOCK_TOKEN.log'"

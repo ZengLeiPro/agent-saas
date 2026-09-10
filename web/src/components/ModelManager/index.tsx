@@ -155,7 +155,7 @@ function formatEffectiveValue(value: string | undefined): string {
 export function ModelManager() {
   // 只读平台 admin：保存并生效与分组/模型的增删等 draft 写操作全部 disabled
   const { platformReadOnly: accountReadOnly } = useAuth();
-  const { readOnly: platformReadOnly, acceptPolicy, acceptFailure, assertWritable, notice, confirmationFor } = useModelWritePolicy(accountReadOnly);
+  const { readOnly: platformReadOnly, acceptResponse, acceptFailure, assertWritable, notice, confirmationFor, bodyMetadata, mutationFetch } = useModelWritePolicy(accountReadOnly);
   const [models, setModels] = useState<EditableModelsConfig | null>(null);
   const [revision, setRevision] = useState(""); const [memoryIndex, setMemoryIndex] = useState<EditableMemoryIndexConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -206,7 +206,7 @@ export function ModelManager() {
       const res = await authFetch("/api/admin/models");
       const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string; code?: string };
       if (!res.ok || !data.revision || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
-      acceptPolicy(data.writePolicy);
+      acceptResponse(data);
       setRevision(data.revision); setModels(data.models);
       setMemoryIndex(data.memoryIndex ?? null);
       titleSettings.applyResponse(data as AdminModelsResponse);
@@ -218,12 +218,12 @@ export function ModelManager() {
       hydrateAdvancedText(data.models);
       setError(null);
     } catch (err) {
-      acceptPolicy(undefined);
+      acceptResponse({});
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [acceptPolicy, hydrateAdvancedText, titleSettings.applyResponse]);
+  }, [acceptResponse, hydrateAdvancedText, titleSettings.applyResponse]);
   useEffect(() => { void refresh(); }, [refresh]);
   const updateModels = useCallback((updater: (current: EditableModelsConfig) => EditableModelsConfig) => {
     setModels((current) => current ? updater(current) : current);
@@ -568,15 +568,15 @@ export function ModelManager() {
       assertWritable();
       const payload = buildPayload(); if (!revision) throw new Error("配置版本尚未加载，请先刷新");
       const productionConfirmation = confirmationFor(revision); if (productionConfirmation === null) return;
-      const res = await authFetch("/api/admin/models", {
+      const res = await mutationFetch("/api/admin/models", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, expectedRevision: revision, ...(productionConfirmation ? { productionConfirmation } : {}) }),
+        body: JSON.stringify({ ...payload, ...bodyMetadata(productionConfirmation) }),
       });
       const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string; code?: string };
       if (!res.ok) acceptFailure(data);
       if (!res.ok || !data.revision || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
-      acceptPolicy(data.writePolicy);
+      acceptResponse(data);
       setRevision(data.revision); setModels(data.models);
       setMemoryIndex(data.memoryIndex ?? null);
       titleSettings.applyResponse(data as AdminModelsResponse);
@@ -589,7 +589,7 @@ export function ModelManager() {
     } finally {
       setSaving(false);
     }
-  }, [confirmationFor, acceptFailure, acceptPolicy, assertWritable, buildPayload, hydrateAdvancedText, revision, titleSettings.applyResponse]);
+  }, [confirmationFor, acceptFailure, acceptResponse, assertWritable, bodyMetadata, buildPayload, hydrateAdvancedText, mutationFetch, revision, titleSettings.applyResponse]);
 
   if (loading && !models) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;

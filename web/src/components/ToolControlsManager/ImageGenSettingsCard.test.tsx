@@ -12,7 +12,11 @@ vi.mock("@/contexts/AuthContext", () => ({
 vi.mock("@/lib/authFetch", () => ({ authFetch: vi.fn() }));
 
 function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
+  return new Response(JSON.stringify({
+    revision: "revision-image-1",
+    writePolicy: { environment: "development", mode: "online", canSave: true },
+    ...(body as Record<string, unknown>),
+  }), { status });
 }
 
 function emptyConfig() {
@@ -74,6 +78,8 @@ describe("ImageGenSettingsCard", () => {
         timeoutMs: 180000,
       },
     });
+    expect(payload).toMatchObject({ expectedRevision: "revision-image-1" });
+    expect(payload.operationId).toEqual(expect.any(String));
   });
 
   it("已有密钥时页面不回显明文，留空保存不提交 apiKey", async () => {

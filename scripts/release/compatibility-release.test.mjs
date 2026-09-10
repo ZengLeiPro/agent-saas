@@ -220,10 +220,9 @@ test('rebuilds the trusted identity from the observed live component matrix', ()
   assert.equal(identity.configIdentity.status, undefined);
 });
 
-test('legacy deploy entrypoints persist immutable baselines and refresh trusted identity', async () => {
+test('CI compatibility and retained rollback helpers preserve immutable baselines and trusted identity', async () => {
   const [
     appWorkflow,
-    acsWorkflow,
     promotionWorkflow,
     acsDeploy,
     recoveryRollback,
@@ -232,7 +231,6 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     zeroDowntimeDocs,
   ] = await Promise.all([
     Promise.all([readFile('.github/workflows/ci.yml', 'utf8'), readFile('scripts/release/fixtures/legacy-ecs-workflow.yml', 'utf8')]).then(([current, legacy]) => current.replace('\n  deploy-web-oss:\n', `${legacy}\n  deploy-web-oss:\n`)),
-    readFile('.github/workflows/acs-sandbox.yml', 'utf8'),
     readFile('.github/workflows/promote-release.yml', 'utf8'),
     readFile('scripts/deploy-acs-orchestrator.sh', 'utf8'),
     readFile('scripts/rollback-recovery-web.sh', 'utf8'),
@@ -469,14 +467,11 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
       appWorkflow.indexOf('drain signal SIGUSR2 sent to old color'),
   );
   assert.match(appWorkflow, /github\.event_name == 'workflow_dispatch' && 'production-runtime'/u);
-  assert.match(acsWorkflow, /group: production-runtime/u);
   assert.match(promotionWorkflow, /group: production-runtime/u);
   assert.doesNotMatch(
-    `${appWorkflow}\n${acsWorkflow}\n${promotionWorkflow}`,
+    `${appWorkflow}\n${promotionWorkflow}`,
     /group: agent-saas-production-deploy/u,
   );
-  assert.match(acsWorkflow, /baselines\/acs-/u);
-  assert.match(acsWorkflow, /group: production-runtime/u);
   assert.match(
     appWorkflow,
     /format\('agent-saas-\{0\}-\{1\}', github\.workflow, github\.event\.pull_request\.number \|\| github\.run_id\)/u,
@@ -485,37 +480,17 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     appWorkflow,
     /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/u,
   );
-  assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
-  assert.match(acsWorkflow, /Stale ACS deploy dispatch/u);
-  assert.match(acsWorkflow, /before Production mutation/u);
-  assert.match(acsWorkflow, /acs-release-stage\/acs-orchestrator\/runtime-dependencies\.json/u);
-  assert.match(acsWorkflow, /manage-acs-systemd-unit\.sh/u);
-  assert.match(acsWorkflow, /agent-saas-acs-orchestrator\.service\.template/u);
-  assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
-  assert.match(acsWorkflow, /environment: production/u);
   assert.match(appWorkflow, /DEPLOY_LOCK_FILE="\/run\/lock\/agent-saas\/promotion\.lock"/u);
   assert.doesNotMatch(appWorkflow, /agent-saas-deploy\.lock/u);
   assert.ok(
     appWorkflow.indexOf('flock -n 9') < appWorkflow.indexOf('identity_probe="/etc/agent-saas/'),
   );
-  assert.match(acsWorkflow, /acs-release-identity\.json/u);
-  assert.doesNotMatch(acsWorkflow, /后续 main 推进不影响本次代码与镜像/u);
-  const acsDeployStart = acsWorkflow.indexOf(
-    '      - name: 部署编排器并执行排空与冒烟检查',
-  );
-  const acsDeployEnd = acsWorkflow.indexOf('      - name: 清理已封存的 ACS 生产暂存区');
-  const acsDeployStep = acsWorkflow.slice(acsDeployStart, acsDeployEnd);
-  assert.match(acsWorkflow, /PRODUCTION_STAGING_ROOT: \/run\/agent-saas-production-staging/u);
-  assert.match(acsWorkflow, /上传并封存编排器版本/u);
-  assert.match(
-    acsWorkflow,
-    /bash -s -- verify '\$payload_digest' '\$remote\/payload\.tgz' '\$remote'[\s\S]*seal-root-staged-payload\.sh/u,
-  );
-  assert.match(
-    acsWorkflow,
-    /seal_script_digest="\$\(sha256sum scripts\/release\/seal-root-staged-payload\.sh/u,
-  );
-  assert.match(acsWorkflow, /SEAL_STAGED_PAYLOAD_SCRIPT_SHA256='\$seal_script_digest'/u);
+  // The active ACS release path now consumes sealed RC artifacts, never source-head dispatches.
+  assert.match(promotionWorkflow, /prefetch-promotion-artifacts\.mjs/u);
+  assert.match(promotionWorkflow, /verify-selected-release-artifacts\.mjs/u);
+  assert.match(promotionWorkflow, /verify-promotion-acs-selection\.mjs/u);
+  assert.match(promotionWorkflow, /ACS_UNIT_TEMPLATE=/u);
+  assert.match(promotionWorkflow, /EXPECTED_MANIFEST_DIGEST=/u);
   assert.match(acsDeploy, /seal_payload_fd_path="\/proc\/\$\$\/fd\/\$seal_payload_fd"/u);
   assert.match(acsDeploy, /bash "\$seal_payload_fd_path" extract/u);
   assert.match(
@@ -524,19 +499,6 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   );
   assert.match(acsDeploy, /cp -a "\$RUNTIME_PREFLIGHT_DIR\/\." "\$candidate\/"/u);
   assert.doesNotMatch(acsDeploy, /tar -xzf "\$RELEASE_TGZ"/u);
-  assert.doesNotMatch(acsWorkflow, /:\/tmp\/agent-saas-acs-release\.tgz/u);
-  assert.match(acsWorkflow, /清理已封存的 ACS 生产暂存区/u);
-  assert.match(
-    acsWorkflow,
-    /if: always\(\) && steps\.necessity\.outputs\.deploy_needed == 'true'/u,
-  );
-  assert.match(acsWorkflow, /sudo rm -rf -- '\$release_remote'/u);
-  assert.doesNotMatch(acsWorkflow, /identity_remote/u);
-  assert.match(acsDeployStep, /git fetch --no-tags origin main/u);
-  assert.match(acsDeployStep, /latest_main_sha="\$\(git rev-parse origin\/main\)"/u);
-  assert.match(acsDeployStep, /if \[ "\$latest_main_sha" != "\$GITHUB_SHA" \]/u);
-  assert.ok(acsDeployStep.indexOf('latest_main_sha=') < acsDeployStep.indexOf('bash -s'));
-  assert.match(releaseDocs, /实际生产\s+部署 mutation 前都会校验 latest main/u);
   assert.match(acsDeploy, /acs-releases\/\$\{ORCHESTRATOR_ARTIFACT_DIGEST#sha256:\}/u);
   assert.match(acsDeploy, /RELEASE_TGZ="\$\{RELEASE_TGZ:-\/tmp\/agent-saas-acs-release\.tgz\}"/u);
   assert.match(acsDeploy, /\/run\/agent-saas-production-staging\/acs-release-\*/u);

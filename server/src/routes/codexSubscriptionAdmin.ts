@@ -8,9 +8,14 @@ import type { CodexCredentialManager } from '../runtime/responses/codexCredentia
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import {
   AdminConfigMutationService,
+  ConfigMutationCommittedError,
   RuntimeRestoreFailedError,
 } from '../config/adminConfigMutationService.js';
-import { mutationRequestContext } from '../config/adminConfigMutationHttp.js';
+import {
+  adminConfigReadMetadata,
+  mutationRequestContext,
+  sendConfigMutationError,
+} from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
 export interface CreateCodexSubscriptionAdminRouterOptions {
@@ -20,6 +25,20 @@ export interface CreateCodexSubscriptionAdminRouterOptions {
   deviceAuthService: CodexDeviceAuthService;
   closeWebSockets?: (credentialRefs?: readonly string[]) => void;
   configMutationService?: AdminConfigMutationService;
+  completionTaskTtlMs?: number;
+  completionTaskLimit?: number;
+}
+
+const DEFAULT_COMPLETION_TASK_TTL_MS = 5 * 60_000;
+const DEFAULT_COMPLETION_TASK_LIMIT = 100;
+
+type CompletionResult = Awaited<ReturnType<typeof publicState>>;
+
+interface DeviceCompletionTask {
+  promise: Promise<CompletionResult>;
+  createdAt: number;
+  completed: boolean;
+  cleanupTimer?: ReturnType<typeof setTimeout>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -33,12 +52,15 @@ function credentialRefs(options: CreateCodexSubscriptionAdminRouterOptions): str
 function configWithCredentialRefs(
   current: ReturnType<CodexCredentialManager['getConfiguration']>,
   refs: string[],
-  overrides: Partial<Pick<CodexSubscriptionConfig, 'enabled' | 'websocketEnabled' | 'quotaCooldownMinutes'>> = {},
+  overrides: Partial<
+    Pick<CodexSubscriptionConfig, 'enabled' | 'websocketEnabled' | 'quotaCooldownMinutes'>
+  > = {},
 ): CodexSubscriptionConfig {
   return {
     enabled: overrides.enabled ?? current.enabled,
-    websocketEnabled: (overrides.websocketEnabled ?? current.websocketEnabled)
-      && (overrides.enabled ?? current.enabled),
+    websocketEnabled:
+      (overrides.websocketEnabled ?? current.websocketEnabled) &&
+      (overrides.enabled ?? current.enabled),
     quotaCooldownMinutes: overrides.quotaCooldownMinutes ?? current.quotaCooldownMinutes,
     endpoint: current.endpoint,
     originator: current.originator,
@@ -51,16 +73,22 @@ async function persistConfig(
   configMutationService: AdminConfigMutationService,
   req: Request,
   next: CodexSubscriptionConfig,
+  operation:
+    'codex.settings' | 'codex.order' | 'codex.complete' | 'codex.remove' | 'codex.disconnect',
 ): Promise<CodexSubscriptionConfig> {
   const result = await configMutationService.mutate({
     ...mutationRequestContext(req),
+    operation: { id: operation },
     changedPaths: ['codexSubscription'],
     buildCandidate: (configText, raw) => {
       const parsed = parseAppConfig({ ...raw, codexSubscription: next });
       if (!parsed.codexSubscription) throw new Error('codexSubscription 配置无效');
-      return applyEdits(configText, modify(configText, ['codexSubscription'], parsed.codexSubscription, {
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
-      }));
+      return applyEdits(
+        configText,
+        modify(configText, ['codexSubscription'], parsed.codexSubscription, {
+          formattingOptions: { insertSpaces: true, tabSize: 2 },
+        }),
+      );
     },
     applyRuntime: (candidate) => {
       if (!candidate.codexSubscription) throw new Error('codexSubscription 配置无效');
@@ -74,10 +102,14 @@ async function persistConfig(
   return result.config.codexSubscription!;
 }
 
-async function publicState(options: CreateCodexSubscriptionAdminRouterOptions) {
+async function publicState(
+  options: CreateCodexSubscriptionAdminRouterOptions,
+  service?: AdminConfigMutationService,
+) {
   const configuration = options.credentialManager.getConfiguration();
   const credentials = await options.credentialManager.getStatuses();
   return {
+    ...(service ? adminConfigReadMetadata(options.processCwd, service) : {}),
     config: {
       enabled: configuration.enabled,
       websocketEnabled: configuration.websocketEnabled,
@@ -97,20 +129,32 @@ export function createCodexSubscriptionAdminRouter(
   options: CreateCodexSubscriptionAdminRouterOptions,
 ): Router {
   const router = Router();
-  const deviceCompletionTasks = new Map<
-    string,
-    Promise<Awaited<ReturnType<typeof publicState>>>
-  >();
-  const configMutationService = options.configMutationService ?? new AdminConfigMutationService({
-    configPath: getAppConfigPath(options.processCwd),
-    processCwd: options.processCwd,
-    environment: readRuntimeIdentity().environment,
-    processRole: 'all',
-  });
+  const deviceCompletionTasks = new Map<string, DeviceCompletionTask>();
+  const completionTaskTtlMs = options.completionTaskTtlMs ?? DEFAULT_COMPLETION_TASK_TTL_MS;
+  const completionTaskLimit = options.completionTaskLimit ?? DEFAULT_COMPLETION_TASK_LIMIT;
+  const reserveCompletionTaskSlot = (): boolean => {
+    if (deviceCompletionTasks.size < completionTaskLimit) return true;
+    const oldestCompleted = [...deviceCompletionTasks.entries()]
+      .filter(([, task]) => task.completed)
+      .sort(([, left], [, right]) => left.createdAt - right.createdAt)[0];
+    if (!oldestCompleted) return false;
+    if (oldestCompleted[1].cleanupTimer) clearTimeout(oldestCompleted[1].cleanupTimer);
+    deviceCompletionTasks.delete(oldestCompleted[0]);
+    return deviceCompletionTasks.size < completionTaskLimit;
+  };
+  const configMutationService =
+    options.configMutationService ??
+    new AdminConfigMutationService({
+      configPath: getAppConfigPath(options.processCwd),
+      processCwd: options.processCwd,
+      environment: readRuntimeIdentity().environment,
+      processRole: 'all',
+    });
   router.use(requirePlatformAdmin);
 
   router.get('/', async (_req, res) => {
-    res.json(await publicState(options));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(await publicState(options, configMutationService));
   });
 
   router.put('/', async (req, res) => {
@@ -123,26 +167,40 @@ export function createCodexSubscriptionAdminRouter(
       return;
     }
     const enabled = typeof body.enabled === 'boolean' ? body.enabled : current.enabled;
-    const requestedWebsocketEnabled = typeof body.websocketEnabled === 'boolean'
-      ? body.websocketEnabled
-      : current.websocketEnabled;
-    const quotaCooldownMinutes = typeof requestedQuotaCooldownMinutes === 'number'
-      ? requestedQuotaCooldownMinutes
-      : current.quotaCooldownMinutes;
+    const requestedWebsocketEnabled =
+      typeof body.websocketEnabled === 'boolean' ? body.websocketEnabled : current.websocketEnabled;
+    const quotaCooldownMinutes =
+      typeof requestedQuotaCooldownMinutes === 'number'
+        ? requestedQuotaCooldownMinutes
+        : current.quotaCooldownMinutes;
+    if (
+      !Number.isInteger(quotaCooldownMinutes) ||
+      quotaCooldownMinutes < 1 ||
+      quotaCooldownMinutes > 10_080
+    ) {
+      res.status(400).json({ error: 'quotaCooldownMinutes 必须是 1 到 10080 之间的整数' });
+      return;
+    }
     if (enabled && refs.length === 0) {
       res.status(409).json({ error: '请先完成至少一个 Codex 账号授权，再启用订阅 transport' });
       return;
     }
 
     try {
-      await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, refs, {
-        enabled,
-        websocketEnabled: requestedWebsocketEnabled,
-        quotaCooldownMinutes,
-      }));
-      res.json(await publicState(options));
+      await persistConfig(
+        options,
+        configMutationService,
+        req,
+        configWithCredentialRefs(current, refs, {
+          enabled,
+          websocketEnabled: requestedWebsocketEnabled,
+          quotaCooldownMinutes,
+        }),
+        'codex.settings',
+      );
+      res.json(await publicState(options, configMutationService));
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
     }
   });
 
@@ -151,32 +209,39 @@ export function createCodexSubscriptionAdminRouter(
     const currentRefs = credentialRefs(options);
     const body = isRecord(req.body) ? req.body : {};
     const requested = Array.isArray(body.credentialRefs)
-      ? body.credentialRefs.filter((ref): ref is string => typeof ref === 'string' && ref.length > 0)
+      ? body.credentialRefs.filter(
+          (ref): ref is string => typeof ref === 'string' && ref.length > 0,
+        )
       : [];
     const requestedSet = new Set(requested);
     if (
-      requested.length !== currentRefs.length
-      || requestedSet.size !== currentRefs.length
-      || currentRefs.some((ref) => !requestedSet.has(ref))
+      requested.length !== currentRefs.length ||
+      requestedSet.size !== currentRefs.length ||
+      currentRefs.some((ref) => !requestedSet.has(ref))
     ) {
       res.status(400).json({ error: '授权账号排序必须包含全部已配置账号，且不能重复' });
       return;
     }
 
     try {
-      await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, requested));
-      res.json(await publicState(options));
+      await persistConfig(
+        options,
+        configMutationService,
+        req,
+        configWithCredentialRefs(current, requested),
+        'codex.order',
+      );
+      res.json(await publicState(options, configMutationService));
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
     }
   });
 
   router.post('/device/start', async (req, res) => {
     try {
       const body = isRecord(req.body) ? req.body : {};
-      const replaceCredentialRef = typeof body.credentialRef === 'string'
-        ? body.credentialRef.trim()
-        : '';
+      const replaceCredentialRef =
+        typeof body.credentialRef === 'string' ? body.credentialRef.trim() : '';
       if (replaceCredentialRef && !credentialRefs(options).includes(replaceCredentialRef)) {
         res.status(404).json({ error: '待重授权的 Codex 账号不存在' });
         return;
@@ -194,66 +259,138 @@ export function createCodexSubscriptionAdminRouter(
     try {
       const existingCompletion = deviceCompletionTasks.get(req.params.sessionId);
       if (existingCompletion) {
-        res.json({ status: 'completed', ...(await existingCompletion) });
+        res.json({ status: 'applied', ...(await existingCompletion.promise) });
         return;
       }
-      const result = await options.deviceAuthService.poll(req.params.sessionId);
-      if (result.status === 'pending') {
-        res.json(result);
-        return;
-      }
-      if (result.status === 'expired') {
-        res.status(410).json(result);
-        return;
-      }
-      const completedResult = result;
-      let completion = deviceCompletionTasks.get(req.params.sessionId);
-      if (!completion) {
-        completion = (async () => {
-          const current = options.credentialManager.getConfiguration();
-          const currentRefs = credentialRefs(options);
-          const replaceCredentialRef = completedResult.replaceCredentialRef;
-          if (replaceCredentialRef && !currentRefs.includes(replaceCredentialRef)) {
-            throw new Error('待重授权的 Codex 账号已被移除，请重新发起授权');
-          }
-          const persisted = await options.credentialManager.persistLogin(
-            completedResult.tokens,
-            replaceCredentialRef,
-          );
-          const nextRefs = replaceCredentialRef
-            ? currentRefs.map((ref) => (
-              ref === replaceCredentialRef ? persisted.credentialRef : ref
-            ))
-            : [...currentRefs, persisted.credentialRef];
-          try {
-            await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, nextRefs, {
-              enabled: true,
-              websocketEnabled: current.websocketEnabled,
-            }));
-          } catch (error) {
-            if (error instanceof RuntimeRestoreFailedError) {
-              options.deviceAuthService.complete(req.params.sessionId);
-            } else if (!replaceCredentialRef || persisted.credentialRef !== replaceCredentialRef) {
-              await options.credentialManager.revoke(persisted.credentialRef).catch(() => undefined);
-              options.deviceAuthService.complete(req.params.sessionId);
-            }
-            throw error;
-          }
-          if (replaceCredentialRef) options.closeWebSockets?.([replaceCredentialRef]);
-          options.deviceAuthService.complete(req.params.sessionId);
-          return publicState(options);
-        })();
-        deviceCompletionTasks.set(req.params.sessionId, completion);
-        const clearCompletion = () => {
-          if (deviceCompletionTasks.get(req.params.sessionId) === completion) {
-            deviceCompletionTasks.delete(req.params.sessionId);
-          }
-        };
-        void completion.then(clearCompletion, clearCompletion);
-      }
-      res.json({ status: 'completed', ...(await completion) });
+      const result = options.deviceAuthService.status(req.params.sessionId);
+      res.status(result.status === 'expired' ? 410 : 200).json(result);
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/device/:sessionId/poll', async (req, res) => {
+    try {
+      const result = await options.deviceAuthService.poll(req.params.sessionId);
+      if (result.status === 'completed') {
+        res.json({
+          status: 'authorized_pending_publication',
+          ...(result.replaceCredentialRef
+            ? { replaceCredentialRef: result.replaceCredentialRef }
+            : {}),
+        });
+        return;
+      }
+      res.status(result.status === 'expired' ? 410 : 200).json(result);
+    } catch (error) {
+      res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/device/:sessionId/complete', async (req, res) => {
+    const sessionId = req.params.sessionId;
+    const prior = deviceCompletionTasks.get(sessionId);
+    if (prior) {
+      res.json({ status: 'applied', ...(await prior.promise) });
+      return;
+    }
+    if (!reserveCompletionTaskSlot()) {
+      res.status(429).json({ error: '正在完成的 Codex 授权过多，请稍后重试' });
+      return;
+    }
+    let candidateRef: string | undefined;
+    const completion = (async () => {
+      const authorized = options.deviceAuthService.completedResult(sessionId);
+      const requestContext = mutationRequestContext(req);
+      const result = await configMutationService.mutate({
+        ...requestContext,
+        operation: { id: 'codex.complete' },
+        changedPaths: ['codexSubscription'],
+        buildCandidate: async (configText, raw) => {
+          const persistedConfig = parseAppConfig(raw);
+          const current = persistedConfig.codexSubscription;
+          if (!current) throw new Error('codexSubscription 配置无效');
+          const currentRefs = current.credentialRefs?.length
+            ? [...current.credentialRefs]
+            : current.credentialRef
+              ? [current.credentialRef]
+              : [];
+          if (
+            authorized.replaceCredentialRef &&
+            !currentRefs.includes(authorized.replaceCredentialRef)
+          ) {
+            throw new Error('待重授权的 Codex 账号已被移除，请重新发起授权');
+          }
+          const candidate = await options.credentialManager.persistLogin(
+            authorized.tokens,
+            undefined,
+            requestContext.operationId ? { configOperationId: requestContext.operationId } : {},
+          );
+          candidateRef = candidate.credentialRef;
+          const nextRefs = authorized.replaceCredentialRef
+            ? currentRefs.map((ref) =>
+                ref === authorized.replaceCredentialRef ? candidate.credentialRef : ref,
+              )
+            : [...currentRefs, candidate.credentialRef];
+          const next = {
+            ...current,
+            enabled: true,
+            websocketEnabled: current.websocketEnabled === true,
+            credentialRef: nextRefs[0],
+            credentialRefs: nextRefs,
+          };
+          const parsed = parseAppConfig({ ...raw, codexSubscription: next });
+          return applyEdits(
+            configText,
+            modify(configText, ['codexSubscription'], parsed.codexSubscription, {
+              formattingOptions: { insertSpaces: true, tabSize: 2 },
+            }),
+          );
+        },
+        applyRuntime: (candidate) => {
+          if (!candidate.codexSubscription) throw new Error('codexSubscription 配置无效');
+          options.config.codexSubscription = candidate.codexSubscription;
+        },
+      });
+      if (authorized.replaceCredentialRef)
+        options.closeWebSockets?.([authorized.replaceCredentialRef]);
+      options.deviceAuthService.complete(sessionId);
+      return { ...(await publicState(options, configMutationService)), revision: result.revision };
+    })();
+    const task: DeviceCompletionTask = {
+      promise: completion,
+      createdAt: Date.now(),
+      completed: false,
+    };
+    deviceCompletionTasks.set(sessionId, task);
+    void completion.then(
+      () => {
+        task.completed = true;
+        task.cleanupTimer = setTimeout(() => {
+          if (deviceCompletionTasks.get(sessionId) === task) {
+            deviceCompletionTasks.delete(sessionId);
+          }
+        }, completionTaskTtlMs);
+        task.cleanupTimer.unref?.();
+      },
+      () => {
+        if (deviceCompletionTasks.get(sessionId) === task) {
+          deviceCompletionTasks.delete(sessionId);
+        }
+      },
+    );
+    try {
+      res.json({ status: 'applied', ...(await completion) });
+    } catch (error) {
+      deviceCompletionTasks.delete(sessionId);
+      if (
+        candidateRef &&
+        !(error instanceof RuntimeRestoreFailedError) &&
+        !(error instanceof ConfigMutationCommittedError)
+      ) {
+        await options.credentialManager.discardLoginCandidate(candidateRef);
+      }
+      sendConfigMutationError(res, error);
     }
   });
 
@@ -267,12 +404,18 @@ export function createCodexSubscriptionAdminRouter(
     }
     const nextRefs = currentRefs.filter((item) => item !== ref);
     try {
-      await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, nextRefs, {
-        enabled: nextRefs.length > 0 ? current.enabled : false,
-        websocketEnabled: nextRefs.length > 0 ? current.websocketEnabled : false,
-      }));
+      await persistConfig(
+        options,
+        configMutationService,
+        req,
+        configWithCredentialRefs(current, nextRefs, {
+          enabled: nextRefs.length > 0 ? current.enabled : false,
+          websocketEnabled: nextRefs.length > 0 ? current.websocketEnabled : false,
+        }),
+        'codex.remove',
+      );
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
       return;
     }
 
@@ -283,7 +426,7 @@ export function createCodexSubscriptionAdminRouter(
       warning = 'transport 已更新，但旧 SecretVault 凭据清理失败，请检查凭据存储';
     }
     res.json({
-      ...(await publicState(options)),
+      ...(await publicState(options, configMutationService)),
       ...(warning ? { warning } : {}),
     });
   });
@@ -292,12 +435,18 @@ export function createCodexSubscriptionAdminRouter(
     const current = options.credentialManager.getConfiguration();
     const refs = credentialRefs(options);
     try {
-      await persistConfig(options, configMutationService, _req, configWithCredentialRefs(current, [], {
-        enabled: false,
-        websocketEnabled: false,
-      }));
+      await persistConfig(
+        options,
+        configMutationService,
+        _req,
+        configWithCredentialRefs(current, [], {
+          enabled: false,
+          websocketEnabled: false,
+        }),
+        'codex.disconnect',
+      );
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
       return;
     }
 
@@ -311,7 +460,7 @@ export function createCodexSubscriptionAdminRouter(
       }
     }
     res.json({
-      ...(await publicState(options)),
+      ...(await publicState(options, configMutationService)),
       ...(warnings.length > 0 ? { warning: warnings.join('；') } : {}),
     });
   });
@@ -323,11 +472,13 @@ function webSocketInvalidation(
   previous: ReturnType<CodexCredentialManager['getConfiguration']>,
   next: CodexSubscriptionConfig,
 ): 'all' | string[] {
-  if (previous.enabled !== next.enabled || previous.websocketEnabled !== next.websocketEnabled) return 'all';
+  if (previous.enabled !== next.enabled || previous.websocketEnabled !== next.websocketEnabled)
+    return 'all';
   if (previous.endpoint !== (next.endpoint ?? previous.endpoint)) return 'all';
   if (previous.originator !== (next.originator ?? previous.originator)) return 'all';
   const previousRefs = previous.credentialRefs;
   const nextRefs = next.credentialRefs ?? (next.credentialRef ? [next.credentialRef] : []);
-  return [...new Set([...previousRefs, ...nextRefs])]
-    .filter((ref) => previousRefs.includes(ref) !== nextRefs.includes(ref));
+  return [...new Set([...previousRefs, ...nextRefs])].filter(
+    (ref) => previousRefs.includes(ref) !== nextRefs.includes(ref),
+  );
 }

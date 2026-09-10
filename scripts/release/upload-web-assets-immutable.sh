@@ -20,6 +20,7 @@ uploaded=0
 reused=0
 javascript_assets=0
 css_assets=0
+trap 'echo "Web asset verification failed: key=${key:-unknown} line=$LINENO command=$BASH_COMMAND" >&2' ERR
 while IFS= read -r -d '' source_path; do
   key="${source_path#"$asset_root"/}"
   printf '%s' "$key" | grep -Eq '^[A-Za-z0-9._/-]+$'
@@ -30,6 +31,9 @@ while IFS= read -r -d '' source_path; do
   expected_encoding=''
   compressed=''
   case "$key" in
+    *.woff2) expected_type='font/woff2' ;;
+    *.woff) expected_type='font/woff' ;;
+    *.ttf) expected_type='font/ttf' ;;
     *.js|*.mjs)
       javascript_assets=$((javascript_assets + 1))
       compressed="$(mktemp)"
@@ -67,14 +71,9 @@ while IFS= read -r -d '' source_path; do
       rm -f "$put_log" "$compressed"
       exit 1
     fi
-    stat_log="$(mktemp)"
-    if ! ossutil stat "$target_uri" --region "$region" > "$stat_log" 2>&1; then
-      cat "$put_log" >&2
-      cat "$stat_log" >&2
-      rm -f "$put_log" "$stat_log" "$compressed"
-      exit 1
-    fi
-    rm -f "$stat_log"
+    # The byte-exact SDK HEAD + GET below proves that the conflicting key exists and still
+    # contains the expected immutable bytes. `ossutil stat` additionally requests object ACL,
+    # which is outside the production writer's least-privilege read contract.
     reused=$((reused + 1))
   fi
   rm -f "$put_log"
@@ -86,6 +85,11 @@ while IFS= read -r -d '' source_path; do
   node "$script_dir/get-web-object.mjs" "$bucket" "${target_uri#"oss://$bucket/"}" "$region" \
     "$readback" "$credentials_path" "$oss_module_path" >/dev/null
   cmp "$upload_path" "$readback"
+  if [ "$put_status" -eq 17 ]; then
+    node "$script_dir/repair-web-asset-metadata.mjs" \
+      "$upload_path" "$bucket" "${target_uri#"oss://$bucket/"}" "$region" \
+      "$cache_control" "$expected_type" "$expected_encoding" "$credentials_path" "$oss_module_path"
+  fi
   # Verify the public object contract, not only the authenticated readback bytes.
   headers="$(mktemp)"
   curl -fsSI -H 'Accept-Encoding: gzip' \

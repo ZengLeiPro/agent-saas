@@ -17,7 +17,11 @@ vi.mock("@/contexts/AuthContext", () => ({
 vi.mock("@/lib/authFetch", () => ({ authFetch: vi.fn() }));
 
 function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status });
+  return new Response(JSON.stringify({
+    revision: "revision-stt-1",
+    writePolicy: { environment: "development", mode: "online", canSave: true },
+    ...(body as Record<string, unknown>),
+  }), { status });
 }
 
 function configuredResponse(overrides: Record<string, unknown> = {}) {
@@ -101,7 +105,7 @@ describe("AudioTranscribeSettingsCard", () => {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
     });
-    expect(JSON.parse((putCall[1] as RequestInit).body as string)).toEqual({
+    expect(JSON.parse((putCall[1] as RequestInit).body as string)).toMatchObject({
       config: {
         enabled: true,
         model: "fun-asr-realtime",
@@ -112,6 +116,8 @@ describe("AudioTranscribeSettingsCard", () => {
         ossAccessKeySecret: "",
       },
       pricing: { creditsPerCall: 25, costYuanPerCall: 0.1 },
+      expectedRevision: "revision-stt-1",
+      operationId: expect.any(String),
     });
   });
 

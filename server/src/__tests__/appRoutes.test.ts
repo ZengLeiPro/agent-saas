@@ -367,7 +367,7 @@ describe('registerRoutes', () => {
     //   + kyApp 未启用时的结构化 API 错误兜底 = 52
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(52);
+    expect(app.use).toHaveBeenCalledTimes(53);
     expect(app.use).toHaveBeenCalledWith('/api/app-contract/v1', expect.any(Function));
     expect(app.get).toHaveBeenCalledWith(
       '/api/app-contract/v1/availability', requirePlatformAdmin, expect.any(Function),

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import { parseClassification, planAcsCi } from '../ci-acs-plan.mjs';
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 const ci = read('.github/workflows/ci.yml');
-const manual = read('.github/workflows/acs-sandbox.yml');
+const promotion = read('.github/workflows/promote-release.yml');
 const staging = read('.github/workflows/deploy-staging.yml');
 const job = (text, id) => {
   const start = text.indexOf(`  ${id}:\n`);
@@ -22,8 +22,8 @@ test('a single automatic CI preserves both required check names and consumes one
   assert.match(triggers, /push:\s+branches: \[main\]/u);
   assert.match(triggers, /pull_request:\s+branches: \[main\]/u);
   assert.doesNotMatch(triggers, /paths(?:-ignore)?:/u);
-  assert.doesNotMatch(manual.slice(0, manual.indexOf('\njobs:')), /\n  (push|pull_request):/u);
-  assert.doesNotMatch(manual, /\n  (acs-impact-gate|contract-check):/u);
+  assert.equal(existsSync(new URL('../../.github/workflows/acs-sandbox.yml', import.meta.url)), false);
+  assert.doesNotMatch(promotion.slice(0, promotion.indexOf('\njobs:')), /\n  (push|pull_request):/u);
   const acs = job(ci, 'acs-impact-gate');
   assert.match(acs, /name: ACS Impact Gate/u);
   assert.match(acs, /needs: ci_plan/u);
@@ -46,14 +46,13 @@ test('a single automatic CI preserves both required check names and consumes one
 test('manual production boundaries and stable artifact identity are preserved', () => {
   assert.match(ci, /web_only_compatibility:/u);
   assert.match(ci, /github.event_name == 'workflow_dispatch' && 'production-runtime'/u);
-  assert.match(manual, /^name: ACS Manual Deploy$/mu);
-  assert.match(manual, /workflow_dispatch:/u);
-  const deploy = job(manual, 'build-deploy');
+  assert.match(promotion, /workflow_dispatch:/u);
+  const deploy = job(promotion, 'promote');
   assert.match(deploy, /environment: production/u);
-  assert.match(deploy, /group: production-runtime\s+cancel-in-progress: false/u);
+  assert.match(promotion, /group: production-runtime\s+cancel-in-progress: false/u);
   assert.match(
     deploy,
-    /if: github.event_name == 'workflow_dispatch' && github.ref == 'refs\/heads\/main'/u,
+    /if: github.ref == 'refs\/heads\/main' && needs.dispatch.outputs.operation == 'promote'/u,
   );
   assert.match(
     ci,

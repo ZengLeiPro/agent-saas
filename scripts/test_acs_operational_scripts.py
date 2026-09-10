@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 APPLY_SCRIPT = REPO_ROOT / 'scripts' / 'apply-orchestrator-env.py'
 VERIFY_SCRIPT = REPO_ROOT / 'scripts' / 'acs-verify-per-session.py'
 TOOL_CONTENT_JSON = REPO_ROOT / 'scripts' / 'acs-tool-content-json.mjs'
-ACS_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'acs-sandbox.yml'
+ACS_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'promote-release.yml'
 ACS_CLASSIFIER = REPO_ROOT / '.github' / 'scripts' / 'acs-classify.sh'
 ACS_DEPLOY_SCRIPT = REPO_ROOT / 'scripts' / 'deploy-acs-orchestrator.sh'
 ACS_BROWSER_E2E = REPO_ROOT / 'scripts' / 'acs-browser-lease-e2e.mjs'
@@ -259,8 +259,9 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         cls.deploy_script = ACS_DEPLOY_SCRIPT.read_text(encoding='utf-8')
 
     def test_externalizes_remote_deploy_script_and_keeps_syntax_valid(self):
-        self.assertIn('< scripts/deploy-acs-orchestrator.sh', self.workflow)
-        self.assertNotIn("<<'REMOTE'", self.workflow)
+        self.assertNotIn('scripts/deploy-acs-orchestrator.sh', self.workflow)
+        self.assertIn('deploy-production-release.sh', self.workflow)
+        self.assertIn('prefetch-promotion-artifacts.mjs', self.workflow)
         syntax = subprocess.run(
             ['bash', '-n', str(ACS_DEPLOY_SCRIPT)],
             capture_output=True,
@@ -299,10 +300,10 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('reason=pnpm-lock.yaml runtime dependency resolution', classified.stdout)
         self.assertIn('skipped=none', classified.stdout)
     def test_direct_deploy_recovers_restart_and_reload_failures(self):
-        self.assertIn('scripts/release/manage-acs-systemd-unit.sh', self.workflow)
+        self.assertIn('scripts/release/manage-acs-systemd-unit.sh', self.deploy_script)
         self.assertIn(
             'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
-            self.workflow,
+            (REPO_ROOT / 'scripts/release/build-release.mjs').read_text(encoding='utf-8'),
         )
         classifier = ACS_CLASSIFIER.read_text(encoding='utf-8')
         self.assertIn('scripts/release/manage-acs-systemd-unit.sh', classifier)
@@ -409,14 +410,14 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertEqual(checked.returncode, 0, checked.stderr)
 
     def test_browser_smoke_helper_is_sealed_and_triggers_publish(self):
-        self.assertIn(
-            'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py',
-            self.workflow,
-        )
-        self.assertRegex(
-            self.workflow,
-            r'install -m 0555[\s\\]+workspace-shared/\.ky-agent/skills-pool/browser/scripts/acs_browser\.py',
-        )
+        # The old direct-deploy wrapper is gone. The browser helper remains in
+        # the image/source input contract, while actual scripts retain rollback tests.
+        inputs = (REPO_ROOT / '.github/acs-runtime-inputs.txt').read_text(encoding='utf-8')
+        self.assertIn('0555 workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py', inputs)
+        release_builder = (REPO_ROOT / 'scripts/release/build-release.mjs').read_text(encoding='utf-8')
+        self.assertIn("const sourceRoot = join(root, 'workspace-shared')", release_builder)
+        self.assertIn("'.ky-agent/skills-pool'", release_builder)
+        self.assertIn('await copyStagingSharedAssets(root,', release_builder)
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
             changed.write('workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py\n')
             changed.flush()

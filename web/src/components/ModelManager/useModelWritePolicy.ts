@@ -1,28 +1,32 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import {
   getConfigWritePolicy,
-  parseConfigWritePolicy,
   PRODUCTION_CONFIG_PUBLISH_REQUIRED,
-  type ConfigWritePolicy,
 } from '@agent/shared/configWritePolicy';
+import { useAdminConfigWritePolicy } from '@/hooks/useAdminConfigWritePolicy';
 
 const UNKNOWN_POLICY = '尚未取得服务端配置写入策略，暂不可修改。请刷新后重试。';
 const PRODUCTION_NOTICE =
-  '生产环境：当前部署尚未提供生产配置在线发布能力，模型配置仅可查看。需通过已验证的受控运维流程变更；重复保存或刷新不会解除此限制。';
+  '生产环境未提供模型在线发布能力，请走受控运维流程。';
 
 /** UI capability is read from this endpoint, never inferred from hostname or NODE_ENV. */
 export function useModelWritePolicy(accountReadOnly: boolean) {
-  const [policy, setPolicy] = useState<ConfigWritePolicy | null>(null);
+  const common = useAdminConfigWritePolicy(accountReadOnly);
+  const acceptMetadata = common.acceptMetadata;
+  const policy = common.policy;
   const acceptPolicy = useCallback((value: unknown) => {
-    setPolicy(parseConfigWritePolicy(value));
-  }, []);
+    acceptMetadata({ writePolicy: value as never });
+  }, [acceptMetadata]);
+  const acceptResponse = useCallback((value: { revision?: string; writePolicy?: unknown }) => {
+    acceptMetadata(value as never);
+  }, [acceptMetadata]);
   const acceptFailure = useCallback((value: { code?: string }) => {
     if (value.code === PRODUCTION_CONFIG_PUBLISH_REQUIRED) {
       // Preserve the local draft; only withdraw permission after an authoritative denial.
-      setPolicy(getConfigWritePolicy('production'));
+      acceptMetadata({ writePolicy: getConfigWritePolicy('production') });
     }
-  }, []);
-  const readOnly = accountReadOnly || policy?.canSave !== true;
+  }, [acceptMetadata]);
+  const readOnly = common.readOnly;
   const notice = accountReadOnly
     ? '当前账号只有查看权限，不能保存模型配置。'
     : !policy
@@ -39,7 +43,10 @@ export function useModelWritePolicy(accountReadOnly: boolean) {
   }, [notice, readOnly]);
   const confirmationFor = useCallback((revision: string): string | undefined | null => {
     if (policy?.environment !== 'production') return undefined;
-    return window.confirm('当前为生产环境。保存将修改当前环境的模型配置，并等待 API 与 Worker 同时生效。确认继续？') ? revision : null;
+    return window.confirm('确认保存生产模型配置并等待双端生效？') ? revision : null;
   }, [policy]);
-  return { readOnly, acceptPolicy, acceptFailure, assertWritable, notice, confirmationFor };
+  return {
+    readOnly, acceptPolicy, acceptResponse, acceptFailure, assertWritable, notice, confirmationFor,
+    bodyMetadata: common.bodyMetadata, mutationFetch: common.mutationFetch,
+  };
 }

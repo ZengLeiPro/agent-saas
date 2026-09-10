@@ -90,6 +90,7 @@ export async function persistSubmittedQuotaSecrets(input: {
   replacedRefs: QuotaSecretRef[];
   /** 现有配置里每个分组的 quotaSource.secretAccessKeyRef。 */
   previousRefs: Map<string, string | undefined>;
+  operationId?: string;
 }): Promise<ModelsConfig> {
   const groups = await Promise.all(
     input.models.groups.map(async (group) => {
@@ -101,7 +102,12 @@ export async function persistSubmittedQuotaSecrets(input: {
         'models',
         source.secretAccessKey,
         { actor: 'system', userId: 'models_config_admin', scopes: ['secret:models:write'] },
-        { groupId: group.id, purpose: 'quota-source', provider: source.provider },
+        {
+          groupId: group.id,
+          purpose: 'quota-source',
+          provider: source.provider,
+          ...(input.operationId ? { configOperationId: input.operationId } : {}),
+        },
       );
       input.createdRefs.push({ ref: ref.id, kind: 'models' });
       const { secretAccessKey: _plain, ...safe } = source;

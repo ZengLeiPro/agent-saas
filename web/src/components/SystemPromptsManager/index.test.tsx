@@ -15,6 +15,8 @@ const CUSTOM_CONTENT = "自定义提示语";
 
 function response(content = DEFAULT_CONTENT, overridden = false): Response {
   return new Response(JSON.stringify({
+    revision: "revision-prompt-1",
+    writePolicy: { environment: "development", mode: "online", canSave: true },
     prompts: [{
       id: "main.static",
       category: "main",
@@ -52,11 +54,19 @@ describe("SystemPromptsManager", () => {
     expect(await screen.findByText("已保存并热更新，后续模型调用立即使用新版本")).toBeTruthy();
     const put = vi.mocked(authFetch).mock.calls.find((call) => call[1]?.method === "PUT");
     expect(put?.[0]).toBe("/api/admin/system-prompts/main.static");
-    expect(JSON.parse(String(put?.[1]?.body))).toEqual({ content: CUSTOM_CONTENT });
+    expect(JSON.parse(String(put?.[1]?.body))).toEqual(expect.objectContaining({
+      content: CUSTOM_CONTENT,
+      expectedRevision: "revision-prompt-1",
+      operationId: expect.any(String),
+    }));
 
     await user.click(screen.getByRole("button", { name: "恢复默认" }));
     expect(await screen.findByText("已恢复系统默认并热更新")).toBeTruthy();
     const reset = vi.mocked(authFetch).mock.calls.find((call) => call[1]?.method === "DELETE");
     expect(reset?.[0]).toBe("/api/admin/system-prompts/main.static");
+    expect(reset?.[1]?.headers).toEqual(expect.objectContaining({
+      "X-Config-Revision": "revision-prompt-1",
+      "X-Config-Operation-Id": expect.any(String),
+    }));
   });
 });

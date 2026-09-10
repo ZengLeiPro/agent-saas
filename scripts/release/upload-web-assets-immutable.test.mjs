@@ -92,8 +92,14 @@ module.exports = class FakeOSS {
       fs.writeFileSync(file, '<html>website fallback</html>');
       return { res: { status: 200, headers: { etag: '"fallback"' } } };
     }
-    fs.copyFileSync(target, file);
-    return { res: { status: 200, headers: { etag: '"' + fs.statSync(target).size + '"' } } };
+    if (typeof file === 'string') fs.copyFileSync(target, file);
+    else if (file) file.end(fs.readFileSync(target));
+    const headers = { etag: '"' + fs.statSync(target).size + '"' };
+    for (const line of fs.readFileSync(target + '.headers', 'utf8').split('\\r\\n')) {
+      const split = line.indexOf(':');
+      if (split > 0) headers[line.slice(0, split).toLowerCase()] = line.slice(split + 1).trim();
+    }
+    return { content: fs.readFileSync(target), res: { status: 200, headers } };
   }
 };
 `;
@@ -180,6 +186,8 @@ test('atomically uploads final Web asset bytes from the Workflow working directo
   const second = runUploader(root);
   assert.equal(second.status, 0, second.stderr);
   assert.match(second.stdout, /uploaded=0 reused=3/u);
+  const secondLog = await readFile(join(root, 'oss.log'), 'utf8');
+  assert.doesNotMatch(secondLog, /^stat /mu);
 });
 
 test('rejects same-key asset byte drift instead of overwriting the existing object', async () => {
@@ -220,4 +228,5 @@ test('rejects immutable assets whose uploaded cache or content headers drift', a
   const root = await setupFixture();
   const result = runUploader(root, { FAKE_BAD_HEADERS: 'true' });
   assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Web asset verification failed: key=app-abc.js/u);
 });

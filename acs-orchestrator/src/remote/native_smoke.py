@@ -25,6 +25,13 @@ def main() -> None:
     empty, _ = reap_children()
     if not empty:
         raise RuntimeError("native child reaping failed")
+    # 按生产的真实隔离入口执行，不能用当前进程已修正的 sys.path 代替验证。
+    control = subprocess.run([sys.executable, "-I", str(HERE / "dws_control.py")],
+                             input="{}", text=True, capture_output=True, timeout=5)
+    if control.returncode != 1 or control.stderr or json.loads(control.stdout) != {
+        "protocolVersion": 1, "error": "unsupported_receiver_protocol",
+    }:
+        raise RuntimeError("isolated DWS control entry smoke failed")
     print(json.dumps({"nativeControlSmoke": "passed", "productionVerification": False}))
 
 

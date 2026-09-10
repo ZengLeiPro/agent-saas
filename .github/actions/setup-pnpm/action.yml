@@ -21,7 +21,7 @@ runs:
           Linux-aarch64|Linux-arm64) asset=pnpm-linux-arm64 ;;
           Darwin-arm64) asset=pnpm-macos-arm64 ;;
           Darwin-x86_64) asset=pnpm-macos-x64 ;;
-          *) echo "::error title=setup-pnpm::unsupported runner platform $(uname -s)-$(uname -m)"; exit 1 ;;
+          *) echo "::error title=setup-pnpm::unsupported runner platform $(uname -s)-$(uname -m)"; exit 2 ;;
         esac
         expected="$(awk -v key="$asset@$version" '$2 == key { print $1 }' .github/pnpm-standalone.sha256 | head -n1)"
         if [ -z "$expected" ]; then
@@ -67,7 +67,11 @@ runs:
         PNPM_DIR: ${{ steps.resolve.outputs.dir }}
       run: |
         set -euo pipefail
-        actual="$(sha256sum "$PNPM_DIR/pnpm" | awk '{ print $1 }')"
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual="$(sha256sum "$PNPM_DIR/pnpm" | awk '{ print $1 }')"
+        else
+          actual="$(shasum -a 256 "$PNPM_DIR/pnpm" | awk '{ print $1 }')"
+        fi
         if [ "$actual" != "$PNPM_EXPECTED_SHA256" ]; then
           rm -rf "$PNPM_DIR"
           echo "::error title=setup-pnpm::pnpm binary digest mismatch: expected $PNPM_EXPECTED_SHA256 got $actual"

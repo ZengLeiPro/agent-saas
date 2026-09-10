@@ -63,6 +63,50 @@ describe("UserStore user ids", () => {
     expect(reader.findById(user.id)?.username).toBe("reload-safe-user");
   });
 
+  it.each([
+    ["缺少 users", { version: 1, debugModeMigrationVersion: 1 }],
+    ["users 为 null", { version: 1, debugModeMigrationVersion: 1, users: null }],
+    ["users 不是数组", { version: 1, debugModeMigrationVersion: 1, users: {} }],
+    [
+      "数组元素损坏",
+      { version: 1, debugModeMigrationVersion: 1, users: [{ id: "broken-user" }] },
+    ],
+  ])("reload 遇到%s时保留上一版有效快照", async (_case, invalidSnapshot) => {
+    const { store: writer, filePath } = await tempUserStore();
+    const user = await writer.create({
+      username: "reload-structure-safe-user",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+    });
+    const reader = new UserStore(filePath);
+
+    await writeFile(filePath, JSON.stringify(invalidSnapshot));
+    expect(() => reader.reload()).toThrow("已保留上一版用户快照");
+    expect(reader.count()).toBe(1);
+    expect(reader.findById(user.id)?.username).toBe("reload-structure-safe-user");
+  });
+
+  it("reload 接受结构完整的空用户数组", async () => {
+    const { store: writer, filePath } = await tempUserStore();
+    await writer.create({
+      username: "reload-empty-user",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+    });
+    const reader = new UserStore(filePath);
+
+    await writeFile(
+      filePath,
+      JSON.stringify({ version: 1, debugModeMigrationVersion: 1, users: [] }),
+    );
+    expect(() => reader.reload()).not.toThrow();
+    expect(reader.count()).toBe(0);
+  });
+
   it("persists new users with compact ids", async () => {
     const { store, filePath } = await tempUserStore();
 
@@ -107,6 +151,7 @@ describe("UserStore debug mode cascade", () => {
         tenantId: "tenant-a",
         debugMode: true,
         createdAt: "2026-01-01T00:00:00.000Z",
+        createdBy: "system",
         updatedAt: "2026-01-01T00:00:00.000Z",
       }],
     }));

@@ -19,6 +19,7 @@ import { KyAppHandshakeService } from './attest/handshake.js';
 import { PgKyAppDirectoryChangeLog } from './directory/changeLog.js';
 import { DirectoryProjector, GovernanceDirectorySource } from './directory/projection.js';
 import { DirectoryChangeNotifier } from './directory/notifier.js';
+import { RefreshingDirectoryReconciler } from './directory/refreshingReconciler.js';
 import { PgDirectorySnapshotSource } from './directory/snapshot.js';
 import { PgKyAppDeliveryStore } from './delivery/store.js';
 import { KyAppDeliveryMetrics } from './delivery/metrics.js';
@@ -236,6 +237,13 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     directoryChangeLog && directorySource
       ? new DirectoryProjector({ ...base, changeLog: directoryChangeLog, source: directorySource })
       : null;
+  const directoryReconciler =
+    userStore && directoryProjector
+      ? new RefreshingDirectoryReconciler({
+          refresh: () => userStore.reload(),
+          reconciler: directoryProjector,
+        })
+      : null;
   const directorySnapshots = directoryChangeLog ? new PgDirectorySnapshotSource(base) : null;
   const deliveryStore = new PgKyAppDeliveryStore(pool, tablePrefix);
   const deliveryMetrics =
@@ -308,11 +316,11 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     suspensions,
     alerts,
     directoryIntervalMs: config.directory.reconcileIntervalMs,
-    ...(directoryChangeLog && directoryProjector
+    ...(directoryChangeLog && directoryReconciler
       ? {
           directoryMaintenance: {
             reconcile: async () => {
-              const results = await directoryProjector.reconcileAll();
+              const results = await directoryReconciler.reconcileAll();
               await directoryNotifier.notify(results);
             },
             purgeExpired: (at: Date) =>

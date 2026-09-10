@@ -2,14 +2,20 @@ import type { AgentRunDispatch } from '../agent/index.js';
 import { DwsContextRuntime } from '../context/sync/index.js';
 import type { ContextStore } from '../context/store/index.js';
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import { PgDwsDeliveryStore } from '../data/agentDwsAccounts/durableDeliveryStore.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
-import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
+import { AgentDwsAuthFlowService, principalFor } from '../dws/agentAuthFlow.js';
 import { DwsDeviceLoginRunner, type DwsWorkspacePrincipal } from '../dws/authFlow.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
-import { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
+import { DwsPersonalEventGateway, type DwsEventGateway, type DwsPersonalEvent } from '../dws/personalEventGateway.js';
+import { DurableDwsEventGateway, DwsEventGatewayMultiplexer } from '../dws/durableEventGateway.js';
+import { DwsReceiverClient } from '../dws/dwsReceiverClient.js';
+import {
+  AcsDwsLegacyBridge, DurableDwsReceiverMigrationService, type DwsReceiverMigrationService,
+} from '../dws/durableReceiverMigration.js';
 import {
   AgentDwsMessageRouter,
   type AgentDwsDefaultModelResolution,
@@ -39,7 +45,8 @@ export type ConnectorServerRemoteResolver = (principal: DwsWorkspacePrincipal) =
 export interface AgentDwsRuntimeBundle {
   authFlowService: AgentDwsAuthFlowService;
   messageRouter?: AgentDwsMessageRouter;
-  eventGateway: DwsPersonalEventGateway;
+  eventGateway: DwsEventGateway;
+  receiverMigrationService: DwsReceiverMigrationService;
   approvalService?: OrgAgentApprovalService;
   isOrgAgentRuntimeV2Ready(account: AgentDwsAccountRecord): Promise<boolean>;
   onContextPolicyUpdated(account: AgentDwsAccountRecord): Promise<void>;
@@ -253,24 +260,53 @@ export async function createAgentDwsRuntime(options: {
         logger: options.logger.child('AgentDwsMessageRouter'),
       })
     : undefined;
-  const eventGateway = new DwsPersonalEventGateway({
+  const onEvent = async (account: AgentDwsAccountRecord, event: DwsPersonalEvent) => {
+    if (!messageRouter) throw new Error('Agent DWS durable inbox is unavailable');
+    await messageRouter.ingest(account, event);
+    // Context sync remains a best-effort wake after the durable inbox commit. Event
+    // content is ignored; the worker re-reads canonical messages from DWS.
+    void contextRuntime?.wake(account, event).catch(error => {
+      options.logger.warn(
+        `DWS context event wake failed account=${account.accountId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  };
+  const legacyEventGateway = new DwsPersonalEventGateway({
     agentCwd: options.agentCwd,
     accountStore: options.accountStore,
     resolveServerRemote: options.resolveServerRemote,
     isExecutionEnabled: options.isExecutionEnabled,
-    onEvent: async (account, event) => {
-      if (!messageRouter) throw new Error('Agent DWS durable inbox is unavailable');
-      await messageRouter.ingest(account, event);
-      // Context sync remains a best-effort wake after the durable inbox commit. Event
-      // content is ignored; the worker re-reads canonical messages from DWS.
-      void contextRuntime?.wake(account, event).catch(error => {
-        options.logger.warn(
-          `DWS context event wake failed account=${account.accountId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-    },
+    onEvent,
     logger: options.logger.child('DwsPersonalEventGateway'),
   });
+  const durableDeliveryStore = new PgDwsDeliveryStore(options.pgEventStore.pool, options.tablePrefix);
+  await durableDeliveryStore.init();
+  const durableEventGateway = new DurableDwsEventGateway({
+    accountStore: options.accountStore,
+    deliveryStore: durableDeliveryStore,
+    async clientFor(account) {
+      const remote = await options.resolveServerRemote(principalFor(account));
+      return new DwsReceiverClient({
+        baseUrl: remote.baseUrl,
+        authToken: remote.authToken,
+        ...(remote.invokeTimeoutMs ? { timeoutMs: Math.min(remote.invokeTimeoutMs, 15_000) } : {}),
+      });
+    },
+    onEvent,
+    isExecutionEnabled: options.isExecutionEnabled,
+    logger: options.logger.child('DurableDwsEventGateway'),
+  });
+  const receiverMigrationService = new DurableDwsReceiverMigrationService({
+    agentCwd: options.agentCwd,
+    accountStore: options.accountStore,
+    deliveryStore: durableDeliveryStore,
+    legacyGateway: legacyEventGateway,
+    durableGateway: durableEventGateway,
+    bridge: new AcsDwsLegacyBridge({
+      resolveRemote: account => options.resolveServerRemote(principalFor(account)),
+    }),
+  });
+  const eventGateway: DwsEventGateway = new DwsEventGatewayMultiplexer(legacyEventGateway, durableEventGateway);
   const authFlowService = new AgentDwsAuthFlowService({
     agentCwd: options.agentCwd,
     authSessionStore,
@@ -281,7 +317,7 @@ export async function createAgentDwsRuntime(options: {
     }),
     stopPreviousIdentity: async account => {
       // 账号 CAS 已提交后再停止旧流，避免 CAS 冲突留下 active 旧身份但 stream/context 被清空。
-      await eventGateway.stopAccount(account.accountId);
+      await eventGateway.stopAccount(account.accountId, account);
     },
     invalidatePreviousIdentityContext: async account => {
       await contextRuntime?.invalidateAccountIdentity(account);
@@ -333,6 +369,7 @@ export async function createAgentDwsRuntime(options: {
     authFlowService,
     messageRouter,
     eventGateway,
+    receiverMigrationService,
     approvalService,
     isOrgAgentRuntimeV2Ready,
     async onContextPolicyUpdated(account) {

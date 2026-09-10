@@ -9,7 +9,7 @@ import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/r
 import { runWithInvocationCorrelation } from 'server/runtime/invocationCorrelation.js';
 
 import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput } from './protocol.js';
-import { runSandboxRunnerDaemon } from './sandboxRunnerDaemon.js';
+import { handoverSandboxControl } from './sandboxControlEntry.js';
 import {
   snapshotAutoRoutingReason,
   type SnapshotAutoRoutingReason,
@@ -105,6 +105,10 @@ async function executeSandboxRunnerInputInternal(
   const workspaceRoot = input.workspace.root || process.env.ACS_WORKSPACE_PATH || '/workspace';
   if (input.toolName === '__FeishuCli') {
     emit({ kind: 'final', response: executeFeishuCli(input.input, workspaceRoot) });
+    return;
+  }
+  if (input.toolName === '__DwsReceiver') {
+    emit({ kind: 'final', response: executeDwsReceiverControl(input.input, workspaceRoot) });
     return;
   }
   if (!options.skipPythonEnv) ensurePythonEnv(workspaceRoot);
@@ -251,6 +255,40 @@ async function executeSandboxRunnerInputInternal(
   }
 }
 
+/** Fixed internal receiver RPC; arbitrary commands and caller-selected paths are forbidden. */
+export function executeDwsReceiverControl(input: unknown, workspaceRoot: string): ToolInvocationResponse {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { status: 'error', error: 'invalid_receiver_control' };
+  }
+  try {
+    const podUid = readFileSync('/var/run/acs-identity/pod-uid', 'utf8').trim();
+    if (!podUid) throw new Error('pod_identity_mount_unavailable');
+    const script = join(dirname(fileURLToPath(import.meta.url)), 'remote', 'dws_control.py');
+    const stdout = execFileSync('/usr/local/bin/python3', ['-I', script], {
+      cwd: workspaceRoot,
+      input: JSON.stringify({ ...(input as Record<string, unknown>), podUid, workspaceRoot }),
+      encoding: 'utf8',
+      timeout: 15_000,
+      maxBuffer: 3 * 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const snapshot: unknown = JSON.parse(stdout);
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
+      || (snapshot as Record<string, unknown>).protocolVersion !== 1) {
+      throw new Error('receiver_control_invalid_response');
+    }
+    return { status: 'success', content: JSON.stringify(snapshot) };
+  } catch (error) {
+    const child = error as Error & { stdout?: string | Buffer };
+    let code = 'receiver_control_unavailable';
+    try {
+      const value = JSON.parse(String(child.stdout ?? '')) as { error?: unknown };
+      if (typeof value.error === 'string' && /^[a-z0-9_:-]{1,128}$/.test(value.error)) code = value.error;
+    } catch { /* Keep the fixed diagnostic code. */ }
+    return { status: 'error', error: code };
+  }
+}
+
 export function resolveMountedSharedReadOnlyRoot(value: string | undefined): string {
   if (!value || !isAbsolute(value)) {
     throw new Error('组织共享只读目录已声明挂载，但 AGENT_SHARED_READ_ONLY_PATH 无效');
@@ -353,19 +391,10 @@ export function createCachedPythonEnvEnsurer(
 }
 
 async function main(): Promise<void> {
-  if (process.argv.includes('--daemon')) {
-    const ensurePythonEnvReady = createCachedPythonEnvEnsurer();
-    await runSandboxRunnerDaemon({
-      imageRef: process.env.ACS_SANDBOX_IMAGE,
-      execute: async (input, signal, emit) => {
-        if (input.toolName !== '__FeishuCli') {
-          const workspaceRoot = input.workspace.root || process.env.ACS_WORKSPACE_PATH || '/workspace';
-          await ensurePythonEnvReady(workspaceRoot);
-        }
-        await executeSandboxRunnerInput(input, signal, emit, { skipPythonEnv: true });
-      },
-    });
-    return;
+  // No Node parent may retain the control pipe while same-UID tools execute.
+  // --owned-child is launched only by the immutable per-attempt supervisor.
+  if (!process.argv.includes('--owned-child')) {
+    handoverSandboxControl(process.argv.includes('--daemon') ? 'daemon' : 'oneshot');
   }
   const raw = await readStdin();
   const input = JSON.parse(raw || '{}') as SandboxRunnerInput;

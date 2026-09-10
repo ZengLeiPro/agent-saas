@@ -2879,7 +2879,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentDwsAccountStore, agentDwsMessageStore,
     orgGroupAgentStore, orgAgentApprovalService: agentDwsRuntime?.approvalService,
     agentDwsAuthFlowService: agentDwsRuntime?.authFlowService, agentDwsMessageRouter: agentDwsRuntime?.messageRouter,
-    dwsPersonalEventGateway: agentDwsRuntime?.eventGateway, agentDwsContextPolicyUpdated: agentDwsRuntime?.onContextPolicyUpdated,
+    dwsPersonalEventGateway: agentDwsRuntime?.eventGateway, dwsReceiverMigrationService: agentDwsRuntime?.receiverMigrationService, agentDwsContextPolicyUpdated: agentDwsRuntime?.onContextPolicyUpdated,
     agentDwsGroupBindingUpdated: agentDwsRuntime?.onGroupBindingUpdated,
     agentDwsEnabledChanged: agentDwsRuntime?.onEnabledChanged, notionAuthFlowService,
     isOrgAgentRuntimeV2Ready: agentDwsRuntime?.isOrgAgentRuntimeV2Ready,

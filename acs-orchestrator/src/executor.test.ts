@@ -533,8 +533,8 @@ function baseConfig(): AcsOrchestratorConfig {
   };
 }
 
-describe('spawnRunner 命令构造（A 方案批次 3：预编译 sandboxRunner）', () => {
-  it('优先跑预编译产物，缺失时退回 tsx', async () => {
+describe('spawnRunner 命令构造（隔离 attempt supervisor）', () => {
+  it('one-shot 也进入不可阻塞共享控制面的原生 supervisor', async () => {
     const ref: SandboxRef = {
       name: 'as-active',
       workspaceId: 'ws_kaiyan__u-1',
@@ -573,12 +573,10 @@ describe('spawnRunner 命令构造（A 方案批次 3：预编译 sandboxRunner�
     const firstCall = spawn.mock.calls[0] as unknown as [string[], unknown];
     const args = firstCall[0];
     const script = args.join(' ');
-    // 用 sh -c 做运行期存在性判断，而非把路径写死：蓝绿/回滚期间可能短暂跑到
-    // 不含预编译产物的旧镜像，此时必须能退回 tsx（宁可慢，不可不可用）。
-    expect(args).toContain('/bin/sh');
-    expect(script).toContain('dist/sandboxRunner.mjs');
-    expect(script).toContain('src/sandboxRunner.ts');
-    expect(script.indexOf('dist/sandboxRunner.mjs')).toBeLessThan(script.indexOf('node_modules/.bin/tsx'));
+    expect(args).toContain('/usr/local/bin/python3');
+    expect(script).toContain('dist/remote/runner_daemon.py');
+    expect(args).toContain('--oneshot');
+    expect(script).not.toContain('node_modules/.bin/tsx');
   });
 });
 

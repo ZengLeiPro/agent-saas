@@ -22,7 +22,7 @@ import { resolveOrgAgentRuntimeSkillIds } from '../data/orgAgents/runtimePolicy.
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { ContextStore } from '../context/store/index.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
-import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
+import type { DwsEventGateway } from '../dws/personalEventGateway.js';
 import { deriveDwsAgentDelegationResourceId } from '../dws/businessToolProvider.js';
 import { OrgAgentApprovalError, type OrgAgentApprovalService } from '../dws/orgAgentApprovalService.js';
 import {
@@ -47,6 +47,7 @@ import {
   withRealtimeConsentTimestamps,
 } from './agentDwsAccountPresentation.js';
 import { queryTenant, tenantFor } from './agentDwsRouteTenant.js';
+import { registerAgentDwsMigrationRoutes, type DwsReceiverMigrationRouteService } from './agentDwsMigrationRoutes.js';
 const eventKindSchema = z.enum(['at_me', 'all_direct']);
 const createSchema = z.object({
   tenantId: z.string().trim().min(1).max(64).optional(),
@@ -136,7 +137,8 @@ export interface AgentDwsAccountsRouterOptions {
   backgroundTasks?: BackgroundTaskRuntime;
   isOrgAgentRuntimeV2Ready?: (account: AgentDwsAccountRecord) => boolean | Promise<boolean>;
   authFlowService?: AgentDwsAuthFlowServiceLike;
-  eventGateway?: DwsPersonalEventGateway;
+  eventGateway?: DwsEventGateway;
+  receiverMigrationService?: DwsReceiverMigrationRouteService;
   auditStore?: GovernanceAuditStore;
   onContextPolicyUpdated?: (account: AgentDwsAccountRecord) => void | Promise<void>;
   onGroupBindingUpdated?: (account: AgentDwsAccountRecord, conversationId: string) => void | Promise<void>;
@@ -145,6 +147,7 @@ export interface AgentDwsAccountsRouterOptions {
 
 export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOptions): Router {
   const router = Router();
+  registerAgentDwsMigrationRoutes(router, options.receiverMigrationService);
 
   router.get('/agent-dws-accounts', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
@@ -675,7 +678,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       try {
         if (!parsed.data.enabled) {
           await options.authFlowService?.cancel(tenantId, account.accountId);
-          await options.eventGateway?.stopAccount(account.accountId);
+          await options.eventGateway?.stopAccount(account.accountId, account);
         } else if (account.status === 'active') {
           await options.eventGateway?.startAccount(account);
         }
@@ -740,7 +743,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
         parsed.data.mode,
       );
       try {
-        await options.eventGateway?.stopAccount(account.accountId);
+        await options.eventGateway?.stopAccount(account.accountId, account);
         const session = await options.authFlowService!.start(account);
         return {
           status: 202,
@@ -791,7 +794,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       purpose: 'restart Agent DingTalk personal event stream',
     }, async () => {
       try {
-        await options.eventGateway!.stopAccount(account.accountId);
+        await options.eventGateway!.stopAccount(account.accountId, account);
         await options.eventGateway!.startAccount(account);
       } catch {
         throw new AgentDwsMutationFailure('AGENT_DWS_RUNTIME_SYNC_FAILED', true);

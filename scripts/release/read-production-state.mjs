@@ -472,8 +472,8 @@ export async function validateCandidateReleaseReadiness({
   }
   assertAnonymousReadinessOmitsConfigIdentity(required(readiness, 'Candidate readiness response'));
   const release = required(readiness.release, 'Candidate readiness release identity');
-  const expectedSourceSha =
-    environment === 'production' ? manifest?.components?.api?.sourceSha : manifest?.releaseSha;
+  // 两个环境都安装清单选定的 API；只更新 ACS 时 API 源码仍属于上一版本。
+  const expectedSourceSha = manifest?.components?.api?.sourceSha;
   if (
     readiness.status !== 'ok' ||
     release.environment !== environment ||

@@ -180,6 +180,8 @@ test('atomically uploads final Web asset bytes from the Workflow working directo
   const second = runUploader(root);
   assert.equal(second.status, 0, second.stderr);
   assert.match(second.stdout, /uploaded=0 reused=3/u);
+  const secondLog = await readFile(join(root, 'oss.log'), 'utf8');
+  assert.doesNotMatch(secondLog, /^stat /mu);
 });
 
 test('rejects same-key asset byte drift instead of overwriting the existing object', async () => {

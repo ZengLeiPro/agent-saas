@@ -1,53 +1,65 @@
 {
-  "id": "dws-reader-first-v1",
-  "baseSha": "19844d151823d260348ecdae53d13ca13f5ad5f9",
+  "id": "native-control-image-wiring-v1",
+  "baseSha": "29736ac84f9f3dcc470fd178f961516b43b6f15b",
   "files": [
     {
-      "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
-      "content":"export type DwsDeliveryProtocol = 'legacy' | 'handoff_pending' | 'durable-v1' | 'unsupported';\nexport interface DwsRunnableSelection {\n  deliveryProtocol?: 'legacy' | 'durable-v1' | 'all';\n  /** Identity-cleanup recovery is not a listener and may inspect blocked accounts. */\n  includeIdentityCleanup?: boolean;\n}\n\nexport function readDwsDeliveryProtocol(rawPolicy: unknown): DwsDeliveryProtocol {\n  if (rawPolicy === null || rawPolicy === undefined) return 'legacy';\n  if (typeof rawPolicy !== 'object' || Array.isArray(rawPolicy)) return 'unsupported';\n  const policy = rawPolicy as Record<string, unknown>;\n  if (!Object.hasOwn(policy, 'deliveryProtocol')) return 'legacy';\n  return policy.deliveryProtocol === 'legacy' || policy.deliveryProtocol === 'handoff_pending' || policy.deliveryProtocol === 'durable-v1'\n    ? policy.deliveryProtocol : 'unsupported';\n}\n\nexport function canRunLegacyDwsListener(account: { deliveryProtocol?: string; identityCleanupPending?: unknown }): boolean {\n  return (account.deliveryProtocol === undefined || account.deliveryProtocol === 'legacy') && !account.identityCleanupPending;\n}\n\n// A JSON null, malformed object or unknown future protocol is not legacy.\n// This predicate also fences cached pre-migration snapshots at the authoritative UPDATE.\nexport const LEGACY_DWS_DELIVERY_SQL = `jsonb_typeof(COALESCE(event_policy_json,'{}'::jsonb))='object'\n  AND (NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'deliveryProtocol')\n    OR event_policy_json->>'deliveryProtocol'='legacy')`;\n\nexport function runnableDwsDeliverySql(selection: DwsRunnableSelection = {}): string {\n  const protocol = selection.deliveryProtocol ?? 'legacy';\n  const delivery = protocol === 'legacy' ? `(${LEGACY_DWS_DELIVERY_SQL})`\n    : protocol === 'durable-v1' ? `(event_policy_json->>'deliveryProtocol'='durable-v1')`\n    : protocol === 'all' ? `((${LEGACY_DWS_DELIVERY_SQL}) OR event_policy_json->>'deliveryProtocol' IN ('durable-v1','handoff_pending'))`\n    : (() => { throw new Error('Unsupported DWS runnable selection'); })();\n  return selection.includeIdentityCleanup === true ? delivery\n    : `${delivery} AND NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'identityCleanupPending')`;\n}\n"
-    },
-    {
-      "path": "server/src/data/agentDwsAccounts/types.ts",
-      "replacements": [
-        {"before":"export type AgentDwsAccountStatus", "after":"import type { DwsDeliveryProtocol } from './deliveryProtocol.js';\nexport * from './deliveryProtocol.js';\n\nexport type AgentDwsAccountStatus"},
-        {"before":"  runtimeStatus: AgentDwsRuntimeStatus;", "after":"  runtimeStatus: AgentDwsRuntimeStatus;\n  /** Missing only on pre-reader snapshots; every PG lease UPDATE also checks the persisted protocol. */\n  deliveryProtocol?: DwsDeliveryProtocol;"}
+      "path": "acs-orchestrator/src/sandboxManifest.ts",
+      "extract": {"sourcePath": "acs-orchestrator/src/sandboxManager.ts", "start": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {", "end": "  /** Sandbox CR + Pod 联动删除"},
+      "prefix": "import type { AcsOrchestratorConfig } from './config.js';\nimport type { SandboxRef } from './sandboxManagerTypes.js';\nimport { APP_LABEL, CREATED_AT_ANNOTATION, LAST_ACTIVE_AT_ANNOTATION, MANAGED_BY_LABEL, MOUNT_SUBPATH_ANNOTATION, NETWORK_POLICY_DENY_PRIVATE_ANNOTATION, NETWORK_POLICY_MODE_ANNOTATION, NETWORK_POLICY_MODE_LABEL, SANDBOX_SCOPE_ANNOTATION, SANDBOX_SCOPE_LABEL, SESSION_ANNOTATION, SESSION_LABEL, SHARED_READ_ONLY_SUBPATH_ANNOTATION, WORKSPACE_ANNOTATION, WORKSPACE_LABEL } from './sandboxInventoryReader.js';\nimport { buildWorkspaceVolumeMounts } from './sandboxWorkspaceMounts.js';\nimport { WORKLOAD_CLASS_LABEL, WORKLOAD_DESCRIPTOR_ANNOTATION } from './sandboxLifecyclePolicy.js';\nimport { sandboxResourceTarget } from './sandboxResourceDrift.js';\nimport { acsNetworkPolicyMode, labelValue, nodeHeapLimitMb } from './sandboxState.js';\nimport { buildPackageMirrorEnv, buildSandboxProxyEnv, egressSandboxFingerprint } from 'server/runtime/egressPolicy.js';\n\nconst ACS_NETWORK_POLICY_AGENT_ANNOTATION = 'network.alibabacloud.com/enable-network-policy-agent';\nconst ACS_NETWORK_POLICY_MODE_ANNOTATION = 'network.alibabacloud.com/network-policy-mode';\nconst EGRESS_FINGERPRINT_ANNOTATION = 'agent-saas.kaiyan.net/egress-fingerprint';\nconst SANDBOX_TIMEZONE = 'Asia/Shanghai';\n\n",
+      "transforms": [
+        {"before": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {", "after": "export function buildSandboxManifest(config: AcsOrchestratorConfig, ref: SandboxRef): Record<string, unknown> {"},
+        {"before": "this.config", "after": "config", "all": true},
+        {"before": "      ...(config.pvcName ? {\n        volumeMounts: buildWorkspaceVolumeMounts(config.workspaceMountPath, mountSubPath, sharedReadOnlySubPath),\n      } : {}),", "after": "      volumeMounts: [\n        ...(config.pvcName ? buildWorkspaceVolumeMounts(config.workspaceMountPath, mountSubPath, sharedReadOnlySubPath) : []),\n        // Kernel-supplied Pod identity, not a caller environment value or workspace file.\n        { name: 'acs-identity', mountPath: '/var/run/acs-identity', readOnly: true },\n      ],"},
+        {"before": "        ...(config.pvcName ? {\n          volumes: [{ name: 'workspace', persistentVolumeClaim: { claimName: config.pvcName } }],\n        } : {}),", "after": "        volumes: [\n          ...(config.pvcName ? [{ name: 'workspace', persistentVolumeClaim: { claimName: config.pvcName } }] : []),\n          { name: 'acs-identity', downwardAPI: { defaultMode: 0o444, items: [\n            { path: 'pod-uid', fieldRef: { apiVersion: 'v1', fieldPath: 'metadata.uid' } },\n          ] } },\n        ],"},
+        {"before": "\n  ", "after": "\n", "all": true}
       ]
     },
     {
-      "path": "server/src/data/agentDwsAccounts/store.ts",
+      "path": "acs-orchestrator/src/sandboxManager.ts",
       "replacements": [
-        {"before":"import type pg from 'pg';", "after":"import type pg from 'pg';\nimport { LEGACY_DWS_DELIVERY_SQL, readDwsDeliveryProtocol, runnableDwsDeliverySql, type DwsRunnableSelection } from './deliveryProtocol.js';"},
-        {"before":"  listRunnable(): Promise<AgentDwsAccountRecord[]>;", "after":"  listRunnable(selection?: DwsRunnableSelection): Promise<AgentDwsAccountRecord[]>;"},
-        {"before":"  async listRunnable(): Promise<AgentDwsAccountRecord[]> {", "after":"  async listRunnable(selection: DwsRunnableSelection = {}): Promise<AgentDwsAccountRecord[]> {"},
-        {"before":"         AND profile_id=corp_id || ':' || dingtalk_user_id\n       ORDER BY", "after":"         AND profile_id=corp_id || ':' || dingtalk_user_id\n         AND ${runnableDwsDeliverySql(selection)}\n       ORDER BY"},
-        {"before":"        AND (runtime_lease_owner IS NULL OR runtime_lease_expires_at <= NOW())", "after":"        AND ${LEGACY_DWS_DELIVERY_SQL}\n        AND NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'identityCleanupPending')\n        AND (runtime_lease_owner IS NULL OR runtime_lease_expires_at <= clock_timestamp())"},
-        {"before":"      WHERE account_id=$1 AND revision=$4 AND runtime_lease_owner=$2 AND status='active'", "after":"      WHERE account_id=$1 AND revision=$4 AND runtime_lease_owner=$2 AND status='active'\n        AND runtime_lease_expires_at > clock_timestamp()\n        AND ${LEGACY_DWS_DELIVERY_SQL}\n        AND NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'identityCleanupPending')"},
-        {"before":"runtime_lease_expires_at=NOW()+($3::bigint * INTERVAL '1 millisecond')", "after":"runtime_lease_expires_at=clock_timestamp()+($3::bigint * INTERVAL '1 millisecond')", "all":true,"count":2},
-        {"before":"      WHERE account_id=$1 AND runtime_lease_owner=$2\n", "after":"      WHERE account_id=$1 AND runtime_lease_owner=$2 AND ${LEGACY_DWS_DELIVERY_SQL}\n"},
-        {"before":"      WHERE account_id=$1\n    `, [accountId]);", "after":"      WHERE account_id=$1 AND ${LEGACY_DWS_DELIVERY_SQL}\n    `, [accountId]);"},
-        {"before":"      WHERE account_id=$1 AND revision=$5 AND ($4::text IS NULL OR runtime_lease_owner=$4)", "after":"      WHERE account_id=$1 AND revision=$5 AND ${LEGACY_DWS_DELIVERY_SQL}\n        AND ($4::text IS NULL OR (runtime_lease_owner=$4 AND runtime_lease_expires_at > clock_timestamp()))"},
-        {"before":"        AND runtime_lease_owner=$2 AND runtime_lease_expires_at > NOW()", "after":"        AND runtime_lease_owner=$2 AND runtime_lease_expires_at > clock_timestamp()\n        AND ${LEGACY_DWS_DELIVERY_SQL}"},
-        {"before":"    runtimeStatus: String(row.runtime_status) as AgentDwsAccountRecord['runtimeStatus'],", "after":"    runtimeStatus: String(row.runtime_status) as AgentDwsAccountRecord['runtimeStatus'],\n    deliveryProtocol: readDwsDeliveryProtocol(row.event_policy_json),"}
+        {"before": "import { sandboxImageRef } from './sandboxImageRef.js';", "after": "import { sandboxImageRef } from './sandboxImageRef.js';\nimport { buildSandboxManifest } from './sandboxManifest.js';"},
+        {"beforeFrom": {"sourcePath": "acs-orchestrator/src/sandboxManager.ts", "start": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {", "end": "  /** Sandbox CR + Pod 联动删除"}, "after": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {\n    return buildSandboxManifest(this.config, ref);\n  }\n\n"}
       ]
     },
     {
-      "path": "server/src/dws/personalEventGateway.ts",
+      "path": "acs-orchestrator/src/sandboxRunner.ts",
       "replacements": [
-        {"before":"  hasExactAgentDwsProfile,", "after":"  hasExactAgentDwsProfile,\n  canRunLegacyDwsListener,"},
-        {"before":"    if (this.stopped || account.status !== 'active' || !hasExactAgentDwsProfile(account)) return;", "after":"    if (this.stopped || account.status !== 'active' || !hasExactAgentDwsProfile(account)) return;\n    if (!canRunLegacyDwsListener(account)) return;"}
+        {"before": "import { runSandboxRunnerDaemon } from './sandboxRunnerDaemon.js';", "after": "import { handoverSandboxControl } from './sandboxControlEntry.js';"},
+        {"beforeFrom": {"sourcePath": "acs-orchestrator/src/sandboxRunner.ts", "start": "  if (process.argv.includes('--daemon')) {", "end": "  const raw = await readStdin();"}, "after": "  // No Node parent may retain the control pipe while same-UID tools execute.\n  // --owned-child is launched only by the immutable per-attempt supervisor.\n  if (!process.argv.includes('--owned-child')) {\n    handoverSandboxControl(process.argv.includes('--daemon') ? 'daemon' : 'oneshot');\n  }\n"}
       ]
     },
     {
-      "path": "server/src/dws/agentAuthFlow.ts",
-      "replacements": [{"before":"this.options.accountStore.listRunnable()", "after":"this.options.accountStore.listRunnable({ deliveryProtocol: 'all', includeIdentityCleanup: true })"}]
+      "path": "acs-orchestrator/src/remote/runner_daemon.py",
+      "replacements": [
+        {"before": "return [\"node\", str(candidate), \"--owned-child\"]", "after": "return [\"/usr/local/bin/node\", str(candidate), \"--owned-child\"]"},
+        {"beforeFrom": {"sourcePath": "acs-orchestrator/src/remote/runner_daemon.py", "start": "    candidate = HERE.parent / \"sandboxRunner.ts\"", "end": "\n\ndef unknown("}, "after": "    raise RuntimeError(\"prebuilt sandbox worker is required; workspace loader fallback is forbidden\")"}
+      ]
     },
     {
-      "path": "server/src/context/sync/dwsContextRuntime.ts",
-      "replacements": [{"before":"this.options.accountStore.listRunnable()", "after":"this.options.accountStore.listRunnable({ deliveryProtocol: 'all' })"}]
+      "path": "acs-orchestrator/src/remote/attempt_supervisor.py",
+      "replacements": [
+        {"before": "        self.transferred = False", "after": "        self.transferred = False\n        self.terminal_resource: str | None = None"},
+        {"before": "        if self.cancelled_at is not None or self.transferred:\n", "after": "        if self.cancelled_at is not None or self.transferred or self.terminal_resource in (\"stopped\", \"not_started\"):\n"},
+        {"before": "        envelope = self.state(resource, proof=proof, **({\"background\": background} if background else {}))", "after": "        envelope = self.state(resource, proof=proof, **({\"background\": background} if background else {}))\n        self.terminal_resource = resource"}
+      ]
     },
     {
-      "path": "server/src/data/agentDwsAccounts/deliveryProtocol.test.ts",
-      "content":"import { describe, expect, it } from 'vitest';\nimport { canRunLegacyDwsListener, readDwsDeliveryProtocol, runnableDwsDeliverySql } from './deliveryProtocol.js';\n\ndescribe('DWS reader-first protocol discrimination', () => {\n  it('recognizes only genuinely absent old markers as legacy', () => {\n    expect(readDwsDeliveryProtocol({ kinds: ['at_me'] })).toBe('legacy');\n    expect(readDwsDeliveryProtocol({ deliveryProtocol: null })).toBe('unsupported');\n    expect(readDwsDeliveryProtocol({ deliveryProtocol: 'future-v7' })).toBe('unsupported');\n    expect(readDwsDeliveryProtocol([])).toBe('unsupported');\n    expect(readDwsDeliveryProtocol({ deliveryProtocol: 'durable-v1' })).toBe('durable-v1');\n  });\n  it('excludes blocked, migrated and future accounts from both SQL selection and direct starts', () => {\n    for (const deliveryProtocol of ['durable-v1', 'handoff_pending', 'unsupported', 'future-v7']) {\n      expect(canRunLegacyDwsListener({ deliveryProtocol })).toBe(false);\n    }\n    expect(canRunLegacyDwsListener({ deliveryProtocol: 'legacy', identityCleanupPending: {} })).toBe(false);\n    expect(runnableDwsDeliverySql()).toContain(\"->>'deliveryProtocol'='legacy'\");\n    expect(runnableDwsDeliverySql()).toContain('identityCleanupPending');\n    expect(() => runnableDwsDeliverySql({ deliveryProtocol: 'injected' as 'legacy' })).toThrow();\n  });\n});\n"
+      "path": "acs-orchestrator/package.json",
+      "replacements": [
+        {"before": "esbuild src/index.ts src/backgroundShellWorker.ts src/restorePerPodCli.ts", "after": "esbuild src/index.ts src/sandboxRunner.ts src/backgroundShellWorker.ts src/restorePerPodCli.ts"},
+        {"before": " && rm -rf descriptions && cp -R ../server/src/agent/descriptions descriptions", "after": " && node scripts/copy-native-control.mjs && rm -rf descriptions && cp -R ../server/src/agent/descriptions descriptions"}
+      ]
+    },
+    {
+      "path": "Dockerfile",
+      "replacements": [
+        {"before": "COPY acs-orchestrator/src acs-orchestrator/src", "after": "COPY acs-orchestrator/src acs-orchestrator/src\nCOPY acs-orchestrator/scripts acs-orchestrator/scripts"},
+        {"before": "--target=node20", "after": "--target=node22", "count": 2, "all": true},
+        {"before": "    && test -s dist/backgroundShellWorker.mjs \\\n    && cp -R ../server/src/agent/descriptions ./descriptions", "after": "    && test -s dist/backgroundShellWorker.mjs \\\n    && node scripts/copy-native-control.mjs \\\n    && /usr/local/bin/python3 -I -m compileall -q dist/remote \\\n    && cp -R ../server/src/agent/descriptions ./descriptions"},
+        {"before": "| node dist/sandboxRunner.mjs \\\n    && node -e", "after": "| node dist/sandboxRunner.mjs --owned-child \\\n    && node -e"},
+        {"before": "    && printf '{\"kind\":\"ping\",\"nonce\":\"docker-build-smoke\"}\\n' | node dist/sandboxRunner.mjs --daemon | grep '\"kind\":\"daemon_pong\"' \\", "after": "    && mkdir -p /var/run/acs-identity \\\n    && printf 'image-smoke-only\\n' > /var/run/acs-identity/pod-uid \\\n    && printf '{\"kind\":\"ping\",\"nonce\":\"docker-build-smoke\"}\\n' | node dist/sandboxRunner.mjs --daemon | grep '\"kind\":\"daemon_pong\"' \\\n    && rm /var/run/acs-identity/pod-uid && rmdir /var/run/acs-identity \\", "count": 1},
+        {"before": "    && chown -R agent:agent /opt/uv-cache\n", "after": "    && chown -R agent:agent /opt/uv-cache \\\n    && su agent -c '/usr/local/bin/python3 -I /app/acs-orchestrator/dist/remote/native_smoke.py'\n"}
+      ]
     }
   ]
 }

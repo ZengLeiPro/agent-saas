@@ -3110,6 +3110,7 @@ test('闭包依赖模块的业务 update/delete 词汇不会被误判为 SQL', (
     'export class JsonStore {',
     '  update(record) { return { ...record, updated: true }; }',
     '  remove(record) { delete record.legacy; return record; }',
+    "  lock() { return { state: 'begin' }; }",
     '}',
   ].join('\n');
   const result = dependencyPlan(baselineSource, targetSource);

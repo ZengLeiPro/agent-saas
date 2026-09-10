@@ -92,7 +92,8 @@ module.exports = class FakeOSS {
       fs.writeFileSync(file, '<html>website fallback</html>');
       return { res: { status: 200, headers: { etag: '"fallback"' } } };
     }
-    if (file) fs.copyFileSync(target, file);
+    if (typeof file === 'string') fs.copyFileSync(target, file);
+    else if (file) file.end(fs.readFileSync(target));
     const headers = { etag: '"' + fs.statSync(target).size + '"' };
     for (const line of fs.readFileSync(target + '.headers', 'utf8').split('\\r\\n')) {
       const split = line.indexOf(':');

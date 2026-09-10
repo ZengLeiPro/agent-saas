@@ -1,6 +1,38 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { repairWebAssetMetadata } from './repair-web-asset-metadata.mjs';
+import { repairWebAssetMetadata, readStoredWebAsset } from './repair-web-asset-metadata.mjs';
+import { createRequire } from 'node:module';
+import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
+
+test('真实 ali-oss SDK 的流式 GET 必须保留 gzip 存储字节', async () => {
+  const compressed = gzipSync(Buffer.from('console.log("exact bytes");'));
+  const server = createServer((_req, res) => {
+    res.writeHead(200, {
+      'Content-Encoding': 'gzip',
+      'Content-Length': compressed.length,
+      ETag: '"gzip"',
+    });
+    res.end(compressed);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const require = createRequire(new URL('../../server/package.json', import.meta.url));
+    const OSS = require('ali-oss');
+    const client = new OSS({
+      accessKeyId: 'test',
+      accessKeySecret: 'test',
+      bucket: 'test-bucket',
+      endpoint: `http://127.0.0.1:${server.address().port}`,
+      cname: true,
+      secure: false,
+    });
+    const result = await readStoredWebAsset(client, 'assets/app.js');
+    assert.deepEqual(result.content, compressed);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 const expected = {
   'Cache-Control': 'public, max-age=31536000, immutable',
@@ -10,10 +42,13 @@ function fixture(headers = { 'content-type': 'font/sfnt' }) {
   const state = { content: Buffer.from('font bytes'), etag: '"original"', headers, copies: [] };
   const client = {
     head: async () => ({ status: 200, res: { headers: { etag: state.etag } } }),
-    get: async () => ({
-      content: state.content,
-      res: { status: 200, headers: { ...state.headers, etag: state.etag } },
-    }),
+    get: async (_key, sink) => {
+      sink.end(state.content);
+      return {
+        content: state.content,
+        res: { status: 200, headers: { ...state.headers, etag: state.etag } },
+      };
+    },
     copy: async (target, source, options) => {
       assert.equal(target, source);
       assert.equal(options.headers['x-oss-copy-source-if-match'], state.etag);

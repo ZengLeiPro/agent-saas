@@ -2,13 +2,27 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Writable } from 'node:stream';
+
+export async function readStoredWebAsset(client, key) {
+  const chunks = [];
+  // ali-oss 的内存 GET 会自动解压；Writable GET 保留 OSS 实际存储字节。
+  const sink = new Writable({
+    write(chunk, _encoding, done) {
+      chunks.push(Buffer.from(chunk));
+      done();
+    },
+  });
+  const result = await client.get(key, sink);
+  return { ...result, content: Buffer.concat(chunks) };
+}
 
 // 只迁移字节完全一致的存量对象响应头；并发内容变化由源 ETag 条件拒绝。
 export async function repairWebAssetMetadata(client, key, source, expected) {
   const head = await client.head(key);
   const etag = head.res?.headers?.etag;
   if (head.status !== 200 || !etag) throw new Error(`缺少对象身份: ${key}`);
-  const current = await client.get(key);
+  const current = await readStoredWebAsset(client, key);
   if (
     current.res?.status !== 200 ||
     current.res?.headers?.etag !== etag ||
@@ -38,7 +52,7 @@ export async function repairWebAssetMetadata(client, key, source, expected) {
       'x-oss-copy-source-if-match': etag,
     },
   });
-  const after = await client.get(key);
+  const after = await readStoredWebAsset(client, key);
   if (
     after.res?.status !== 200 ||
     !Buffer.isBuffer(after.content) ||

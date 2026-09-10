@@ -212,4 +212,7 @@ test('iOS native toolchain is explicit and pnpm supports both macOS architecture
   const projectCheck = readFileSync(join(root, 'mobile/scripts/test-ios-native-project.sh'), 'utf8');
   assert.doesNotMatch(projectCheck, /' release-manifest\.json\)/u);
   assert.match(projectCheck, /"\$MOBILE_DIR\/release-manifest\.json"/u);
+  const initializer = readFileSync(join(root, 'mobile/scripts/init-ios-github-release.sh'), 'utf8');
+  assert.match(initializer, /if gh api "repos\/\$REPOSITORY\/environments\/\$environment" >\/dev\/null 2>&1; then/u);
+  assert.doesNotMatch(initializer, /deployment-branch-policies[^\n]+\|\| true/u);
 });

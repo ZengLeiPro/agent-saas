@@ -60,7 +60,10 @@ fi
 
 configure_environment() {
   local environment="$1" policies
-  policies="$(gh api "repos/$REPOSITORY/environments/$environment/deployment-branch-policies" --jq '.branch_policies[]? | [.name,.type] | @tsv' 2>/dev/null || true)"
+  policies=""
+  if gh api "repos/$REPOSITORY/environments/$environment" >/dev/null 2>&1; then
+    policies="$(gh api "repos/$REPOSITORY/environments/$environment/deployment-branch-policies" --jq '.branch_policies[]? | [.name,.type] | @tsv')"
+  fi
   if [ -n "$policies" ] && [ "$policies" != $'main\tbranch' ]; then
     echo "$environment has unexpected deployment branch policies; refusing to replace them" >&2
     exit 1

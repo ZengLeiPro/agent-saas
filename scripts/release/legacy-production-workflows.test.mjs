@@ -32,10 +32,9 @@ function jobNames(workflow) {
   return [...workflow.matchAll(/^  ([A-Za-z0-9_-]+):$/gmu)].map((match) => match[1]);
 }
 
-test('legacy App and ACS workflows expose explicit manual compatibility entrypoints', async () => {
+test('CI retains its explicit manual Web-only compatibility entrypoint', async () => {
   for (const [name, forceInput] of [
     ['ci.yml', 'web_only_compatibility'],
-    ['acs-sandbox.yml', 'force'],
   ]) {
     const workflow = await readFile(new URL(name, root), 'utf8');
     const triggers = triggerBlock(workflow);
@@ -47,42 +46,25 @@ test('legacy App and ACS workflows expose explicit manual compatibility entrypoi
   }
 });
 
-test('ACS triggers and docs keep production deployment manual on latest main without top-level paths', async () => {
-  const workflow = await readFile(new URL('acs-sandbox.yml', root), 'utf8');
-  const triggers = triggerBlock(workflow);
-  const deploy = jobBlock(workflow, 'build-deploy');
-  assert.doesNotMatch(triggers, /^\s+paths:/mu);
-  assert.match(
-    deploy,
-    /if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'/u,
-  );
-  assert.match(deploy, /确认手动触发仍指向最新 main/u);
-  assert.match(deploy, /latest_main_sha[\s\S]*"\$latest_main_sha" != "\$GITHUB_SHA"/u);
-  assert.match(
-    deploy,
-    /PRODUCTION_SSH_HOST_KEY_SHA256: \$\{\{ vars\.PRODUCTION_SSH_HOST_KEY_SHA256 \}\}/u,
-  );
-
-  assert.match(deploy, /ssh-keyscan -T 10 -t ed25519 -H "\$ECS_HOST"/u);
-  assert.match(deploy, /ssh-keygen -lf "\$scan_path" -E sha256/u);
-  assert.match(deploy, /cat "\$scan_path" >> ~\/\.ssh\/known_hosts/u);
-  assert.doesNotMatch(deploy, /ssh-keyscan -H "\$ECS_HOST" >> ~\/\.ssh\/known_hosts/u);
-
-  const [acsDocs, releaseDocs] = await Promise.all([
-    readFile(new URL('../../docs/acs-sandbox-release.md', import.meta.url), 'utf8'),
-    readFile(new URL('../../docs/release-workflow-configuration.md', import.meta.url), 'utf8'),
-  ]);
-  assert.match(acsDocs, /`main` push 只进入分类与测试，不部署生产/u);
-  assert.match(acsDocs, /非 `main` dispatch 同样不会进入该生产 job/u);
-  assert.match(acsDocs, /workflow 顶层没有 `paths` 过滤/u);
-  assert.doesNotMatch(acsDocs, /非 main 手动触发只 build，不 deploy/u);
-  assert.match(releaseDocs, /`main` push 顶层不使用 `paths`/u);
-  assert.match(releaseDocs, /`\.github\/scripts\/acs-classify\.sh` 是唯一影响\s*分类真源/u);
+test('ACS release is RC-only while CI preserves its main-only Web compatibility path', async () => {
+  const workflow = await readFile(new URL('promote-release.yml', root), 'utf8');
+  const deploy = jobBlock(workflow, 'promote');
+  assert.doesNotMatch(triggerBlock(workflow), /\n  (?:push|pull_request):/u);
+  assert.match(deploy, /needs: dispatch/u);
+  assert.match(deploy, /needs.dispatch.outputs.operation == 'promote'/u);
+  assert.match(deploy, /prefetch-promotion-artifacts\.mjs/u);
+  assert.match(deploy, /PRODUCTION_SSH_HOST_KEY_SHA256/u);
+  assert.match(deploy, /git merge-base --is-ancestor "\$release_sha" origin\/main/u);
+  await assert.rejects(readFile(new URL('acs-sandbox.yml', root)), { code: 'ENOENT' });
+  const acsDocs = await readFile(new URL('../../docs/acs-sandbox-release.md', import.meta.url), 'utf8');
+  assert.match(acsDocs, /不可变 RC/u);
+  assert.match(acsDocs, /测试环境部署/u);
+  assert.match(acsDocs, /生产环境发布/u);
 });
 
-test('all legacy jobs reading production Secrets bind exactly one production Environment and match docs', async () => {
+test('all active jobs reading production Secrets bind exactly one production Environment and match docs', async () => {
   const app = await readFile(new URL('ci.yml', root), 'utf8');
-  const acs = await readFile(new URL('acs-sandbox.yml', root), 'utf8');
+  const promotion = await readFile(new URL('promote-release.yml', root), 'utf8');
   const productionSecrets = [
     'ALIYUN_ACCESS_KEY_ID',
     'ALIYUN_ACCESS_KEY_SECRET',
@@ -100,7 +82,7 @@ test('all legacy jobs reading production Secrets bind exactly one production Env
 
   for (const [name, workflow, expectedReaders] of [
     ['ci.yml', app, ['deploy_plan', 'deploy-web-oss']],
-    ['acs-sandbox.yml', acs, ['build-deploy']],
+    ['promote-release.yml', promotion, ['promote', 'web_recovery']],
   ]) {
     const readers = jobNames(workflow).filter((job) =>
       productionSecrets.some((secret) => jobBlock(workflow, job).includes(`secrets.${secret}`)),

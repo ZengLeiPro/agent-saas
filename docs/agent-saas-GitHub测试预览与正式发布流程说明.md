@@ -5,7 +5,7 @@
 > - 本次代码修订时间：2026-08-31（北京时间）
 > - 第八轮返工起点：`PR #366 head@33a478febd38ffd09e93ead7d0e55700741804c3`。
 > - 第十七轮返工最终同步基线：`main@88c2d8857159e2c14e5a0a40bceffe02603b4497`；最终实现以 PR #366 当前精确 head 与 Provider inspection 为准，避免在同一提交中写入不可能稳定的自引用 commit hash。
-> - 最新实现核对时间：2026-09-01 14:15（北京时间）。
+> - Workflow 入口收敛修订：2026-09-10；历史现场记录保留，最新入口以 `config/github-workflow-inventory.json` 为准。
 > - 范围：不含 iOS Release；说明 GitHub 从 PR 测试、Staging 预览到正式生产晋级的完整机制。
 > - 证据边界：本文把代码保证、GitHub/阿里云现场配置、历史已验证样本和仍需人工操作分开表述；未在本次修订中手动运行 Staging 或 Production。
 
@@ -14,14 +14,13 @@
 ```text
 开发分支 / PR
       │
-      ├─ App CI / Deploy：Build & Check
-      └─ ACS CI / Deploy：ACS Impact Gate
+      └─ CI：Build & Check + ACS Impact Gate
                 │
         两项必需检查通过
                 │
              合入 main
                 │
- main push 跑 App CI；ACS 仅在相关路径命中时运行其拓扑
+ main push 跑统一 CI（App + 完整 ACS 门禁）
                 │
           部署测试环境（手动）
                 │
@@ -55,17 +54,16 @@
 4. **完整浏览器、Agent 和业务行为是否符合预期**：可选的 `测试环境验收` 决定。
 5. **是否把这组已经冻结的制品晋级生产**：Promotion 决定。
 
-## 二、GitHub 上五个 Workflow 分别做什么
+## 二、GitHub 上四个 Workflow 分别做什么
 
-| Workflow          | 触发方式                     | 核心职责                                                | 是否改生产                 |
-| ----------------- | ---------------------------- | ------------------------------------------------------- | -------------------------- |
-| `App CI / Deploy` | PR、push main、手动          | App 主门禁；手动时兼容旧生产部署                        | 只有手动 dispatch 会改生产 |
-| `ACS CI / Deploy` | PR、相关路径 push main、手动 | 判断 ACS 影响，测试 Orchestrator；手动时兼容旧 ACS 部署 | 只有手动 dispatch 会改生产 |
-| `部署测试环境`    | 手动                         | 创建不可变 RC、部署测试环境并跑确定性门禁               | 只改测试环境               |
-| `测试环境验收`    | 手动、可选                   | 浏览器、Agent、ACS、恢复行为的完整 E2E                  | 只操作测试环境             |
-| `发布到生产环境`  | 手动                         | 将 RC 的原制品按 digest 晋级生产并自动收尾              | 会改生产                   |
+| Workflow | 触发方式 | 核心职责 | 生产边界 |
+| --- | --- | --- | --- |
+| `CI` | PR、push main、手动 | App/ACS 检查与制品；保留手动 Web-only 兼容发布 | 仅显式确认的 main dispatch 可发布 Web |
+| `测试环境部署` | 手动 | 同 SHA 证据、镜像准备、不可变 RC、Staging 确定性门禁 | 前置阶段只读生产基线，实际部署在 staging |
+| `测试环境验收` | 手动、可选 | 浏览器和 Agent 验收 | 不改生产 |
+| `生产环境发布` | 手动 | 晋级 RC；独立模式审计或修复 Web 冷备 | production Environment 与共享生产锁 |
 
-`App CI / Deploy` 和 `ACS CI / Deploy` 的生产 Deploy 入口目前仍保留，作为兼容与应急通道；新版本正常发版应优先走 RC 主链。
+CI 的 Web-only 兼容入口按维护者要求保留；独立 ACS 直发退役，正常发布继续走 RC 主链。
 
 ## 三、第一阶段：PR 测试与合并门禁
 
@@ -82,7 +80,7 @@ GitHub 现场已有两套 active Ruleset，且都没有 bypass actor：
 
 ### 3.2 Build & Check 实际检查什么
 
-`App CI / Deploy` 在 PR 上启动 PostgreSQL 16 测试服务，然后执行：
+`CI` 在 PR 上启动 PostgreSQL 16 测试服务，然后执行：
 
 - 工程 ratchets：大文件行数、环境变量数量、Web 首屏预算等。
 - Release/Staging Workflow、migration、reconcile、isolation 等发布契约 Node 测试；这些测试由 `preflight_checks` 直接执行并汇总进 required `Build & Check`，不是仅供本地参考。
@@ -97,17 +95,16 @@ GitHub 现场已有两套 active Ruleset，且都没有 bypass actor：
 
 ### 3.3 ACS Impact Gate 实际检查什么
 
-`ACS CI / Deploy` 先按变更路径分类：
+统一 `CI` 的 `ACS Impact Gate` 始终提供固定检查名称。main push 和手动 CI 执行完整 ACS 检查；
+PR 依据分类器和原修复证据路径选择。纯 UI/普通文档变更可明确 `not_required`，计划缺失则失败。
+完整检查包含类型检查、Orchestrator Vitest、真实 Python 远程进程测试、构建与 Server 生命周期/运维契约。
+检查日志和 JSON 结果保存实际 checkout SHA、独立 PR head 字段及 run/attempt；不把 merge 测试误称为 exact-head 测试。
 
-- 不影响 ACS：检查直接通过，不做无意义的镜像构建。
-- 只改 contract/test fixture：只跑 contract check，不发布镜像。
-- 真正影响 ACS：执行 Server/Orchestrator typecheck、Orchestrator 测试和 ACS 运维脚本测试。
-
-PR 阶段的 `ACS Impact Gate` 总会作为必需检查出现：先分类，再按影响范围运行 contract check 或完整 Orchestrator 检查，不部署。main push 并不是“完整重跑同一套 ACS CI”：`acs-sandbox.yml` 顶层不设 `paths`，所有 main push 都先进入 Classify；后续仅按 `.github/scripts/acs-classify.sh` 的唯一分类结果选择 Contract/Tests/Gate 拓扑。`.github/acs-bundle-inputs.txt` 是 Orchestrator 仓库内生产源码输入的路径契约，覆盖 `acs-orchestrator` 的真实生产源码、被引用的 `server/src/**`、`shared/src/**` 以及相应 workspace `package.json`。测试会从三个真实 entry 生成 esbuild metafile，将输入规范化为仓库相对路径并与 `git ls-files` 取交集，再逐项核对清单与 classifier；workflow 直接执行的 `create-component-artifact-index.mjs`、`seal-root-staged-payload.sh` 等生产支撑脚本也必须逐项命中 publish 分类。源码 metafile 不是全部制品输入：`pnpm-lock.yaml` 可单独改变运行时依赖解析，因此 lockfile-only 变更同样保守判定 ACS publish；新增仓库源码、包元数据或生产支撑脚本不能静默漏过 ACS 构建，`node_modules` 等安装产物本身不会误报。ACR tag 的 6 位 SHA 后缀只用于从全部 build-record API 分页中筛选全局唯一候选；分页总数因并发构建变化时会从第一页重新读取，连续三次仍无法取得稳定快照才 fail closed，记录缺失或重复也不会放行。GitHub 侧还必须从该 record 的 `GIT_CLONE` 日志验证完整 40 位 `GITHUB_SHA`。解析 digest 前后会再次遍历全部分页，确认候选 tag 仍唯一绑定同一 `BuildRecordId` 且两次 tag digest 读回稳定，最终只部署 digest reference；不能把短 tag 当作精确 SHA 证据。由于 ACR build-record API 不直接返回产物 digest，现场还必须把 tag 写权限限制在受控构建链。
+`.github/acs-bundle-inputs.txt` 是 Orchestrator 仓库内生产源码输入的路径契约，覆盖 `acs-orchestrator` 的真实生产源码、被引用的 `server/src/**`、`shared/src/**` 以及相应 workspace `package.json`。测试会从三个真实 entry 生成 esbuild metafile，将输入规范化为仓库相对路径并与 `git ls-files` 取交集，再逐项核对清单与 classifier；workflow 直接执行的 `create-component-artifact-index.mjs`、`seal-root-staged-payload.sh` 等生产支撑脚本也必须逐项命中 publish 分类。源码 metafile 不是全部制品输入：`pnpm-lock.yaml` 可单独改变运行时依赖解析，因此 lockfile-only 变更同样保守判定 ACS publish；新增仓库源码、包元数据或生产支撑脚本不能静默漏过 ACS 构建，`node_modules` 等安装产物本身不会误报。ACR tag 的 6 位 SHA 后缀只用于从全部 build-record API 分页中筛选全局唯一候选；分页总数因并发构建变化时会从第一页重新读取，连续三次仍无法取得稳定快照才 fail closed，记录缺失或重复也不会放行。GitHub 侧还必须从该 record 的 `GIT_CLONE` 日志验证完整 40 位 `GITHUB_SHA`。解析 digest 前后会再次遍历全部分页，确认候选 tag 仍唯一绑定同一 `BuildRecordId` 且两次 tag digest 读回稳定，最终只部署 digest reference；不能把短 tag 当作精确 SHA 证据。由于 ACR build-record API 不直接返回产物 digest，现场还必须把 tag 写权限限制在受控构建链。
 
 ## 四、第二阶段：手动 RC 流程先生成或复用 Release Evidence
 
-PR 合入 main 后，`App CI / Deploy` 会再以 push 事件跑一次。随后人工运行 `部署测试环境`；Workflow 会先在隔离的 `prepare-evidence` job 中锁定 dispatch 的完整 main SHA，等待并验证同 SHA 的必需 CI，再生成或复用 Release Evidence。证据准备成功后，独立的 `build-deploy-verify` job 才能进入 Staging 构建与部署。
+PR 合入 main 后，`CI` 会再以 push 事件跑一次。随后人工运行 `部署测试环境`；Workflow 会先在隔离的 `prepare-evidence` job 中锁定 dispatch 的完整 main SHA，等待并验证同 SHA 的必需 CI，再生成或复用 Release Evidence。证据准备成功后，独立的 `build-deploy-verify` job 才能进入 Staging 构建与部署。
 
 `prepare-evidence` 会验证：
 
@@ -321,15 +318,17 @@ Migration plan 会从仓库权威入口构建 baseline 与 target 两侧的相�
 
 RC 多次 Promotion 重试会追加新的 attestation 和 operation receipt。GitHub Release 是 **attestation/operation 历史** 的 Promotion 重跑权威日志，OSS 对这两类小日志提供审计镜像；GitHub 已成功而该日志镜像暂时失败时 Workflow 会明确告警但不伪造失败状态，镜像需单独补写。这里不适用于 RC 的 canonical `manifest.json`、`artifact-index.json` 与 release record：它们仍是晋级前必须从 OSS 下载并逐项比对的硬门禁，缺失或读取失败会阻断 Promotion。单个文件通常很小且不会覆盖旧记录；这是审计设计，不应把它当缓存随手删除。真正容易增长的是 OSS 大制品、ACR 镜像、GitHub Actions artifact 和失败 E2E 的视频。
 
-## 十二、旧 App/ACS Deploy 入口怎么理解
+## 十二、保留 CI 兼容入口、退役 ACS 直发
 
-`App CI / Deploy` 和 `ACS CI / Deploy` 的手动生产入口属于 compatibility 通道，但能力并不对称：
+`CI` 的手动生产入口继续作为 Web-only compatibility 通道；ACS 不再有独立直发入口：
 
 - App dispatch 只接受 `main`，并且**只允许 Web-only compatibility publish**。运行界面必须显式确认 `web_only_compatibility=true`；部署计划会读取生产 active ECS SHA 到目标 SHA 的累计差异。只要出现 Server/API/Runtime Worker 相关路径，或无法证明差异只影响 Web，就会在任何生产 mutation 前 fail closed，要求改走 RC + Production Promotion。
 - App compatibility 不再允许跨 `deploy-ecs` / `deploy-web-oss` 两个 job 发布 Server 与 Web。原因是跨 job 失败无法提供同一事务式补偿；保留旧 trusted identity 并不能让混合物理态变得原子。Web-only 路径会在任何 OSS mutation 前枚举本次可能覆盖的全部可变键：四个入口、`icons/`、`kaikai-presets/`、favicon/avatar 固定键与 Workbox 文件；逐键记录原状态为 present/missing，把 present 内容和对象 headers/metadata 复制到事务前镜像，并与 recovery Web 现场按字节核对。最终现场组件读回必须先证明 kept API/Runtime Worker/ACS 仍等于 mutation 前冻结 identity；identity 写入后的 confirmed readback 还要按完整四组件稳定字段矩阵与现场一致。任一步失败，都会按 manifest 恢复 present 键、删除事务新增的 missing 键，同时恢复 recovery Web 与原 trusted identity；随后逐键核对 OSS/recovery 的内容、对象 metadata 或 404 状态，并以完整 Production 读回证明三者重新一致后失败退出。hash assets 通过独立 helper 先生成最终传输字节，再只创建新键或按字节和 HTTP headers 复用既有键；写入由仓库锁定的 `ali-oss` SDK 读取 runner 上权限收紧的临时凭据文件，使用规范化的 `oss-<region>` endpoint 并发送真实 `x-oss-forbid-overwrite:true` 条件请求，固定 ossutil 2.1.2 只承担安装后已探测参数契约的 stat，不承担条件写；字节回读由同一 SDK 的 GET（不带 Accept-Encoding）完成，因为 ossutil/aliyun `cp` 会对 `Content-Encoding: gzip` 对象透明解压并因 CRC 不一致失败；只有 SDK 返回精确 HTTP 409 `FileAlreadyExists` 才进入复用证明，并发同名创建或既有对象有任何字节/headers 漂移都会在固定键 mutation 前失败，因此不参与覆盖补偿。recovery Web 对 `assets/**` 和 `workbox-*.js` 的同名共享文件也会在复制与 symlink 切换前逐字节核对；冲突时 current/previous 保持不变且 receipt 不得进入 `activated`。补偿或证明失败必须人工处置。
-- ACS dispatch 只接受 main，并在初始检查和实际部署 mutation 前再次要求 `origin/main` 精确等于 run SHA；ACR record 即使已经进入 `PENDING`/`BUILDING`，main 前进也会让本次旧 dispatch 在生产部署前 fail closed。它独立维护 ACS identity，但仍不提供 RC Promotion 的完整跨组件原子性。
-- 两个 compatibility 入口都不创建不可变 RC、不部署 Staging、不产生完整 Promotion receipts 与跨组件收敛证据。
-- App、ACS 与包含自动收尾的 Promotion 共享 `production-runtime` concurrency group，仓库代码保证生产写操作串行；仍需 GitHub Actions 权限与外部手工变更纪律配合。
+- ACS 发布只能使用 `生产环境发布` 的不可变 RC 主链，不恢复旧独立 dispatch。
+- CI compatibility 不创建不可变 RC、不部署 Staging、不产生完整 Promotion receipts 与跨组件收敛证据。
+- CI Web-only、RC 晋级和 Web 冷备恢复共享 `production-runtime` concurrency group；生产实际 mutation 仍受主机锁约束。
+- 冷备操作从 `生产环境发布` 选择 `web-recovery-audit` 或 `web-recovery-repair`，不是 `recovery_mode=repair`。
+  必须提供操作原因；audit 不带修复确认，repair 要有审阅摘要及明确确认，不接受 RC ID。
 
 最重要的混用风险是：如果先创建了 RC，随后又用 compatibility 通道改变生产基线，旧 RC 的 rollback target 会漂移，Promotion 应当被阻断。此时正确动作是重新生成 Evidence 和 RC，不是强行绕过门禁。任何 Server/API/Worker 变更都直接走正式 RC 流程，不要把 Web-only 入口当成“少一步的 Promotion”。
 

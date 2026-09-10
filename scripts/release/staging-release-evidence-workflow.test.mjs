@@ -11,7 +11,7 @@ const removedWorkflowPath = new URL(
   import.meta.url,
 );
 const stagingWorkflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
-const acsWorkflowPath = new URL('../../.github/workflows/acs-sandbox.yml', import.meta.url);
+const retiredAcsWorkflowPath = new URL('../../.github/workflows/acs-sandbox.yml', import.meta.url);
 const stagingNginxPaths = [
   new URL('../../daemon-packaging/nginx/agent-saas-staging.conf.template', import.meta.url),
   new URL('../../daemon-packaging/nginx/agent-saas-staging.conf.example', import.meta.url),
@@ -109,10 +109,8 @@ test('Staging Nginx exposes the authenticated Evidence Writer capability endpoin
 });
 
 test('Staging evidence stage safely reuses or creates one immutable same-SHA record', async () => {
-  const [workflow, acsWorkflow] = await Promise.all([
-    readFile(stagingWorkflowPath, 'utf8'),
-    readFile(acsWorkflowPath, 'utf8'),
-  ]);
+  const workflow = await readFile(stagingWorkflowPath, 'utf8');
+  await assert.rejects(access(retiredAcsWorkflowPath), { code: 'ENOENT' });
   assert.match(workflow, /存在时复用不可变发布证据/u);
   assert.match(workflow, /validateReleaseEvidenceDocument/u);
   assert.match(workflow, /REUSE_RELEASE_EVIDENCE=true/u);
@@ -130,7 +128,6 @@ test('Staging evidence stage safely reuses or creates one immutable same-SHA rec
   assert.ok(evidenceHelper.includes('ACS Impact Gate'));
   assert.match(evidenceHelper, /matches.length === 1/u);
   assert.match(evidenceHelper, /job.conclusion === 'success'/u);
-  assert.doesNotMatch(acsWorkflow.slice(0, acsWorkflow.indexOf('jobs:')), /\n  (push|pull_request):/u);
   assert.match(workflow, /只读获取在线生产状态/u);
   assert.match(workflow, /RELEASE_RECORD_OSS_URI/u);
   assert.match(workflow, /RELEASE_RECORD_OSS_REGION/u);

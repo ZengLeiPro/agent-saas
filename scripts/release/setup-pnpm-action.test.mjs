@@ -56,7 +56,6 @@ test('setup-pnpm 只从 GitHub Releases 拉固定二进制、校验 sha256 并�
 test('所有 workflow 都改用固定二进制安装 pnpm', () => {
   for (const name of [
     'ci.yml',
-    'acs-sandbox.yml',
     'deploy-staging.yml',
     'promote-release.yml',
     'staging-acceptance.yml',

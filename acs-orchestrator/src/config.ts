@@ -706,7 +706,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
       max: 7 * 24 * 60 * 60_000,
     }),
     // 宽限默认 5min：正常 pause 收敛 <2min（生产实测），5min 足以避开瞬态；
-    // 且必须小于发布门禁的等待窗口（acs-sandbox.yml 5.5 段 8min），否则门禁等不到自愈。
+    // 且必须小于发布门禁的等待窗口（RC ACS 发布阶段），否则门禁等不到自愈。
     sandboxBrokenRecycleGraceMs: readIntEnv('ACS_SANDBOX_BROKEN_RECYCLE_GRACE_MS', 5 * 60_000, {
       min: 0,
       max: 24 * 60 * 60_000,

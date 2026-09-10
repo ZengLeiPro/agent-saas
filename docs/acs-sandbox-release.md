@@ -1,6 +1,9 @@
 # ACS Sandbox 镜像发布门禁
 
-> 当前结论：ACS Sandbox 已有独立 GitHub Actions 链路（`.github/workflows/acs-sandbox.yml`）。`main` push 只进入分类与测试，不部署生产；只有指向最新 `main` 的 `workflow_dispatch` 才可能进入 `build-deploy`，经 ECS 处理当前 SHA 的不可变镜像、更新 `ACS_SANDBOX_IMAGE`、重启 `agent-saas-acs-orchestrator.service`，并跑正式 `/provision + /execute Shell` smoke。非 `main` dispatch 同样不会进入该生产 job。主服务 CI/CD 绿灯仍不能代表 Sandbox 已发布；必须核对该次 ACS Sandbox 手工发布结果。
+> 当前入口（2026-09-10）：ACS 的检查由统一 `CI` 提供；`测试环境部署` 准备镜像与不可变 RC，
+> `生产环境发布` 晋级该 RC 的原制品。独立 ACS Manual Deploy 已退役。CI 绿灯不代表 ACS 已发布，
+> 必须检查 RC 的组件选择、生产 durable receipts 与 `/health` 读回。CI 的手动 Web-only 兼容生产发布仍保留，不能用于 ACS。
+
 
 ## 生产链路边界
 
@@ -16,7 +19,9 @@ ACS workspace 挂载也跨这三段：主服务把真实用户目录相对 `/mnt
 
 ## 触发条件
 
-ACS Sandbox workflow 不使用顶层 `paths`；`main` push 与面向 `main` 的 PR 都会唤醒 workflow，`.github/scripts/acs-classify.sh` 是唯一影响分类真源。`Classify ACS Impact` job 按 changed files 输出发布或契约检查范围；分类结果只决定 CI 门禁，生产 `build-deploy` 仍只允许最新 `main` 的手工 dispatch。
+统一 `CI` 不使用顶层 `paths`；`main` push 与面向 `main` 的 PR 均进入规划。
+`.github/scripts/acs-classify.sh` 仍负责 ACS 镜像影响分类；`scripts/ci-acs-plan.mjs` 同时覆盖原修复证据的广义 Server/ACS 路径。
+CI 不自动部署生产；`测试环境部署` 等待同 SHA 的 CI 成功，再准备 RC，最后由 `生产环境发布` 手动晋级。
 
 改到以下内容时，应发布新 ACS Sandbox 镜像：
 
@@ -47,7 +52,7 @@ ACS Sandbox workflow 不使用顶层 `paths`；`main` push 与面向 `main` 的 
 
 `shared/**` 不能整体视为非 ACS 输入：当前真实 Orchestrator bundle 已引用的 `shared/src/**` 会由 `.github/acs-bundle-inputs.txt` 命中并触发 ACS 发布；未进入真实 bundle 的 shared 文件按 classifier 结果处理。每次新增 import 都由 esbuild metafile 契约复核，不能靠文档白名单漏掉。
 
-只改 ACS orchestrator 自身代码时，主服务 CI/CD 不会自动部署 `/opt/agent-saas`；现在由 ACS Sandbox workflow 同步 `/opt/agent-saas` 并重启 `agent-saas-acs-orchestrator.service`。如果同时改到 Sandbox runner 或工具运行依赖，同一个 workflow 会继续发布新 Sandbox 镜像。
+只改 ACS orchestrator 自身代码也必须生成或选择相应不可变 RC，由生产晋级的 ACS 阶段安装已校验制品并执行生命周期门禁；不会通过源码直发入口单独滚动生产。
 
 其中工具名、tool schema、入参、返回结构、stream chunk、错误语义、权限语义发生变化时，必须二选一：
 
@@ -216,28 +221,19 @@ curl -sf http://127.0.0.1:3400/health
 2. 重启 `agent-saas-acs-orchestrator.service`。
 3. 只清理精确测试 Sandbox；不要删除 NAS workspace。
 
-## 自动化
+## 自动化（当前主链）
 
-`.github/workflows/acs-sandbox.yml` 负责这条链路：
+当前自动化分工：
 
-- `Classify ACS Impact` 通过 `.github/scripts/acs-classify.sh` 读取 changed files，输出 `publish` / `contract_check`；workflow 顶层没有 `paths` 过滤。
-- `main` push 只分类并执行相应测试，不进入生产 `build-deploy`；只有最新 `main` 的 `workflow_dispatch` 才能进入该 job，非 `main` dispatch 也不会进入。
-- `publish=true` 时跑 typecheck、orchestrator tests 与 operational scripts；镜像由 GitHub push webhook 触发 ACR EE 源码构建。
-- `workflow_dispatch` 遍历 ACR build-record API 全部分页，以 tag 的 6 位 SHA 后缀筛选全局唯一 build record；分页总数因并发构建变化时会从第一页重新读取，连续三次仍无法取得稳定快照才 fail closed，记录缺失或重复也不会放行。随后从该 record 的 `GIT_CLONE` 日志验证完整 40 位 `GITHUB_SHA`；解析前后必须再次遍历全部分页并维持同一 `BuildRecordId`，且两次 tag digest 读回稳定，最终只部署 digest reference。ACR build-record API 不直接返回产物 digest，因此现场必须把候选 tag 的写权限限制在受控构建链；不能把短 tag 或可被外部改写的 tag 本身当作精确 SHA 证据。读取生产 Secret 的 `build-deploy` job 显式绑定 `production` Environment。
-- 全量分页后仍找不到完整 revision 候选构建记录且连续两次缺失时，按 `push + refs/heads/main + payload.after=GITHUB_SHA` 精确定位失败的 ACR webhook delivery，最多自动补投一次，然后继续原轮询；找不到或补投失败仍保持 fail-fast。
-- 将 orchestrator release 包和安全解包 helper 上传到 ECS 的 root-only `/run/agent-saas-production-staging/`；部署脚本先校验 helper 的 runner-side SHA-256，再拒绝路径穿越、链接和特殊文件，仅从已验证目录安装制品。随后更新 `/etc/agent-saas/acs-orchestrator.env` 的 `ACS_SANDBOX_IMAGE`，并通过 drain 旧进程后由 systemd 拉起新版本；任一早期失败与正常结束都会清理该 staging。
-- 正式跑 `/provision + /execute Shell` smoke，断言 workspace venv 路径、base Python 包 import、`ACS_SANDBOX_DEPLOY_SMOKE_OK`。
-- `/health` 暴露当前 Sandbox image、runtime contract、capabilities、networkPolicy、SNAT 与 Sandbox inventory。
-- `publish=false && contract_check=true` 时只跑 `server` / `acs-orchestrator` typecheck 和 `acs-orchestrator` tests，不发布。
+- `CI / ACS Impact Gate`：类型检查、完整 Orchestrator 回归、真实 Python 远程进程测试、构建及必要的生命周期/运维契约。检查失败不被日志上传或证据整理隐藏。
+- `测试环境部署 / prepare-acs`：运行 `wait-for-acr-image.sh` 与其 supervisor，查全量 build records；短 tag 只用于候选筛选，必须以 GIT_CLONE 日志绑定完整 release SHA，并对同一 BuildRecordId 和 digest 二次校验。总等待及阶段等待均有界，禁止换成“最新可用镜像”。
+- `生产环境发布 / promote`：只消费已选 RC 的制品与清单；ACS unit、源码包、配置及镜像选择与清单绑定，受共享生产锁、drain、回滚和最终身份读回约束。它不再构建或部署任意源码 HEAD。
+- ACR 云端构建和集群 imagePullSecret 不在本次清理范围内，不得因为旧 workflow 删除就停掉镜像构建。
 
-Workflow 的必需生产 Secrets 是 `ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、
-`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ACR_READ_ACCESS_KEY_ID`、
-`ACR_READ_ACCESS_KEY_SECRET`，均只配置在 `production` Environment。后两项只读 ACR build record、
-`GIT_CLONE` 日志与 image metadata，不得授予镜像写入或删除权限。
-`ACS_WEBHOOK_REDELIVERY_TOKEN` 是可选恢复凭据：仅在当前 SHA 的 ACR 自动构建记录缺失时用于补投
-一次 GitHub webhook；正常命中构建记录时不需要，必须补投但未配置时 Workflow fail closed。该 token
-必须仅授权 `ZengLeiPro/agent-saas`，Repository permissions 只有 `Webhooks: write`，禁止复用个人
-broad-scope token。集群 `acr-agentsaasacrprod` imagePullSecret 只用于拉取生产镜像，不作为 webhook
-补投凭据。所有同名 Repository/organization Secret 在 Environment 迁移核验后必须删除。
+`ACS_WEBHOOK_REDELIVERY_TOKEN` 是可选恢复凭据，原生产兼容入口退役不意味着可以删除被当前
+Staging `prepare-acs` 使用的同类恢复能力。`ACR_READ_ACCESS_KEY_ID`、`ACR_READ_ACCESS_KEY_SECRET`
+等共享凭据也必须按剩余调用者审计后处理，本次不改 Secret、云资源或运行配置。
+生产写 job 继续绑定 `production` Environment；镜像准备按现有代码绑定 `staging`。
+历史手工诊断/回滚命令仅供受授权事故处置参考，正常发布以本节的不可变 RC 主链为准。
 
 旧 tag 清理不是自动化的一部分。删除 ACR tag 仍需单独确认回滚窗口。

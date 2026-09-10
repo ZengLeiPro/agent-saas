@@ -52,16 +52,18 @@ web-before/index.html web-recovery-before/index.html differ: byte 358, line 11
 
 ## 使用顺序
 
-合并本 PR 后，进入 Actions → **Production Web Recovery Repair**，选择 `main`：
+进入 Actions → **生产环境发布**，选择 `main`，填写操作原因。
+`release_id` 留空、RC 的 `recovery_mode` 保持 `normal`；使用 `operation` 选择冷备操作。
+旧独立 Production Web Recovery Repair 已退役，底层审计/修复脚本和保护机制不变：
 
-1. 首先运行 `mode=audit`。它读取可信 Production identity，通过现有的不可变
+1. 首先运行 `operation=web-recovery-audit`。它读取可信 Production identity，通过现有的不可变
    baseline resolver 找到当前 Web 制品，校验 SHA-256 后安全解包。不会使用本次
    main 新构建来代替当前线上基线。审计仍会取得生产互斥锁并写诊断临时文件。
 2. 查看 `web-recovery-audit-<run>-<attempt>` 中的 JSON。它分别比较 **制品/OSS**、
    **OSS/recovery 磁盘**、**recovery 磁盘/HTTP**，输出文件名、摘要、长度、首次
    差异位置，不上传 HTML、私有 runtime identity 或任何凭证。
 3. 仅当 `sourceVerified=true`、`recoveryHeader=true`、`repairable=true`，并确认
-   报告中的 SHA/digest 是预期线上版本后，运行 `mode=repair`，勾选
+   报告中的 SHA/digest 是预期线上版本后，运行 `operation=web-recovery-repair`，勾选
    `confirm_recovery_only`，粘贴完整 `planDigest` 到 `expected_plan_digest`。
    repair 会重新读取全部基线；任何受审核字节或 current 指针发生变化都拒绝旧计划。
 4. 修复使用该份已经验证的制品，而不是仅覆盖 index.html。仅通过现有 activation/
@@ -72,7 +74,7 @@ web-before/index.html web-recovery-before/index.html differ: byte 358, line 11
    被现有 ECS 分类器保守阻断；不要放宽分类器，可使用既有 RC Promotion 路径。
    修复旧 recovery 不等于发布了新 Web，也不等于 Staging 门禁通过。
 
-`mode=audit` 任务成功表示**审计完成**，不表示两个站点一致；必须看 `converged`。
+`operation=web-recovery-audit` 任务成功表示**审计完成**，不表示两个站点一致；必须看 `converged`。
 修复成功报告带 `status=repaired`。一致基线的 repair 是无操作，不创建新版本。
 
 ## 失败关闭与权限边界

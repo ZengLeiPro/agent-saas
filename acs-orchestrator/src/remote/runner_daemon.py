@@ -34,14 +34,8 @@ def worker_command() -> list[str]:
     for name in ("sandboxRunner.mjs", "sandboxRunner.js"):
         candidate = HERE.parent / name
         if candidate.is_file():
-            return ["node", str(candidate), "--owned-child"]
-    candidate = HERE.parent / "sandboxRunner.ts"
-    if not candidate.is_file():
-        candidate = HERE.parent.parent / "src" / "sandboxRunner.ts"
-    if not candidate.is_file():
-        raise RuntimeError("sandbox worker bundle is missing")
-    return ["node", "--import", "tsx", str(candidate), "--owned-child"]
-
+            return ["/usr/local/bin/node", str(candidate), "--owned-child"]
+    raise RuntimeError("prebuilt sandbox worker is required; workspace loader fallback is forbidden")
 
 def unknown(reason: str) -> dict[str, Any]:
     return {"kind": "final", "response": {"status": "error", "error": "Remote attempt remains unresolved",

@@ -459,22 +459,27 @@ RUN node /opt/ky-agent/runtime-identity/runtime-dependency.mjs \
 #    结构化 final 响应，可一次覆盖 require 崩溃、descriptions 缺失与启动链路回归。
 RUN cd /app/acs-orchestrator \
     && ./node_modules/.bin/esbuild src/sandboxRunner.ts \
-         --bundle --platform=node --format=esm --target=node20 \
+         --bundle --platform=node --format=esm --target=node22 \
          --external:node:* --external:pg-native --external:@napi-rs/canvas \
          --banner:js="import { createRequire as __kyCreateRequire } from 'node:module'; const require = __kyCreateRequire(import.meta.url);" \
          --outfile=dist/sandboxRunner.mjs \
     && ./node_modules/.bin/esbuild src/backgroundShellWorker.ts \
-         --bundle --platform=node --format=esm --target=node20 \
+         --bundle --platform=node --format=esm --target=node22 \
          --external:node:* \
          --outfile=dist/backgroundShellWorker.js \
     && rm -rf descriptions \
     && cp -R /app/server/src/agent/descriptions descriptions \
     && test -s descriptions/Edit.md \
     && test -s dist/backgroundShellWorker.js \
-    && echo '{}' | node dist/sandboxRunner.mjs | grep -q '"kind":"final"' \
+    && node scripts/copy-native-control.mjs \
+    && /usr/local/bin/python3 -I -m compileall -q dist/remote \
+    && echo '{}' | node dist/sandboxRunner.mjs --owned-child | grep -q '"kind":"final"' \
+    && mkdir -p /var/run/acs-identity \
+    && printf 'image-smoke-only\n' > /var/run/acs-identity/pod-uid \
     && printf '%s\n' '{"kind":"ping","nonce":"image-smoke"}' \
        | node dist/sandboxRunner.mjs --daemon \
-       | grep -q '"kind":"daemon_pong","nonce":"image-smoke"'
+       | grep -q '"kind":"daemon_pong","nonce":"image-smoke"' \
+    && rm /var/run/acs-identity/pod-uid && rmdir /var/run/acs-identity
 
 ENV NODE_ENV=production
 ENV ACS_WORKSPACE_PATH=/workspace
@@ -516,6 +521,7 @@ RUN groupadd -f -g 20 dialout \
     && mkdir -p /workspace /home/agent/.npm-global/bin /home/agent/.npm-global/lib /ms-playwright \
     && chown -R 501:20 /home/agent /workspace \
     && su agent -c 'cd /app && corepack prepare yarn@1.22.22 --activate && corepack prepare "$(node -p "require(\"./package.json\").packageManager")" --activate'
+RUN su agent -c '/usr/local/bin/python3 -I /app/acs-orchestrator/dist/remote/native_smoke.py'
 WORKDIR /workspace
 
 CMD ["/bin/sh", "-c", "sleep infinity"]

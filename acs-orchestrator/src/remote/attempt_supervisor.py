@@ -69,6 +69,7 @@ class AttemptSupervisor:
         self.cancelled_at: float | None = None
         self.unknown_emitted = False
         self.transferred = False
+        self.terminal_resource: str | None = None
         self.background_pids: set[int] = set()
         self.background_deadline: float | None = None
         self.child: subprocess.Popen | None = None
@@ -155,7 +156,7 @@ class AttemptSupervisor:
     def cancel(self, reason: str) -> None:
         # Once handed off, foreground/transport cancellation must not kill a
         # legitimate background task. Its own task API and deadline govern it.
-        if self.cancelled_at is not None or self.transferred:
+        if self.cancelled_at is not None or self.transferred or self.terminal_resource in ("stopped", "not_started"):
             return
         self.cancelled_at = time.monotonic()
         self.reason = reason
@@ -296,6 +297,7 @@ class AttemptSupervisor:
 
     def publish(self, resource: str, proof: str, background: dict[str, Any] | None = None) -> None:
         envelope = self.state(resource, proof=proof, **({"background": background} if background else {}))
+        self.terminal_resource = resource
         response = dict(self.final or terminal_error("Owned attempt stopped before its tool result was confirmed"))
         metadata = response.get("metadata")
         metadata = dict(metadata) if isinstance(metadata, dict) else {}

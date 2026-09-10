@@ -9,7 +9,7 @@ import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/r
 import { runWithInvocationCorrelation } from 'server/runtime/invocationCorrelation.js';
 
 import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput } from './protocol.js';
-import { runSandboxRunnerDaemon } from './sandboxRunnerDaemon.js';
+import { handoverSandboxControl } from './sandboxControlEntry.js';
 import {
   snapshotAutoRoutingReason,
   type SnapshotAutoRoutingReason,
@@ -353,19 +353,10 @@ export function createCachedPythonEnvEnsurer(
 }
 
 async function main(): Promise<void> {
-  if (process.argv.includes('--daemon')) {
-    const ensurePythonEnvReady = createCachedPythonEnvEnsurer();
-    await runSandboxRunnerDaemon({
-      imageRef: process.env.ACS_SANDBOX_IMAGE,
-      execute: async (input, signal, emit) => {
-        if (input.toolName !== '__FeishuCli') {
-          const workspaceRoot = input.workspace.root || process.env.ACS_WORKSPACE_PATH || '/workspace';
-          await ensurePythonEnvReady(workspaceRoot);
-        }
-        await executeSandboxRunnerInput(input, signal, emit, { skipPythonEnv: true });
-      },
-    });
-    return;
+  // No Node parent may retain the control pipe while same-UID tools execute.
+  // --owned-child is launched only by the immutable per-attempt supervisor.
+  if (!process.argv.includes('--owned-child')) {
+    handoverSandboxControl(process.argv.includes('--daemon') ? 'daemon' : 'oneshot');
   }
   const raw = await readStdin();
   const input = JSON.parse(raw || '{}') as SandboxRunnerInput;

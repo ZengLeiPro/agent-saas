@@ -1,13 +1,13 @@
 {
-  "id": "dws-reader-first-v1",
-  "baseSha": "19844d151823d260348ecdae53d13ca13f5ad5f9",
+  "id": "native-control-image-wiring-v2",
+  "baseSha": "d93af49b352f4c4d6833a52ef9ac2a57647b8bcd",
   "files": [
-    "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
-    "server/src/data/agentDwsAccounts/types.ts",
-    "server/src/data/agentDwsAccounts/store.ts",
-    "server/src/dws/personalEventGateway.ts",
-    "server/src/dws/agentAuthFlow.ts",
-    "server/src/context/sync/dwsContextRuntime.ts",
-    "server/src/data/agentDwsAccounts/deliveryProtocol.test.ts"
+    "acs-orchestrator/src/sandboxManifest.ts",
+    "acs-orchestrator/src/sandboxManager.ts",
+    "acs-orchestrator/src/sandboxRunner.ts",
+    "acs-orchestrator/src/remote/runner_daemon.py",
+    "acs-orchestrator/src/remote/attempt_supervisor.py",
+    "acs-orchestrator/package.json",
+    "Dockerfile"
   ]
 }

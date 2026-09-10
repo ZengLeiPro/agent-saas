@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { kyAppPost, kyAppRequest } from '@/lib/kyAppManagementApi';
 import type { SystemDetail } from '@/lib/kyAppManagementTypes';
@@ -34,7 +34,11 @@ const detail = {
     },
   ],
 } as unknown as SystemDetail;
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  // 先撤销组件的异步刷新，再清调用记录，不能依赖跨文件 afterEach 的执行顺序。
+  cleanup();
+  vi.clearAllMocks();
+});
 describe('系统默认接入配置', () => {
   it('保存模板携带版本号，成功后刷新且不修改安装实例', async () => {
     vi.mocked(kyAppRequest).mockResolvedValue({
@@ -50,8 +54,12 @@ describe('系统默认接入配置', () => {
     fireEvent.change(screen.getByLabelText('默认业务页面地址'), {
       target: { value: 'https://{tenantId}.example.com' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '保存接入配置' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存接入配置' }));
+    });
     await waitFor(() => expect(saved).toHaveBeenCalledOnce());
+    await screen.findByLabelText('默认业务服务地址');
+    expect(kyAppRequest).toHaveBeenCalledTimes(2);
     expect(kyAppPost).toHaveBeenCalledWith('/systems/demo/connection-settings', {
       expectedVersion: 2,
       settings: {
@@ -73,7 +81,9 @@ describe('系统默认接入配置', () => {
     fireEvent.change(screen.getByLabelText('诊断能力'), { target: { value: 'read' } });
     fireEvent.change(screen.getByLabelText('客户名称'), { target: { value: '开沿科技' } });
     expect(screen.queryByLabelText('内部编号')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '保存接入配置' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存接入配置' }));
+    });
     await waitFor(() =>
       expect(kyAppPost).toHaveBeenCalledWith('/systems/demo/connection-settings', {
         expectedVersion: 1,
@@ -88,7 +98,9 @@ describe('系统默认接入配置', () => {
       }),
     );
     await screen.findByText('保存失败');
-    fireEvent.click(screen.getByRole('button', { name: '重新加载已保存配置' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '重新加载已保存配置' }));
+    });
     await waitFor(() => expect(kyAppRequest).toHaveBeenCalledTimes(2));
   });
 });

@@ -1,4 +1,4 @@
-# iOS V1 构建与提交
+# iOS V1 构建与 TestFlight 发布
 
 ## 已冻结身份
 
@@ -16,14 +16,15 @@
 ## 发布边界
 
 1. 发布源必须是干净提交，而且已包含在 `origin/main`。
-2. GitHub Actions 的 `build` 只生成并验证 IPA；默认 `build-and-submit` 在构建成功后上传、等待处理并提交审核。
+2. GitHub Actions 的 `build` 只生成并验证 IPA；默认 `build-and-testflight` 在构建成功后上传、等待处理并确认进入内部 TestFlight。
 3. IPA 必须通过主 App 身份、版本、受签名保护的 source Git SHA、Distribution 签名、App Group、唯一 Share Extension 及 Extension 身份/签名校验；任一 target 意外带入开发或推送 entitlement，直接拒绝。
 4. 提交脚本只接受 `mobile/builds/` 下带 source/verification sidecar 的已验证 IPA，并从当前 `main` manifest 重建身份、复制到私有快照后重新验签，再逐字节比对验证结果；上传时使用已验文件的只读描述符，路径替换不能改变上传字节。
-5. iOS 编译、签名与提交不调用 EAS；Distribution P12、描述文件及 App Store Connect `.p8` 仅通过 GitHub Environment Secrets 注入，不进入仓库或制品。
+5. iOS 编译、签名与 TestFlight 上传不调用 EAS；Distribution P12、描述文件及 App Store Connect `.p8` 仅通过 GitHub Environment Secrets 注入，不进入仓库或制品。
+6. 当前发布止于内部 TestFlight，不关联正式 App Store 版本，不提交审核，不触发公开上架。
 
 ## 命令
 
-正常发布在 GitHub Actions 手动运行“iOS 构建与发布”，默认 `build-and-submit`。本地受控排查仍可在仓库根目录、合并后的 `main` 提交上执行：
+正常发布在 GitHub Actions 手动运行“iOS 构建与发布”，默认 `build-and-testflight`。本地受控排查仍可在仓库根目录、合并后的 `main` 提交上执行：
 
 ```bash
 pnpm mobile-contract
@@ -36,4 +37,4 @@ pnpm --filter mobile submit:ios builds/AgentSaaS-1.0.0.ipa
 ## 暂缓项
 
 - 最低/最新 iOS 真机矩阵、弱网、后台恢复、系统分享等 RC 验收暂缓，不得写成已通过。
-- App Store 隐私问卷、截图、文案和审核说明必须以后台真实资料为准；构建处理成功或提交审核不等于审核通过和公开可下载。
+- App Store 隐私问卷、截图、文案和审核说明留待正式上架项目处理；内部 TestFlight 成功不等于提交审核或公开可下载。

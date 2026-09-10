@@ -39,6 +39,28 @@ test('real anonymous readiness fixtures stay summary-free and validate against p
   }
 });
 
+test('仅更新 ACS 的候选在两个环境按 API 部件源码验收，而非 RC 总体源码', async () => {
+  const manifest = await fixture('candidate-manifest.json');
+  const privateSnapshotPath = new URL('./fixtures/candidate-config-identity.json', import.meta.url);
+  const newSourceSha = '9'.repeat(40);
+  assert.notEqual(manifest.components.api.sourceSha, newSourceSha);
+  manifest.releaseSha = newSourceSha;
+  manifest.components.api.action = 'keep';
+  for (const environment of ['production', 'staging']) {
+    const readiness = await fixture(`${environment}-readiness.json`);
+    const input = { environment, manifest, readiness, privateSnapshotPath, expectedConfigIdentity };
+    await assert.doesNotReject(validateCandidateReleaseReadiness(input));
+    await assert.rejects(validateCandidateReleaseReadiness({
+      ...input,
+      readiness: { ...readiness, release: { ...readiness.release, releaseSha: newSourceSha } },
+    }), /release identity does not match Manifest/);
+    await assert.rejects(validateCandidateReleaseReadiness({
+      ...input,
+      readiness: { ...readiness, release: { ...readiness.release, serverDigest: `sha256:${'9'.repeat(64)}` } },
+    }), /release identity does not match Manifest/);
+  }
+});
+
 test('candidate contract rejects anonymous summary leaks and deployment/snapshot disagreement', async () => {
   const manifest = await fixture('candidate-manifest.json');
   const readiness = await fixture('production-readiness.json');

@@ -26,11 +26,11 @@ jobs:
     env:
       TEST_DATABASE_URL: postgresql://kyapp:kyapp@127.0.0.1:5433/kyapp_test
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -43,7 +43,7 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       # §9.3 十六章：数据库用 GitHub service（--pg url），浏览器用 chromium。
       - run: pnpm exec ky-app doctor --pg url --browser on --report doctor-report.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: doctor-report

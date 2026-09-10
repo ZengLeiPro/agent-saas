@@ -170,9 +170,7 @@ export function initializeProductionModelPublication(options: {
       });
     return pending;
   };
-  const publisher =
-    role === 'ws-only'
-      ? new ProductionModelPublisher({
+  const publisher = new ProductionModelPublisher({
           configPath,
           processCwd: options.processCwd,
           releaseId,
@@ -180,10 +178,9 @@ export function initializeProductionModelPublication(options: {
           secretVault: options.secretVault,
           targets: () => activeTargets(configPath),
           observeLocal: observe,
-        })
-      : undefined;
+        });
   const mutationService = publisher
-    ? new AdminConfigMutationService({
+    && role === 'ws-only' ? new AdminConfigMutationService({
         configPath,
         processCwd: options.processCwd,
         environment: 'production',
@@ -223,6 +220,7 @@ export function initializeProductionModelPublication(options: {
   void tick();
   return {
     mutationService,
+    coordinateCredentialRotation: (credentialRef: string) => publisher.coordinateCredentialRotation(credentialRef),
     observe,
     stop: () => {
       stopped = true;

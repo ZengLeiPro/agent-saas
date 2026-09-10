@@ -71,7 +71,7 @@ describe('toolControlsApi', () => {
         webTools: { enabled: true },
       };
       mockAuthFetch.mockResolvedValue(jsonResponse(200, resp));
-      await expect(updateToolControlsConfig(payload)).resolves.toEqual(resp);
+      await expect(updateToolControlsConfig(payload, authFetch)).resolves.toEqual(resp);
 
       const { url, init } = lastCall();
       expect(url).toBe('/api/admin/tool-controls');
@@ -82,7 +82,7 @@ describe('toolControlsApi', () => {
     it('非 2xx JSON body.error 时抛该 error', async () => {
       mockAuthFetch.mockResolvedValue(jsonResponse(400, { error: '工具配置非法' }));
       await expect(
-        updateToolControlsConfig({ toolControls: null, webTools: null }),
+        updateToolControlsConfig({ toolControls: null, webTools: null }, authFetch),
       ).rejects.toThrow('工具配置非法');
     });
   });

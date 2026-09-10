@@ -14,6 +14,8 @@ vi.mock("@/lib/authFetch", () => ({
 }));
 
 const INITIAL_VIEW = {
+  revision: "revision-memory-1",
+  writePolicy: { environment: "development", mode: "online", canSave: true },
   polling: {
     enabled: true,
     hour: 4,
@@ -84,7 +86,9 @@ describe("MemoryPollingManager", () => {
     const putCall = vi.mocked(authFetch).mock.calls.find((call) =>
       call[0] === "/api/admin/memory-polling" && call[1]?.method === "PUT");
     expect(putCall).toBeTruthy();
-    expect(JSON.parse(String(putCall?.[1]?.body))).toEqual({
+    expect(JSON.parse(String(putCall?.[1]?.body))).toEqual(expect.objectContaining({
+      expectedRevision: "revision-memory-1",
+      operationId: expect.any(String),
       polling: {
         enabled: true,
         hour: 4,
@@ -95,7 +99,7 @@ describe("MemoryPollingManager", () => {
         timeoutSeconds: 900,
         model: "openai/gpt-5.5",
       },
-    });
+    }));
   });
 
   it("跨日调度在前端被拦截，不发送 PUT", async () => {

@@ -104,23 +104,33 @@ describe('production ModelManager save', () => {
 
   it('a committed-but-unconfirmed error is never presented as success or automatically retried', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    vi.mocked(authFetch).mockImplementation(async (_path, init) =>
-      init?.method === 'PUT'
-        ? json(
-            {
-              code: 'CONFIG_MUTATION_COMMITTED',
-              error: '配置已提交，但最终生效确认未完成，请刷新确认',
-            },
-            500,
-          )
-        : json(view),
-    );
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (init?.method === 'PUT') {
+        return json(
+          {
+            code: 'CONFIG_MUTATION_COMMITTED',
+            error: '配置已提交，但最终生效确认未完成，请刷新确认',
+          },
+          500,
+        );
+      }
+      if (String(path).startsWith('/api/admin/config-operations/')) {
+        return json({ state: 'committed_unconfirmed' });
+      }
+      return json(view);
+    });
     const user = userEvent.setup();
     render(<ModelManager />);
     await screen.findByText(/当前为生产环境/);
     await user.click(screen.getByRole('button', { name: '保存并生效' }));
-    expect(await screen.findByText(/最终生效确认未完成/)).toBeTruthy();
+    await waitFor(() => expect(putCalls()).toHaveLength(1));
+    const operationId = JSON.parse(String(putCalls()[0]?.[1]?.body)).operationId as string;
+    expect(await screen.findByText(new RegExp(operationId, 'u'))).toBeTruthy();
+    expect(screen.getByText(/committed_unconfirmed/)).toBeTruthy();
     expect(screen.queryByText('已保存')).toBeNull();
     expect(putCalls()).toHaveLength(1);
+    expect(authFetch).toHaveBeenCalledWith(
+      `/api/admin/config-operations/${encodeURIComponent(operationId)}`,
+    );
   });
 });

@@ -26,6 +26,8 @@ import { applyModelsHotUpdate, prepareModelsHotUpdateTransaction } from './model
 import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
 import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
 import type { ToolControlsRuntimeUpdateCommit } from './toolControlsRuntimeUpdate.js';
+import type { ImageGenRuntimeUpdateCommit } from './imageGenRuntimeUpdate.js';
+import type { TenantRemoteHandsRuntimeUpdateCommit } from './tenantRemoteHandsRuntimeUpdate.js';
 
 export type ModelResolver = (
   ref: string,
@@ -75,6 +77,13 @@ export function createModelResolvers(params: {
   prepareMemoryPollingUpdate?: (
     next: NonNullable<AppConfig['memory']>['polling'],
   ) => () => void;
+  prepareImageGenUpdate?: (
+    next: AppConfig['imageGenTools'],
+  ) => ImageGenRuntimeUpdateCommit | Promise<ImageGenRuntimeUpdateCommit>;
+  prepareTenantRemoteHandsUpdate?: (
+    next: AppConfig['tenantRemoteHands'],
+  ) => TenantRemoteHandsRuntimeUpdateCommit | Promise<TenantRemoteHandsRuntimeUpdateCommit>;
+  requireRuntimeConsumers?: boolean;
   /** Codex 配置变化后，undefined 表示关闭全池，否则只关闭指定 credential refs。 */
   onCodexSubscriptionUpdated?: (credentialRefs?: readonly string[]) => void;
   initialRuntimeModels?: NonNullable<AppConfig['models']>;
@@ -121,6 +130,11 @@ export function createModelResolvers(params: {
     ...(params.prepareMemoryPollingUpdate
       ? { prepareMemoryPollingUpdate: params.prepareMemoryPollingUpdate }
       : {}),
+    ...(params.prepareImageGenUpdate ? { prepareImageGenUpdate: params.prepareImageGenUpdate } : {}),
+    ...(params.prepareTenantRemoteHandsUpdate
+      ? { prepareTenantRemoteHandsUpdate: params.prepareTenantRemoteHandsUpdate }
+      : {}),
+    ...(params.requireRuntimeConsumers ? { requireRuntimeConsumers: true } : {}),
     ...(params.onCodexSubscriptionUpdated
       ? { onCodexSubscriptionUpdated: params.onCodexSubscriptionUpdated }
       : {}),

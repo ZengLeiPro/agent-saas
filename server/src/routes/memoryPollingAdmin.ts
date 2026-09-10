@@ -8,7 +8,7 @@ import type { AppConfig, MemoryPollingConfig } from '../app/config.js';
 import { MEMORY_POLL_DEFAULTS } from '../cron/memoryPoll.js';
 import type { MemoryConsolidationScannerStatus } from '../memory/consolidation/types.js';
 import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
-import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
+import { adminConfigReadMetadata, mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
 export interface CreateMemoryPollingAdminRouterOptions {
@@ -110,7 +110,9 @@ export function createMemoryPollingAdminRouter(
           // 观测查询失败不影响 polling 配置管理，也不参与 readiness。
         }
       }
+      res.setHeader('Cache-Control', 'no-store');
       res.json({
+        ...adminConfigReadMetadata(options.processCwd, configMutationService),
         ...pollingView(persisted),
         consolidationScanner: {
           available: consolidationScannerAvailable,
@@ -126,6 +128,7 @@ export function createMemoryPollingAdminRouter(
     try {
       const result = await configMutationService.mutate({
         ...mutationRequestContext(req),
+        operation: { id: 'memory-polling.save' },
         changedPaths: ['memory.polling'],
         buildCandidate: (configText, rawConfig) => {
           const polling = validatePollingUpdate(rawConfig, req.body);
@@ -144,7 +147,10 @@ export function createMemoryPollingAdminRouter(
         },
       });
       res.setHeader('ETag', `"${result.rawConfigFingerprint}"`);
-      res.json(pollingView(options.config));
+      res.json({
+        ...pollingView(options.config),
+        ...adminConfigReadMetadata(options.processCwd, configMutationService),
+      });
     } catch (error) {
       if (error instanceof Error && /memory\.polling|时区|触发窗口|模型/u.test(error.message)) {
         res.status(400).json({ error: error.message });

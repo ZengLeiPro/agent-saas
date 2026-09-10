@@ -1,5 +1,6 @@
 import { authFetch } from './authFetch';
 import { parseJsonResponse } from './parseJsonResponse';
+import type { ConfigWritePolicy } from '../configWritePolicy';
 
 export type WebSearchProvider = 'brave' | 'volcengine' | 'tencent_wsa' | 'zhipu' | 'tavily';
 
@@ -92,6 +93,7 @@ export interface ToolCatalogItem {
 
 export interface ToolControlsAdminResponse {
   revision?: string;
+  writePolicy?: ConfigWritePolicy;
   descriptionRevision?: string;
   toolControls: ToolControlsConfig | null;
   tools: ToolCatalogItem[];
@@ -101,6 +103,8 @@ export interface ToolControlsAdminResponse {
 
 export interface UpdateToolControlsRequest {
   expectedRevision?: string;
+  productionConfirmation?: string;
+  operationId?: string;
   toolControls: ToolControlsConfig | null;
   webTools: WebToolsConfig | null;
 }
@@ -113,6 +117,8 @@ export interface UpdateToolControlsRequest {
  */
 export interface UpdateSingleToolRequest {
   expectedRevision?: string;
+  productionConfirmation?: string;
+  operationId?: string;
   expectedDescriptionRevision?: string;
   enabled?: boolean;
   descriptionOverride?: ToolDescriptionOverride | null;
@@ -127,27 +133,27 @@ export async function fetchToolControlsConfig(): Promise<ToolControlsAdminRespon
   );
 }
 
-export async function updateToolControlsConfig(payload: UpdateToolControlsRequest): Promise<ToolControlsAdminResponse> {
-  return parseJsonResponse<ToolControlsAdminResponse>(
-    await authFetch(API_BASE, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-    '工具开关',
-  );
+async function update(
+  url: string,
+  payload: UpdateToolControlsRequest | UpdateSingleToolRequest,
+  request: typeof authFetch,
+): Promise<ToolControlsAdminResponse> {
+  return parseJsonResponse<ToolControlsAdminResponse>(await request(url, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }), '工具开关');
+}
+
+export async function updateToolControlsConfig(
+  payload: UpdateToolControlsRequest,
+  request: typeof authFetch,
+): Promise<ToolControlsAdminResponse> {
+  return update(API_BASE, payload, request);
 }
 
 export async function updateSingleTool(
   toolId: string,
   payload: UpdateSingleToolRequest,
+  request: typeof authFetch = authFetch,
 ): Promise<ToolControlsAdminResponse> {
-  return parseJsonResponse<ToolControlsAdminResponse>(
-    await authFetch(`${API_BASE}/${encodeURIComponent(toolId)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-    '工具开关',
-  );
+  return update(`${API_BASE}/${encodeURIComponent(toolId)}`, payload, request);
 }

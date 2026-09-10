@@ -158,14 +158,6 @@ export function PersonalDebugModeSetting({ className = '', title = '显示详细
     }
   }, [debugModeAvailable, updateDebugMode, user?.debugMode]);
 
-  const platformAllowed = user?.tenantFeatures?.debugModeAllowed === true;
-  const organizationEnabled = user?.tenantFeatures?.debugModeEnabled === true;
-  const unavailableGuidance = !platformAllowed
-    ? '需要平台管理员先在“平台运营 → 组织 → 右上角组织配置 → 选择目标组织并进入配置 → 授权与配额”开启“调试模式授权”，再由组织管理员在“组织管理 → 功能与配额 → 功能开关”开启“成员调试模式”。'
-    : !organizationEnabled
-      ? '平台已授权；还需要组织管理员在“组织管理 → 功能与配额 → 功能开关”开启“成员调试模式”。'
-      : null;
-
   return (
       <section className={className} aria-labelledby="detailed-execution-process">
         <div className="flex items-start justify-between gap-4">
@@ -176,11 +168,6 @@ export function PersonalDebugModeSetting({ className = '', title = '显示详细
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               开启后显示 Agent 的思考摘要、工具调用和技能执行细节。
             </p>
-            {!debugModeAvailable ? (
-              <p className="mt-2 text-sm text-muted-foreground" role="note">
-                {unavailableGuidance}
-              </p>
-            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {debugModeSaving ? (

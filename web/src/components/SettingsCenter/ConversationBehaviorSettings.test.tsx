@@ -66,7 +66,7 @@ describe('ConversationBehaviorSettings', () => {
     );
   });
 
-  it('调试能力未开放时展示三层开通路径', () => {
+  it('调试能力未开放时只禁用开关，不展示管理员开通路径', () => {
     state.user = {
       ...state.user,
       tenantFeatures: { debugModeAllowed: false, debugModeEnabled: false },
@@ -74,9 +74,8 @@ describe('ConversationBehaviorSettings', () => {
     mocks.isDebugModeAvailable.mockReturnValue(false);
     render(<ConversationBehaviorSettings />);
 
-    expect(screen.getByText(/平台运营 → 组织 → 右上角组织配置/)).toBeTruthy();
-    expect(screen.getByText(/选择目标组织并进入配置 → 授权与配额/)).toBeTruthy();
-    expect(screen.getByText(/组织管理 → 功能与配额 → 功能开关/)).toBeTruthy();
+    expect(screen.queryByText(/平台运营 → 组织/)).toBeNull();
+    expect(screen.queryByText(/组织管理 → 功能与配额/)).toBeNull();
     expect(
       (screen.getByRole('switch', { name: '显示详细执行过程' }) as HTMLButtonElement).disabled,
     ).toBe(true);

@@ -1,16 +1,16 @@
 {
-  "id": "native-control-image-wiring-v1",
-  "baseSha": "29736ac84f9f3dcc470fd178f961516b43b6f15b",
+  "id": "native-control-image-wiring-v2",
+  "baseSha": "d93af49b352f4c4d6833a52ef9ac2a57647b8bcd",
   "files": [
     {
       "path": "acs-orchestrator/src/sandboxManifest.ts",
-      "extract": {"sourcePath": "acs-orchestrator/src/sandboxManager.ts", "start": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {", "end": "  /** Sandbox CR + Pod 联动删除"},
+      "extract": {"sourcePath": "acs-orchestrator/src/sandboxManager.ts", "start": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {", "end": "  /** 删除 finalizer 在网络回收完成前固定旧 CR UID/RV"},
       "prefix": "import type { AcsOrchestratorConfig } from './config.js';\nimport type { SandboxRef } from './sandboxManagerTypes.js';\nimport { APP_LABEL, CREATED_AT_ANNOTATION, LAST_ACTIVE_AT_ANNOTATION, MANAGED_BY_LABEL, MOUNT_SUBPATH_ANNOTATION, NETWORK_POLICY_DENY_PRIVATE_ANNOTATION, NETWORK_POLICY_MODE_ANNOTATION, NETWORK_POLICY_MODE_LABEL, SANDBOX_SCOPE_ANNOTATION, SANDBOX_SCOPE_LABEL, SESSION_ANNOTATION, SESSION_LABEL, SHARED_READ_ONLY_SUBPATH_ANNOTATION, WORKSPACE_ANNOTATION, WORKSPACE_LABEL } from './sandboxInventoryReader.js';\nimport { buildWorkspaceVolumeMounts } from './sandboxWorkspaceMounts.js';\nimport { WORKLOAD_CLASS_LABEL, WORKLOAD_DESCRIPTOR_ANNOTATION } from './sandboxLifecyclePolicy.js';\nimport { sandboxResourceTarget } from './sandboxResourceDrift.js';\nimport { acsNetworkPolicyMode, labelValue, nodeHeapLimitMb } from './sandboxState.js';\nimport { buildPackageMirrorEnv, buildSandboxProxyEnv, egressSandboxFingerprint } from 'server/runtime/egressPolicy.js';\n\nconst ACS_NETWORK_POLICY_AGENT_ANNOTATION = 'network.alibabacloud.com/enable-network-policy-agent';\nconst ACS_NETWORK_POLICY_MODE_ANNOTATION = 'network.alibabacloud.com/network-policy-mode';\nconst EGRESS_FINGERPRINT_ANNOTATION = 'agent-saas.kaiyan.net/egress-fingerprint';\nconst SANDBOX_TIMEZONE = 'Asia/Shanghai';\n\n",
       "transforms": [
         {"before": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {", "after": "export function buildSandboxManifest(config: AcsOrchestratorConfig, ref: SandboxRef): Record<string, unknown> {"},
         {"before": "this.config", "after": "config", "all": true},
-        {"before": "      ...(config.pvcName ? {\n        volumeMounts: buildWorkspaceVolumeMounts(config.workspaceMountPath, mountSubPath, sharedReadOnlySubPath),\n      } : {}),", "after": "      volumeMounts: [\n        ...(config.pvcName ? buildWorkspaceVolumeMounts(config.workspaceMountPath, mountSubPath, sharedReadOnlySubPath) : []),\n        // Kernel-supplied Pod identity, not a caller environment value or workspace file.\n        { name: 'acs-identity', mountPath: '/var/run/acs-identity', readOnly: true },\n      ],"},
-        {"before": "        ...(config.pvcName ? {\n          volumes: [{ name: 'workspace', persistentVolumeClaim: { claimName: config.pvcName } }],\n        } : {}),", "after": "        volumes: [\n          ...(config.pvcName ? [{ name: 'workspace', persistentVolumeClaim: { claimName: config.pvcName } }] : []),\n          { name: 'acs-identity', downwardAPI: { defaultMode: 0o444, items: [\n            { path: 'pod-uid', fieldRef: { apiVersion: 'v1', fieldPath: 'metadata.uid' } },\n          ] } },\n        ],"},
+        {"before": "      ...(config.pvcName ? {\n        volumeMounts: buildWorkspaceVolumeMounts(ref, config.workspaceMountPath),\n      } : {}),", "after": "      volumeMounts: [\n        ...(config.pvcName ? buildWorkspaceVolumeMounts(ref, config.workspaceMountPath) : []),\n        // Pod identity is supplied read-only by Kubernetes, never by tool input.\n        { name: 'acs-identity', mountPath: '/var/run/acs-identity', readOnly: true },\n      ],"},
+        {"before": "            ...(config.pvcName ? { volumes: [{ name: 'workspace', persistentVolumeClaim: { claimName: config.pvcName } }] } : {}),", "after": "            volumes: [\n              ...(config.pvcName ? [{ name: 'workspace', persistentVolumeClaim: { claimName: config.pvcName } }] : []),\n              { name: 'acs-identity', downwardAPI: { defaultMode: 0o444, items: [\n                { path: 'pod-uid', fieldRef: { apiVersion: 'v1', fieldPath: 'metadata.uid' } },\n              ] } },\n            ],"},
         {"before": "\n  ", "after": "\n", "all": true}
       ]
     },
@@ -18,7 +18,7 @@
       "path": "acs-orchestrator/src/sandboxManager.ts",
       "replacements": [
         {"before": "import { sandboxImageRef } from './sandboxImageRef.js';", "after": "import { sandboxImageRef } from './sandboxImageRef.js';\nimport { buildSandboxManifest } from './sandboxManifest.js';"},
-        {"beforeFrom": {"sourcePath": "acs-orchestrator/src/sandboxManager.ts", "start": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {", "end": "  /** Sandbox CR + Pod 联动删除"}, "after": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {\n    return buildSandboxManifest(this.config, ref);\n  }\n\n"}
+        {"beforeFrom": {"sourcePath": "acs-orchestrator/src/sandboxManager.ts", "start": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {", "end": "  /** 删除 finalizer 在网络回收完成前固定旧 CR UID/RV"}, "after": "  private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {\n    return buildSandboxManifest(this.config, ref);\n  }\n\n"}
       ]
     },
     {
@@ -53,12 +53,11 @@
     {
       "path": "Dockerfile",
       "replacements": [
-        {"before": "COPY acs-orchestrator/src acs-orchestrator/src", "after": "COPY acs-orchestrator/src acs-orchestrator/src\nCOPY acs-orchestrator/scripts acs-orchestrator/scripts"},
         {"before": "--target=node20", "after": "--target=node22", "count": 2, "all": true},
-        {"before": "    && test -s dist/backgroundShellWorker.mjs \\\n    && cp -R ../server/src/agent/descriptions ./descriptions", "after": "    && test -s dist/backgroundShellWorker.mjs \\\n    && node scripts/copy-native-control.mjs \\\n    && /usr/local/bin/python3 -I -m compileall -q dist/remote \\\n    && cp -R ../server/src/agent/descriptions ./descriptions"},
-        {"before": "| node dist/sandboxRunner.mjs \\\n    && node -e", "after": "| node dist/sandboxRunner.mjs --owned-child \\\n    && node -e"},
-        {"before": "    && printf '{\"kind\":\"ping\",\"nonce\":\"docker-build-smoke\"}\\n' | node dist/sandboxRunner.mjs --daemon | grep '\"kind\":\"daemon_pong\"' \\", "after": "    && mkdir -p /var/run/acs-identity \\\n    && printf 'image-smoke-only\\n' > /var/run/acs-identity/pod-uid \\\n    && printf '{\"kind\":\"ping\",\"nonce\":\"docker-build-smoke\"}\\n' | node dist/sandboxRunner.mjs --daemon | grep '\"kind\":\"daemon_pong\"' \\\n    && rm /var/run/acs-identity/pod-uid && rmdir /var/run/acs-identity \\", "count": 1},
-        {"before": "    && chown -R agent:agent /opt/uv-cache\n", "after": "    && chown -R agent:agent /opt/uv-cache \\\n    && su agent -c '/usr/local/bin/python3 -I /app/acs-orchestrator/dist/remote/native_smoke.py'\n"}
+        {"before": "    && test -s dist/backgroundShellWorker.js \\\n", "after": "    && test -s dist/backgroundShellWorker.js \\\n    && node scripts/copy-native-control.mjs \\\n    && /usr/local/bin/python3 -I -m compileall -q dist/remote \\\n"},
+        {"before": "    && echo '{}' | node dist/sandboxRunner.mjs | grep -q '\"kind\":\"final\"' \\\n", "after": "    && echo '{}' | node dist/sandboxRunner.mjs --owned-child | grep -q '\"kind\":\"final\"' \\\n    && mkdir -p /var/run/acs-identity \\\n    && printf 'image-smoke-only\\n' > /var/run/acs-identity/pod-uid \\\n"},
+        {"before": "       | grep -q '\"kind\":\"daemon_pong\",\"nonce\":\"image-smoke\"'", "after": "       | grep -q '\"kind\":\"daemon_pong\",\"nonce\":\"image-smoke\"' \\\n    && rm /var/run/acs-identity/pod-uid && rmdir /var/run/acs-identity"},
+        {"before": "WORKDIR /workspace\n\nCMD", "after": "RUN su agent -c '/usr/local/bin/python3 -I /app/acs-orchestrator/dist/remote/native_smoke.py'\nWORKDIR /workspace\n\nCMD"}
       ]
     }
   ]

@@ -90,6 +90,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/apns/store.ts',
   'server/src/app/runtimeGovernanceConnectors.ts',
   'server/src/connectors/googleWorkspace.ts',
+  'server/src/data/agentDwsAccounts/durableDeliveryStore.ts',
   'server/src/data/agentDwsAccounts/store.ts',
   'server/src/data/agentDwsMessages/store.ts',
   'server/src/data/agentProfiles/store.ts',

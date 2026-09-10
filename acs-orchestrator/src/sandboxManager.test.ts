@@ -163,11 +163,11 @@ describe('SandboxManager', () => {
       { name: 'LC_ALL', value: 'C.UTF-8' },
     ]));
     expect(container.command).toEqual(['/bin/sh', '-c', 'mkdir -p "$ACS_WORKSPACE_PATH" "$DOWNLOAD_DIR" && cd "$ACS_WORKSPACE_PATH" && sleep infinity']);
-    expect(container.volumeMounts).toMatchObject([{
+    expect(container.volumeMounts).toEqual([{
       name: 'workspace',
       mountPath: '/workspace',
       subPath: 'workspaces/kaiyan/u-1/work/task-a',
-    }, { name: 'workspace', mountPath: '/agent-shared', subPath: 'workspaces/kaiyan/u-1', readOnly: true }]);
+    }, { name: 'workspace', mountPath: '/agent-shared', subPath: 'workspaces/kaiyan/u-1', readOnly: true }, { name: 'acs-identity', mountPath: '/var/run/acs-identity', readOnly: true }]);
     expect(container.env).toContainEqual({ name: 'AGENT_SHARED_READ_ONLY_PATH', value: '/agent-shared' });
     expect(podSpec).toMatchObject({
       automountServiceAccountToken: false,

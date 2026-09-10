@@ -200,31 +200,11 @@ export function activeInvocationLeaseUntil(annotations: Record<string, unknown>)
   return latest;
 }
 
-/** Returns expired executing/legacy residues, but never pending or future-fenced annotations. */
-export function expiredActiveInvocationLeaseAnnotationKeys(
-  annotations: Record<string, unknown>,
-  nowMs: number,
-): string[] {
-  return activeInvocationLeaseSnapshots(annotations)
-    .filter((snapshot) => {
-      if (snapshot.malformed) return !snapshot.until || Date.parse(snapshot.until) <= nowMs;
-      if (snapshot.state !== 'executing') return false;
-      const untilMs = snapshot.until ? Date.parse(snapshot.until) : Number.NaN;
-      return !Number.isFinite(untilMs) || untilMs <= nowMs;
-    })
-    .map((snapshot) => snapshot.annotationKey);
-}
+/** No timestamp, malformed value or future state proves a remote writer stopped. */
+export function expiredActiveInvocationLeaseAnnotationKeys(_annotations: Record<string, unknown>, _nowMs: number): string[] { return []; }
 
-/** Returns malformed annotations whose own fence no longer delays recovery cleanup. */
-export function malformedActiveInvocationLeaseAnnotationKeys(
-  annotations: Record<string, unknown>,
-  nowMs = Date.now(),
-): string[] {
-  return activeInvocationLeaseSnapshots(annotations)
-    .filter((snapshot) => snapshot.malformed
-      && (!snapshot.until || Date.parse(snapshot.until) <= nowMs))
-    .map((snapshot) => snapshot.annotationKey);
-}
+/** Residues are cleared only by exact completion/recovery CAS, never by a TTL scan. */
+export function malformedActiveInvocationLeaseAnnotationKeys(_annotations: Record<string, unknown>, _nowMs = Date.now()): string[] { return []; }
 
 function parseInvocationLeaseSnapshot(annotationKey: string, rawValue: unknown): ActiveInvocationLeaseSnapshot {
   const raw = typeof rawValue === 'string' ? rawValue : String(rawValue ?? '');

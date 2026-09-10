@@ -909,7 +909,8 @@ function hasExecutableSqlShape(value) {
   const normalized = normalizeSqlForClassification(value);
   return (
     MIGRATION_PROVIDER_SQL_PATTERN.test(normalized) ||
-    DYNAMIC_SQL_PATTERN.test(normalized)
+    DYNAMIC_SQL_PATTERN.test(normalized) ||
+    UNKNOWN_SQL_PATTERN.test(normalized)
   );
 }
 

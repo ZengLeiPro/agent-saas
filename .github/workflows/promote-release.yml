@@ -1067,7 +1067,7 @@ jobs:
           )
           test -d "$RUNNER_TEMP/web-assets/assets"
           run_with_web_lock bash scripts/release/upload-web-assets-immutable.sh \
-            "$RUNNER_TEMP/web-assets/assets" "$PRODUCTION_WEB_OSS_URI/assets" "$web_oss_credentials"
+            "$RUNNER_TEMP/web-assets/assets" "$PRODUCTION_WEB_OSS_URI/assets" "$web_oss_credentials" "" "https://agent.kaiyan.net"
           # 2) 其余壳文件（sw.js、manifest、图标等）保持原有覆盖式上传；入口两键最后写。
           rm -rf "$RUNNER_TEMP/web-shell"
           mkdir -p "$RUNNER_TEMP/web-shell"

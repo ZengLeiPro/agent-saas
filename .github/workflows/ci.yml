@@ -1226,7 +1226,7 @@ jobs:
             cd web/dist
             # 1) hash 静态资源：最终字节只允许创建或复用，禁止覆盖既有对象键。
             bash ../../scripts/release/upload-web-assets-immutable.sh \
-              assets "oss://$OSS_BUCKET/assets" "$credentials"
+              assets "oss://$OSS_BUCKET/assets" "$credentials" "" "https://agent.kaiyan.net"
             # 2) 图标与预置资源：短缓存
             for d in icons kaikai-presets; do
               [ -d "$d" ] && ossutil cp "$d" "oss://$OSS_BUCKET/$d" -r -f --region "$OSS_REGION" \

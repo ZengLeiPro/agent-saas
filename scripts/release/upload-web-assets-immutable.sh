@@ -6,6 +6,9 @@ asset_root="${1:?asset root is required}"
 target_base="${2:?target OSS prefix is required}"
 credentials_path="${3:?OSS SDK credentials file is required}"
 oss_module_path="${4:-}"
+public_origin="${5:?public Web origin is required}"
+public_origin="${public_origin%/}"
+printf '%s' "$public_origin" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?$'
 region="${OSS_REGION:?OSS_REGION is required}"
 test -d "$asset_root"
 test -s "$credentials_path"
@@ -14,7 +17,7 @@ case "$target_base" in oss://*/*) ;; *) echo 'target must be an OSS prefix' >&2;
 target_base="${target_base%/}"
 bucket_and_prefix="${target_base#oss://}"
 bucket="${bucket_and_prefix%%/*}"
-public_origin="https://${bucket}.oss-${region}.aliyuncs.com"
+# 公开响应头必须按用户实际访问的域名验证；OSS 默认域名会注入强制下载头。
 
 uploaded=0
 reused=0
@@ -55,13 +58,14 @@ while IFS= read -r -d '' source_path; do
 
   put_log="$(mktemp)"
   # ali-oss sends the real conditional request header; exit 17 means an exact 409 conflict.
-  set +e
-  node "$script_dir/put-web-asset-create-only.mjs" \
+  if node "$script_dir/put-web-asset-create-only.mjs" \
     "$upload_path" "$bucket" "${target_uri#"oss://$bucket/"}" "$region" \
     "$cache_control" "$expected_type" "$expected_encoding" \
-    "$credentials_path" "$oss_module_path" > "$put_log" 2>&1
-  put_status=$?
-  set -e
+    "$credentials_path" "$oss_module_path" > "$put_log" 2>&1; then
+    put_status=0
+  else
+    put_status=$?
+  fi
   if [ "$put_status" -eq 0 ]; then
     uploaded=$((uploaded + 1))
   else

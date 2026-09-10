@@ -1,6 +1,6 @@
-import { randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
-import { writeFile, rename, unlink } from 'node:fs/promises';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync, mkdirSync } from 'node:fs';
+import { open, readFile, writeFile, rename, rm, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AgentProfileRecord, AgentProfileInfo, AgentsFileData } from './types.js';
 
@@ -8,6 +8,30 @@ const DEFAULT_PROFILE: Omit<AgentProfileRecord, 'updatedAt' | 'updatedBy'> = {
   name: '开开',
   avatar: '🤖',
 };
+
+const DEFAULT_LOCK_TIMEOUT_MS = 10_000;
+const DEFAULT_LOCK_RETRY_MS = 20;
+
+export interface AgentStoreOptions {
+  /** 生产 PG advisory lock；未提供时使用同路径的跨进程文件锁。 */
+  withLock?: <T>(operation: () => Promise<T>) => Promise<T>;
+  lockTimeoutMs?: number;
+  lockRetryMs?: number;
+}
+
+interface LocalLock {
+  handle: Awaited<ReturnType<typeof open>>;
+  token: string;
+}
+
+interface MutationResult<T> {
+  changed: boolean;
+  value: T;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function errorCode(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null && 'code' in error
@@ -17,12 +41,15 @@ function errorCode(error: unknown): string | undefined {
 
 export class AgentStore {
   private agents: Record<string, AgentProfileRecord> = {};
-  private filePath: string;
-  private writeTail: Promise<void> = Promise.resolve();
+  private readonly filePath: string;
+  private readonly options: AgentStoreOptions;
+  private mutationQueue: Promise<void> = Promise.resolve();
+  private mutationActive = false;
   private sourceWasPresent = false;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, options: AgentStoreOptions = {}) {
     this.filePath = filePath;
+    this.options = options;
     this.load();
   }
 
@@ -57,43 +84,97 @@ export class AgentStore {
     }
   }
 
-  private enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
-    const guarded = async (): Promise<T> => {
-      const previous = structuredClone(this.agents);
+  private refreshForRead(): void {
+    if (!this.mutationActive) this.load();
+  }
+
+  private async acquireLocalLock(): Promise<LocalLock> {
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    const lockPath = `${this.filePath}.lock`;
+    const timeoutMs = Math.max(0, this.options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS);
+    const retryMs = Math.max(1, this.options.lockRetryMs ?? DEFAULT_LOCK_RETRY_MS);
+    const deadline = Date.now() + timeoutMs;
+    const token = randomUUID();
+    for (;;) {
+      let handle: Awaited<ReturnType<typeof open>> | undefined;
       try {
-        return await operation();
+        handle = await open(lockPath, 'wx', 0o600);
+        await handle.writeFile(token, 'utf8');
+        return { handle, token };
       } catch (error) {
-        this.agents = previous;
+        await handle?.close().catch(() => undefined);
+        if (handle) await unlink(lockPath).catch(() => undefined);
+        if (errorCode(error) !== 'EEXIST') throw error;
+        if (Date.now() >= deadline) throw new Error(`Timed out acquiring agents store lock: ${lockPath}`);
+        await sleep(Math.min(retryMs, Math.max(1, deadline - Date.now())));
+      }
+    }
+  }
+
+  private async releaseLocalLock(lock: LocalLock): Promise<void> {
+    const lockPath = `${this.filePath}.lock`;
+    await lock.handle.close().catch(() => undefined);
+    try {
+      if ((await readFile(lockPath, 'utf8')) === lock.token) await unlink(lockPath);
+    } catch (error) {
+      if (errorCode(error) !== 'ENOENT') throw error;
+    }
+  }
+
+  private async mutate<T>(operation: () => MutationResult<T> | Promise<MutationResult<T>>): Promise<T> {
+    const execute = async (): Promise<T> => {
+      this.mutationActive = true;
+      let committedAgents = this.agents;
+      try {
+        this.load();
+        committedAgents = structuredClone(this.agents);
+        const result = await operation();
+        if (result.changed) await this.persist();
+        return result.value;
+      } catch (error) {
+        this.agents = committedAgents;
         throw error;
+      } finally {
+        this.mutationActive = false;
       }
     };
-    const run = this.writeTail.then(guarded, guarded);
-    this.writeTail = run.then(
+    const run = async (): Promise<T> => {
+      if (this.options.withLock) return this.options.withLock(execute);
+      const lock = await this.acquireLocalLock();
+      try {
+        return await execute();
+      } finally {
+        await this.releaseLocalLock(lock);
+      }
+    };
+    const queued = this.mutationQueue.then(run, run);
+    this.mutationQueue = queued.then(
       () => undefined,
       () => undefined,
     );
-    return run;
+    return queued;
   }
 
   private async persist(): Promise<void> {
     const data: AgentsFileData = { version: 1, agents: this.agents };
     mkdirSync(dirname(this.filePath), { recursive: true });
-    const tmpPath = join(dirname(this.filePath), `.agents.${randomBytes(6).toString('hex')}.tmp`);
-    await writeFile(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+    const tmpPath = join(dirname(this.filePath), `.agents.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
     try {
+      await writeFile(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
       await rename(tmpPath, this.filePath);
       this.sourceWasPresent = true;
-    } catch (err) {
-      await unlink(tmpPath).catch(() => {});
-      throw err;
+    } finally {
+      await rm(tmpPath, { force: true }).catch(() => undefined);
     }
   }
 
   get(username: string): AgentProfileRecord | undefined {
+    this.refreshForRead();
     return this.agents[username];
   }
 
   getOrDefault(username: string): AgentProfileInfo {
+    this.refreshForRead();
     return {
       ...(this.agents[username] ?? {
         ...DEFAULT_PROFILE,
@@ -105,6 +186,7 @@ export class AgentStore {
   }
 
   getAll(): AgentProfileInfo[] {
+    this.refreshForRead();
     return Object.entries(this.agents).map(([username, profile]) => ({
       ...profile,
       username,
@@ -112,77 +194,53 @@ export class AgentStore {
   }
 
   async set(username: string, partial: Partial<AgentProfileRecord>, updatedBy: string): Promise<AgentProfileInfo> {
-    return this.enqueueWrite(async () => {
-      this.load();
+    return this.mutate(() => {
       const existing = this.agents[username];
       const now = new Date().toISOString();
       if (existing) Object.assign(existing, partial, { updatedAt: now, updatedBy });
       else this.agents[username] = { ...DEFAULT_PROFILE, ...partial, updatedAt: now, updatedBy };
-      await this.persist();
-      return { ...this.agents[username], username };
+      return { changed: true, value: { ...this.agents[username], username } };
     });
   }
 
   async remove(username: string): Promise<void> {
-    await this.enqueueWrite(async () => {
-      this.load();
-      if (!(username in this.agents)) return;
+    await this.mutate(() => {
+      if (!(username in this.agents)) return { changed: false, value: undefined };
       delete this.agents[username];
-      await this.persist();
+      return { changed: true, value: undefined };
     });
   }
 
   async removeMany(usernames: Iterable<string>): Promise<number> {
     const targets = [...usernames];
-    return this.enqueueWrite(async () => {
-      this.load();
+    return this.mutate(() => {
       let removed = 0;
       for (const username of targets) {
         if (!(username in this.agents)) continue;
         delete this.agents[username];
         removed++;
       }
-      if (removed > 0) await this.persist();
-      return removed;
+      return { changed: removed > 0, value: removed };
     });
   }
 
   /** 为不存在记录的用户写入默认 profile */
-  initDefaults(usernames: string[]): void {
-    this.load();
-    const previous = structuredClone(this.agents);
-    let changed = false;
-    const now = new Date().toISOString();
-    for (const username of usernames) {
-      if (!(username in this.agents)) {
-        this.agents[username] = {
-          ...DEFAULT_PROFILE,
-          updatedAt: now,
-          updatedBy: 'system',
-        };
-        changed = true;
-      }
-    }
-    if (changed) {
-      // 启动期也先写唯一临时文件再原子替换，禁止把中断写入暴露成合法空库。
-      const data: AgentsFileData = { version: 1, agents: this.agents };
-      mkdirSync(dirname(this.filePath), { recursive: true });
-      const tmpPath = join(dirname(this.filePath), `.agents.${randomBytes(6).toString('hex')}.tmp`);
-      try {
-        writeFileSync(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
-        renameSync(tmpPath, this.filePath);
-        this.sourceWasPresent = true;
-      } catch (error) {
-        this.agents = previous;
-        throw error;
-      } finally {
-        try {
-          unlinkSync(tmpPath);
-        } catch {
-          /* already renamed or cleanup best effort */
+  async initDefaults(usernames: string[]): Promise<void> {
+    await this.mutate(() => {
+      let changed = false;
+      const now = new Date().toISOString();
+      for (const username of usernames) {
+        if (!(username in this.agents)) {
+          this.agents[username] = {
+            ...DEFAULT_PROFILE,
+            updatedAt: now,
+            updatedBy: 'system',
+          };
+          changed = true;
         }
       }
-    }
+      return { changed, value: undefined };
+    });
   }
 }
 

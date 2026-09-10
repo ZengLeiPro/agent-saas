@@ -61,7 +61,7 @@ describe('identity JSON stores fail closed on existing unreadable state', () => 
     await store.set('alice', { name: 'Alice Agent' }, 'admin');
     await writeFile(filePath, CORRUPT);
 
-    expect(() => store.initDefaults(['bob'])).toThrow(AgentStoreUnavailableError);
+    await expect(store.initDefaults(['bob'])).rejects.toBeInstanceOf(AgentStoreUnavailableError);
     await expect(store.set('bob', { name: 'Bob Agent' }, 'admin')).rejects.toBeInstanceOf(
       AgentStoreUnavailableError,
     );

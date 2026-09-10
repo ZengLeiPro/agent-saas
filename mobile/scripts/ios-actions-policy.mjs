@@ -9,7 +9,9 @@ export const IOS_ENVIRONMENTS = Object.freeze({
 });
 
 export function requireSha(value, label = 'source SHA') {
-  assert.match(value ?? '', /^[0-9a-f]{40}$/u, `${label} must be a full lowercase Git SHA`);
+  assert.equal(typeof value, 'string', `${label} must be a string`);
+  assert.equal(value.length, 40, `${label} must contain exactly 40 characters`);
+  assert.match(value, /^[0-9a-f]{40}$/u, `${label} must be a full lowercase Git SHA`);
   return value;
 }
 
@@ -17,6 +19,7 @@ export function requireId(value, label) {
   const text = String(value ?? '');
   assert.match(text, /^[1-9][0-9]*$/u, `${label} must be a positive integer`);
   assert.ok(Number.isSafeInteger(Number(text)), `${label} is too large`);
+  assert.equal(text, String(Number(text)), `${label} must be canonical`);
   return text;
 }
 

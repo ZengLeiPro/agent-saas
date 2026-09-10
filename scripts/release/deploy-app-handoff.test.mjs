@@ -146,6 +146,10 @@ test('authority 提交后旧 generation 后台交接：marker + disable + SIGUSR
   assert.match(fn, /install -m 0644 \/dev\/null "\$marker"/u);
   assert.match(fn, /systemctl disable "\$unit"/u);
   assert.match(fn, /kill -USR2 "\$pid"/u);
+  assert.match(
+    fn,
+    /if \[ "\$main_pid" != "\$pid" \]; then[\s\S]*ActiveState[\s\S]*\[ "\$state" = inactive \] && return 0/u,
+  );
   assert.doesNotMatch(fn, /--now|systemctl (?:stop|kill)|seq 1/u);
 });
 

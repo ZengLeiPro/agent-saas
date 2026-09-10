@@ -451,75 +451,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          base_sha="$(git rev-parse "$RELEASE_SHA^1")"
-          git diff --name-only "$base_sha" "$RELEASE_SHA" > "$RUNNER_TEMP/acs-changed-files.txt"
-          bash .github/scripts/acs-classify.sh \
-            "$RUNNER_TEMP/acs-changed-files.txt" "$base_sha" > "$RUNNER_TEMP/acs-classification.out"
-          cat "$RUNNER_TEMP/acs-classification.out"
-          publish="$(sed -n 's/^publish=//p' "$RUNNER_TEMP/acs-classification.out")"
-          contract_check="$(sed -n 's/^contract_check=//p' "$RUNNER_TEMP/acs-classification.out")"
-          case "$publish:$contract_check" in
-            false:false)
-              jq -n --arg sha "$RELEASE_SHA" --argjson appRunId "$APP_CI_RUN_ID" '{
-                appCi: {workflow: "Build & Check", status: "success", headSha: $sha, runId: $appRunId},
-                acsImpact: {workflow: "ACS Impact Gate", status: "not_required", headSha: $sha}
-              }' > "$RUNNER_TEMP/checks.json"
-              ;;
-            true:*|*:true)
-              acs_run=''
-              for attempt in $(seq 1 90); do
-                gh api --method GET \
-                  "repos/$GITHUB_REPOSITORY/actions/workflows/acs-sandbox.yml/runs" \
-                  -f head_sha="$RELEASE_SHA" -f event=push -f per_page=20 \
-                  > "$RUNNER_TEMP/acs-runs.json"
-                acs_run="$(jq -c --arg sha "$RELEASE_SHA" '
-                  [.workflow_runs[] | select(.head_sha == $sha and .event == "push")] |
-                  sort_by(.run_number) | last // empty
-                ' "$RUNNER_TEMP/acs-runs.json")"
-                if [ -z "$acs_run" ] || [ "$(printf '%s' "$acs_run" | jq -r .status)" != completed ]; then
-                  sleep 10
-                  continue
-                fi
-                test "$(printf '%s' "$acs_run" | jq -r .conclusion)" = success
-                acs_run_id="$(printf '%s' "$acs_run" | jq -r .id)"
-                gh api "repos/$GITHUB_REPOSITORY/actions/runs/$acs_run_id/jobs?filter=latest&per_page=100" \
-                  > "$RUNNER_TEMP/acs-jobs.json"
-                acs_gate_job_name='门禁（类型检查 + 测试）'
-                acs_contract_job_name='ACS 契约检查'
-                if [ "$publish" = true ]; then
-                  if ! jq -e --arg name "$acs_gate_job_name" \
-                    '[.jobs[] | select(.name == $name and .conclusion == "success")] | length == 1' \
-                    "$RUNNER_TEMP/acs-jobs.json" >/dev/null; then
-                    jq '[.jobs[] | {id, name, status, conclusion, html_url}]' \
-                      "$RUNNER_TEMP/acs-jobs.json" >&2
-                    echo "::error::ACS run $acs_run_id 缺少成功的 $acs_gate_job_name job" >&2
-                    exit 1
-                  fi
-                fi
-                if [ "$contract_check" = true ]; then
-                  if ! jq -e --arg name "$acs_contract_job_name" \
-                    '[.jobs[] | select(.name == $name and .conclusion == "success")] | length == 1' \
-                    "$RUNNER_TEMP/acs-jobs.json" >/dev/null; then
-                    jq '[.jobs[] | {id, name, status, conclusion, html_url}]' \
-                      "$RUNNER_TEMP/acs-jobs.json" >&2
-                    echo "::error::ACS run $acs_run_id 缺少成功的 $acs_contract_job_name job" >&2
-                    exit 1
-                  fi
-                fi
-                jq -n --arg sha "$RELEASE_SHA" --argjson appRunId "$APP_CI_RUN_ID" \
-                  --argjson acsRunId "$acs_run_id" '{
-                    appCi: {workflow: "Build & Check", status: "success", headSha: $sha, runId: $appRunId},
-                    acsImpact: {workflow: "ACS Impact Gate", status: "success", headSha: $sha, runId: $acsRunId}
-                  }' > "$RUNNER_TEMP/checks.json"
-                break
-              done
-              test -s "$RUNNER_TEMP/checks.json"
-              ;;
-            *)
-              echo 'Invalid ACS classification output' >&2
-              exit 1
-              ;;
-          esac
+          # ci.yml now owns both gates. Never wait for the manual ACS deployment workflow.
+          # Read every latest-job page; successful jobs from earlier rerun attempts remain valid.
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$APP_CI_RUN_ID/jobs?filter=latest&per_page=100" \
+            > "$RUNNER_TEMP/unified-ci-jobs-pages.json"
+          # Reject a rerun that raced the trusted CI read and job collection.
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_CI_RUN_ID" \
+            > "$RUNNER_TEMP/unified-ci-run.json"
+          node scripts/release/unified-ci-evidence.mjs \
+            "$RUNNER_TEMP/app-ci-workflow.json" "$RUNNER_TEMP/app-ci-run.json" \
+            "$RUNNER_TEMP/unified-ci-jobs-pages.json" "$RUNNER_TEMP/unified-ci-run.json" \
+            "$RELEASE_SHA" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/checks.json"
 
       - name: 存在时复用不可变发布证据
         env:

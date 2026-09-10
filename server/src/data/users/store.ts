@@ -92,12 +92,12 @@ export class UserStore {
     this.load();
   }
 
-  private load(): void {
+  private load(): boolean {
     if (!existsSync(this.filePath)) {
       mkdirSync(dirname(this.filePath), { recursive: true });
       this.users = [];
       this.debugModeMigrationVersion = 1;
-      return;
+      return false;
     }
     let needsDebugModeMigration = false;
     try {
@@ -108,7 +108,7 @@ export class UserStore {
     } catch {
       this.users = [];
       this.debugModeMigrationVersion = 1;
-      return;
+      return false;
     }
 
     // PR 2 迁移：为缺失 tenantId 的旧记录回填。
@@ -152,11 +152,17 @@ export class UserStore {
         authLogger.warn(`Failed to persist user record migrations: ${err}`);
       });
     }
+    return true;
   }
 
   /** 重新读取共享 users.json，供多进程后台执行器刷新用户状态。 */
   reload(): void {
-    this.load();
+    const previousUsers = this.users;
+    const previousMigrationVersion = this.debugModeMigrationVersion;
+    if (this.load()) return;
+    this.users = previousUsers;
+    this.debugModeMigrationVersion = previousMigrationVersion;
+    throw new Error('共享 users.json 刷新失败，已保留上一版用户快照');
   }
 
   setPostPersistObserver(observer: (() => void) | undefined): void {

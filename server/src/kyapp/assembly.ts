@@ -18,6 +18,7 @@ import { PgKyAppNonceStore } from './attest/nonceStore.js';
 import { KyAppHandshakeService } from './attest/handshake.js';
 import { PgKyAppDirectoryChangeLog } from './directory/changeLog.js';
 import { DirectoryProjector, GovernanceDirectorySource } from './directory/projection.js';
+import { DirectoryChangeNotifier } from './directory/notifier.js';
 import { PgDirectorySnapshotSource } from './directory/snapshot.js';
 import { PgKyAppDeliveryStore } from './delivery/store.js';
 import { KyAppDeliveryMetrics } from './delivery/metrics.js';
@@ -261,6 +262,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     now,
     onAbandoned: alerts.onEventAbandoned,
   });
+  const observedFeatures = new Map<string, ReadonlySet<string>>();
   const prober = new KyAppHealthProber({
     config,
     directory,
@@ -282,6 +284,18 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
       return result.verified;
     },
     onAlert: alerts.onHealthAlert,
+    onFeaturesObserved: (installationId, features) => {
+      observedFeatures.set(installationId, new Set(features));
+    },
+  });
+  const directoryNotifier = new DirectoryChangeNotifier({
+    directory,
+    issuer,
+    outbound,
+    now,
+    supportsFeature: (installationId, feature) =>
+      observedFeatures.get(installationId)?.has(feature) === true,
+    logger: { warn: (message) => serverLogger.warn(message) },
   });
   const worker = new KyAppWorker({
     canRun: () => runtime.getRuntimeAdmissionSnapshot?.().admitting === true,
@@ -298,7 +312,8 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
       ? {
           directoryMaintenance: {
             reconcile: async () => {
-              await directoryProjector.reconcileAll();
+              const results = await directoryProjector.reconcileAll();
+              await directoryNotifier.notify(results);
             },
             purgeExpired: (at: Date) =>
               directoryChangeLog.purgeExpired({

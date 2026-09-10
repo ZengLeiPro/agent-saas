@@ -42,6 +42,11 @@ export interface DirectorySourceSnapshot {
  */
 export interface DirectorySourceProvider {
   readonly sourceId: DirectorySourceId;
+  /**
+   * 在一轮投影开始前刷新跨进程事实源。文件型事实源必须在这里重新装载，
+   * 避免 runtime worker 永久持有启动时的旧内存副本。
+   */
+  refresh?(): Promise<void> | void;
   /** 需要投影的组织列表。 */
   listTenantIds(): Promise<string[]>;
   /** 拉取一个组织的完整目录期望态；必须是只读且幂等的。 */
@@ -63,6 +68,8 @@ export interface DirectoryUserSourceRecord {
 }
 
 export interface DirectoryUserReader {
+  /** 多进程部署下重新读取共享账号事实源；纯内存测试替身可以不实现。 */
+  reload?(): void;
   listAll(): readonly DirectoryUserSourceRecord[];
 }
 
@@ -95,6 +102,10 @@ export class GovernanceDirectorySource implements DirectorySourceProvider {
     this.membershipsTable = `${prefix}_tenant_memberships`;
     this.groupsTable = `${prefix}_directory_groups`;
     this.groupMembersTable = `${prefix}_directory_group_members`;
+  }
+
+  refresh(): void {
+    this.options.users.reload?.();
   }
 
   async listTenantIds(): Promise<string[]> {
@@ -291,10 +302,17 @@ export class DirectoryProjector {
   }
 
   async reconcileAll(): Promise<DirectoryReconcileResult[]> {
+    await this.options.source.refresh?.();
     const tenantIds = await this.options.source.listTenantIds();
     const results: DirectoryReconcileResult[] = [];
-    for (const tenantId of tenantIds) results.push(await this.reconcileTenant(tenantId));
+    for (const tenantId of tenantIds) results.push(await this.reconcileTenantCurrent(tenantId));
     return results;
+  }
+
+  /** 单组织手动对齐同样先刷新源，避免运维触发路径绕过跨进程刷新。 */
+  async reconcileTenant(tenantId: string): Promise<DirectoryReconcileResult> {
+    await this.options.source.refresh?.();
+    return this.reconcileTenantCurrent(tenantId);
   }
 
   /**
@@ -302,7 +320,7 @@ export class DirectoryProjector {
    * 事务外先取期望态（源端可能是慢 IO），事务内用 advisory lock 把同组织的并发投影串起来，
    * 避免两个 worker 同时跑出重复事件。
    */
-  async reconcileTenant(tenantId: string): Promise<DirectoryReconcileResult> {
+  private async reconcileTenantCurrent(tenantId: string): Promise<DirectoryReconcileResult> {
     const desired = await this.options.source.loadDirectory(tenantId);
     const client = await this.options.pool.connect();
     try {

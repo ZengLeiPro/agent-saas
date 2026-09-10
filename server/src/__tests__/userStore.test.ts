@@ -47,6 +47,22 @@ describe("UserStore user ids", () => {
     expect(reader.findById(user.id)?.disabled).toBe(true);
   });
 
+  it("reload 读取损坏文件时保留上一版，避免后台投影误判全员离职", async () => {
+    const { store: writer, filePath } = await tempUserStore();
+    const user = await writer.create({
+      username: "reload-safe-user",
+      password: "password123",
+      role: "user",
+      createdBy: "system",
+      tenantId: "kaiyan",
+    });
+    const reader = new UserStore(filePath);
+
+    await writeFile(filePath, "{broken-json");
+    expect(() => reader.reload()).toThrow("已保留上一版用户快照");
+    expect(reader.findById(user.id)?.username).toBe("reload-safe-user");
+  });
+
   it("persists new users with compact ids", async () => {
     const { store, filePath } = await tempUserStore();
 

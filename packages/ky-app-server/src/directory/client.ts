@@ -28,6 +28,8 @@ export const DIRECTORY_RATE_LIMIT = { max: 60, windowMs: 60_000 } as const;
 export const DIRECTORY_CHANGES_LIMIT = 500;
 /** 快照分页的安全上限，防止服务端 `pageToken` 成环。 */
 export const DIRECTORY_SNAPSHOT_MAX_PAGES = 1000;
+/** 单次平台目录请求最长等待 10 秒，避免关停时被无界网络请求拖住。 */
+export const DIRECTORY_REQUEST_TIMEOUT_MS = 10_000;
 
 export type DirectorySyncStatus = 'snapshot' | 'changes' | 'up-to-date' | 'rate_limited';
 
@@ -47,6 +49,7 @@ export interface DirectoryClientOptions {
   baseUrl: string;
   fetch?: FetchLike;
   now?: () => number;
+  requestTimeoutMs?: number;
 }
 
 export interface DirectoryClient {
@@ -88,6 +91,10 @@ export function createDirectoryClient(options: DirectoryClientOptions): Director
   const doFetch: FetchLike = options.fetch ?? ((input, init) => fetch(input, init));
   const limiter = new WindowLimiter(DIRECTORY_RATE_LIMIT.max, DIRECTORY_RATE_LIMIT.windowMs);
   const base = options.baseUrl.replace(/\/+$/u, '');
+  const requestTimeoutMs = options.requestTimeoutMs ?? DIRECTORY_REQUEST_TIMEOUT_MS;
+  if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
+    throw new Error('requestTimeoutMs 必须大于 0');
+  }
 
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     if (!limiter.take(now())) {
@@ -95,6 +102,7 @@ export function createDirectoryClient(options: DirectoryClientOptions): Director
     }
     const response = await doFetch(`${base}${path}`, {
       ...init,
+      signal: init.signal ?? AbortSignal.timeout(requestTimeoutMs),
       headers: {
         authorization: `Bearer ${options.config.serviceCredential}`,
         accept: 'application/json',

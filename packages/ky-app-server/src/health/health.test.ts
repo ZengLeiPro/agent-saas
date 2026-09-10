@@ -20,6 +20,7 @@ describe('buildHealthReady', () => {
     appVersion: '1.2.3',
     manifestDigest: TEST_MANIFEST_DIGEST,
     installationState: 'enabled' as const,
+    features: ['directory.changed.v1'] as const,
     deps: { db: () => true, executionStore: () => true, jtiStore: () => true },
     directorySync: async () => ({ checkpoint: 42, ageSeconds: 12 }),
     jwksKids: () => ['k1', 'k2'],
@@ -32,6 +33,7 @@ describe('buildHealthReady', () => {
       appVersion: '1.2.3',
       manifestDigest: TEST_MANIFEST_DIGEST,
       installationState: 'enabled',
+      features: ['directory.changed.v1'],
       deps: {
         db: true,
         executionStore: true,

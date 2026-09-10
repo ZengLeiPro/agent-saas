@@ -1,5 +1,7 @@
 # Release-bound Config Identity（配置身份）
 
+> 2026-09-10 补充：平台管理在线保存沿用同一签名 publication 权威；operation scope 只限制合法 raw diff，不改变 identity 算法。Codex 正常 token rotate 通过服务器内部既有受管 ref 的协调推进签名 identity；事务外 Secret 修改仍视为 drift，禁止 observed 自动采纳为 expected。详见 `docs/plans/platform-admin-controlled-config-save-implementation.md`。
+
 > 2026-09-09 补充：生产模型管理已增加签名的在线配置发布权威。下文的 `.release.env` 仍是不可变的代码发布基线；同一代码版本上经过受控保存的配置，以签名在线版本作为 expected。详见本文末节和 `docs/plans/production-model-config-online-save.md`。
 
 > 对应任务：TASK-318。本文定义「Release 期望的配置身份」与「Runtime 实际观察到的

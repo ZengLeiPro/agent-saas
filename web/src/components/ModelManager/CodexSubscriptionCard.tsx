@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAdminConfigWritePolicy, type AdminConfigResponseMetadata } from "@/hooks/useAdminConfigWritePolicy";
 
 type CodexRuntimeStatus = {
   requestWindow: {
@@ -62,7 +63,7 @@ type CodexCredentialState = {
   error?: string;
 };
 
-type CodexSubscriptionState = {
+type CodexSubscriptionState = AdminConfigResponseMetadata & {
   config: {
     enabled: boolean;
     /** 蓝绿 N/N+1：旧 Server 缺字段时按关闭处理。 */
@@ -105,6 +106,9 @@ function accountList(state: CodexSubscriptionState | null): CodexCredentialState
 }
 
 export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
+  const write = useAdminConfigWritePolicy(readOnly);
+  const { acceptMetadata } = write;
+  const effectiveReadOnly = write.readOnly;
   const [state, setState] = useState<CodexSubscriptionState | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [websocketEnabled, setWebsocketEnabled] = useState(false);
@@ -115,13 +119,14 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const [error, setError] = useState<string | null>(null);
 
   const applyState = useCallback((next: CodexSubscriptionState) => {
+    acceptMetadata(next);
     const credentials = next.credentials ?? (next.credential?.configured ? [next.credential] : []);
     setState({ ...next, credentials });
     setEnabled(next.config.enabled);
     setWebsocketEnabled(next.config.websocketEnabled === true);
     setQuotaCooldownMinutes(next.config.quotaCooldownMinutes ?? 60);
     setError(next.warning ?? null);
-  }, []);
+  }, [acceptMetadata]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -159,11 +164,12 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     const poll = async () => {
       try {
         const response = await authFetch(
-          `/api/admin/codex-subscription/device/${encodeURIComponent(deviceSession.sessionId)}`,
+          `/api/admin/codex-subscription/device/${encodeURIComponent(deviceSession.sessionId)}/poll`,
+          { method: "POST" },
         );
         const data = await readJson<
           | { status: "pending"; retryAfterMs: number }
-          | ({ status: "completed" } & CodexSubscriptionState)
+          | { status: "authorized_pending_publication" }
           | { status: "expired" }
         >(response);
         if (cancelled) return;
@@ -173,8 +179,23 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
           return;
         }
         if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-        if (data.status === "completed" && "config" in data) {
-          applyState(data);
+        if (data.status === "authorized_pending_publication") {
+          const productionConfirmation = write.confirmMutation();
+          if (productionConfirmation === null) {
+            setError("外部授权已完成，尚未登记到平台；可稍后继续完成登记");
+            return;
+          }
+          const completeResponse = await write.mutationFetch(
+            `/api/admin/codex-subscription/device/${encodeURIComponent(deviceSession.sessionId)}/complete`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(write.bodyMetadata(productionConfirmation)),
+            },
+          );
+          const completed = await readJson<{ status: "applied" } & CodexSubscriptionState>(completeResponse);
+          if (!completeResponse.ok || !completed.config) throw new Error(completed.error || `HTTP ${completeResponse.status}`);
+          applyState(completed);
           setDeviceSession(null);
           return;
         }
@@ -194,7 +215,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [applyState, deviceSession]);
+  }, [applyState, deviceSession, write]);
 
   const startAuthorization = useCallback(async (credentialRef?: string) => {
     setWorking(true);
@@ -220,10 +241,12 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     setWorking(true);
     setError(null);
     try {
-      const response = await authFetch("/api/admin/codex-subscription", {
+      const productionConfirmation = write.confirmMutation();
+      if (productionConfirmation === null) return;
+      const response = await write.mutationFetch("/api/admin/codex-subscription", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled, websocketEnabled, quotaCooldownMinutes }),
+        body: JSON.stringify({ enabled, websocketEnabled, quotaCooldownMinutes, ...write.bodyMetadata(productionConfirmation) }),
       });
       const data = await readJson<CodexSubscriptionState>(response);
       if (!response.ok || !data.config) {
@@ -235,7 +258,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     } finally {
       setWorking(false);
     }
-  }, [applyState, enabled, quotaCooldownMinutes, websocketEnabled]);
+  }, [applyState, enabled, quotaCooldownMinutes, websocketEnabled, write]);
 
   const reorder = useCallback(async (fromIndex: number, toIndex: number) => {
     const accounts = accountList(state);
@@ -251,10 +274,12 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     setWorking(true);
     setError(null);
     try {
-      const response = await authFetch("/api/admin/codex-subscription/credentials/order", {
+      const productionConfirmation = write.confirmMutation();
+      if (productionConfirmation === null) return;
+      const response = await write.mutationFetch("/api/admin/codex-subscription/credentials/order", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credentialRefs: refs }),
+        body: JSON.stringify({ credentialRefs: refs, ...write.bodyMetadata(productionConfirmation) }),
       });
       const data = await readJson<CodexSubscriptionState>(response);
       if (!response.ok || !data.config) throw new Error(data.error || `HTTP ${response.status}`);
@@ -264,7 +289,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     } finally {
       setWorking(false);
     }
-  }, [applyState, state]);
+  }, [applyState, state, write]);
 
   const removeCredential = useCallback(async (account: CodexCredentialState) => {
     if (!account.id) {
@@ -276,9 +301,11 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     setWorking(true);
     setError(null);
     try {
-      const response = await authFetch(
+      const productionConfirmation = write.confirmMutation();
+      if (productionConfirmation === null) return;
+      const response = await write.mutationFetch(
         `/api/admin/codex-subscription/credentials/${encodeURIComponent(account.id)}`,
-        { method: "DELETE" },
+        { method: "DELETE", headers: write.deleteHeaders(productionConfirmation) },
       );
       const data = await readJson<CodexSubscriptionState>(response);
       if (!response.ok || !data.config) throw new Error(data.error || `HTTP ${response.status}`);
@@ -288,14 +315,16 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     } finally {
       setWorking(false);
     }
-  }, [applyState]);
+  }, [applyState, write]);
 
   const disconnect = useCallback(async () => {
     if (!window.confirm("确定断开全部 Codex 订阅账号并撤销已保存的 OAuth 凭据吗？")) return;
     setWorking(true);
     setError(null);
     try {
-      const response = await authFetch("/api/admin/codex-subscription", { method: "DELETE" });
+      const productionConfirmation = write.confirmMutation();
+      if (productionConfirmation === null) return;
+      const response = await write.mutationFetch("/api/admin/codex-subscription", { method: "DELETE", headers: write.deleteHeaders(productionConfirmation) });
       const data = await readJson<CodexSubscriptionState>(response);
       if (!response.ok || !data.config) {
         throw new Error(data.error || `HTTP ${response.status}`);
@@ -307,7 +336,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     } finally {
       setWorking(false);
     }
-  }, [applyState]);
+  }, [applyState, write]);
 
   const accounts = accountList(state);
   const primary = accounts[0] ?? state?.credential;
@@ -354,7 +383,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                 <input
                   type="checkbox"
                   checked={enabled}
-                  disabled={readOnly || working || accounts.length === 0}
+                  disabled={effectiveReadOnly || working || accounts.length === 0}
                   onChange={(event) => setEnabled(event.target.checked)}
                 />
                 启用订阅 transport
@@ -367,7 +396,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                   min={1}
                   max={10_080}
                   value={quotaCooldownMinutes}
-                  disabled={readOnly || working}
+                  disabled={effectiveReadOnly || working}
                   onChange={(event) => setQuotaCooldownMinutes(Number(event.target.value))}
                 />
                 <div className="text-xs text-muted-foreground">冷却期间跳过该账号，到期自动恢复探测。</div>
@@ -377,7 +406,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                   className="mt-0.5"
                   type="checkbox"
                   checked={websocketEnabled}
-                  disabled={readOnly || working || !enabled || accounts.length === 0}
+                  disabled={effectiveReadOnly || working || !enabled || accounts.length === 0}
                   onChange={(event) => setWebsocketEnabled(event.target.checked)}
                 />
                 <span>
@@ -414,7 +443,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                           size="sm"
                           variant="ghost"
                           className="h-7 px-2"
-                          disabled={readOnly || working || index === 0}
+                          disabled={effectiveReadOnly || working || index === 0}
                           onClick={() => void reorder(index, index - 1)}
                           title="上移优先级"
                         >
@@ -425,7 +454,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                           size="sm"
                           variant="ghost"
                           className="h-7 px-2"
-                          disabled={readOnly || working || index === accounts.length - 1}
+                          disabled={effectiveReadOnly || working || index === accounts.length - 1}
                           onClick={() => void reorder(index, index + 1)}
                           title="下移优先级"
                         >
@@ -436,7 +465,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                           size="sm"
                           variant="ghost"
                           className="h-7 px-2"
-                          disabled={readOnly || working || !account.id}
+                          disabled={effectiveReadOnly || working || !account.id}
                           onClick={() => void startAuthorization(account.id)}
                         >
                           <KeyRound className="size-3.5" />
@@ -446,7 +475,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                           size="sm"
                           variant="ghost"
                           className="h-7 px-2 text-destructive hover:text-destructive"
-                          disabled={readOnly || working || !account.id}
+                          disabled={effectiveReadOnly || working || !account.id}
                           onClick={() => void removeCredential(account)}
                         >
                           <Trash2 className="size-3.5" />
@@ -575,7 +604,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={readOnly || working}
+                disabled={effectiveReadOnly || working}
                 onClick={() => void startAuthorization()}
               >
                 {working ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
@@ -583,7 +612,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
               </Button>
               <Button
                 size="sm"
-                disabled={readOnly || working || accounts.length === 0 || !quotaCooldownValid}
+                disabled={effectiveReadOnly || working || accounts.length === 0 || !quotaCooldownValid}
                 onClick={() => void save()}
               >
                 <Save className="size-3.5" />
@@ -598,7 +627,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                   size="sm"
                   variant="ghost"
                   className="text-destructive hover:text-destructive"
-                  disabled={readOnly || working}
+                  disabled={effectiveReadOnly || working}
                   onClick={() => void disconnect()}
                 >
                   <Unplug className="size-3.5" />

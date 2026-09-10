@@ -209,6 +209,7 @@ async function persistSubmittedModelCredentials(input: {
   replacedRefs: CreatedSecretRef[];
   previousRefs: Map<string, string | undefined>;
   allowInlineWithoutVault?: boolean;
+  operationId?: string;
 }): Promise<ModelsConfig> {
   const groups: ModelsConfig['groups'] = [];
   for (const group of input.models.groups) {
@@ -228,7 +229,7 @@ async function persistSubmittedModelCredentials(input: {
       'models',
       group.apiKey,
       { actor: 'system', userId: 'models_config_admin', scopes: ['secret:models:write'] },
-      { groupId: group.id, purpose: 'model-api' },
+      { groupId: group.id, purpose: 'model-api', ...(input.operationId ? { configOperationId: input.operationId } : {}) },
     );
     input.createdRefs.push({ ref: ref.id, kind: 'models' });
     const previousRef = input.previousRefs.get(group.id);
@@ -248,6 +249,7 @@ async function persistSubmittedMemoryCredential(input: {
   secretVault?: SecretVault;
   createdRefs: CreatedSecretRef[];
   replacedRefs: CreatedSecretRef[];
+  operationId?: string;
 }): Promise<MemoryIndexAppConfig | null> {
   if (!input.memoryIndex || !isRecord(input.body) || !isRecord(input.body.memoryIndex)) return input.memoryIndex;
   const requested = input.body.memoryIndex;
@@ -261,7 +263,7 @@ async function persistSubmittedMemoryCredential(input: {
     'memory_index',
     requested.embedding.apiKey,
     { actor: 'system', userId: 'models_config_admin', scopes: ['secret:memory_index:write'] },
-    { purpose: 'memory-embedding' },
+    { purpose: 'memory-embedding', ...(input.operationId ? { configOperationId: input.operationId } : {}) },
   );
   input.createdRefs.push({ ref: ref.id, kind: 'memory_index' });
   const previousRef = input.current.memory?.index?.embedding.apiKeyRef;
@@ -401,12 +403,12 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
     const requestContext = mutationRequestContext(req);
     const expectedRevisions = [
       typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : undefined,
-      requestContext.expectedFingerprint,
+      requestContext.expectedRevision,
     ].filter((revision): revision is string => Boolean(revision));
     try {
       const result = await configMutationService.mutate({
-        actor: requestContext.actor,
-        productionConfirmation: typeof req.body?.productionConfirmation === 'string' ? req.body.productionConfirmation : undefined,
+        operation: { id: 'models.save' },
+        ...requestContext,
         expectedRevision: expectedRevisions[0],
         changedPaths: ['models', 'memory.index', 'titleGenerator', 'guardrail', 'systemPrompts.utility.title'],
         validateBaseline: async (configText, _current) => {
@@ -433,6 +435,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
               replacedRefs,
               previousRefs: new Map((persisted.models?.groups ?? []).map((group) => [group.id, group.apiKeyRef])),
               allowInlineWithoutVault: Boolean(options.validateConfigReload),
+              operationId: requestContext.operationId,
             }),
           };
           nextUpdate = {
@@ -444,6 +447,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
               createdRefs,
               replacedRefs,
               previousRefs: new Map((persisted.models?.groups ?? []).map((group) => [group.id, group.quotaSource?.secretAccessKeyRef])),
+              operationId: requestContext.operationId,
             }),
           };
           nextUpdate = {
@@ -455,6 +459,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
               secretVault: options.secretVault,
               createdRefs,
               replacedRefs,
+              operationId: requestContext.operationId,
             }),
           };
           let updatedText = applyEdits(configText, modify(configText, ['models'], nextUpdate.models, {

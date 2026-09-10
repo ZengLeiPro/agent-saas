@@ -17,8 +17,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
+import { useAdminConfigWritePolicy, type AdminConfigResponseMetadata } from "@/hooks/useAdminConfigWritePolicy";
 
-export interface AudioTranscribeAdminResponse {
+export interface AudioTranscribeAdminResponse extends AdminConfigResponseMetadata {
   config: {
     enabled: boolean;
     model?: string;
@@ -87,6 +88,7 @@ function parsePricing(draft: AudioTranscribeDraft) {
 
 export function AudioTranscribeSettingsCard(): JSX.Element {
   const { platformReadOnly } = useAuth();
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly);
   const [data, setData] = useState<AudioTranscribeAdminResponse | null>(null);
   const [draft, setDraft] = useState<AudioTranscribeDraft | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,10 +98,11 @@ export function AudioTranscribeSettingsCard(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   const hydrate = useCallback((next: AudioTranscribeAdminResponse) => {
+    acceptMetadata(next);
     setData(next);
     setDraft(hydrateDraft(next));
     setDirty(false);
-  }, []);
+  }, [acceptMetadata]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -132,14 +135,17 @@ export function AudioTranscribeSettingsCard(): JSX.Element {
     if (!draft) return;
     setSaving(true);
     try {
+      const productionConfirmation = confirmMutation();
+      if (productionConfirmation === null) return;
       if (!draft.model.trim()) throw new Error("model 不能为空");
       if (!draft.ossBucket.trim()) throw new Error("OSS_BUCKET 不能为空");
       if (!draft.ossEndpoint.trim()) throw new Error("OSS_ENDPOINT 不能为空");
       const pricing = parsePricing(draft);
-      const response = await authFetch("/api/admin/audio-transcribe", {
+      const response = await mutationFetch("/api/admin/audio-transcribe", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...bodyMetadata(productionConfirmation),
           config: {
             enabled: draft.enabled,
             model: draft.model.trim(),
@@ -164,7 +170,7 @@ export function AudioTranscribeSettingsCard(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [draft, hydrate]);
+  }, [bodyMetadata, confirmMutation, draft, hydrate, mutationFetch]);
 
   return (
     <Card>
@@ -182,7 +188,7 @@ export function AudioTranscribeSettingsCard(): JSX.Element {
           <Button variant="outline" size="sm" onClick={() => { void refresh(); }} disabled={loading || saving}>
             <RefreshCw className="size-3.5" />刷新
           </Button>
-          <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || saving || !dirty || !draft}>
+          <Button size="sm" onClick={() => { void save(); }} disabled={readOnly || saving || !dirty || !draft}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
             保存语音转写配置
           </Button>
@@ -224,7 +230,7 @@ export function AudioTranscribeSettingsCard(): JSX.Element {
               </div>
               <Switch
                 checked={draft.enabled}
-                disabled={platformReadOnly}
+                disabled={readOnly}
                 onCheckedChange={(checked) => updateDraft({ enabled: checked })}
                 aria-label="启用平台语音转写能力"
               />

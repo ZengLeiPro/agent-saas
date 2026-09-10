@@ -15,6 +15,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 const connectedState = {
+  revision: "revision-codex-1",
+  writePolicy: { environment: "development", mode: "online", canSave: true },
   config: {
     enabled: true,
     websocketEnabled: true,
@@ -100,11 +102,13 @@ describe("CodexSubscriptionCard", () => {
     await waitFor(() => {
       const saveCall = vi.mocked(authFetch).mock.calls.find((call) => call[1]?.method === "PUT");
       expect(saveCall?.[0]).toBe("/api/admin/codex-subscription");
-      expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
+      expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual(expect.objectContaining({
         enabled: true,
         websocketEnabled: true,
         quotaCooldownMinutes: 60,
-      });
+        expectedRevision: "revision-codex-1",
+        operationId: expect.any(String),
+      }));
     });
   });
 

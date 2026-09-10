@@ -8,6 +8,7 @@ import { parseAppConfig } from '../app/config.js';
 import { assertProductionManagedCredentialSafety } from '../release/configIdentity.js';
 import { createTenantRemoteHandsAdminRouter } from '../routes/tenantRemoteHandsAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { InMemorySecretVault } from '../security/secretVault.js';
 
 const servers: Array<{ close: () => void }> = [];
 
@@ -85,7 +86,7 @@ describe('tenant remote hands admin router', () => {
   it('returns tenant remote hand config without leaking inline authToken', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl }) => {
       const response = await fetch(`${baseUrl}/api/admin/tenant-remote-hands`);
-      expect(response.status).toBe(200);
+      expect(response.status, await response.clone().text()).toBe(200);
       const body = await readJson(response);
       expect(body.tenantRemoteHands.hands[0]).toMatchObject({
         id: 'tenant-ecs',
@@ -118,7 +119,7 @@ describe('tenant remote hands admin router', () => {
           },
         }),
       });
-      expect(response.status).toBe(200);
+      expect(response.status, await response.clone().text()).toBe(200);
       const body = await readJson(response);
       expect(body.tenantRemoteHands.hands[0]).toMatchObject({
         id: 'tenant-ecs',
@@ -140,6 +141,37 @@ describe('tenant remote hands admin router', () => {
       expect(written.tenantRemoteHands.hands[0].preserveAuth).toBeUndefined();
       expect(written.tenantRemoteHands.hands[0].authTokenConfigured).toBeUndefined();
     }, { onTenantRemoteHandsUpdated });
+  });
+
+  it('rejects a newly submitted Vault ref that is not bound to the same hand id', async () => {
+    const secretVault = new InMemorySecretVault();
+    const forged = await secretVault.putSecret(
+      'global',
+      'tenant-hand',
+      'forged-token',
+      { actor: 'system', userId: '__system__', scopes: ['secret:tenant-hand:write'] },
+      { handId: 'another-hand' },
+    );
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      const response = await fetch(`${baseUrl}/api/admin/tenant-remote-hands`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tenantRemoteHands: {
+            hands: [{
+              id: 'tenant-ecs',
+              rollout: { mode: 'all' },
+              baseUrl: 'http://tenant-ecs-hand:3300',
+              authTokenRef: forged.id,
+            }],
+          },
+        }),
+      });
+      expect(response.status).toBe(400);
+      expect((await readJson(response)).error).toContain('不属于该执行环境');
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+    }, { secretVault });
   });
 
   it('omits default networkPolicy when writing config.json', async () => {

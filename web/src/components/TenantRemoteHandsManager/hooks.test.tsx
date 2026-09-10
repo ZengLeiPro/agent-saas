@@ -22,7 +22,11 @@ function config(id: string): TenantRemoteHandsConfig {
 }
 
 function response(tenantRemoteHands: TenantRemoteHandsConfig): Response {
-  return new Response(JSON.stringify({ tenantRemoteHands }), {
+  return new Response(JSON.stringify({
+    tenantRemoteHands,
+    revision: "revision-hands-1",
+    writePolicy: { environment: "development", mode: "online", canSave: true },
+  }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
@@ -33,7 +37,7 @@ beforeEach(() => {
 });
 
 describe("useTenantRemoteHands request ordering", () => {
-  it("does not let a GET started before save overwrite the PUT result", async () => {
+  it("在版本 GET 完成前拒绝保存，加载后保存结果不会被旧请求覆盖", async () => {
     const pendingGet = deferred<Response>();
     const saved = config("saved");
     vi.mocked(authFetch)
@@ -44,16 +48,18 @@ describe("useTenantRemoteHands request ordering", () => {
     await waitFor(() => expect(authFetch).toHaveBeenCalledTimes(1));
 
     await act(async () => {
-      await result.current.save(saved.hands);
+      await expect(result.current.save(saved.hands)).rejects.toThrow("配置版本尚未加载");
     });
-    expect(result.current.config).toEqual(saved);
-    expect(result.current.loading).toBe(false);
+    expect(authFetch).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      pendingGet.resolve(response(config("stale")));
+      pendingGet.resolve(response(config("initial")));
       await pendingGet.promise;
     });
-
+    await waitFor(() => expect(result.current.readOnly).toBe(false));
+    await act(async () => {
+      await result.current.save(saved.hands);
+    });
     expect(result.current.config).toEqual(saved);
     expect(result.current.savedAt).not.toBeNull();
   });

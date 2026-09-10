@@ -161,7 +161,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -662,7 +662,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:2f4422bc42e1eb6c29beeed6aeb3122ab91f940e5e02ba15b3087d32a5258421",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -1761,7 +1761,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -2630,7 +2630,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -3462,7 +3462,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -4294,7 +4294,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -5104,7 +5104,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -5914,7 +5914,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -6738,7 +6738,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -7833,7 +7833,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -8663,7 +8663,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -9506,7 +9506,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -10342,7 +10342,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -11113,7 +11113,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -11884,7 +11884,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -12655,7 +12655,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -13419,7 +13419,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -14172,7 +14172,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -14925,7 +14925,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -15602,7 +15602,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -16268,7 +16268,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -16926,7 +16926,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -17584,7 +17584,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -18242,7 +18242,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -18864,7 +18864,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -19480,7 +19480,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -20052,7 +20052,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -20624,7 +20624,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -21138,7 +21138,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -21644,7 +21644,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -22124,7 +22124,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -22600,7 +22600,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -23080,7 +23080,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -23545,7 +23545,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -24010,7 +24010,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -24464,7 +24464,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -24930,7 +24930,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -25396,7 +25396,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
         },
@@ -26263,9 +26263,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:069baebe507675a57cdd22ae8391c8cab83539371f5ee6304cb37ae978d58994",
-          "targetDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
+          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
           "classification": "no-schema-change",
-          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged."
+          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。"
         },
         {
           "path": "server/src/app/runtimeContracts.ts",
@@ -26493,6 +26493,10 @@
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/平台管理配置受控保存运行时装配无结构变更审核-20260910.md",
+          "digest": "sha256:d7fa363bb2aeb5f914dc6d72724d190d6c8bc8490be6ab0070d5101f2ad58ae7"
+        },
         {
           "path": "docs/release/DWS持久接收与T0迁移审核-20260910.md",
           "digest": "sha256:a92bfad32b13a45e1b71987290a0528a8ed2349a6d74b2f1f941cea845446237"

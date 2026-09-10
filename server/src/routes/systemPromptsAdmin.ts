@@ -12,10 +12,16 @@ import { requirePlatformAdmin } from '../auth/middleware.js';
 import {
   SystemPromptRegistry,
   isSystemPromptId,
+  type SystemPromptId,
   type SystemPromptOverrides,
 } from '../runtime/systemPrompts.js';
 import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
-import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
+import {
+  adminConfigReadMetadata,
+  mutationBusinessBody,
+  mutationRequestContext,
+  sendConfigMutationError,
+} from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
 const updateBodySchema = z.object({
@@ -42,7 +48,11 @@ export function createSystemPromptsAdminRouter(
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
-    res.json({ prompts: options.registry.list() });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ...adminConfigReadMetadata(options.processCwd, configMutationService),
+      prompts: options.registry.list(),
+    });
   });
 
   router.put('/:promptId', requireSuperAdmin, async (req, res) => {
@@ -51,19 +61,22 @@ export function createSystemPromptsAdminRouter(
       res.status(404).json({ error: '未知系统提示语类型' });
       return;
     }
-    const parsedBody = updateBodySchema.safeParse(req.body);
+    const parsedBody = updateBodySchema.safeParse(mutationBusinessBody(req));
     if (!parsedBody.success) {
       res.status(400).json({ error: parsedBody.error.issues.map((issue) => issue.message).join('; ') });
       return;
     }
 
     try {
-      const next = {
-        ...(options.config.systemPrompts ?? {}),
-        [promptId]: parsedBody.data.content,
-      } satisfies SystemPromptOverrides;
-      await persist(options, configMutationService, req, next);
-      res.json({ prompts: options.registry.list() });
+      await persist(options, configMutationService, req, {
+        promptId,
+        action: 'set',
+        content: parsedBody.data.content,
+      });
+      res.json({
+        ...adminConfigReadMetadata(options.processCwd, configMutationService),
+        prompts: options.registry.list(),
+      });
     } catch (error) {
       sendConfigMutationError(res, error);
     }
@@ -77,10 +90,11 @@ export function createSystemPromptsAdminRouter(
     }
 
     try {
-      const next = { ...(options.config.systemPrompts ?? {}) };
-      delete next[promptId];
-      await persist(options, configMutationService, req, next);
-      res.json({ prompts: options.registry.list() });
+      await persist(options, configMutationService, req, { promptId, action: 'reset' });
+      res.json({
+        ...adminConfigReadMetadata(options.processCwd, configMutationService),
+        prompts: options.registry.list(),
+      });
     } catch (error) {
       sendConfigMutationError(res, error);
     }
@@ -93,12 +107,22 @@ async function persist(
   options: CreateSystemPromptsAdminRouterOptions,
   configMutationService: AdminConfigMutationService,
   req: Request,
-  nextOverrides: SystemPromptOverrides,
+  command:
+    | { promptId: SystemPromptId; action: 'set'; content: string }
+    | { promptId: SystemPromptId; action: 'reset' },
 ): Promise<void> {
   await configMutationService.mutate({
     ...mutationRequestContext(req),
-    changedPaths: ['systemPrompts'],
+    operation: {
+      id: command.action === 'set' ? 'system-prompts.set' : 'system-prompts.reset',
+      target: command.promptId,
+    },
+    changedPaths: [`systemPrompts.${command.promptId}`],
     buildCandidate: (configText, rawConfig) => {
+      const current = parseAppConfig(rawConfig).systemPrompts ?? {};
+      const nextOverrides: SystemPromptOverrides = { ...current };
+      if (command.action === 'set') nextOverrides[command.promptId] = command.content;
+      else delete nextOverrides[command.promptId];
       const hasOverrides = Object.keys(nextOverrides).length > 0;
       const nextRaw = { ...rawConfig };
       if (hasOverrides) nextRaw.systemPrompts = nextOverrides;

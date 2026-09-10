@@ -121,6 +121,8 @@ describe('audio transcribe admin router', () => {
       expect(response.status).toBe(200);
       const body = await readJson(response);
       expect(body).toEqual({
+        revision: expect.any(String),
+        writePolicy: { environment: 'development', mode: 'online', canSave: true },
         config: {
           enabled: true,
           model: 'fun-asr',

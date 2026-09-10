@@ -37,6 +37,7 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { serializeSearchSource } from "./webSearchSettings";
 import { ToolDetailPanel } from "@/components/ToolControlsManager/ToolDetailPanel";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminConfigWritePolicy } from "@/hooks/useAdminConfigWritePolicy";
 
 // 缺省视为「启用」以对齐后端语义：WebToolProvider.list() 判 `search.enabled !== false`
 // 即缺省字段视为启用。若这里写 false，config.json 里省略 `enabled` 字段时前端会误
@@ -232,6 +233,7 @@ export function buildWebToolsPayload(
 
 export function ToolControlsManager(): JSX.Element {
   const { platformReadOnly } = useAuth();
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly);
   const [toolControlsDraft, setToolControlsDraft] = useState<ToolControlsConfig>(() => normalizeToolControls(null));
   const [webToolsDraft, setWebToolsDraft] = useState<WebToolsConfig>(() => normalizeWebTools(null));
   const [tools, setTools] = useState<ToolCatalogItem[]>([]);
@@ -258,6 +260,7 @@ export function ToolControlsManager(): JSX.Element {
 
   const hydrate = useCallback((response: ToolControlsAdminResponse) => {
     if (response.revision) setRevision(response.revision);
+    acceptMetadata(response);
     setDescriptionRevision(response.descriptionRevision);
     const nextToolControls = normalizeToolControls(response.toolControls);
     // 把 catalog 里带回来的 descriptionOverride 合并回 draft，保证详情页看到最新 override
@@ -282,7 +285,7 @@ export function ToolControlsManager(): JSX.Element {
     setSearchApiKeyText("");
     setDirty(false);
     setSavedAt(null);
-  }, []);
+  }, [acceptMetadata]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -353,7 +356,13 @@ export function ToolControlsManager(): JSX.Element {
       const toolControls = buildToolControlsPayload(toolControlsDraft);
       const webTools = buildWebToolsPayload(webToolsDraft, toolControlsDraft, allowedContentTypesText, allowedHostsText, blockedHostsText, searchApiKeyText);
       if (!revision) throw new Error("配置版本尚未加载，请先刷新");
-      const response = await updateToolControlsConfig({ toolControls, webTools, expectedRevision: revision });
+      const productionConfirmation = confirmMutation();
+      if (productionConfirmation === null) return;
+      const response = await updateToolControlsConfig({
+        toolControls,
+        webTools,
+        ...bodyMetadata(productionConfirmation),
+      }, mutationFetch);
       hydrate(response);
       setSavedAt(Date.now());
       setError(null);
@@ -362,7 +371,7 @@ export function ToolControlsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [allowedContentTypesText, allowedHostsText, blockedHostsText, hydrate, revision, searchApiKeyText, toolControlsDraft, webToolsDraft]);
+  }, [allowedContentTypesText, allowedHostsText, blockedHostsText, bodyMetadata, confirmMutation, hydrate, mutationFetch, revision, searchApiKeyText, toolControlsDraft, webToolsDraft]);
 
   const saveSingleTool = useCallback(async (
     toolId: string,
@@ -372,7 +381,20 @@ export function ToolControlsManager(): JSX.Element {
     if (!revision) throw new Error("配置版本尚未加载，请先刷新");
     setSaving(true);
     try {
-      const response = await updateSingleTool(toolId, { ...payload, expectedRevision: revision, expectedDescriptionRevision: descriptionRevision });
+      const descriptionOnly = payload.enabled === undefined
+        && Object.prototype.hasOwnProperty.call(payload, "descriptionOverride")
+        && !!descriptionRevision;
+      const productionConfirmation = descriptionOnly ? undefined : confirmMutation();
+      if (productionConfirmation === null) return;
+      const requestPayload = {
+        ...payload,
+        ...(descriptionOnly ? { expectedRevision: revision } : bodyMetadata(productionConfirmation)),
+        expectedDescriptionRevision: descriptionRevision,
+      };
+      const response = descriptionOnly
+        ? await updateSingleTool(toolId, requestPayload)
+        : await updateSingleTool(toolId, requestPayload, mutationFetch);
+      acceptMetadata(response);
       if (response.revision) setRevision(response.revision);
       setDescriptionRevision(response.descriptionRevision);
       setTools(response.tools);
@@ -385,7 +407,7 @@ export function ToolControlsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [revision, descriptionRevision]);
+  }, [acceptMetadata, bodyMetadata, confirmMutation, descriptionRevision, mutationFetch, revision]);
 
   const draftVisibleTools = useMemo(
     () => listDraftVisibleTools(tools, toolControlsDraft, webToolsDraft),
@@ -444,7 +466,7 @@ export function ToolControlsManager(): JSX.Element {
               <RefreshCw className="size-3.5" />
               刷新
             </Button>
-            <Button size="sm" onClick={() => { void save(); }} disabled={platformReadOnly || saving || !dirty}>
+            <Button size="sm" onClick={() => { void save(); }} disabled={readOnly || saving || !dirty}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               保存并生效
             </Button>
@@ -475,7 +497,7 @@ export function ToolControlsManager(): JSX.Element {
               </div>
               <Switch
                 checked={toolControlsDraft.enabled !== false}
-                disabled={platformReadOnly || saving}
+                disabled={readOnly || saving}
                 onCheckedChange={(checked) => updateToolControls((current) => ({ ...current, enabled: checked }))}
               />
             </div>
@@ -545,7 +567,7 @@ export function ToolControlsManager(): JSX.Element {
                         <div className="flex items-center gap-2">
                           <Switch
                             checked={switchChecked}
-                            disabled={platformReadOnly || saving || toolControlsDraft.enabled === false}
+                            disabled={readOnly || saving || toolControlsDraft.enabled === false}
                             onCheckedChange={(checked) => updateTool(tool.id, checked)}
                             aria-label={`启用 ${tool.name}`}
                           />

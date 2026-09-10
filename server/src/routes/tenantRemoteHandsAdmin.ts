@@ -8,9 +8,22 @@ import type { AppConfig, TenantRemoteHandsConfig } from '../app/config.js';
 import { DEFAULT_CODING_HAND_NETWORK_POLICY } from '../runtime/networkPolicy.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
 import type { SecretVault } from '../security/secretVault.js';
+import { GLOBAL_OWNER_ID } from '../security/secretVault.js';
 import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
-import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
+import { adminConfigReadMetadata, mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
+import { RouteSecretRefMutation } from './secretRefMutation.js';
+
+const TENANT_HAND_SECRET_WRITER = {
+  actor: 'system' as const,
+  userId: '__system__',
+  scopes: ['secret:tenant-hand:write', 'secret:tenant-hand:revoke'],
+};
+const TENANT_HAND_SECRET_INSPECTOR = {
+  actor: 'system' as const,
+  userId: '__system__',
+  scopes: ['secret:metadata:read'],
+};
 
 export interface CreateTenantRemoteHandsAdminRouterOptions {
   processCwd: string;
@@ -77,10 +90,10 @@ function hydratePreservedCredentials(rawConfig: unknown, tenantRemoteHands: unkn
 export function sanitizeTenantRemoteHands(config: TenantRemoteHandsConfig | undefined) {
   return {
     hands: (config?.hands ?? []).map((hand) => {
-      const { authToken: _authToken, ...safe } = hand;
+      const { authToken: _authToken, authTokenRef: _authTokenRef, ...safe } = hand;
       return {
         ...safe,
-        authTokenConfigured: typeof hand.authToken === 'string' && hand.authToken.length > 0,
+        authTokenConfigured: Boolean(hand.authToken || hand.authTokenRef),
       };
     }),
   };
@@ -180,7 +193,9 @@ export function createTenantRemoteHandsAdminRouter(
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
+      ...adminConfigReadMetadata(options.processCwd, configMutationService),
       tenantRemoteHands: sanitizeTenantRemoteHands(options.config.tenantRemoteHands),
     });
   });
@@ -190,13 +205,68 @@ export function createTenantRemoteHandsAdminRouter(
       res.status(400).json({ error: 'tenantRemoteHands object is required' });
       return;
     }
+    let staged: TenantRemoteHandsConfig | undefined;
+    const secretMutation = new RouteSecretRefMutation(
+      options.secretVault,
+      TENANT_HAND_SECRET_WRITER,
+      { preservePreviousOnCommit: configMutationService.isControlledProductionPublisher() },
+    );
     try {
+      const requestContext = mutationRequestContext(req);
+      secretMutation.bindOperation(requestContext.operationId);
       const result = await configMutationService.mutate({
-        ...mutationRequestContext(req),
+        ...requestContext,
+        operation: { id: 'tenant-remote-hands.save' },
         changedPaths: ['tenantRemoteHands'],
-        buildCandidate: (configText, rawConfig) => {
-          const next = validateTenantRemoteHandsUpdate(rawConfig, req.body.tenantRemoteHands);
-          return applyEdits(configText, modify(configText, ['tenantRemoteHands'], serializeTenantRemoteHandsConfig(next), {
+        buildCandidate: async (configText, rawConfig) => {
+          const current = parseAppConfig(rawConfig).tenantRemoteHands;
+          secretMutation.trackPrevious(current?.hands.map((hand) => hand.authTokenRef) ?? []);
+          const requested: TenantRemoteHandsConfig = validateTenantRemoteHandsUpdate(rawConfig, req.body.tenantRemoteHands);
+          const currentRefById = new Map(
+            (current?.hands ?? []).map((hand) => [hand.id, hand.authTokenRef] as const),
+          );
+          for (const hand of requested.hands) {
+            if (!hand.authTokenRef || hand.authTokenRef === currentRefById.get(hand.id)) continue;
+            if (!options.secretVault?.inspectRef) {
+              throw new Error(`tenantRemoteHands ${hand.id} 的新 authTokenRef 无法验证`);
+            }
+            const ref = await options.secretVault.inspectRef(hand.authTokenRef, TENANT_HAND_SECRET_INSPECTOR);
+            if (
+              !ref
+              || ref.revokedAt
+              || ref.ownerId !== GLOBAL_OWNER_ID
+              || ref.kind !== 'tenant-hand'
+              || ref.metadata.handId !== hand.id
+            ) {
+              throw new Error(`tenantRemoteHands ${hand.id} 的 authTokenRef 不属于该执行环境`);
+            }
+          }
+          const submittedInlineIds = new Set<string>(
+            (Array.isArray(req.body.tenantRemoteHands.hands) ? req.body.tenantRemoteHands.hands : [])
+              .filter(isObject)
+              .filter((hand: RawObject) => typeof hand.authToken === 'string' && hand.authToken.length > 0)
+              .map((hand: RawObject) => hand.id)
+              .filter((id: unknown): id is string => typeof id === 'string'),
+          );
+          if (!secretMutation.available && submittedInlineIds.size > 0 && options.validateConfigReload) {
+            await options.validateConfigReload(parseAppConfig({ ...rawConfig, tenantRemoteHands: requested }));
+          }
+          staged = {
+            hands: await Promise.all(requested.hands.map(async (hand) => {
+              if (!hand.authToken || !submittedInlineIds.has(hand.id)) return hand;
+              const { authToken, ...safe } = hand;
+              const authTokenRef = await secretMutation.put(
+                GLOBAL_OWNER_ID,
+                'tenant-hand',
+                authToken,
+                { handId: hand.id, purpose: 'tenant-remote-hand' },
+              );
+              return { ...safe, authTokenRef };
+            })),
+          };
+          const parsed = parseAppConfig({ ...rawConfig, tenantRemoteHands: staged });
+          staged = parsed.tenantRemoteHands ?? { hands: [] };
+          return applyEdits(configText, modify(configText, ['tenantRemoteHands'], serializeTenantRemoteHandsConfig(staged), {
             formattingOptions: { insertSpaces: true, tabSize: 2 },
           }));
         },
@@ -206,13 +276,18 @@ export function createTenantRemoteHandsAdminRouter(
           options.config.tenantRemoteHands = next;
           options.onTenantRemoteHandsUpdated?.(next);
         },
+        onCommitted: async () => {
+          await secretMutation.committed(staged?.hands.map((hand) => hand.authTokenRef) ?? []);
+        },
       });
 
       res.json({
+        ...adminConfigReadMetadata(options.processCwd, configMutationService),
         tenantRemoteHands: sanitizeTenantRemoteHands(result.config.tenantRemoteHands),
       });
     } catch (error) {
-      if (error instanceof Error && /tenantRemoteHands|hands|baseUrl|authToken/u.test(error.message)) {
+      await secretMutation.failed(error, staged?.hands.map((hand) => hand.authTokenRef) ?? []);
+      if (error instanceof Error && /tenantRemoteHands|hands|baseUrl|authToken|Secret|credential/u.test(error.message)) {
         res.status(400).json({ error: error.message });
         return;
       }

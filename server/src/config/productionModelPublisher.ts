@@ -34,10 +34,20 @@ import {
   ConfigConflictError,
   ConfigMutationCommittedError,
   RuntimeRestoreFailedError,
+  ProductionConfirmationError,
   configFingerprint,
   type AdminConfigMutationResult,
   type MutationInput,
 } from './adminConfigMutationService.js';
+import {
+  adminConfigOperationAuditPath,
+  assertAdminConfigOperationScope,
+} from './adminConfigOperationRegistry.js';
+import {
+  AdminConfigOperationJournal,
+  AdminConfigOperationPendingError,
+  type AdminConfigOperationRecord,
+} from './adminConfigOperationJournal.js';
 
 export interface PublicationTarget {
   role: 'ws-only' | 'runtime-worker';
@@ -61,30 +71,22 @@ export interface ProductionPublisher {
   /** Caller owns the existing deployment/config OS fence for the ENTIRE call. */
   mutate(input: MutationInput): Promise<AdminConfigMutationResult>;
   recover(): Promise<void>;
+  /** 仅供受信运行时在既有受管 Codex ref 正常 rotate 后推进签名身份。 */
+  coordinateCredentialRotation?(credentialRef: string): Promise<void>;
+  getOperationStatus?(operationId: string, actor: string): {
+    operationId: string;
+    operation: string;
+    state: string;
+    updatedAt: string;
+    revision?: string;
+    publicationRevision?: string;
+  } | undefined;
 }
 
-const ALLOWED = new Set([
-  'models',
-  'memory.index',
-  'titleGenerator',
-  'guardrail',
-  'systemPrompts.utility.title',
+const LEGACY_MODEL_PATHS = new Set([
+  'models', 'memory.index', 'titleGenerator', 'guardrail', 'systemPrompts.utility.title',
 ]);
-function withoutModelSettings(value: Record<string, unknown>): string {
-  const copy = structuredClone(value);
-  for (const key of ['models', 'titleGenerator', 'guardrail']) delete copy[key];
-  for (const [key, field] of [
-    ['memory', 'index'],
-    ['systemPrompts', 'utility.title'],
-  ]) {
-    const section = copy[key];
-    if (section && typeof section === 'object' && !Array.isArray(section)) {
-      delete (section as Record<string, unknown>)[field];
-      if (Object.keys(section).length === 0) delete copy[key];
-    }
-  }
-  return canonical(copy);
-}
+
 function asIdentity(value: {
   schemaVersion: number;
   digest: string;
@@ -102,6 +104,7 @@ function asIdentity(value: {
 
 /** No network paths, environment selectors or signing options are accepted from HTTP. */
 export class ProductionModelPublisher implements ProductionPublisher {
+  private operationJournal?: AdminConfigOperationJournal;
   constructor(
     private readonly options: {
       configPath: string;
@@ -145,6 +148,45 @@ export class ProductionModelPublisher implements ProductionPublisher {
 
   private now(): number {
     return this.options.now?.() ?? Date.now();
+  }
+  private journal(): AdminConfigOperationJournal {
+    return this.operationJournal ??= new AdminConfigOperationJournal(this.options.configPath);
+  }
+  getOperationStatus(operationId: string, actor: string) {
+    let record = this.journal().read(operationId);
+    if (!record || !this.journal().owns(record, actor)) return undefined;
+    if (record.state === 'publishing' || record.state === 'committed_unconfirmed') {
+      try {
+        const publication = this.state();
+        if (publication.revision === record.publicationRevision) {
+          const nextState = publication.phase === 'committed'
+            ? 'committed_unconfirmed'
+            : publication.phase === 'recovery_required' ? 'recovery_required' : record.state;
+          if (nextState !== record.state) record = this.journal().update(record, {
+            state: nextState,
+            updatedAt: publication.updatedAt,
+          });
+        } else if (
+          publication.phase === 'committed'
+          && publication.rawRevision === record.beforeRevision
+        ) {
+          record = this.journal().update(record, {
+            state: 'rolled_back',
+            updatedAt: publication.updatedAt,
+          });
+        }
+      } catch {
+        // Keep the durable pending state; absence of signed evidence is not success.
+      }
+    }
+    return {
+      operationId,
+      operation: record.operation,
+      state: record.state,
+      updatedAt: record.updatedAt,
+      ...(record.candidateRevision ? { revision: record.candidateRevision } : {}),
+      ...(record.publicationRevision ? { publicationRevision: record.publicationRevision } : {}),
+    };
   }
   private state(): ConfigPublication {
     const state = readPublication(this.options.configPath);
@@ -262,6 +304,62 @@ export class ProductionModelPublisher implements ProductionPublisher {
     return this.fenced(() => this.recoverLocked());
   }
 
+  async coordinateCredentialRotation(credentialRef: string): Promise<void> {
+    return this.fenced(async () => {
+      await this.recoverLocked();
+      const state = assertPublishedDisk(this.options.configPath, this.state())!;
+      if (state.phase !== 'committed' || state.releaseId !== this.options.releaseId) {
+        throw new Error('凭据轮换时生产配置权威不可用');
+      }
+      const currentText = readFileSync(this.options.configPath, 'utf8');
+      const currentRaw = parseJsonc(currentText) as Record<string, unknown>;
+      const config = parseAppConfig(currentRaw);
+      const refs = config.codexSubscription?.credentialRefs?.length
+        ? config.codexSubscription.credentialRefs
+        : config.codexSubscription?.credentialRef ? [config.codexSubscription.credentialRef] : [];
+      if (!refs.includes(credentialRef)) throw new Error('拒绝为未登记的 Codex 凭据推进签名身份');
+      const identity = await this.identity(config);
+      if (canonical(identity) === canonical(this.expected(state))) return;
+      const targets = this.options.targets();
+      this.assertTargets(targets);
+      const intent: ConfigPublication = {
+        ...state,
+        phase: 'applying',
+        sequence: state.sequence + 1,
+        revision: randomUUID(),
+        rawRevision: rawRevision(currentText),
+        identity,
+        previous: {
+          revision: state.revision,
+          rawRevision: state.rawRevision,
+          identity: this.expected(state),
+        },
+        owner: processIdentity(),
+        actor: 'system:codex-token-refresh',
+        changedPaths: ['runtime-credential-rotation:codexSubscription'],
+        updatedAt: new Date(this.now()).toISOString(),
+      };
+      try {
+        writePublication(this.options.configPath, intent);
+        await this.wait(intent, targets);
+        const committed = this.transition(intent, 'committed');
+        await this.wait(committed, targets);
+      } catch (error) {
+        try {
+          const latest = this.state();
+          if (latest.revision === intent.revision && latest.phase !== 'committed') {
+            this.transition(latest, 'recovery_required');
+          }
+        } catch {
+          /* 已签名的 applying head 本身会保持 fail-closed。 */
+        }
+        throw new ConfigMutationCommittedError(
+          new Error('Codex token 已刷新，但签名身份确认未完成；配置写入已阻断等待恢复', { cause: error }),
+        );
+      }
+    });
+  }
+
   private async recoverLocked(): Promise<void> {
     const state = readPublication(this.options.configPath);
     if (!state || state.phase === 'committed') return;
@@ -296,6 +394,13 @@ export class ProductionModelPublisher implements ProductionPublisher {
       await this.wait(rolling, targets);
       const committed = this.transition(rolling, 'committed');
       await this.wait(committed, targets);
+      const operation = this.journal().findByPublicationRevision(state.revision);
+      if (operation && operation.state !== 'rolled_back') {
+        this.journal().update(operation, {
+          state: 'rolled_back',
+          updatedAt: committed.updatedAt,
+        });
+      }
     } catch (restoreError) {
       // Never overwrite an unrelated winning transaction or discard recovery evidence.
       try {
@@ -320,7 +425,25 @@ export class ProductionModelPublisher implements ProductionPublisher {
   }
 
   async mutate(input: MutationInput): Promise<AdminConfigMutationResult> {
-    return this.fenced(() => this.mutateLocked(input));
+    return this.fenced(async () => {
+      try {
+        return await this.mutateLocked(input);
+      } catch (error) {
+        if (input.operationId) {
+          const record = this.journal().read(input.operationId);
+          // `preparing` is written before candidate construction. If no signed
+          // publication head was selected, every route-level candidate Secret
+          // cleanup can safely converge this operation to a terminal no-write.
+          if (record?.state === 'preparing') {
+            this.journal().update(record, {
+              state: 'not_committed',
+              updatedAt: new Date(this.now()).toISOString(),
+            });
+          }
+        }
+        throw error;
+      }
+    });
   }
 
   private async mutateLocked(input: MutationInput): Promise<AdminConfigMutationResult> {
@@ -331,6 +454,32 @@ export class ProductionModelPublisher implements ProductionPublisher {
     const currentRaw = parseJsonc(currentText) as Record<string, unknown>;
     const beforeFingerprint = configFingerprint(currentRaw);
     const beforeRevision = rawRevision(currentText);
+    // #593 内部调用兼容：只对原有模型固定集合推导 models.save；其他操作必须显式绑定。
+    const operation = input.operation ?? (
+      input.changedPaths.length > 0 && input.changedPaths.every((path) => LEGACY_MODEL_PATHS.has(path))
+        ? { id: 'models.save' as const }
+        : undefined
+    );
+    if (!operation) throw new Error('生产配置发布缺少服务端操作策略');
+    if (input.operationId && this.journal().read(input.operationId)) {
+      const existing = this.journal().begin({
+        operationId: input.operationId, operation: operation.id, actor: input.actor,
+        semantic: input.requestSemantic, beforeRevision, now: new Date(this.now()).toISOString(),
+      });
+      if (existing.state !== 'applied' || !existing.candidateRevision) {
+        throw new AdminConfigOperationPendingError(existing.state);
+      }
+      const replayText = readSnapshot(this.options.configPath, existing.candidateRevision);
+      const replayRaw = parseJsonc(replayText) as Record<string, unknown>;
+      const previousText = readSnapshot(this.options.configPath, existing.beforeRevision);
+      const previousRaw = parseJsonc(previousText) as Record<string, unknown>;
+      return {
+        config: parseAppConfig(replayRaw), previousConfig: parseAppConfig(previousRaw),
+        beforeFingerprint: configFingerprint(previousRaw),
+        rawConfigFingerprint: configFingerprint(replayRaw), effectiveConfigFingerprint: configFingerprint(replayRaw),
+        revision: existing.candidateRevision, appliedAt: existing.updatedAt,
+      };
+    }
     if (
       !input.expectedRevision ||
       input.expectedRevision !== beforeRevision ||
@@ -339,9 +488,18 @@ export class ProductionModelPublisher implements ProductionPublisher {
       throw new ConfigConflictError(beforeFingerprint, beforeRevision);
     }
     if (input.productionConfirmation !== beforeRevision)
-      throw new Error('请确认对当前版本的生产配置进行修改');
-    if (input.changedPaths.some((path) => !ALLOWED.has(path)))
-      throw new Error('生产在线发布仅允许模型配置范围');
+      throw new ProductionConfirmationError();
+    let operationRecord: AdminConfigOperationRecord | undefined;
+    if (input.operationId) {
+      operationRecord = this.journal().begin({
+        operationId: input.operationId,
+        operation: operation.id,
+        actor: input.actor,
+        semantic: input.requestSemantic,
+        beforeRevision,
+        now: new Date(this.now()).toISOString(),
+      });
+    }
     const targets = this.options.targets();
     await this.wait(state, targets);
     const previousConfig = parseAppConfig(currentRaw);
@@ -349,10 +507,17 @@ export class ProductionModelPublisher implements ProductionPublisher {
     if (canonical(previousIdentity) !== canonical(this.expected(state)))
       throw new Error('生产配置基线与可信身份不一致');
     await input.validateBaseline?.(currentText, previousConfig);
-    const candidateText = await input.buildCandidate(currentText, currentRaw);
+    let candidateText: string;
+    try {
+      candidateText = await input.buildCandidate(currentText, currentRaw);
+    } catch (error) {
+      if (operationRecord) this.journal().update(operationRecord, {
+        state: 'not_committed', updatedAt: new Date(this.now()).toISOString(),
+      });
+      throw error;
+    }
     const candidateRaw = parseJsonc(candidateText) as Record<string, unknown>;
-    if (withoutModelSettings(currentRaw) !== withoutModelSettings(candidateRaw))
-      throw new Error('模型保存不允许修改其他配置段');
+    assertAdminConfigOperationScope(operation, currentRaw, candidateRaw);
     const config = parseAppConfig(candidateRaw);
     await input.validateCandidate?.(config);
     const candidateIdentity = await this.identity(config);
@@ -373,7 +538,14 @@ export class ProductionModelPublisher implements ProductionPublisher {
       revision: rawRevision(candidateText),
       appliedAt: new Date(this.now()).toISOString(),
     });
-    if (candidateText === currentText) return result();
+    if (candidateText === currentText) {
+      // Idempotent replay still needs a durable result snapshot.
+      saveSnapshot(this.options.configPath, currentText);
+      if (operationRecord) this.journal().update(operationRecord, {
+        state: 'applied', candidateRevision: beforeRevision, updatedAt: new Date(this.now()).toISOString(),
+      });
+      return result();
+    }
     saveSnapshot(this.options.configPath, currentText);
     saveSnapshot(this.options.configPath, candidateText);
     const intent: ConfigPublication = {
@@ -392,10 +564,14 @@ export class ProductionModelPublisher implements ProductionPublisher {
       },
       owner: processIdentity(),
       actor: input.actor,
-      changedPaths: [...new Set(input.changedPaths)].sort(),
+      changedPaths: [adminConfigOperationAuditPath(operation)],
       updatedAt: new Date(this.now()).toISOString(),
     };
     try {
+      if (operationRecord) operationRecord = this.journal().update(operationRecord, {
+        state: 'publishing', candidateRevision: intent.rawRevision,
+        publicationRevision: intent.revision, updatedAt: new Date(this.now()).toISOString(),
+      });
       writePublication(this.options.configPath, intent);
       atomicWrite(this.options.configPath, candidateText);
       // The shared runtime refresher, not the HTTP route's partial update recipe,
@@ -403,6 +579,9 @@ export class ProductionModelPublisher implements ProductionPublisher {
       await this.wait(intent, targets);
       const committed = this.transition(intent, 'committed');
       await this.wait(committed, targets);
+      if (operationRecord) this.journal().update(operationRecord, {
+        state: 'applied', updatedAt: new Date(this.now()).toISOString(),
+      });
       return result();
     } catch (error) {
       let latest: ConfigPublication;
@@ -412,11 +591,26 @@ export class ProductionModelPublisher implements ProductionPublisher {
         throw new RuntimeRestoreFailedError(error, readError);
       }
       if (latest.revision === intent.revision && latest.phase === 'committed') {
+        if (operationRecord) this.journal().update(operationRecord, {
+          state: 'committed_unconfirmed', updatedAt: new Date(this.now()).toISOString(),
+        });
         throw new ConfigMutationCommittedError(
           new Error('配置已提交，但最终生效确认未完成，请刷新确认后再操作', { cause: error }),
         );
       }
-      if (latest.revision === intent.revision) await this.rollback(latest, error);
+      if (latest.revision === intent.revision) {
+        try {
+          await this.rollback(latest, error);
+          if (operationRecord) this.journal().update(operationRecord, {
+            state: 'rolled_back', updatedAt: new Date(this.now()).toISOString(),
+          });
+        } catch (restoreError) {
+          if (operationRecord) this.journal().update(operationRecord, {
+            state: 'recovery_required', updatedAt: new Date(this.now()).toISOString(),
+          });
+          throw restoreError;
+        }
+      }
       else if (canonical(latest) !== canonical(state))
         throw new RuntimeRestoreFailedError(error, new Error('配置事务权威已变化'));
       throw error;

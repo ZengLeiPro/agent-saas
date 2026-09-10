@@ -65,6 +65,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
       - name: 验证实际 Xcode 与本机构建工具
         run: bash mobile/scripts/setup-ios-runner.sh
       - name: 测试来源、审批、制品与重试契约（不连接 EAS 或 Apple）
@@ -99,6 +100,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
       - name: 验证 main 来源与最新完整 CI
         id: plan
         env:

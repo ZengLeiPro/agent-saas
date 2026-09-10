@@ -1,0 +1,275 @@
+name: iOS 构建与发布
+run-name: ${{ github.event_name == 'pull_request' && 'iOS Workflow 检查' || format('iOS {0} · {1}', inputs.operation, inputs.source_sha || github.sha) }}
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-ios-release.yml'
+      - '.github/actions/setup-pnpm/**'
+      - '.github/pnpm-standalone.sha256'
+      - '.nvmrc'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'build=仅构建；build-and-submit=构建后独立审批上传；submit=复用已有 IPA'
+        type: choice
+        required: true
+        default: build
+        options: [build, build-and-submit, submit]
+      source_sha:
+        description: 'main 上已通过 CI 的完整提交 SHA；构建时留空使用本次 main，submit 时必填'
+        type: string
+        required: false
+      build_run_id:
+        description: '仅 submit：原签名构建的 Actions run ID（不是 EAS build ID）'
+        type: string
+        required: false
+      build_run_attempt:
+        description: '仅 submit：原构建的 attempt；必须与构建摘要一致'
+        type: string
+        required: true
+        default: '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ios-contract-{0}', github.event.pull_request.number) || 'mobile-ios-release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: '1'
+  EXPO_NO_TELEMETRY: '1'
+  FASTLANE_SKIP_UPDATE_CHECK: '1'
+  FASTLANE_HIDE_CHANGELOG: '1'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  contract:
+    name: iOS / Workflow 与 macOS 工具链检查
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: 检出待合并代码（无发布凭据）
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: 安装已锁定 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 安装已锁定 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+      - name: 验证实际 Xcode 与本机构建工具
+        run: bash mobile/scripts/setup-ios-runner.sh
+      - name: 测试来源、审批、制品与重试契约（不连接 EAS 或 Apple）
+        run: |
+          node --test mobile/scripts/ios-actions.test.mjs
+          bash -n mobile/scripts/build.sh
+          bash -n mobile/scripts/submit-ios.sh
+          bash -n mobile/scripts/setup-ios-runner.sh
+
+  plan:
+    name: iOS / 发布准入
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      do_build: ${{ steps.plan.outputs.do_build }}
+      do_submit: ${{ steps.plan.outputs.do_submit }}
+      build_run_id: ${{ steps.plan.outputs.build_run_id }}
+      build_run_attempt: ${{ steps.plan.outputs.build_run_attempt }}
+      artifact_name: ${{ steps.plan.outputs.artifact_name }}
+    steps:
+      - name: 检出调度版本
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 安装 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+      - name: 验证 main 来源与最新完整 CI
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node mobile/scripts/ios-actions.mjs plan
+
+  build_ios:
+    name: iOS / 签名构建
+    needs: plan
+    if: needs.plan.outputs.do_build == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    environment: mobile-build-production
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+    env:
+      IOS_SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+      IOS_BUILD_RUN_ID: ${{ needs.plan.outputs.build_run_id }}
+      IOS_BUILD_ATTEMPT: ${{ needs.plan.outputs.build_run_attempt }}
+      MOBILE_RELEASE_CONFIGURED: ${{ vars.MOBILE_RELEASE_CONFIGURED }}
+    steps:
+      - name: 检出可信调度代码
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 检出精确应用源码（与调度代码隔离）
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 安装已锁定 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 安装已锁定 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: source/.nvmrc
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - name: 校验发布配置、main CI 和真实独立审批
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node mobile/scripts/ios-actions.mjs guard-build source
+      - name: 选择并记录 Xcode 26.2
+        run: bash mobile/scripts/setup-ios-runner.sh
+      - name: 按锁文件安装应用依赖（尚未注入 Expo 凭据）
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+      - name: 运行 iOS 清洁预构建策略门禁
+        working-directory: source
+        run: node mobile/scripts/run-native-prebuild-gate.mjs --profile ios
+      - name: 在 GitHub macOS 上构建并验证签名 IPA
+        working-directory: source
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_ORG_ROBOT_TOKEN }}
+          EAS_LOCAL_BUILD_WORKINGDIR: ${{ runner.temp }}/ios-eas-local
+        run: |
+          set -euo pipefail
+          : "${EXPO_TOKEN:?Configure EXPO_ORG_ROBOT_TOKEN in mobile-build-production}"
+          export GITHUB_SHA="$IOS_SOURCE_SHA"
+          export MOBILE_SOURCE_GIT_SHA="$IOS_SOURCE_SHA"
+          bash mobile/scripts/build.sh ios --build
+      - name: 封存来源、锁文件、工具链和审批记录
+        run: node mobile/scripts/ios-actions.mjs seal source
+      - name: 保存不可变 IPA 与校验附件（不上传密钥和原始日志）
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.plan.outputs.artifact_name }}
+          path: |
+            source/mobile/builds/*.ipa
+            source/mobile/builds/*.ipa.source.json
+            source/mobile/builds/*.ipa.verification.json
+            source/mobile/builds/ios-release.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          overwrite: false
+      - name: 清理临时构建目录
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/ios-eas-local"
+
+  submit_ios:
+    name: iOS / 提交 TestFlight
+    needs: [plan, build_ios]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.do_submit == 'true' && (needs.plan.outputs.do_build == 'false' || needs.build_ios.result == 'success') }}
+    runs-on: macos-15
+    timeout-minutes: 45
+    environment: mobile-submit-ios-store
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+    env:
+      IOS_SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+      IOS_BUILD_RUN_ID: ${{ needs.plan.outputs.build_run_id }}
+      IOS_BUILD_ATTEMPT: ${{ needs.plan.outputs.build_run_attempt }}
+      MOBILE_SUBMIT_CONFIGURED: ${{ vars.MOBILE_SUBMIT_CONFIGURED }}
+    steps:
+      - name: 检出可信调度代码
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 检出原 IPA 对应的精确源码
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 安装已锁定 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 安装已锁定 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: source/.nvmrc
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - name: 校验提交配置与独立提交审批
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node mobile/scripts/ios-actions.mjs guard-submit source
+      - name: 验证原构建 job、attempt 和不可变 artifact ID
+        id: artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node mobile/scripts/ios-actions.mjs resolve-artifact
+      - name: 仅按已授权 ID 下载原 IPA
+        uses: actions/download-artifact@v7
+        with:
+          artifact-ids: ${{ steps.artifact.outputs.artifact_id }}
+          run-id: ${{ needs.plan.outputs.build_run_id }}
+          github-token: ${{ github.token }}
+          path: source/mobile/builds
+          merge-multiple: true
+      - name: 选择并记录原生校验工具
+        run: bash mobile/scripts/setup-ios-runner.sh
+      - name: 安装锁定的 EAS CLI（不构建应用）
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+      - name: 重验 SHA256、签名、应用身份及来源
+        id: verified
+        env:
+          IOS_BUILD_WORKFLOW_SHA: ${{ steps.artifact.outputs.workflow_sha }}
+        run: node mobile/scripts/ios-actions.mjs verify source
+      - name: 提交同一份 IPA 并等待 EAS 提交完成
+        working-directory: source
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_ORG_ROBOT_TOKEN }}
+          IPA_PATH: ${{ steps.verified.outputs.ipa_path }}
+        run: |
+          set -euo pipefail
+          : "${EXPO_TOKEN:?Configure EXPO_ORG_ROBOT_TOKEN in mobile-submit-ios-store}"
+          export GITHUB_SHA="$IOS_SOURCE_SHA"
+          export MOBILE_SOURCE_GIT_SHA="$IOS_SOURCE_SHA"
+          bash mobile/scripts/submit-ios.sh "$IPA_PATH"
+      - name: 记录无凭据提交回执
+        id: receipt
+        env:
+          IOS_BUILD_WORKFLOW_SHA: ${{ steps.artifact.outputs.workflow_sha }}
+          IOS_ARTIFACT_ID: ${{ steps.artifact.outputs.artifact_id }}
+        run: node mobile/scripts/ios-actions.mjs receipt source
+      - name: 保存提交回执（不等同于 Apple 审核或正式放量）
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-submit-${{ needs.plan.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.receipt.outputs.receipt_path }}
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false

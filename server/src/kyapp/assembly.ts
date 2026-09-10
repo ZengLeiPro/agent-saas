@@ -20,6 +20,7 @@ import { PgKyAppDirectoryChangeLog } from './directory/changeLog.js';
 import { DirectoryProjector, GovernanceDirectorySource } from './directory/projection.js';
 import { DirectoryChangeNotifier } from './directory/notifier.js';
 import { RefreshingDirectoryReconciler } from './directory/refreshingReconciler.js';
+import { UsersFileDirectoryReader } from './directory/usersFileReader.js';
 import { PgDirectorySnapshotSource } from './directory/snapshot.js';
 import { PgKyAppDeliveryStore } from './delivery/store.js';
 import { KyAppDeliveryMetrics } from './delivery/metrics.js';
@@ -230,17 +231,23 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
   // 绝不拿一份空用户表去差分（那会投影出「全组织离职」的删除墓碑）。
   const userStore = runtime.userStore;
   const directoryChangeLog = userStore ? new PgKyAppDirectoryChangeLog(base) : null;
-  const directorySource = userStore
-    ? new GovernanceDirectorySource({ ...base, users: userStore })
+  const directoryUsers = userStore
+    ? new UsersFileDirectoryReader({
+        filePath: resolve(runtime.processCwd, runtime.config.auth?.usersFile || './data/users.json'),
+        initialUsers: userStore.listAll(),
+      })
+    : null;
+  const directorySource = directoryUsers
+    ? new GovernanceDirectorySource({ ...base, users: directoryUsers })
     : null;
   const directoryProjector =
     directoryChangeLog && directorySource
       ? new DirectoryProjector({ ...base, changeLog: directoryChangeLog, source: directorySource })
       : null;
   const directoryReconciler =
-    userStore && directoryProjector
+    directoryUsers && directoryProjector
       ? new RefreshingDirectoryReconciler({
-          refresh: () => userStore.reload(),
+          refresh: () => directoryUsers.reload(),
           reconciler: directoryProjector,
         })
       : null;

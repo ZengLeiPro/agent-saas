@@ -29,65 +29,6 @@ const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
 export const USER_ID_PATTERN = /^ky[0-9abcdefghjkmnpqrstvwxyz]{12}$/;
 
-type StoredUserRecord = UserRecord & { photoSync?: unknown };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function assertStoredUser(value: unknown, index: number): asserts value is StoredUserRecord {
-  if (!isRecord(value)) throw new Error(`users[${index}] 必须是对象`);
-  for (const field of ["id", "username", "passwordHash", "createdAt", "createdBy", "updatedAt"]) {
-    if (typeof value[field] !== "string" || value[field] === "") {
-      throw new Error(`users[${index}].${field} 必须是非空字符串`);
-    }
-  }
-  if (value.role !== "admin" && value.role !== "user") {
-    throw new Error(`users[${index}].role 非法`);
-  }
-  for (const field of [
-    "realName", "position", "phone", "phoneVerifiedAt", "avatar", "dingtalkStaffId", "tenantId",
-    "disabledAt", "disabledBy", "appVersion", "appVersionUpdatedAt",
-  ]) {
-    if (value[field] !== undefined && typeof value[field] !== "string") {
-      throw new Error(`users[${index}].${field} 必须是字符串`);
-    }
-  }
-  for (const field of ["debugMode", "disabled"]) {
-    if (value[field] !== undefined && typeof value[field] !== "boolean") {
-      throw new Error(`users[${index}].${field} 必须是布尔值`);
-    }
-  }
-  if (value.avatarVersion !== undefined && !Number.isFinite(value.avatarVersion)) {
-    throw new Error(`users[${index}].avatarVersion 必须是有限数值`);
-  }
-  if (value.platformCapabilities !== undefined && !Array.isArray(value.platformCapabilities)) {
-    throw new Error(`users[${index}].platformCapabilities 必须是数组`);
-  }
-  for (const field of ["permissions", "platformCapabilityLimits", "groupSorting", "preferences"]) {
-    if (value[field] !== undefined && !isRecord(value[field])) {
-      throw new Error(`users[${index}].${field} 必须是对象`);
-    }
-  }
-}
-
-function parseUsersFile(raw: string): {
-  users: StoredUserRecord[];
-  needsDebugModeMigration: boolean;
-} {
-  const data: unknown = JSON.parse(raw);
-  if (!isRecord(data) || data.version !== 1) throw new Error("users.json 版本或根结构非法");
-  if (!Array.isArray(data.users)) throw new Error("users.json 的 users 必须是数组");
-  if (data.debugModeMigrationVersion !== undefined && data.debugModeMigrationVersion !== 1) {
-    throw new Error("users.json 的 debugModeMigrationVersion 非法");
-  }
-  data.users.forEach(assertStoredUser);
-  return {
-    users: data.users,
-    needsDebugModeMigration: data.debugModeMigrationVersion !== 1,
-  };
-}
-
 export function generateUserId(): string {
   const bytes = randomBytes(USER_ID_RANDOM_LENGTH);
   let suffix = "";
@@ -151,73 +92,71 @@ export class UserStore {
     this.load();
   }
 
-  private load(): boolean {
+  private load(): void {
     if (!existsSync(this.filePath)) {
       mkdirSync(dirname(this.filePath), { recursive: true });
       this.users = [];
       this.debugModeMigrationVersion = 1;
-      return false;
+      return;
     }
+    let needsDebugModeMigration = false;
     try {
       const raw = readFileSync(this.filePath, "utf-8");
-      const { users, needsDebugModeMigration } = parseUsersFile(raw);
-
-      // PR 2 迁移：为缺失 tenantId 的旧记录回填。
-      // admin 代表平台最高权限，回填平台根组织；其他旧用户沿历史口径回填开沿日常组织。
-      // 一次性持久化（fire-and-forget）。持久化失败不阻止启动——下次启动会再次回填。
-      let migrated = 0;
-      let purgedMediaSync = 0;
-      let purgedLegacyDebugMode = 0;
-      for (const u of users) {
-        if (needsDebugModeMigration && u.debugMode === true) {
-          u.debugMode = false;
-          purgedLegacyDebugMode += 1;
-        }
-        if ("photoSync" in u) {
-          delete u.photoSync;
-          purgedMediaSync += 1;
-        }
-        if (!u.tenantId) {
-          u.tenantId = u.username === "admin" && u.role === "admin" ? DEFAULT_TENANT_ID : LEGACY_TENANT_ID;
-          migrated += 1;
-        }
-      }
-      this.users = users;
-      this.debugModeMigrationVersion = 1;
-      if (needsDebugModeMigration || migrated > 0 || purgedMediaSync > 0) {
-        if (needsDebugModeMigration) {
-          authLogger.info(
-            `Purged ${purgedLegacyDebugMode} legacy debug mode value(s) from user records`,
-          );
-        }
-        if (migrated > 0) {
-          authLogger.info(
-            `Migrated ${migrated} legacy user record(s) to tenantId by platform/admin split`,
-          );
-        }
-        if (purgedMediaSync > 0) {
-          authLogger.info(
-            `Purged ${purgedMediaSync} legacy photo sync setting(s) from user records`,
-          );
-        }
-        void this.persist().catch((err) => {
-          authLogger.warn(`Failed to persist user record migrations: ${err}`);
-        });
-      }
-      return true;
+      const data: UsersFileData = JSON.parse(raw);
+      this.users = data.users || [];
+      needsDebugModeMigration = data.debugModeMigrationVersion !== 1;
     } catch {
-      return false;
+      this.users = [];
+      this.debugModeMigrationVersion = 1;
+      return;
+    }
+
+    // PR 2 迁移：为缺失 tenantId 的旧记录回填。
+    // admin 代表平台最高权限，回填平台根组织；其他旧用户沿历史口径回填开沿日常组织。
+    // 一次性持久化（fire-and-forget）。持久化失败不阻止启动——下次启动会再次回填。
+    let migrated = 0;
+    let purgedMediaSync = 0;
+    let purgedLegacyDebugMode = 0;
+    for (const u of this.users as Array<UserRecord & { photoSync?: unknown }>) {
+      if (needsDebugModeMigration && u.debugMode === true) {
+        u.debugMode = false;
+        purgedLegacyDebugMode += 1;
+      }
+      if ("photoSync" in u) {
+        delete u.photoSync;
+        purgedMediaSync += 1;
+      }
+      if (!u.tenantId) {
+        u.tenantId = u.username === "admin" && u.role === "admin" ? DEFAULT_TENANT_ID : LEGACY_TENANT_ID;
+        migrated += 1;
+      }
+    }
+    this.debugModeMigrationVersion = 1;
+    if (needsDebugModeMigration || migrated > 0 || purgedMediaSync > 0) {
+      if (needsDebugModeMigration) {
+        authLogger.info(
+          `Purged ${purgedLegacyDebugMode} legacy debug mode value(s) from user records`,
+        );
+      }
+      if (migrated > 0) {
+        authLogger.info(
+          `Migrated ${migrated} legacy user record(s) to tenantId by platform/admin split`,
+        );
+      }
+      if (purgedMediaSync > 0) {
+        authLogger.info(
+          `Purged ${purgedMediaSync} legacy photo sync setting(s) from user records`,
+        );
+      }
+      void this.persist().catch((err) => {
+        authLogger.warn(`Failed to persist user record migrations: ${err}`);
+      });
     }
   }
 
   /** 重新读取共享 users.json，供多进程后台执行器刷新用户状态。 */
   reload(): void {
-    const previousUsers = this.users;
-    const previousMigrationVersion = this.debugModeMigrationVersion;
-    if (this.load()) return;
-    this.users = previousUsers;
-    this.debugModeMigrationVersion = previousMigrationVersion;
-    throw new Error('共享 users.json 刷新失败，已保留上一版用户快照');
+    this.load();
   }
 
   setPostPersistObserver(observer: (() => void) | undefined): void {

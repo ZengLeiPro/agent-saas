@@ -204,7 +204,7 @@ export async function recordPreflightFailure(directory, check, details = null, e
   return report;
 }
 
-async function main([mode, directory, manifestPath, historyPath]) {
+async function main([mode, directory, manifestPath, historyPath, repository]) {
   await mkdir(directory, { recursive: true });
   if (mode === 'failure') {
     let existing;
@@ -216,9 +216,9 @@ async function main([mode, directory, manifestPath, historyPath]) {
     if (existing?.status !== 'rejected')
       await recordPreflightFailure(
         directory,
-        process.env.STAGING_PREFLIGHT_CHECK ?? 'unknown',
+        manifestPath ?? 'unknown',
         null,
-        Number(process.env.STAGING_PREFLIGHT_EXIT_CODE ?? 1),
+        Number(historyPath ?? 1),
       );
     console.error(`Staging promotion preflight rejected; see ${join(directory, 'report.json')}`);
     return;
@@ -242,7 +242,7 @@ async function main([mode, directory, manifestPath, historyPath]) {
     const report = validateStagingDeployment({
       manifest,
       history,
-      repository: process.env.GITHUB_REPOSITORY,
+      repository,
       deployment: await json(join(directory, 'deployment.json')),
       statusPages: await json(join(directory, 'deployment-statuses.json')),
       attemptRun: await json(join(directory, 'staging-attempt.json')),

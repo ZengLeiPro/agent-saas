@@ -189,8 +189,8 @@ jobs:
           preflight_failure() {
             local result=$?
             trap - ERR
-            STAGING_PREFLIGHT_CHECK="$preflight_check" STAGING_PREFLIGHT_EXIT_CODE="$result" \
-              node scripts/release/staging-deployment-evidence.mjs failure "$preflight_dir" || true
+            node scripts/release/staging-deployment-evidence.mjs failure \
+              "$preflight_dir" "$preflight_check" "$result" || true
             echo "::error title=Staging promotion preflight::Failed check=$preflight_check; production mutation has not started. See report.json in the production evidence artifact."
             exit "$result"
           }

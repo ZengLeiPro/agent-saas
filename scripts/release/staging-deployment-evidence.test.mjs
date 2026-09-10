@@ -329,7 +329,14 @@ test('CLI completion requires the exact, unexpired core-smoke proof', async () =
   try {
     const f = fixture();
     await files(root, f);
-    const args = [cli, 'complete', root, join(root, 'manifest.json'), join(root, 'history.jsonl')];
+    const args = [
+      cli,
+      'complete',
+      root,
+      join(root, 'manifest.json'),
+      join(root, 'history.jsonl'),
+      repository,
+    ];
     const env = { ...process.env, GITHUB_REPOSITORY: repository };
     assert.equal(spawnSync(process.execPath, args, { env }).status, 0);
     assert.equal(JSON.parse(await readFile(join(root, 'report.json'))).status, 'passed');

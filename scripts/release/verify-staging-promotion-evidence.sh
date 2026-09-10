@@ -11,8 +11,7 @@ preflight_check=staging_binding
 failure() {
   local result=$?
   trap - ERR
-  STAGING_PREFLIGHT_CHECK="$preflight_check" STAGING_PREFLIGHT_EXIT_CODE="$result" \
-    node "$validator" failure "$directory" || true
+  node "$validator" failure "$directory" "$preflight_check" "$result" || true
   echo "::error title=Staging promotion preflight::Failed check=$preflight_check; production mutation has not started. See report.json in the production evidence artifact."
   exit "$result"
 }
@@ -44,7 +43,7 @@ read_metadata() {
 set -E
 read_metadata
 preflight_check=deployment_evidence
-node "$validator" verify "$directory" "$manifest" "$history"
+node "$validator" verify "$directory" "$manifest" "$history" "$GITHUB_REPOSITORY"
 for name in deployment deployment-statuses staging-attempt staging-run; do
   cp "$directory/$name.json" "$directory/$name-initial.json"
 done
@@ -60,4 +59,4 @@ node "$script_dir/staging-core-smoke-evidence.mjs" \
 # Fail closed if a rerun/failure appeared while downloading the evidence.
 read_metadata
 preflight_check=final_staging_evidence
-node "$validator" complete "$directory" "$manifest" "$history"
+node "$validator" complete "$directory" "$manifest" "$history" "$GITHUB_REPOSITORY"

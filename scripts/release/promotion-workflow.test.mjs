@@ -103,6 +103,13 @@ test('durable promoting marker interruptions always converge through needs_human
 
 test('promotion accepts only an approved release id and shares the production runtime lock', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
+  const evidenceScript = await readFile(
+    new URL('./verify-staging-promotion-evidence.sh', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /verify-staging-promotion-evidence\.sh/u);
+  assert.match(workflow, /staging-promotion-preflight\//u);
+  assert.match(workflow, /stagingDeploymentEvidence/u);
   assert.match(workflow, /^name: 生产环境发布$/mu);
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /release_id:/u);
@@ -133,11 +140,11 @@ test('promotion accepts only an approved release id and shares the production ru
     workflow,
     /--state promoting --operation "promoting:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u,
   );
-  assert.match(workflow, /deployments\/\$deployment_id\/statuses/u);
-  assert.match(workflow, /actions\/runs\/\$staging_run_id/u);
+  assert.match(evidenceScript, /deployments\/\$deployment_id\/statuses/u);
+  assert.match(evidenceScript, /actions\/runs\/\$staging_run_id/u);
   assert.match(workflow, /deterministic-deployment-gates-v2/u);
-  assert.match(workflow, /staging-core-smoke-evidence\.mjs/u);
-  assert.match(workflow, /staging-evidence-\$RELEASE_ID-\$staging_run_attempt/u);
+  assert.match(evidenceScript, /staging-core-smoke-evidence\.mjs/u);
+  assert.match(evidenceScript, /staging-evidence-\$RELEASE_ID-\$staging_run_attempt/u);
   assert.match(workflow, /verificationSummary/u);
   assert.doesNotMatch(workflow, /e2eRunId|e2eSummary|summarize-e2e/u);
   assert.match(workflow, /runtime_summary=/u);
@@ -232,9 +239,13 @@ test('Web promotion publishes gzip immutable assets and syncs the cold-standby i
     "grep -Fx 'state=activated'",
     'cmp "$RUNNER_TEMP/web-assets/index.html" "$RUNNER_TEMP/recovery-web.index.html"',
     "printf '%s' \"$recovery_release_id\" | grep -Eq '^[a-f0-9]{40}$'",
-  ]) assert.ok(web.includes(contract), contract);
+  ])
+    assert.ok(web.includes(contract), contract);
   // 冷备回滚在 OSS 入口恢复之前，且都受同一把主机锁保护。
-  const cleanup = web.slice(web.indexOf('cleanup_web_on_exit() {'), web.indexOf('trap cleanup_web_on_exit EXIT'));
+  const cleanup = web.slice(
+    web.indexOf('cleanup_web_on_exit() {'),
+    web.indexOf('trap cleanup_web_on_exit EXIT'),
+  );
   ordered(cleanup, ['web_lock_is_alive', 'rollback_recovery_web', 'restore_web_entry']);
   assert.ok(web.indexOf('recovery_started=true') > web.indexOf('verify-public-web.mjs'));
   assert.equal(web.split('recovery_started=true').length - 1, 1);
@@ -250,9 +261,7 @@ test('deploy output creates exact run-attempt fallback evidence without swallowi
         : '- name: 蓝绿部署 API 并交接运行时 Worker',
     );
     const end = workflow.indexOf(
-      phase === 'acs'
-        ? '- name: 持久化 ACS 操作回执'
-        : '- name: 持久化 API 与 Worker 操作回执',
+      phase === 'acs' ? '- name: 持久化 ACS 操作回执' : '- name: 持久化 API 与 Worker 操作回执',
       start,
     );
     const deployStep = workflow.slice(start, end);
@@ -343,9 +352,7 @@ test('remote workspaces and approval attestations are isolated by run attempt', 
 
 test('trusted identity write is followed by a strict stable ConfigIdentity confirmation', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const start = workflow.indexOf(
-    '- name: 读取全部在线组件并仅在完全收敛后提交可信身份',
-  );
+  const start = workflow.indexOf('- name: 读取全部在线组件并仅在完全收敛后提交可信身份');
   const end = workflow.indexOf('- name: 核对组件结果', start);
   assert.ok(start >= 0 && end > start, 'readback step must be present');
   const readback = workflow.slice(start, end);
@@ -380,10 +387,7 @@ test('trusted identity write is followed by a strict stable ConfigIdentity confi
 test('final outcome preserves fail-closed reconciliation and trusted identity evidence', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const start = workflow.indexOf('- name: 记录真实最终结果');
-  const end = workflow.indexOf(
-    '- name: 在生产变更前记录失败关闭结果',
-    start,
-  );
+  const end = workflow.indexOf('- name: 在生产变更前记录失败关闭结果', start);
   assert.ok(start >= 0 && end > start, 'final outcome step must be present');
   const finalOutcome = workflow.slice(start, end);
   ordered(finalOutcome, [
@@ -530,10 +534,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
     workflow,
     /\.components \| \{api,runtimeWorker\}[\s\S]*\{api,runtimeWorker\}[\s\S]*app_already_target=true/u,
   );
-  assert.match(
-    workflow,
-    /if \[ "\$APP_ALREADY_TARGET" = true \]; then[\s\S]*resume_handoff=true/u,
-  );
+  assert.match(workflow, /if \[ "\$APP_ALREADY_TARGET" = true \]; then[\s\S]*resume_handoff=true/u);
   assert.match(
     workflow,
     /if \[ "\$ACS_ALREADY_TARGET" = true \]; then[\s\S]*ACS already equals the immutable target/u,
@@ -584,10 +585,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
     "echo 'target_match=false'",
     "write-production-identity.mjs' '$PROMOTION_REMOTE/manifest.json'",
   ]);
-  assert.match(
-    workflow,
-    /scripts\/release\/write-live-production-identity\.mjs/u,
-  );
+  assert.match(workflow, /scripts\/release\/write-live-production-identity\.mjs/u);
   assert.match(workflow, /--recovery-mode "\$PROMOTION_RETRY_MODE"/u);
   assert.match(workflow, /identity_projection=/u);
   assert.doesNotMatch(workflow, /jq -S \.components "\$RUNNER_TEMP\/production-confirmed\.json"/u);
@@ -660,10 +658,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   // aliyun `oss cp` gunzips Content-Encoding: gzip objects and fails CRC; assets are read back by the SDK helper.
   assert.doesNotMatch(workflow, /gzip -n -9 -c "\$source"/u);
   assert.match(workflow, /cmp "\$source" "\$target"/u);
-  assert.doesNotMatch(
-    workflow,
-    /done < <\(find "\$RUNNER_TEMP\/web-assets" -type f -print0\)/u,
-  );
+  assert.doesNotMatch(workflow, /done < <\(find "\$RUNNER_TEMP\/web-assets" -type f -print0\)/u);
   assert.match(workflow, /release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /WEB_LOCK_READY='\$web_lock_ready'/u);
   assert.match(workflow, /timeout-minutes: 180/u);
@@ -782,10 +777,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(workflow, /promotion-config-identity-state\.mjs plan/u);
   assert.match(workflow, /assert-write-gate/u);
-  assert.match(
-    workflow,
-    /assert-write-gate[\s\S]*--recovery-mode "\$PRODUCTION_RECOVERY_MODE"/u,
-  );
+  assert.match(workflow, /assert-write-gate[\s\S]*--recovery-mode "\$PRODUCTION_RECOVERY_MODE"/u);
   assert.doesNotMatch(workflow, /legacy_api_requires_upgrade/u);
   assert.equal(workflow.match(/config_identity_readback_stage=candidate-readback/gu)?.length, 1);
   assert.match(workflow, /\[ "\$api_action" = deploy \]/u);
@@ -1174,7 +1166,10 @@ test('expand confirmation runs automatically with the existing release-bound evi
     /run_guarded bash scripts\/release\/upload-github-release-asset-immutable\.sh/u,
   );
   assert.match(workflow, /run_guarded bash scripts\/release\/upload-oss-object-immutable\.sh/u);
-  assert.match(workflow, /diff -u[\s\S]*del\(\.liveObservedAt,\.confirmedAt,\.databaseEvidence\.observedAt\)/u);
+  assert.match(
+    workflow,
+    /diff -u[\s\S]*del\(\.liveObservedAt,\.confirmedAt,\.databaseEvidence\.observedAt\)/u,
+  );
   assert.match(workflow, /upload-oss-object-immutable\.sh[\s\S]*--state completed/u);
   assert.match(workflow, /promotion-finalization-mode\.mjs/u);
   assert.doesNotMatch(workflow, /--state completed[\s\S]*migration-confirmations\/confirmation-/u);

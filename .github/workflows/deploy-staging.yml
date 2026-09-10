@@ -1086,7 +1086,8 @@ jobs:
           else
             deployment_id="$(jq -n --arg ref "$GITHUB_SHA" --arg releaseId "$STAGING_RELEASE_ID" \
               --arg runId "$GITHUB_RUN_ID" --arg digest "$MANIFEST_DIGEST" \
-              '{ref:$ref,environment:"staging",auto_merge:false,required_contexts:[],payload:{releaseId:$releaseId,stagingRunId:$runId,manifestDigest:$digest}}' \
+              --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+              '{ref:$ref,environment:"staging",auto_merge:false,required_contexts:[],payload:{releaseId:$releaseId,stagingRunId:$runId,stagingRunAttempt:$runAttempt,manifestDigest:$digest}}' \
               | gh api --method POST "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)"
           fi
           test "$deployment_id" -gt 0
@@ -1287,10 +1288,10 @@ jobs:
             verification_summary="$(jq -nc \
               '{schemaVersion:1,mode:"deterministic-deployment-gates-v2",status:"passed",checks:["immutable-artifacts","runtime-identity","api-readiness","acs-health","web-readback","migration-readback","reverse-isolation","core-business-smoke"]}')"
             staging_reason="$(jq -nc --arg deploymentId "$STAGING_DEPLOYMENT_ID" --arg stagingRunId "$GITHUB_RUN_ID" \
-              --arg manifestDigest "$MANIFEST_DIGEST" \
+              --arg manifestDigest "$MANIFEST_DIGEST" --arg stagingRunAttempt "$GITHUB_RUN_ATTEMPT" \
               --argjson runtimeSummary "$(cat "$RUNNER_TEMP/staging-runtime-summary.json")" \
               --argjson verificationSummary "$verification_summary" \
-              '{stagingDeploymentId:$deploymentId,stagingRunId:$stagingRunId,manifestDigest:$manifestDigest,runtimeSummary:$runtimeSummary,verificationSummary:$verificationSummary}')"
+              '{stagingDeploymentId:$deploymentId,stagingRunId:$stagingRunId,stagingRunAttempt:$stagingRunAttempt,manifestDigest:$manifestDigest,runtimeSummary:$runtimeSummary,verificationSummary:$verificationSummary}')"
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$log_root" --release-id "$STAGING_RELEASE_ID" --digest "$MANIFEST_DIGEST" \
               --state staging_deployed --operation "staging:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
@@ -1368,4 +1369,5 @@ jobs:
           state=failure
           [ "$WORKFLOW_STATUS" = success ] && state=success
           gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$STAGING_DEPLOYMENT_ID/statuses" \
-            -f state="$state" -F auto_inactive=false -f environment=staging -f environment_url="$STAGING_WEB_URL" >/dev/null
+            -f state="$state" -F auto_inactive=false -f environment=staging -f environment_url="$STAGING_WEB_URL" \
+            -f log_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" >/dev/null

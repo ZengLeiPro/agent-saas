@@ -24,15 +24,19 @@ PR 只执行无发布凭据的脚本契约测试和真实 macOS 工具链检查�
 
 每个环境都必须配置：
 
-1. 至少一位 required reviewer，启用 **Prevent self-review**。
+1. 至少一位具名 **User** required reviewer，启用 **Prevent self-review**。当前入口不支持 Team reviewer，因为只读 workflow token 无法可靠核实组织团队成员资格。
 2. 禁用 **Allow administrators to bypass configured protection rules**。
 3. Deployment branches and tags 选择 protected branches，或者只允许 branch `main` 的自定义策略；不要允许 tag 或通配符。
 
 发起运行和重跑的人不能审核自己的运行。构建与提交各自审批，可以由同一位独立审核人在两个阶段分别批准。
 请在审批前核对 run name 和 plan summary 中的完整 source SHA、操作和原构建 run/attempt。
 
-Workflow 会从 GitHub API 读取实际保护规则和批准历史，校验并记录规则摘要；读不到、未配置、
-被放宽、缺少独立批准时均停止，不使用手工写入的“已批准”标志代替真实审批。
+Workflow 从 GitHub API 读取实际 reviewer、prevent_self_review、分支策略和批准历史，校验并记录规则摘要。
+读不到这些必要元数据、没有独立批准、批准者不是当前具名 reviewer 时均停止，不使用手工写入的“已批准”标志。
+GitHub 文档中的 REST environment 响应未提供管理员 bypass 开关，因此该开关需要管理员在 UI 核实；
+记录中对未提供的字段明确写 `not-exposed-by-rest`，不会伪造已关闭。接口提供该字段时会拒绝 true。
+不管该字段是否返回，脚本都要求具名 reviewer 的真实独立批准，单纯绕过环境而没有该批准不能放行。
+
 仅使用最小的 contents/actions/deployments 读取权限，不申请修改源码或仓库设置的令牌。
 配置开关在环境设置完成后才设为 true；不能为了让任务变绿而移除审批检查。
 
@@ -145,4 +149,5 @@ Expo token 只在实际构建或实际提交的步骤注入；依赖安装、来
 - Expo iOS submit 和远程 API key 配置：https://docs.expo.dev/submit/ios/
 - Expo SDK 55 的 Xcode 26.2 镜像：https://docs.expo.dev/build-reference/infrastructure/
 - GitHub macOS runner 工具清单：https://github.com/actions/runner-images/tree/main/images/macos
+- GitHub environment REST 字段：https://docs.github.com/en/rest/deployments/environments
 - pnpm 官方校验来源：https://api.github.com/repos/pnpm/pnpm/releases/tags/v10.18.3

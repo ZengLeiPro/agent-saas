@@ -80,7 +80,10 @@ function UserList() {
 
   const tenantName = useMemo(() => new Map(tenants.map(tenant => [tenant.id, tenant.name])), [tenants]);
   const openUserDetail = (row: UserInfo) => {
-    navigatePlatformAdmin({ section: "users", entityId: row.id, search: window.location.search });
+    navigateGovernance(governanceRoute("platform.org-business.users", {
+      entityId: row.id,
+      search: window.location.search,
+    }));
   };
 
   return (

@@ -35,6 +35,20 @@ describe("governance navigation registry", () => {
     expect(governanceCollectionRoute(governanceRoute("platform.org-business.users"))).toBeNull();
   });
 
+  it("所有注册实体详情路由都有确定的列表返回目标", () => {
+    for (const definition of GOVERNANCE_ROUTES.filter((item) => item.entity !== "none")) {
+      const current = governanceRoute(definition.id, {
+        entityId: "entity-1",
+        orgId: definition.area === "organization" ? "acme" : null,
+        search: "?q=kept",
+      });
+      const collection = governanceCollectionRoute(current);
+      expect(collection, definition.id).not.toBeNull();
+      expect(collection, definition.id).toMatchObject({ entityId: null, search: "?q=kept" });
+      expect(() => buildGovernanceUrl(collection!)).not.toThrow();
+    }
+  });
+
   it("只暴露平台/组织各五个工作区，并完整登记本地叶子与八个个人设置页", () => {
     expect(GOVERNANCE_NAVIGATION.platform.map((item) => item.id)).toEqual([
       "overview", "org-business", "resource-center", "runtime", "governance",

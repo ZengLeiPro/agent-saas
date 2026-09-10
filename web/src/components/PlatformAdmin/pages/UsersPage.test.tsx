@@ -48,4 +48,18 @@ describe("UsersPage 添加成员入口", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/tenant-admin/members/list"));
     expect(window.location.search).toBe("?org=acme");
   });
+
+  it("点击用户名称进入详情并保留检索条件", async () => {
+    window.history.replaceState({}, "", "/platform-console/org-business/users?q=王&tenantId=acme");
+    mocks.users.mockResolvedValue({
+      items: [{ id: "user-1", username: "wang", realName: "王小明", tenantId: "acme", role: "user", position: "顾问", disabled: false, updatedAt: "2026-09-10T08:00:00.000Z" }],
+      nextCursor: null,
+    });
+    render(<UsersPage userId={null} />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "王小明" }));
+
+    expect(window.location.pathname).toBe("/platform-console/org-business/users/user-1");
+    expect(window.location.search).toBe("?q=%E7%8E%8B&tenantId=acme");
+  });
 });

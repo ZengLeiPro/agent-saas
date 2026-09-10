@@ -97,8 +97,9 @@ test('M10-03 manifest schema accepts the checked-in iOS-first release record', (
   const manifest = cloneManifest();
   assert.equal(validateManifestSchema(manifest), manifest);
   assert.equal(manifest.verification.identity, 'verified');
-  assert.equal(manifest.schemaVersion, 4);
+  assert.equal(manifest.schemaVersion, 5);
   assert.equal(manifest.identity.iosAscAppId, '6808382989');
+  assert.equal(manifest.identity.iosTestFlightInternalGroupName, 'kaiyan');
   assert.equal(manifest.verification.versions, 'verified');
   assert.equal(manifest.version.androidVersionCode, null);
   assert.equal(manifest.target.distribution, null);

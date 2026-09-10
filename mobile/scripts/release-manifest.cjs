@@ -128,7 +128,7 @@ function validateManifestSchema(manifest) {
     'verification',
     'oauthCallback',
   ]);
-  if (manifest.schemaVersion !== 4) fail('release manifest.schemaVersion must be 4');
+  if (manifest.schemaVersion !== 5) fail('release manifest.schemaVersion must be 5');
 
   assertExactKeys(manifest.identity, 'release manifest.identity', [
     'displayName',
@@ -136,6 +136,8 @@ function validateManifestSchema(manifest) {
     'scheme',
     'iosBundleIdentifier',
     'iosAscAppId',
+    'iosTestFlightInternalGroupId',
+    'iosTestFlightInternalGroupName',
     'iosAppleTeamId',
     'iosAppGroupIdentifier',
     'androidPackage',
@@ -159,6 +161,13 @@ function validateManifestSchema(manifest) {
   }
   if (manifest.identity.iosAscAppId === LEGACY_KY_AGENT_ASC_APP_ID) {
     fail('release manifest.identity.iosAscAppId must not reuse the legacy KY Agent app');
+  }
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      manifest.identity.iosTestFlightInternalGroupId,
+    )
+  ) {
+    fail('release manifest.identity.iosTestFlightInternalGroupId must be a UUID');
   }
   if (!/^[A-Z0-9]{10}$/.test(manifest.identity.iosAppleTeamId)) {
     fail('release manifest.identity.iosAppleTeamId has an invalid Apple Team ID');

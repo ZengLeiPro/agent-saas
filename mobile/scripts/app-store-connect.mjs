@@ -27,38 +27,23 @@ export function createAppStoreToken({ keyId, issuerId, privateKey, now = Date.no
   return `${encoded}.${signature.toString('base64url')}`;
 }
 
-export function releaseRequestBodies({ appId, versionId, buildId, submissionId }) {
-  const result = {
-    automaticRelease: {
-      data: {
-        type: 'appStoreVersions',
-        id: versionId,
-        attributes: { releaseType: 'AFTER_APPROVAL' },
-      },
-    },
-    attachBuild: { data: { type: 'builds', id: buildId } },
-    createSubmission: {
-      data: {
-        type: 'reviewSubmissions',
-        relationships: { app: { data: { type: 'apps', id: appId } } },
-      },
-    },
-  };
-  if (submissionId) {
-    result.createItem = {
-      data: {
-        type: 'reviewSubmissionItems',
-        relationships: {
-          reviewSubmission: { data: { type: 'reviewSubmissions', id: submissionId } },
-          appStoreVersion: { data: { type: 'appStoreVersions', id: versionId } },
-        },
-      },
-    };
-    result.submit = {
-      data: { type: 'reviewSubmissions', id: submissionId, attributes: { submitted: true } },
-    };
-  }
-  return result;
+export function classifyInternalBuildState(state) {
+  if (state === 'IN_BETA_TESTING') return 'ready';
+  if (['PROCESSING_EXCEPTION', 'EXPIRED'].includes(state)) return 'failed';
+  if (state === 'MISSING_EXPORT_COMPLIANCE') return 'blocked';
+  return 'waiting';
+}
+
+export function validateInternalGroup(group, expected) {
+  assert.equal(group?.id, expected.id, 'TestFlight internal group ID mismatch');
+  assert.equal(group?.attributes?.name, expected.name, 'TestFlight internal group name mismatch');
+  assert.equal(group?.attributes?.isInternalGroup, true, 'Configured TestFlight group is not internal');
+  assert.equal(
+    group?.attributes?.hasAccessToAllBuilds,
+    true,
+    'Internal TestFlight group must automatically receive all builds',
+  );
+  return group;
 }
 
 class AppStoreClient {
@@ -66,22 +51,18 @@ class AppStoreClient {
     this.credentials = credentials;
   }
 
-  async request(path, { method = 'GET', body, allow404 = false } = {}) {
+  async request(path) {
     assert.ok(path.startsWith('/') && !path.includes('..'), 'Unsafe App Store Connect API path');
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const response = await fetch(`${API}${path}`, {
-        method,
         headers: {
           Authorization: `Bearer ${createAppStoreToken(this.credentials)}`,
           Accept: 'application/json',
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
-        body: body ? JSON.stringify(body) : undefined,
         redirect: 'error',
         signal: AbortSignal.timeout(30_000),
       });
       if (response.status === 204) return null;
-      if (allow404 && response.status === 404) return null;
       const payload = await response.json().catch(() => ({}));
       if (response.ok) return payload;
       if ((response.status === 429 || response.status >= 500) && attempt < 3) {
@@ -95,7 +76,7 @@ class AppStoreClient {
         )
         .join('; ');
       throw new Error(
-        `App Store Connect ${method} ${path.split('?')[0]} failed: ${details || `HTTP ${response.status}`}`,
+        `App Store Connect GET ${path.split('?')[0]} failed: ${details || `HTTP ${response.status}`}`,
       );
     }
     throw new Error('App Store Connect retry limit exceeded');
@@ -181,142 +162,38 @@ function uploadIpa(ipaPath, credentials, privateKeysDirectory) {
   }
 }
 
-async function findVersion(client, appId, version) {
+async function findInternalGroup(client, identity) {
   const response = await client.request(
-    `/apps/${appId}/appStoreVersions?${query({
-      'filter[platform]': 'IOS',
-      'filter[versionString]': version,
-      limit: '200',
-    })}`,
+    `/betaGroups?${query({ 'filter[app]': identity.appId, limit: '200' })}`,
   );
-  const matches = response.data ?? [];
-  assert.equal(
-    matches.length,
-    1,
-    `App Store version ${version} must already exist with complete reviewed metadata`,
-  );
-  return matches[0];
-}
-
-async function findSubmission(client, appId, versionId) {
-  const response = await client.request(
-    `/apps/${appId}/reviewSubmissions?${query({
-      include: 'appStoreVersionForReview',
-      limit: '200',
-    })}`,
-  );
-  return (
-    (response.data ?? []).find(
-      (item) => item.relationships?.appStoreVersionForReview?.data?.id === versionId,
-    ) ?? null
-  );
-}
-
-async function ensureSubmissionItem(client, submissionId, versionId) {
-  const response = await client.request(
-    `/reviewSubmissions/${submissionId}/items?${query({
-      include: 'appStoreVersion',
-      limit: '50',
-    })}`,
-  );
-  const matches = (response.data ?? []).filter(
-    (item) => item.relationships?.appStoreVersion?.data?.id === versionId,
-  );
-  assert.ok(matches.length <= 1, 'Review submission contains duplicate App Store version items');
-  if (matches.length === 1) return matches[0];
-  const bodies = releaseRequestBodies({ appId: '', versionId, buildId: '', submissionId });
-  return (
-    await client.request('/reviewSubmissionItems', { method: 'POST', body: bodies.createItem })
-  ).data;
-}
-
-export function classifyAppStoreVersionState(state) {
-  if (
-    [
-      'WAITING_FOR_REVIEW',
-      'IN_REVIEW',
-      'ACCEPTED',
-      'PENDING_APPLE_RELEASE',
-      'PENDING_DEVELOPER_RELEASE',
-      'PROCESSING_FOR_DISTRIBUTION',
-      'READY_FOR_DISTRIBUTION',
-    ].includes(state)
-  ) {
-    return 'submitted';
-  }
-  if (
-    [
-      'DEVELOPER_REJECTED',
-      'INVALID_BINARY',
-      'METADATA_REJECTED',
-      'REJECTED',
-      'REPLACED_WITH_NEW_VERSION',
-    ].includes(state)
-  ) {
-    return 'failed';
-  }
-  return 'editable';
-}
-
-async function submitForReview(client, identity, build) {
-  let version = await findVersion(client, identity.appId, identity.version);
-  const versionState = version.attributes?.appStoreState;
-  const classification = classifyAppStoreVersionState(versionState);
-  if (classification === 'failed')
-    throw new Error(`App Store version cannot be resubmitted from state ${versionState}`);
-  if (classification === 'submitted') {
-    assert.equal(
-      version.attributes.releaseType,
-      'AFTER_APPROVAL',
-      'Existing submitted version is not configured for automatic release',
-    );
-    const submission = await findSubmission(client, identity.appId, version.id);
-    assert.ok(submission, 'Submitted App Store version has no review submission');
-    return { version, submission, alreadySubmitted: true };
-  }
-
-  const baseBodies = releaseRequestBodies({
-    appId: identity.appId,
-    versionId: version.id,
-    buildId: build.id,
+  const group = (response.data ?? []).find((item) => item.id === identity.betaGroupId);
+  assert.ok(group, 'Configured internal TestFlight group does not belong to the app');
+  return validateInternalGroup(group, {
+    id: identity.betaGroupId,
+    name: identity.betaGroupName,
   });
-  if (version.attributes?.releaseType !== 'AFTER_APPROVAL') {
-    await client.request(`/appStoreVersions/${version.id}`, {
-      method: 'PATCH',
-      body: baseBodies.automaticRelease,
-    });
-  }
-  await client.request(`/appStoreVersions/${version.id}/relationships/build`, {
-    method: 'PATCH',
-    body: baseBodies.attachBuild,
-  });
+}
 
-  let submission = await findSubmission(client, identity.appId, version.id);
-  if (!submission) {
-    submission = (
-      await client.request('/reviewSubmissions', {
-        method: 'POST',
-        body: baseBodies.createSubmission,
-      })
-    ).data;
+async function waitForInternalTesting(
+  client,
+  build,
+  { timeoutMs = 30 * 60_000, intervalMs = 20_000 } = {},
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const detail = (await client.request(`/builds/${build.id}/buildBetaDetail`)).data;
+    const state = detail?.attributes?.internalBuildState;
+    const classification = classifyInternalBuildState(state);
+    if (classification === 'ready') return detail;
+    if (classification === 'blocked') {
+      throw new Error('TestFlight is blocked by missing export compliance information');
+    }
+    if (classification === 'failed') {
+      throw new Error(`TestFlight internal distribution failed with state ${state}`);
+    }
+    await sleep(intervalMs);
   }
-  await ensureSubmissionItem(client, submission.id, version.id);
-  if (submission.attributes?.state === 'READY_FOR_REVIEW' || !submission.attributes?.state) {
-    const bodies = releaseRequestBodies({
-      appId: identity.appId,
-      versionId: version.id,
-      buildId: build.id,
-      submissionId: submission.id,
-    });
-    submission = (
-      await client.request(`/reviewSubmissions/${submission.id}`, {
-        method: 'PATCH',
-        body: bodies.submit,
-      })
-    ).data;
-  }
-  version = (await client.request(`/appStoreVersions/${version.id}`)).data;
-  return { version, submission, alreadySubmitted: false };
+  throw new Error('Timed out waiting for the build to enter internal TestFlight testing');
 }
 
 function parseArguments(argv) {
@@ -337,19 +214,34 @@ async function main() {
     execFileSync('jq', ['-c', '.', `${ipaPath}.source.json`], { encoding: 'utf8' }),
   );
   const appId = process.env.APP_STORE_CONNECT_APP_ID;
+  const betaGroupId = process.env.TESTFLIGHT_INTERNAL_GROUP_ID;
+  const betaGroupName = process.env.TESTFLIGHT_INTERNAL_GROUP_NAME;
   const credentials = {
     keyId: process.env.APP_STORE_CONNECT_API_KEY_ID,
     issuerId: process.env.APP_STORE_CONNECT_ISSUER_ID,
     privateKey: process.env.APP_STORE_CONNECT_API_KEY_P8,
   };
   assert.match(appId ?? '', /^[1-9][0-9]+$/u, 'APP_STORE_CONNECT_APP_ID is required');
+  assert.match(
+    betaGroupId ?? '',
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu,
+    'TESTFLIGHT_INTERNAL_GROUP_ID is required',
+  );
+  assert.ok(betaGroupName, 'TESTFLIGHT_INTERNAL_GROUP_NAME is required');
   assert.ok(
     credentials.privateKey?.includes('BEGIN PRIVATE KEY'),
     'APP_STORE_CONNECT_API_KEY_P8 is invalid',
   );
   createAppStoreToken(credentials);
-  const identity = { appId, version: source.version, buildNumber: String(source.buildNumber) };
+  const identity = {
+    appId,
+    version: source.version,
+    buildNumber: String(source.buildNumber),
+    betaGroupId,
+    betaGroupName,
+  };
   const client = new AppStoreClient(credentials);
+  const group = await findInternalGroup(client, identity);
   let build = await findBuild(client, appId, identity.version, identity.buildNumber);
   let uploadStatus = 'already-present';
   let uploadSummary = '';
@@ -369,7 +261,7 @@ async function main() {
     }
   }
   build = await waitForBuild(client, identity);
-  const release = await submitForReview(client, identity, build);
+  const betaDetail = await waitForInternalTesting(client, build);
   const result = {
     schemaVersion: 1,
     appId,
@@ -378,20 +270,16 @@ async function main() {
     buildId: build.id,
     processingState: build.attributes.processingState,
     uploadStatus,
-    appStoreVersionId: release.version.id,
-    appStoreState: release.version.attributes?.appStoreState,
-    releaseType: release.version.attributes?.releaseType,
-    reviewSubmissionId: release.submission?.id ?? null,
-    reviewState: release.submission?.attributes?.state ?? null,
-    alreadySubmitted: release.alreadySubmitted,
+    betaGroupId: group.id,
+    betaGroupName: group.attributes.name,
+    hasAccessToAllBuilds: group.attributes.hasAccessToAllBuilds,
+    internalBuildState: betaDetail.attributes.internalBuildState,
+    autoNotifyEnabled: betaDetail.attributes.autoNotifyEnabled,
     recordedAt: new Date().toISOString(),
   };
   assert.equal(result.processingState, 'VALID');
-  assert.equal(result.releaseType, 'AFTER_APPROVAL');
-  assert.ok(
-    ['WAITING_FOR_REVIEW', 'IN_REVIEW', 'COMPLETING', 'COMPLETE'].includes(result.reviewState),
-    `Review submission did not enter a submitted state: ${result.reviewState}`,
-  );
+  assert.equal(result.hasAccessToAllBuilds, true);
+  assert.equal(result.internalBuildState, 'IN_BETA_TESTING');
   writeFileSync(resolve(args.result), `${JSON.stringify(result, null, 2)}\n`, {
     mode: 0o600,
     flag: 'wx',
@@ -402,7 +290,7 @@ async function main() {
       : '';
     writeFileSync(
       process.env.GITHUB_STEP_SUMMARY,
-      `### App Store Connect\n\nBuild ${identity.version} (${identity.buildNumber}): ${result.processingState}\n\nReview: ${result.reviewState}\n\nRelease: ${result.releaseType}${uploadNote}\n`,
+      `### Internal TestFlight\n\nBuild ${identity.version} (${identity.buildNumber}): ${result.processingState}\n\nInternal testing: ${result.internalBuildState}\n\nGroup: ${result.betaGroupName} (all builds)${uploadNote}\n`,
       { flag: 'a' },
     );
   }

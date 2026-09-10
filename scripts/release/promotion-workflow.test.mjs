@@ -573,9 +573,20 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
     readbackBlock.indexOf("read-live-production-components.mjs'") <
       readbackBlock.indexOf("write-production-identity.mjs'"),
   );
+  const fullIdentityWrite = readbackBlock.indexOf("write-production-identity.mjs'");
   assert.ok(
-    readbackBlock.indexOf("write-production-identity.mjs'") <
-      readbackBlock.indexOf("read-production-state.mjs'"),
+    fullIdentityWrite < readbackBlock.indexOf("read-production-state.mjs'", fullIdentityWrite),
+  );
+  ordered(readbackBlock, [
+    'if ! diff -u <(jq -S .components "$RUNNER_TEMP/production-after.json")',
+    "write-live-production-identity.mjs' --input '$remote/production-after.json'",
+    'production-partial-confirmed.json',
+    "echo 'target_match=false'",
+    "write-production-identity.mjs' '$PROMOTION_REMOTE/manifest.json'",
+  ]);
+  assert.match(
+    workflow,
+    /scripts\/release\/write-live-production-identity\.mjs/u,
   );
   assert.match(workflow, /--recovery-mode "\$PROMOTION_RETRY_MODE"/u);
   assert.match(workflow, /identity_projection=/u);

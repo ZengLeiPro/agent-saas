@@ -1,6 +1,7 @@
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
-import { parseRemoteReceipt, type RemoteAttemptFence, type RemoteAttemptReceipt } from './remoteAttemptProtocol.js';
+import { deriveRemoteReceiptKey, parseRemoteReceipt, type RemoteAttemptFence, type RemoteAttemptReceipt } from './remoteAttemptProtocol.js';
+import { waitForOwned, OWNED_WAIT_BUDGETS } from './ownedWait.js';
 
 /** Short control RPC; no provisioning, new invocation lease or command replay. */
 export async function queryRemoteAttempt(input: {
@@ -10,15 +11,18 @@ export async function queryRemoteAttempt(input: {
   fence: RemoteAttemptFence;
   action: 'status' | 'cancel';
 }): Promise<RemoteAttemptReceipt | null> {
-  const result = await input.kubectl.run([
+  const receiptKey = deriveRemoteReceiptKey(input.config.authToken, input.fence);
+  const task = input.kubectl.run([
     'exec', '-i', input.sandboxName, '-c', input.config.sandboxContainerName, '--',
-    'python3', '/app/acs-orchestrator/dist/remote/attempt_control.py',
-  ], { timeoutMs: 10_000, input: JSON.stringify({
-    action: input.action, fence: input.fence, workspaceRoot: input.config.workspaceMountPath,
+    '/usr/local/bin/python3', '-I', '/app/acs-orchestrator/dist/remote/attempt_control.py',
+  ], { timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs, input: JSON.stringify({
+    protocolVersion: 1, action: input.action, fence: input.fence, receiptKey,
+    workspaceRoot: input.config.workspaceMountPath,
   }) });
+  const result = await waitForOwned(task, { phase: `remote_attempt_${input.action}`, timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs });
   if (result.exitCode !== 0 || result.remoteState === 'unknown') return null;
   try {
     const value = JSON.parse(result.stdout) as { protocolVersion?: unknown; receipt?: unknown };
-    return value.protocolVersion === 1 ? parseRemoteReceipt(value.receipt, input.fence) : null;
+    return value.protocolVersion === 1 ? parseRemoteReceipt(value.receipt, input.fence, receiptKey) : null;
   } catch { return null; }
 }

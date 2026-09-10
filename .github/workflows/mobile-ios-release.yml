@@ -15,21 +15,21 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'build-and-submit=构建、上传、送审并设为审核后自动发布；build=仅构建；submit=复用已有 IPA'
+        description: 'build-and-testflight=构建并发布到内部 TestFlight；build=仅构建；testflight=复用已有 IPA'
         type: choice
         required: true
-        default: build-and-submit
-        options: [build, build-and-submit, submit]
+        default: build-and-testflight
+        options: [build, build-and-testflight, testflight]
       source_sha:
-        description: 'main 上已通过 CI 的完整提交 SHA；构建时留空使用本次 main，submit 时必填'
+        description: 'main 上已通过 CI 的完整提交 SHA；构建时留空使用本次 main，testflight 时必填'
         type: string
         required: false
       build_run_id:
-        description: '仅 submit：原签名构建的 Actions run ID（不是 EAS build ID）'
+        description: '仅 testflight：原签名构建的 Actions run ID（不是 EAS build ID）'
         type: string
         required: false
       build_run_attempt:
-        description: '仅 submit：原构建的 attempt；必须与构建摘要一致'
+        description: '仅 testflight：原构建的 attempt；必须与构建摘要一致'
         type: string
         required: true
         default: '1'
@@ -95,7 +95,7 @@ jobs:
     outputs:
       source_sha: ${{ steps.plan.outputs.source_sha }}
       do_build: ${{ steps.plan.outputs.do_build }}
-      do_submit: ${{ steps.plan.outputs.do_submit }}
+      do_testflight: ${{ steps.plan.outputs.do_testflight }}
       build_run_id: ${{ steps.plan.outputs.build_run_id }}
       build_run_attempt: ${{ steps.plan.outputs.build_run_attempt }}
       artifact_name: ${{ steps.plan.outputs.artifact_name }}
@@ -194,13 +194,13 @@ jobs:
           compression-level: 0
           retention-days: 7
           overwrite: false
-  submit_ios:
-    name: iOS / 提交审核并自动发布
+  publish_testflight:
+    name: iOS / 发布内部 TestFlight
     needs: [plan, build_ios]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.do_submit == 'true' && (needs.plan.outputs.do_build == 'false' || needs.build_ios.result == 'success') }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.do_testflight == 'true' && (needs.plan.outputs.do_build == 'false' || needs.build_ios.result == 'success') }}
     runs-on: macos-15
     timeout-minutes: 120
-    environment: mobile-submit-ios-store
+    environment: mobile-submit-ios-testflight
     permissions:
       contents: read
       actions: read
@@ -230,10 +230,10 @@ jobs:
           node-version-file: source/.nvmrc
           cache: pnpm
           cache-dependency-path: source/pnpm-lock.yaml
-      - name: 校验提交配置与同一次手动触发授权
+      - name: 校验 TestFlight 配置与同一次手动触发授权
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node mobile/scripts/ios-actions.mjs guard-submit source
+        run: node mobile/scripts/ios-actions.mjs guard-testflight source
       - name: 验证原构建 job、attempt 和不可变 artifact ID
         id: artifact
         env:
@@ -254,29 +254,29 @@ jobs:
         env:
           IOS_BUILD_WORKFLOW_SHA: ${{ steps.artifact.outputs.workflow_sha }}
         run: node mobile/scripts/ios-actions.mjs verify source
-      - name: 上传同一份 IPA、等待 Apple 处理并提交审核
+      - name: 上传同一份 IPA 并等待进入内部 TestFlight
         working-directory: source
         env:
           IPA_PATH: ${{ steps.verified.outputs.ipa_path }}
           APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
           APP_STORE_CONNECT_API_KEY_ID: ${{ vars.APP_STORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ vars.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_RESULT_PATH: ${{ runner.temp }}/ios-app-store-result.json
+          APP_STORE_RESULT_PATH: ${{ runner.temp }}/ios-testflight-result.json
         run: |
           set -euo pipefail
           export GITHUB_SHA="$IOS_SOURCE_SHA"
           export MOBILE_SOURCE_GIT_SHA="$IOS_SOURCE_SHA"
           bash mobile/scripts/submit-ios.sh "$IPA_PATH"
-      - name: 记录无凭据提交回执
+      - name: 记录无凭据 TestFlight 回执
         id: receipt
         env:
           IOS_BUILD_WORKFLOW_SHA: ${{ steps.artifact.outputs.workflow_sha }}
           IOS_ARTIFACT_ID: ${{ steps.artifact.outputs.artifact_id }}
         run: node mobile/scripts/ios-actions.mjs receipt source
-      - name: 保存发布状态回执（不等同于 Apple 已审核通过或已可下载）
+      - name: 保存内部 TestFlight 发布状态回执
         uses: actions/upload-artifact@v7
         with:
-          name: ios-submit-${{ needs.plan.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ios-testflight-${{ needs.plan.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.receipt.outputs.receipt_path }}
           if-no-files-found: error
           retention-days: 30

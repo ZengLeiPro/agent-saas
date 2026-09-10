@@ -1,9 +1,9 @@
-# iOS 自动构建与发布
+# iOS 自动构建与 TestFlight 发布
 
 ## 运行边界
 
-`.github/workflows/mobile-ios-release.yml` 是 iOS 正式发布入口。正常发版只手动触发一次，默认操作
-`build-and-submit`，依次完成：
+`.github/workflows/mobile-ios-release.yml` 是 iOS 内部测试发布入口。正常发版只手动触发一次，默认操作
+`build-and-testflight`，依次完成：
 
 1. 校验完整 `main` source SHA 及该提交最新一次 push-main `Build & Check`。
 2. 分配唯一构建号 `<manifest 基数>.<GitHub run ID>.<attempt>`。
@@ -11,13 +11,13 @@
 4. 用独立的主应用、Share Extension App Store 描述文件签名并生成 IPA。
 5. 复核两个 Target 的 Bundle ID、Team、App Group、版本、构建号、签名和 entitlement，保存不可变制品。
 6. 用 Apple 原生命令上传同一份 IPA，等待 App Store Connect 处理为 `VALID`。
-7. 关联已有 App Store 版本，设为 `AFTER_APPROVAL`，通过 App Store Connect API 提交审核。
+7. 核对 `kaiyan` 为自动接收所有构建的内部测试组，等待新构建进入 `IN_BETA_TESTING`。
 
-编译、签名、上传和送审均不依赖 EAS 云构建、EAS 凭据托管或 EAS Submit。Expo SDK、React Native
+编译、签名和上传均不依赖 EAS 云构建、EAS 凭据托管或 EAS Submit。Expo SDK、React Native
 及 Android 现有 EAS 配置不受影响。
 
-Workflow 不等待 Apple 完成审核。审核通过后由 Apple 按 `AFTER_APPROVAL` 自动发布；回执只记录
-Apple 已接受送审时的状态，不能证明审核通过或 App Store 已可下载。
+Workflow 到内部 TestFlight 可用即结束，不关联正式 App Store 版本，不创建审核提交，也不触发公开上架。
+`kaiyan` 组已开启自动接收所有构建；组内成员会按现有通知设置收到更新并可在 TestFlight 下载。
 
 ## 固定身份
 
@@ -37,7 +37,7 @@ Secrets：
 - `IOS_APP_PROFILE_BASE64`
 - `IOS_SHARE_PROFILE_BASE64`
 
-### `mobile-submit-ios-store`
+### `mobile-submit-ios-testflight`
 
 Secret：
 
@@ -48,7 +48,7 @@ Variables：
 - `APP_STORE_CONNECT_API_KEY_ID`
 - `APP_STORE_CONNECT_ISSUER_ID`
 
-API key 至少需要能管理目标 App 的 App Manager 权限；Developer 角色只能上传构建，不能完成正式送审。
+API key 只用于上传构建并读取目标 App 的 TestFlight 状态。
 `.p8` 只能在 Apple 创建 key 时下载一次。已经托管在 EAS 的 key 可以看到 ID 和 issuer，但不能导出私钥。
 
 两个环境都必须配置为：
@@ -84,23 +84,23 @@ bash mobile/scripts/init-ios-github-release.sh \
   --apply
 ```
 
-这不会创建伪造的提交凭据，也不会触发上传或送审。
+这不会创建伪造的上传凭据，也不会触发上传。
 
 ## 日常发布
 
-在 Actions 选择“iOS 构建与发布”，保留默认 `build-and-submit`，`source_sha` 留空并运行。
-Workflow 使用调度时的 `main` SHA，完成构建、上传、Apple 处理确认和送审。构建与提交仍是两个 job，
+在 Actions 选择“iOS 构建与发布”，保留默认 `build-and-testflight`，`source_sha` 留空并运行。
+Workflow 使用调度时的 `main` SHA，完成构建、上传、Apple 处理确认和内部组分发。构建与发布仍是两个 job，
 这是凭据隔离，不是两次人工审批。
 
-`build` 只生成并保存已签名 IPA，不上传。`submit` 用于上传/送审失败后的恢复：填写原构建摘要中的
+`build` 只生成并保存已签名 IPA，不上传。`testflight` 用于上传或 Apple 处理失败后的恢复：填写原构建摘要中的
 完整 `source_sha`、`build_run_id` 和 `build_run_attempt`。它只下载该次成功构建保存的 artifact，
-重新验签后提交，不重新构建。若 Apple 已收到相同版本和构建号，脚本跳过二次上传并继续查询处理或送审。
+重新验签后上传，不重新构建。若 Apple 已收到相同版本和构建号，脚本跳过二次上传并继续查询处理及内部测试状态。
 
 IPA artifact 保留 7 天，提交状态回执保留 30 天。过期后不静默重建旧构建；应明确发布新构建。
 
-## 首次上架资料
+## 正式上架边界
 
-Workflow 只使用 App Store Connect 中已经存在的版本和资料，不自动编造或覆盖以下内容：
+本 Workflow 不读取、不自动编造或覆盖以下正式上架资料：
 
 - App 名称、副标题、介绍、关键词、支持与隐私网址；
 - 分类、年龄分级、价格与销售地区；
@@ -108,8 +108,8 @@ Workflow 只使用 App Store Connect 中已经存在的版本和资料，不自�
 - 隐私问卷、出口合规和内容权利答案；
 - 审核说明及确有需要时的审核账号。
 
-缺少这些资料时，Apple 送审接口会失败，原 IPA 仍可通过 `submit` 重试。审核账号只有后台确认确实需要时，
-才增加 `APP_REVIEW_DEMO_USERNAME` 和 `APP_REVIEW_DEMO_PASSWORD`；当前 Workflow 不读取未使用的账号 Secret。
+这些资料不阻断内部 TestFlight。将来准备正式上架时，应另行实现和授权 App Review 流程；当前 Workflow
+不会读取 `APP_REVIEW_DEMO_USERNAME`、`APP_REVIEW_DEMO_PASSWORD` 等审核资料。
 
 ## 可验证边界
 
@@ -118,7 +118,7 @@ PR 的 macOS job 不接触发布 Secret，不上传 Apple。它会安装锁定�
 
 - GitHub runner 能用现有证书和两个描述文件生成已签名 IPA；
 - Apple 上传及处理查询成功；
-- App Store Connect 资料完整，API key 权限足够完成送审；
-- 审核通过后最终在 App Store 可下载。
+- Apple 能将新构建自动分发给 `kaiyan` 内部组；
+- 组内成员能在 TestFlight 收到并安装更新。
 
 PR 绿灯、Secret 名称存在或本地脚本通过，都不能替代上述真实结果。

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, RefreshCw, TriangleAlert } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ChevronRight, GripVertical, Loader2, RefreshCw, TriangleAlert } from 'lucide-react';
 import type {
   ProviderQuotaHistoryPoint,
   ProviderQuotaHistoryResponse,
@@ -19,6 +19,12 @@ import { cn } from '@/lib/utils';
 import { platformAdminApi } from '../api';
 import { ProviderPlanExpiryEditor } from './ProviderPlanExpiryEditor';
 import { ProviderQuotaPlanBadge } from './ProviderQuotaPlanBadge';
+import {
+  moveQuotaAccount,
+  orderQuotaAccounts,
+  readQuotaAccountOrder,
+  writeQuotaAccountOrder,
+} from './providerQuotaOrder';
 import { formatTime } from '../format';
 
 const SOURCE_LABEL: Record<ProviderQuotaSnapshot['sourceKind'], string> = {
@@ -30,12 +36,13 @@ const SOURCE_LABEL: Record<ProviderQuotaSnapshot['sourceKind'], string> = {
 /** 推送型来源：平台没有可取数的管控面，由采集端主动上报，不提供单账号刷新。 */
 const PUSH_ONLY_SOURCES = new Set<ProviderQuotaSnapshot['sourceKind']>(['claude_subscription']);
 
-const WARNING_PERCENT = 85;
+const WARNING_PERCENT = 70;
 const HISTORY_HOURS = 24;
+const VOLCENGINE_WINDOW_ORDER: Record<string, number> = { monthly: 0, five_hour: 1 };
 
 type Tone = 'ok' | 'warning' | 'critical';
 
-/** ≥85% 提醒、撞限或 ≥100% 告警；状态色只做强调，文字标签保证不靠颜色单独传达。 */
+/** ≥70% 提醒、撞限或 ≥100% 告警；状态色只做强调，文字标签保证不靠颜色单独传达。 */
 export function windowTone(
   window: Pick<ProviderQuotaWindow, 'usedPercent' | 'limitReached'>,
 ): Tone {
@@ -68,7 +75,7 @@ function isMainSubscriptionWindow(
 
 /**
  * 卡级总状态：先看能不能采到、凭据能不能用，再看额度。
- * 「冷却中」= 我们自己的调度器此刻在绕开这个账号，与供应商侧撞限分开显示。
+ * 调度器冷却不参与本页状态展示，不影响后端实际调度行为。
  */
 export function accountStatus(
   snapshot: Pick<ProviderQuotaSnapshot, 'ok' | 'limitReached' | 'windows' | 'credential'> & { sourceKind?: ProviderQuotaSnapshot['sourceKind'] },
@@ -81,7 +88,6 @@ export function accountStatus(
     .filter((window) => isMainSubscriptionWindow(snapshot.sourceKind, window))
     .map(windowTone);
   if (snapshot.limitReached || tones.includes('critical')) return { tone: 'critical', label: '已耗尽' };
-  if (snapshot.credential?.availability === 'quota_cooldown') return { tone: 'warning', label: '冷却中' };
   if (tones.includes('warning')) return { tone: 'warning', label: '接近上限' };
   return { tone: 'ok', label: '正常' };
 }
@@ -185,11 +191,13 @@ function AccountCard({
   refreshing,
   onRefresh,
   onExpirySaved,
+  dragHandle,
 }: {
   snapshot: ProviderQuotaSnapshot;
   refreshing: boolean;
   onRefresh: (accountKey: string) => void;
   onExpirySaved: (overview: ProviderQuotaOverviewResponse) => void;
+  dragHandle: ReactNode;
 }) {
   const status = accountStatus(snapshot);
   const credential = snapshot.credential;
@@ -198,7 +206,9 @@ function AccountCard({
   const isPushOnly = PUSH_ONLY_SOURCES.has(snapshot.sourceKind);
   const mainWindows = snapshot.windows
     .filter((window) => isMainSubscriptionWindow(snapshot.sourceKind, window))
-    .sort((a, b) => Number(b.windowSeconds === 604_800) - Number(a.windowSeconds === 604_800));
+    .sort((a, b) => snapshot.sourceKind === 'volcengine_ark_plan'
+      ? (VOLCENGINE_WINDOW_ORDER[a.id] ?? 2) - (VOLCENGINE_WINDOW_ORDER[b.id] ?? 2)
+      : Number(b.windowSeconds === 604_800) - Number(a.windowSeconds === 604_800));
   const additionalWindows = isCodex || isClaude
     ? snapshot.windows.filter((window) => !isMainSubscriptionWindow(snapshot.sourceKind, window))
     : [];
@@ -228,14 +238,12 @@ function AccountCard({
       <CardHeader className="pb-3">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {dragHandle}
             <CardTitle className="break-all text-base">{snapshot.accountLabel}</CardTitle>
             <Badge variant={TONE_BADGE[status.tone]} className="gap-1 px-1.5 py-0 text-[11px]">
               {status.tone !== 'ok' && <TriangleAlert className="size-3" />}
               {status.label}
             </Badge>
-            {credential?.availability === 'quota_cooldown' && status.label !== '冷却中' && (
-              <Badge variant="warning" className="px-1.5 py-0 text-2xs" title={credential.cooldownUntil ? `冷却至 ${formatTime(credential.cooldownUntil)}` : undefined}>冷却中</Badge>
-            )}
             {credential?.availability === 'auth_unavailable' && status.label !== '凭据不可用' && (
               <Badge variant="danger" className="px-1.5 py-0 text-2xs" title={credential.lastFailureCode}>凭据不可用</Badge>
             )}
@@ -291,12 +299,13 @@ function AccountCard({
           </div>
         )}
         {additionalWindows.length > 0 && (
-          <details className="rounded-md border p-3">
-            <summary className="cursor-pointer text-xs text-muted-foreground">
-              {isClaude ? '其他额度' : '其他模型额度'}（{additionalWindows.length} 个窗口）
+          <details className="group/other">
+            <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-1 gap-y-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-open/other:rotate-90" aria-hidden="true" />
+              <span>其他（{additionalWindows.length} 个窗口）</span>
               {additionalLimited > 0 && <span className="ml-2 text-warning-ink">{additionalLimited} 个窗口已耗尽</span>}
             </summary>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className={cn('mt-3 grid gap-3', mainWindows.length > 1 && 'sm:grid-cols-2')}>
               {additionalWindows.map((window) => (
                 <WindowTile key={window.id} window={window} />
               ))}
@@ -315,6 +324,10 @@ export function ProviderQuotaPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshingKey, setRefreshingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [accountOrder, setAccountOrder] = useState(readQuotaAccountOrder);
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
+  const [sortAnnouncement, setSortAnnouncement] = useState('');
 
   const load = useCallback(
     async (mode: 'initial' | 'reload' | 'collect' = 'reload', accountKey?: string) => {
@@ -350,6 +363,25 @@ export function ProviderQuotaPage() {
   useEffect(() => {
     void load('initial');
   }, [load]);
+
+  const orderedItems = useMemo(
+    () => orderQuotaAccounts(overview?.items ?? [], accountOrder),
+    [overview?.items, accountOrder],
+  );
+
+  const moveAccount = (accountKey: string, targetKey: string) => {
+    const next = moveQuotaAccount(orderedItems.map((item) => item.accountKey), accountKey, targetKey);
+    if (!next) return;
+    setAccountOrder(next);
+    const saved = writeQuotaAccountOrder(next);
+    const label = orderedItems.find((item) => item.accountKey === accountKey)?.accountLabel ?? accountKey;
+    setSortAnnouncement(`已将 ${label} 移至第 ${next.indexOf(accountKey) + 1} 位，共 ${next.length} 张卡片。${saved ? '顺序已保存。' : '浏览器存储不可用，仅在本次页面内保留顺序。'}`);
+  };
+
+  const stopDragging = () => {
+    setDraggingKey(null);
+    setDropTargetKey(null);
+  };
 
   const collector = overview?.collector;
   const statusCounts = useMemo(() => {
@@ -399,6 +431,8 @@ export function ProviderQuotaPage() {
         }
       />
 
+      <p id="quota-order-instructions" className="sr-only">拖动卡片标题旁的六点手柄调整顺序；也可聚焦手柄后按上下方向键前移或后移。顺序保存在当前浏览器。</p>
+      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">{sortAnnouncement}</p>
       {error && <AdminErrorAlert error={error} />}
 
       {overview && overview.items.length === 0 ? (
@@ -409,14 +443,72 @@ export function ProviderQuotaPage() {
         />
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
-          {overview?.items.map((snapshot) => (
-            <AccountCard
+          {orderedItems.map((snapshot, index) => (
+            <div
               key={snapshot.accountKey}
-              snapshot={snapshot}
-              refreshing={refreshing && (refreshingKey === null || refreshingKey === snapshot.accountKey)}
-              onExpirySaved={setOverview}
-              onRefresh={(accountKey) => void load('collect', accountKey)}
-            />
+              data-quota-sortable={snapshot.accountKey}
+              className={cn(
+                'group relative min-w-0 rounded-lg transition-[box-shadow,opacity]',
+                draggingKey === snapshot.accountKey && 'opacity-50',
+                dropTargetKey === snapshot.accountKey && 'ring-2 ring-primary/50 ring-offset-2 ring-offset-background',
+              )}
+              onDragOver={(event) => {
+                if (!draggingKey) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                setDropTargetKey(draggingKey === snapshot.accountKey ? null : snapshot.accountKey);
+              }}
+              onDragLeave={(event) => {
+                const next = event.relatedTarget;
+                if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+                  setDropTargetKey((key) => key === snapshot.accountKey ? null : key);
+                }
+              }}
+              onDrop={(event) => {
+                if (!draggingKey) return;
+                event.preventDefault();
+                moveAccount(draggingKey, snapshot.accountKey);
+                stopDragging();
+              }}
+            >
+              <AccountCard
+                snapshot={snapshot}
+                refreshing={refreshing && (refreshingKey === null || refreshingKey === snapshot.accountKey)}
+                onExpirySaved={setOverview}
+                onRefresh={(accountKey) => void load('collect', accountKey)}
+                dragHandle={
+                  <button
+                    type="button"
+                    draggable={orderedItems.length > 1}
+                    disabled={orderedItems.length < 2}
+                    aria-label={`拖动排序 ${snapshot.accountLabel}`}
+                    aria-describedby="quota-order-instructions"
+                    aria-keyshortcuts="ArrowUp ArrowDown"
+                    title="拖动调整顺序；也可聚焦后按上下方向键"
+                    className="-ml-1 flex size-7 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground/40 outline-none transition-colors group-hover:text-muted-foreground hover:bg-background/80 hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing disabled:cursor-default disabled:opacity-25"
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', snapshot.accountKey);
+                      const card = event.currentTarget.closest<HTMLElement>('[data-quota-sortable]');
+                      if (card) {
+                        const rect = card.getBoundingClientRect();
+                        event.dataTransfer.setDragImage(card, event.clientX - rect.left, event.clientY - rect.top);
+                      }
+                      setDraggingKey(snapshot.accountKey);
+                    }}
+                    onDragEnd={stopDragging}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+                      event.preventDefault();
+                      const target = orderedItems[index + (event.key === 'ArrowUp' ? -1 : 1)];
+                      if (target) moveAccount(snapshot.accountKey, target.accountKey);
+                    }}
+                  >
+                    <GripVertical className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                }
+              />
+            </div>
           ))}
         </div>
       )}

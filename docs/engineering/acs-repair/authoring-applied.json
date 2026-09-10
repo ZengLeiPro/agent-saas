@@ -1,15 +1,13 @@
 {
-  "id": "owned-budget-and-accounting-v2",
-  "baseSha": "7a217704000d3068773fe7a9e2a45829586816d3",
+  "id": "dws-reader-first-v1",
+  "baseSha": "19844d151823d260348ecdae53d13ca13f5ad5f9",
   "files": [
-    "acs-orchestrator/src/ownedBudgetRegression.test.ts",
-    "acs-orchestrator/src/provisionBudgets.ts",
-    "acs-orchestrator/src/ownedSharedWork.ts",
-    "acs-orchestrator/src/provision.ts",
-    "acs-orchestrator/src/ownedExecutionRuntime.ts",
-    "acs-orchestrator/src/executorSupport.ts",
-    "acs-orchestrator/src/executor.ts",
-    "acs-orchestrator/src/index.ts",
-    "acs-orchestrator/src/provisionBudgets.test.ts"
+    "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
+    "server/src/data/agentDwsAccounts/types.ts",
+    "server/src/data/agentDwsAccounts/store.ts",
+    "server/src/dws/personalEventGateway.ts",
+    "server/src/dws/agentAuthFlow.ts",
+    "server/src/context/sync/dwsContextRuntime.ts",
+    "server/src/data/agentDwsAccounts/deliveryProtocol.test.ts"
   ]
 }

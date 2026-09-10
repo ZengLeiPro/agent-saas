@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
+import { LEGACY_DWS_DELIVERY_SQL, readDwsDeliveryProtocol, runnableDwsDeliverySql, type DwsRunnableSelection } from './deliveryProtocol.js';
 
 import { PgGovernanceMigrationRunner, governanceTablePrefix } from '../governance-schema/index.js';
 import {
@@ -19,7 +20,7 @@ import {
 export interface AgentDwsAccountStore {
   init(): Promise<void>;
   listForTenant(tenantId: string): Promise<AgentDwsAccountRecord[]>;
-  listRunnable(): Promise<AgentDwsAccountRecord[]>;
+  listRunnable(selection?: DwsRunnableSelection): Promise<AgentDwsAccountRecord[]>;
   getForTenant(tenantId: string, accountId: string): Promise<AgentDwsAccountRecord | null>;
   deleteForTenant(tenantId: string): Promise<number>;
   create(input: CreateAgentDwsAccountInput): Promise<AgentDwsAccountRecord>;
@@ -76,12 +77,13 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     return result.rows.map(mapRow);
   }
 
-  async listRunnable(): Promise<AgentDwsAccountRecord[]> {
+  async listRunnable(selection: DwsRunnableSelection = {}): Promise<AgentDwsAccountRecord[]> {
     const result = await this.pool.query(
       `SELECT * FROM ${this.table}
        WHERE status='active' AND profile_id IS NOT NULL
          AND corp_id IS NOT NULL AND dingtalk_user_id IS NOT NULL
          AND profile_id=corp_id || ':' || dingtalk_user_id
+         AND ${runnableDwsDeliverySql(selection)}
        ORDER BY updated_at, account_id`,
     );
     return result.rows.map(mapRow);
@@ -326,11 +328,13 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     const result = await this.pool.query(`
       UPDATE ${this.table}
       SET runtime_lease_owner=$2,
-          runtime_lease_expires_at=NOW()+($3::bigint * INTERVAL '1 millisecond')
+          runtime_lease_expires_at=clock_timestamp()+($3::bigint * INTERVAL '1 millisecond')
       WHERE account_id=$1 AND revision=$4 AND status='active' AND profile_id IS NOT NULL
         AND corp_id IS NOT NULL AND dingtalk_user_id IS NOT NULL
         AND profile_id=corp_id || ':' || dingtalk_user_id
-        AND (runtime_lease_owner IS NULL OR runtime_lease_expires_at <= NOW())
+        AND ${LEGACY_DWS_DELIVERY_SQL}
+        AND NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'identityCleanupPending')
+        AND (runtime_lease_owner IS NULL OR runtime_lease_expires_at <= clock_timestamp())
       RETURNING account_id
     `, [accountId, leaseOwner, leaseTtlMs, expectedRevision]);
     return Boolean(result.rows[0]);
@@ -344,8 +348,11 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
   ): Promise<boolean> {
     const result = await this.pool.query(`
       UPDATE ${this.table}
-      SET runtime_lease_expires_at=NOW()+($3::bigint * INTERVAL '1 millisecond')
+      SET runtime_lease_expires_at=clock_timestamp()+($3::bigint * INTERVAL '1 millisecond')
       WHERE account_id=$1 AND revision=$4 AND runtime_lease_owner=$2 AND status='active'
+        AND runtime_lease_expires_at > clock_timestamp()
+        AND ${LEGACY_DWS_DELIVERY_SQL}
+        AND NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'identityCleanupPending')
       RETURNING account_id
     `, [accountId, leaseOwner, leaseTtlMs, expectedRevision]);
     return Boolean(result.rows[0]);
@@ -355,7 +362,7 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     await this.pool.query(`
       UPDATE ${this.table}
       SET runtime_lease_owner=NULL,runtime_lease_expires_at=NULL
-      WHERE account_id=$1 AND runtime_lease_owner=$2
+      WHERE account_id=$1 AND runtime_lease_owner=$2 AND ${LEGACY_DWS_DELIVERY_SQL}
     `, [accountId, leaseOwner]);
   }
 
@@ -363,7 +370,7 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     await this.pool.query(`
       UPDATE ${this.table}
       SET runtime_lease_owner=NULL,runtime_lease_expires_at=NULL,runtime_status='stopped'
-      WHERE account_id=$1
+      WHERE account_id=$1 AND ${LEGACY_DWS_DELIVERY_SQL}
     `, [accountId]);
   }
 
@@ -377,7 +384,8 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     await this.pool.query(`
       UPDATE ${this.table}
       SET runtime_status=$2,last_error=$3,updated_at=NOW()
-      WHERE account_id=$1 AND revision=$5 AND ($4::text IS NULL OR runtime_lease_owner=$4)
+      WHERE account_id=$1 AND revision=$5 AND ${LEGACY_DWS_DELIVERY_SQL}
+        AND ($4::text IS NULL OR (runtime_lease_owner=$4 AND runtime_lease_expires_at > clock_timestamp()))
     `, [accountId, status, error ? compactError(error) : null, leaseOwner ?? null, expectedRevision]);
   }
 
@@ -391,7 +399,8 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
       UPDATE ${this.table}
       SET last_event_at=$3,runtime_status='ready',last_error=NULL,updated_at=NOW()
       WHERE account_id=$1 AND revision=$4
-        AND runtime_lease_owner=$2 AND runtime_lease_expires_at > NOW()
+        AND runtime_lease_owner=$2 AND runtime_lease_expires_at > clock_timestamp()
+        AND ${LEGACY_DWS_DELIVERY_SQL}
       RETURNING account_id
     `, [accountId, leaseOwner, occurredAt.toISOString(), expectedRevision]);
     return Boolean(result.rows[0]);
@@ -435,6 +444,7 @@ function mapRow(row: Record<string, unknown>): AgentDwsAccountRecord {
     ...(text(row.profile_id) ? { profileId: text(row.profile_id) } : {}),
     status: String(row.status) as AgentDwsAccountRecord['status'],
     runtimeStatus: String(row.runtime_status) as AgentDwsAccountRecord['runtimeStatus'],
+    deliveryProtocol: readDwsDeliveryProtocol(row.event_policy_json),
     runtimeLeaseActive: Boolean(row.runtime_lease_owner)
       && Boolean(row.runtime_lease_expires_at)
       && Date.parse(iso(row.runtime_lease_expires_at)) > Date.now(),

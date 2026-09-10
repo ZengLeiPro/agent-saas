@@ -90,7 +90,7 @@ export class AgentDwsAuthFlowService implements AgentDwsAuthFlowServiceLike {
   }
 
   async recoverPendingIdentityCleanup(): Promise<void> {
-    const accounts = await this.options.accountStore.listRunnable();
+    const accounts = await this.options.accountStore.listRunnable({ deliveryProtocol: 'all', includeIdentityCleanup: true });
     const errors: unknown[] = [];
     for (const account of accounts) {
       if (!account.identityCleanupPending) continue;

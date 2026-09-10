@@ -405,7 +405,7 @@ export class DwsContextRuntime {
   }
 
   private async runDue(): Promise<void> {
-    const accounts = await this.options.accountStore.listRunnable();
+    const accounts = await this.options.accountStore.listRunnable({ deliveryProtocol: 'all' });
     const now = this.clock().getTime();
     for (const account of accounts) {
       const targets = periodicTargets(account, SOURCES)

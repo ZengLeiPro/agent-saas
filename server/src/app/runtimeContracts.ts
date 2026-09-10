@@ -49,7 +49,8 @@ import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
-import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
+import type { DwsEventGateway } from '../dws/personalEventGateway.js';
+import type { DwsReceiverMigrationService } from '../dws/durableReceiverMigration.js';
 import type { OrgAgentApprovalService } from '../dws/orgAgentApprovalService.js';
 import type { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import type { PgMessageFeedbackStore } from '../data/feedback/store.js';
@@ -217,7 +218,8 @@ export interface AppRuntime {
   /** Agent-owned DWS device flow，token 只进入 Agent connector workspace。 */
   agentDwsAuthFlowService?: AgentDwsAuthFlowServiceLike;
   /** DWS Personal Stream consumer supervisor。 */
-  dwsPersonalEventGateway?: DwsPersonalEventGateway;
+  dwsPersonalEventGateway?: DwsEventGateway;
+  dwsReceiverMigrationService?: DwsReceiverMigrationService;
   /** Context 范围保存后，立即把权威策略镜像到检索 Source/Collection。 */
   agentDwsContextPolicyUpdated?: (account: AgentDwsAccountRecord) => Promise<void>;
   agentDwsGroupBindingUpdated?: (account: AgentDwsAccountRecord, conversationId: string) => Promise<void>;

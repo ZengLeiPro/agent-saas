@@ -11,7 +11,8 @@ interface DiagnosticsOptions {
 
 /** Snapshots only: this route never calls health, kubectl, a remote tool or a database. */
 export function handleOperationDiagnostics(req: IncomingMessage, res: ServerResponse, options: DiagnosticsOptions): boolean {
-  const path = (req.url ?? '').split('?')[0] ?? '';
+  const url = new URL(req.url ?? '/', 'http://acs.local');
+  const path = url.pathname;
   if (path !== '/diagnostics/drain' && path !== '/operations' && !/^\/operations\/[^/]+(?:\/cancel)?$/.test(path)) return false;
   if (!options.authorize(req, res)) return true;
   const send = (status: number, value: unknown) => {
@@ -31,6 +32,28 @@ export function handleOperationDiagnostics(req: IncomingMessage, res: ServerResp
     return true;
   }
   if (req.method === 'GET' && path === '/operations') {
+    const invocationId = url.searchParams.get('invocationId');
+    if (invocationId !== null) {
+      if (!/^[A-Za-z0-9._:@-]{1,256}$/.test(invocationId)) {
+        send(400, { error: 'invalid_invocation_id' });
+        return true;
+      }
+      const journal = options.journal.snapshot();
+      if (!journal.available) {
+        send(503, { error: 'ownership_journal_unavailable' });
+        return true;
+      }
+      const durable = journal.records.filter((item) => item.invocationId === invocationId);
+      const local = snapshots.filter((item) => item.invocationId === invocationId);
+      send(200, {
+        protocolVersion: 1,
+        invocationId,
+        journalAvailable: true,
+        operations: durable.length ? durable : local,
+        provenance: durable.length ? 'journal' : 'local',
+      });
+      return true;
+    }
     send(200, { protocolVersion: 1, total: snapshots.length, operations: snapshots.slice(0, 50), truncated: snapshots.length > 50 });
     return true;
   }

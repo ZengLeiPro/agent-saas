@@ -13,6 +13,8 @@ import { OwnedSharedWork } from './ownedSharedWork.js';
 import { SandboxOwnershipReaders } from './sandboxOwnershipReaders.js';
 import { writableScope } from './ownershipState.js';
 import { OWNED_WAIT_BUDGETS } from './ownedWait.js';
+import { deriveRemoteReceiptKey } from './remoteAttemptProtocol.js';
+import { reconcileRemoteOwnership } from './remoteOwnershipReconciler.js';
 
 export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void }) {
   const kubectl = new Kubectl(config);
@@ -21,7 +23,9 @@ export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logge
   // The journal transport is deliberately outside the execution observer: its
   // own failed CAS must not recursively attempt another journal mutation.
   const ownershipJournal = new OwnershipJournal(config, new Kubectl(config));
-  const ownedOperations = new OwnedOperations(ownershipJournal);
+  const ownedOperations = new OwnedOperations(ownershipJournal, {
+    receiptKey: fence => deriveRemoteReceiptKey(config.authToken, fence),
+  });
   kubectl.setOwnershipObserver((reason) => ownedOperations.current()?.markUncertain(reason));
   const sandboxManager = new SandboxManager(config, kubectl, logger, activeRegistry, kubeApi);
   sandboxManager.setOwnershipReaders(new SandboxOwnershipReaders(config, kubectl, ownedOperations, ownershipJournal, kubeApi));
@@ -45,7 +49,16 @@ export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logge
   const refresh = async () => {
     if (refreshing) return;
     refreshing = true;
-    try { await ownershipJournal.read(); }
+    try {
+      await reconcileRemoteOwnership({
+        config,
+        kubectl,
+        journal: ownershipJournal,
+        sandboxManager,
+        operations: ownedOperations,
+        logger,
+      });
+    }
     catch { logger.warn('ownership_journal_unavailable'); }
     finally { refreshing = false; }
   };

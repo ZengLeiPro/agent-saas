@@ -42,6 +42,15 @@ def unknown(reason: str) -> dict[str, Any]:
             "metadata": {"remoteExecution": {"state": "unknown", "reasonCode": reason}}}}
 
 
+def print_capabilities() -> None:
+    secure_control_process()
+    pod_uid = Path(POD_IDENTITY_PATH).read_text(encoding="utf8").strip()
+    if not pod_uid:
+        raise RuntimeError("read-only Pod identity is required")
+    print(json.dumps({"protocolVersion": 1, "podUid": pod_uid, "capabilities": CAPABILITIES},
+                     separators=(",", ":")), flush=True)
+
+
 class RunnerDaemon:
     def __init__(self, oneshot: bool = False):
         secure_control_process()
@@ -297,6 +306,10 @@ class RunnerDaemon:
                 self.last_heartbeat = now
                 self.enqueue({"kind": "daemon_heartbeat", "runnerId": self.runner_id, "at": utc_ms()})
             self.flush()
+            if self.oneshot and any(job["terminal"] for job in self.jobs.values()) and not self.output:
+                # A background supervisor deliberately outlives this one-shot
+                # presentation transport after its authenticated handoff.
+                return
             live = any(not job["exited"] for job in self.jobs.values())
             if not self.input_open and not live and not self.output:
                 return
@@ -304,7 +317,10 @@ class RunnerDaemon:
 
 if __name__ == "__main__":
     try:
-        RunnerDaemon(oneshot="--oneshot" in sys.argv).run()
+        if "--capabilities" in sys.argv:
+            print_capabilities()
+        else:
+            RunnerDaemon(oneshot="--oneshot" in sys.argv).run()
     except BaseException:
         # Exiting the control plane is never reported as remotely stopped.
         sys.exit(1)

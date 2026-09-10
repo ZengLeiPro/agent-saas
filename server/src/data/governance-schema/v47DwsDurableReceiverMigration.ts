@@ -1,3 +1,4 @@
+// release-migration: expand
 /** Additive reader-first schema. Applying it never migrates an account or starts a source. */
 export function governanceV47DwsDurableReceiverStatements(prefix: string): string[] {
   return [

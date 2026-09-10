@@ -19,8 +19,8 @@ from process_control import atomic_json, process_identity, read_json, safe_direc
 FRAME_BYTES = 1024 * 1024
 PAGE_BYTES = 2 * 1024 * 1024
 PAGE_RECORDS = 32
-SPOOL_BYTES = 256 * 1024 * 1024
-SPOOL_RECORDS = 100_000
+SPOOL_BYTES = 128 * 1024 * 1024
+SPOOL_RECORDS = 10_000
 MAX_SEQUENCE = 9007199254740991
 
 

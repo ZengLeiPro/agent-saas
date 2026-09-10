@@ -97,8 +97,7 @@ export async function prepareFencedRunnerInput(input: {
     startBeforeMs: Date.now() + 60_000,
   };
   const receiptKey = deriveRemoteReceiptKey(config.authToken, fence);
-  const reservation = { sandboxUid: input.sandboxUid, remoteFence: fence, phase: 'remote_reserved' };
-  await operation.update(reservation);
+  await operation.bindRemoteFence(fence);
   if (operation.controller.signal.aborted) throw new OwnershipBlockedError(operation.record.operationId);
   return { ...input.runnerInput, executionFence: fence, receiptKey };
 }

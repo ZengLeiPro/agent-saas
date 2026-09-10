@@ -43,7 +43,15 @@ export interface DwsPersonalEvent {
   raw: Record<string, unknown>;
 }
 
-export class DwsPersonalEventGateway {
+export interface DwsEventGateway {
+  startAll(): Promise<void>;
+  startAccount(account: AgentDwsAccountRecord): Promise<void>;
+  stopTenant(tenantId: string): Promise<void>;
+  stopAccount(accountId: string, account?: AgentDwsAccountRecord): Promise<void>;
+  stop(): Promise<void>;
+}
+
+export class DwsPersonalEventGateway implements DwsEventGateway {
   private readonly active = new Map<string, { controller: AbortController; leaseOwner: string; task: Promise<void> }>();
   private reconcileTimer?: NodeJS.Timeout;
   private readonly retryByAccount = new Map<string, DwsRetryState>();

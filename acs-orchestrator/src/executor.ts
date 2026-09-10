@@ -2,12 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { AcsOrchestratorConfig } from './config.js';
 import { Kubectl } from './kubectl.js';
-import type {
-  SandboxRunnerFinalOutput,
-  SandboxRunnerInput,
-  SandboxRunnerOutput,
-  WireToolInvocationRequest,
-} from './protocol.js';
+import type { SandboxRunnerInput, WireToolInvocationRequest } from './protocol.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { PersistentSandboxRunner } from './persistentRunner.js';
 import type { SandboxManager, SandboxRef, SandboxResourceOverride } from './sandboxManager.js';
@@ -26,6 +21,8 @@ import {
 import { establishInvocationCompletionFence, recoverHousekeepingLeaseClear, recoverInvocationCompletion } from './invocationCompletionRecovery.js';
 import { reconcileInvocationRestartRecovery } from './invocationRestartRecovery.js';
 import { isBackgroundShellRequest, toolNameForSandboxRunner, OriginalSandboxGoneError, errorMessage, unrefDelay, protectionStateHasObservation, addRunnerMetadata, type InvocationProtectionState } from './executorSupport.js';
+import { prepareFencedRunnerInput, validateFencedResponse } from './remoteOwnership.js';
+import { reconcileLateRunnerTerminal } from './lateRunnerTerminal.js';
 export { toolNameForSandboxRunner } from './executorSupport.js';
 interface InvocationEntry {
   controller: AbortController;
@@ -177,7 +174,7 @@ export class AcsExecutor {
       const runnerCorrelation = request.context.correlation
         ? { ...request.context.correlation, sandboxId: ref.name }
         : undefined;
-      const runnerInput: SandboxRunnerInput = {
+      let runnerInput: SandboxRunnerInput = {
         toolName: toolNameForSandboxRunner(request.toolName),
         input: request.input,
         invocationId,
@@ -210,6 +207,17 @@ export class AcsExecutor {
         if (leaseMonitor.failure) throw leaseMonitor.failure;
         return;
       }
+      if (operation) {
+        runnerInput = await prepareFencedRunnerInput({
+          config: this.config,
+          kubectl: this.kubectl,
+          operation,
+          ref,
+          sandboxUid,
+          runnerInput,
+          ...(runner ? { control: runner.controlIdentity() } : {}),
+        });
+      }
       await operation?.dispatch(sandboxUid);
       remoteDispatched = true;
       if (runner) {
@@ -217,7 +225,10 @@ export class AcsExecutor {
         for await (const output of runner.invoke(leaseKey, runnerInput, controller.signal)) {
           if (output.kind === 'chunk') {
             if (output.chunk.type === 'completed') {
-              finalResponse = addRunnerMetadata(output.chunk.response, 'persistent');
+              finalResponse = addRunnerMetadata(
+                operation ? validateFencedResponse(runnerInput, output.chunk.response) : output.chunk.response,
+                'persistent',
+              );
               await this.applyBackgroundShellProtection(
                 ref, finalResponse, leaseKey, sandboxUid, protectionState, ownedBackgroundTaskId,
               );
@@ -225,7 +236,10 @@ export class AcsExecutor {
               yield output.chunk;
             }
           } else {
-            finalResponse = addRunnerMetadata(output.response, 'persistent');
+            finalResponse = addRunnerMetadata(
+              operation ? validateFencedResponse(runnerInput, output.response) : output.response,
+              'persistent',
+            );
             await this.applyBackgroundShellProtection(
               ref, finalResponse, leaseKey, sandboxUid, protectionState, ownedBackgroundTaskId,
             );
@@ -236,7 +250,9 @@ export class AcsExecutor {
           ref, runnerInput, controller, invocationKey, leaseKey, sandboxUid, protectionState,
           ownedBackgroundTaskId,
         )) {
-          if (output.type === 'completed') finalResponse = output.response;
+          if (output.type === 'completed') {
+            finalResponse = operation ? validateFencedResponse(runnerInput, output.response) : output.response;
+          }
           else if (!leaseMonitor?.failure) yield output;
         }
       }
@@ -855,7 +871,36 @@ export class AcsExecutor {
   }
 
   private async connectPersistentRunner(ref: SandboxRef): Promise<PersistentSandboxRunner> {
-    const runner = new PersistentSandboxRunner(this.config, this.kubectl, ref, this.logger);
+    const runner = new PersistentSandboxRunner(this.config, this.kubectl, ref, this.logger, {
+      unresolved: key => {
+        const entry = [...this.invocations.values()].find(candidate => candidate.leaseKey === key);
+        if (entry) entry.unresolved = true;
+      },
+      lateTerminal: (key, output) => {
+        void reconcileLateRunnerTerminal({
+          config: this.config,
+          sandboxManager: this.sandboxManager,
+          operations: this.options.ownedOperations,
+          ref,
+          attemptId: key,
+          output,
+          findInvocation: () => {
+            const found = [...this.invocations.entries()].find(([, candidate]) => candidate.leaseKey === key);
+            return found ? { key: found[0], entry: found[1] } : undefined;
+          },
+          forgetInvocation: invocationKey => this.invocations.delete(invocationKey),
+          recoverCompletion: (completedAt, sandboxUid, invocationId) => {
+            this.startInvocationCompletionRecovery(ref, key, invocationId, sandboxUid, completedAt);
+          },
+          recoverLeaseClear: (sandboxUid, invocationId) => {
+            this.startHousekeepingLeaseClearRecovery(ref, key, invocationId, sandboxUid);
+          },
+          logger: this.logger,
+        }).catch(error => {
+          this.logger.warn(`runner_late_terminal_reconciliation_failed sandbox=${ref.name} attempt=${key}: ${errorMessage(error)}`);
+        });
+      },
+    });
     try {
       await runner.start();
       this.persistentRunners.set(ref.name, runner);
@@ -921,4 +966,3 @@ export class AcsExecutor {
     return spawnOneShotRunner(this.config, this.kubectl, ref, input, controller, this.logger);
   }
 }
-

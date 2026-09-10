@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import {
-  IOS_BUILD_JOB, IOS_WORKFLOW, artifactName, canonical, digest,
-  validateBuildRun, validateCiRun, validateDispatch, validateProtection,
+  IOS_BUILD_JOB, IOS_WORKFLOW, allocateBuildNumber, artifactName, canonical, digest,
+  validateBuildRun, validateCiRun, validateDispatch, validateEnvironment,
 } from './ios-actions-policy.mjs';
 import { hashFile, readJson, sealBundle, verifyBundle } from './ios-actions-artifacts.mjs';
 
@@ -15,8 +15,7 @@ const sha = 'a'.repeat(40);
 const workflowSha = 'b'.repeat(40);
 const repository = 'example/ios-release-contract';
 const repo = { full_name: repository };
-const context = { repository, sourceSha: sha, workflowSha, buildRunId: '101', buildAttempt: '2', currentRunId: '202' };
-const clone = (value) => structuredClone(value);
+const context = { repository, sourceSha: sha, workflowSha, buildRunId: '101', buildAttempt: '2', buildNumber: '4.101.2', currentRunId: '202' };
 const dispatch = { event: 'workflow_dispatch', ref: 'refs/heads/main', repository, sha, runId: '202', attempt: '1' };
 const ci = {
   id: 100, run_attempt: 1, path: '.github/workflows/ci.yml', event: 'push',
@@ -34,12 +33,11 @@ const artifact = {
 };
 const protectedEnvironment = {
   id: 7, name: 'mobile-build-production', can_admins_bypass: false,
-  deployment_branch_policy: { protected_branches: true, custom_branch_policies: false },
-  protection_rules: [{ type: 'required_reviewers', prevent_self_review: true, reviewers: [{ type: 'User', reviewer: { login: 'reviewer' } }] }],
+  deployment_branch_policy: { protected_branches: false, custom_branch_policies: true },
+  protection_rules: [],
 };
-const approvals = [{ state: 'approved', user: { login: 'reviewer' }, environments: [{ id: 7, name: 'mobile-build-production' }] }];
-const protectionExpected = { environment: 'mobile-build-production', actor: 'author', triggeringActor: 'rerunner' };
-const buildApproval = validateProtection(protectedEnvironment, approvals, protectionExpected);
+const protectionExpected = { environment: 'mobile-build-production', actor: 'author', triggeringActor: 'rerunner', branchPolicies: [{ name: 'main', type: 'branch' }] };
+const buildAuthorization = validateEnvironment(protectedEnvironment, protectionExpected);
 
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'ios-actions-contract-'));
@@ -53,15 +51,15 @@ function fixture(t) {
   writeFileSync(join(directory, 'pnpm-lock.yaml'), 'lockfileVersion: test-fixture\n');
   const ipa = join(directory, 'mobile/builds/AgentSaaS-1.2.3.ipa');
   // This is deliberately not a signed IPA. These tests validate handoff logic,
-  // not native signing, live EAS upload, real-device evidence or store approval.
+  // not native signing, live Apple upload, real-device evidence or store approval.
   writeFileSync(ipa, 'DETERMINISTIC CONTRACT FIXTURE; NOT AN INSTALLABLE IPA');
   writeFileSync(`${ipa}.source.json`, JSON.stringify({
     profile: 'ios-store', sourceGitSha: sha, appId: manifest.identity.iosBundleIdentifier,
     iosTeamId: manifest.identity.iosAppleTeamId, iosAppGroup: manifest.identity.iosAppGroupIdentifier,
-    version: '1.2.3', buildNumber: 4,
+    version: '1.2.3', buildNumber: '4.101.2',
   }));
   writeFileSync(`${ipa}.verification.json`, JSON.stringify({ evidenceKind: 'deterministic-contract-fixture' }));
-  const record = sealBundle(directory, context, buildApproval, { evidenceKind: 'test-fixture' }, { sourceGitSha: sha, runId: 100, attempt: 1 });
+  const record = sealBundle(directory, context, buildAuthorization, { evidenceKind: 'test-fixture' }, { sourceGitSha: sha, runId: 100, attempt: 1 });
   return { directory, ipa, record, recordPath: join(directory, 'mobile/builds/ios-release.json') };
 }
 
@@ -80,6 +78,8 @@ test('iOS dispatch defaults to the immutable main workflow SHA and separates ope
   assert.throws(() => validateDispatch(dispatch, { operation: 'submit', source_sha: sha, build_run_id: '202', build_run_attempt: '1' }));
   assert.throws(() => validateDispatch(dispatch, { operation: 'build', build_run_id: '101' }));
   assert.throws(() => validateDispatch(dispatch, { operation: 'unknown' }));
+  assert.equal(allocateBuildNumber(4, '202', '1'), '4.202.1');
+  assert.throws(() => allocateBuildNumber(4, '../../etc', '1'));
 });
 
 test('iOS accepts only successful same-source push-main CI and its authoritative job', () => {
@@ -117,25 +117,17 @@ test('iOS rejects fork, PR, wrong-attempt, expired and failed-build artifacts', 
   assert.throws(() => artifactName(sha, '../../etc', '1'));
 });
 
-test('iOS protects build and submit approvals against bypass and self-review', () => {
-  assert.deepEqual(buildApproval.reviewers, ['reviewer']);
-  assert.match(buildApproval.protectionRulesSha256, /^[0-9a-f]{64}$/u);
-  for (const change of [{ can_admins_bypass: true }, { protection_rules: [] }, { deployment_branch_policy: null }]) {
-    assert.throws(() => validateProtection({ ...protectedEnvironment, ...change }, approvals, protectionExpected));
-  }
-  const selfReview = clone(protectedEnvironment);
-  selfReview.protection_rules[0].prevent_self_review = false;
-  assert.throws(() => validateProtection(selfReview, approvals, protectionExpected));
-  for (const login of ['author', 'rerunner']) {
-    assert.throws(() => validateProtection(protectedEnvironment, [{ ...approvals[0], user: { login } }], protectionExpected));
-  }
-  assert.throws(() => validateProtection(protectedEnvironment, [], protectionExpected));
-  assert.throws(() => validateProtection(protectedEnvironment, [{ ...approvals[0], state: 'rejected' }], protectionExpected));
-  assert.throws(() => validateProtection(protectedEnvironment, [{ ...approvals[0], environments: [{ id: 8, name: 'mobile-submit-ios-store' }] }], protectionExpected));
-  const custom = { ...protectedEnvironment, deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } };
-  assert.doesNotThrow(() => validateProtection(custom, approvals, { ...protectionExpected, branchPolicies: [{ name: 'main', type: 'branch' }] }));
+test('iOS environments use the dispatch as the sole authorization and allow main only', () => {
+  assert.equal(buildAuthorization.authorization, 'workflow_dispatch');
+  assert.equal(buildAuthorization.actor, 'author');
+  assert.match(buildAuthorization.protectionRulesSha256, /^[0-9a-f]{64}$/u);
+  for (const change of [
+    { protection_rules: [{ type: 'required_reviewers', reviewers: [{ type: 'User' }] }] },
+    { deployment_branch_policy: null },
+    { deployment_branch_policy: { protected_branches: true, custom_branch_policies: false } },
+  ]) assert.throws(() => validateEnvironment({ ...protectedEnvironment, ...change }, protectionExpected));
   for (const policies of [[], [{ name: '*', type: 'branch' }], [{ name: 'main', type: 'tag' }]]) {
-    assert.throws(() => validateProtection(custom, approvals, { ...protectionExpected, branchPolicies: policies }));
+    assert.throws(() => validateEnvironment(protectedEnvironment, { ...protectionExpected, branchPolicies: policies }));
   }
   assert.equal(digest(canonical({ b: 2, a: 1 })), digest(canonical({ a: 1, b: 2 })));
 });
@@ -143,7 +135,7 @@ test('iOS protects build and submit approvals against bypass and self-review', (
 test('iOS handoff round-trips and refuses overwrite', (t) => {
   const item = fixture(t);
   assert.equal(verifyBundle(item.directory, context).ipaPath, item.ipa);
-  assert.throws(() => sealBundle(item.directory, context, buildApproval, {}, { sourceGitSha: sha }), /EEXIST/u);
+  assert.throws(() => sealBundle(item.directory, context, buildAuthorization, {}, { sourceGitSha: sha }), /EEXIST/u);
 });
 
 test('iOS handoff detects changes to IPA, source, verification, lockfile and manifest', (t) => {
@@ -157,12 +149,12 @@ test('iOS handoff detects changes to IPA, source, verification, lockfile and man
   }
 });
 
-test('iOS handoff rejects metadata swaps, path traversal and missing approvals', (t) => {
+test('iOS handoff rejects metadata swaps, path traversal and missing dispatch authorization', (t) => {
   const changes = [
     { repository: 'fork/repo' }, { sourceGitSha: workflowSha }, { workflowGitSha: sha },
     { buildRunId: '999' }, { buildRunAttempt: '1' }, { buildNumber: 99 },
     { appId: 'wrong.app' }, { appStoreConnectAppId: '9999999999' },
-    { approval: {} }, { ci: {} }, { files: [{ filename: '../../private.key' }] },
+    { authorization: {} }, { ci: {} }, { files: [{ filename: '../../private.key' }] },
   ];
   for (const change of changes) {
     const item = fixture(t);
@@ -181,19 +173,21 @@ test('iOS file readers reject symlinks and oversized metadata', (t) => {
   assert.throws(() => readJson(item.recordPath), /size bound/u);
 });
 
-test('iOS workflow keeps PR validation secret-free and submission build-free', () => {
+test('iOS workflow keeps PR validation secret-free, uses one dispatch and keeps submission build-free', () => {
   const workflow = readFileSync(join(root, IOS_WORKFLOW), 'utf8');
   const contract = workflow.split('  contract:')[1].split('  plan:')[0];
   const build = workflow.split('  build_ios:')[1].split('  submit_ios:')[0];
   const submit = workflow.split('  submit_ios:')[1];
-  assert.doesNotMatch(workflow, /pull_request_target|workflow_run:|--auto-submit|--latest/u);
+  assert.doesNotMatch(workflow, /pull_request_target|workflow_run:|--auto-submit|--latest|EXPO_TOKEN|eas build|eas submit/u);
   assert.match(contract, /node --test mobile\/scripts\/ios-actions\.test\.mjs/u);
   assert.doesNotMatch(contract, /secrets\.|EXPO_TOKEN|environment:/u);
   assert.match(build, /environment: mobile-build-production/u);
+  assert.match(build, /IOS_DISTRIBUTION_P12_BASE64/u);
   assert.match(build, /build\.sh ios --build/u);
   assert.doesNotMatch(build, /submit-ios\.sh/u);
   assert.match(submit, /environment: mobile-submit-ios-store/u);
   assert.match(submit, /artifact-ids: \$\{\{ steps\.artifact\.outputs\.artifact_id \}\}/u);
+  assert.match(submit, /APP_STORE_CONNECT_API_KEY_P8/u);
   assert.match(submit, /submit-ios\.sh/u);
   assert.doesNotMatch(submit, /eas build|build\.sh|expo prebuild/u);
   assert.match(submit, /!cancelled\(\)/u);
@@ -206,13 +200,13 @@ test('iOS workflow keeps PR validation secret-free and submission build-free', (
   assert.match(cli, /verify-mobile-release-artifact\.sh/u);
 });
 
-test('iOS local toolchain is explicit and pnpm supports both macOS architectures', () => {
+test('iOS native toolchain is explicit and pnpm supports both macOS architectures', () => {
   const eas = readJson(join(root, 'mobile/eas.json'));
-  assert.equal(eas.build.production.ios.image, 'macos-sequoia-15.6-xcode-26.2');
+  assert.equal(eas.build.production.ios, undefined);
   const checksums = readFileSync(join(root, '.github/pnpm-standalone.sha256'), 'utf8');
   assert.match(checksums, /7cf378c3a55d2aa3734007e4fdce5252291a4f1315966b0a996cffcff6aa2a74\s+pnpm-macos-arm64@10\.18\.3/u);
   assert.match(checksums, /fd9380941b1eac83b6e6a8660e9ca341eb8bc5a294c26d510e356c7bdf51a255\s+pnpm-macos-x64@10\.18\.3/u);
-  for (const file of ['build.sh', 'submit-ios.sh', 'setup-ios-runner.sh']) {
+  for (const file of ['build.sh', 'build-ios-native.sh', 'submit-ios.sh', 'setup-ios-runner.sh', 'init-ios-github-release.sh']) {
     execFileSync('bash', ['-n', join(root, 'mobile/scripts', file)]);
   }
 });

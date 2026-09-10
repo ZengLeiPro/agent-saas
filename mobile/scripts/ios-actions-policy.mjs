@@ -35,6 +35,11 @@ export function digest(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+export function allocateBuildNumber(baseBuildNumber, runId, attempt) {
+  const base = requireId(baseBuildNumber, 'manifest iOS build number');
+  return `${base}.${requireId(runId, 'run ID')}.${requireId(attempt, 'attempt')}`;
+}
+
 export function validateDispatch(context, inputs) {
   assert.equal(context.event, 'workflow_dispatch', 'Release is manual dispatch only');
   assert.equal(context.ref, 'refs/heads/main', 'Dispatch the reviewed workflow from main only');
@@ -106,34 +111,16 @@ export function validateBuildRun(run, jobs, artifacts, expected) {
   return { artifactId: String(artifact.id), artifactDigest: artifact.digest, workflowSha: run.head_sha };
 }
 
-export function validateProtection(environment, approvals, expected) {
+export function validateEnvironment(environment, expected) {
   assert.equal(environment.name, expected.environment, 'Wrong protected environment');
-  const required = environment.protection_rules?.find((rule) => rule.type === 'required_reviewers');
-  assert.ok(required?.reviewers?.length > 0, 'Configure required environment reviewers before release');
-  assert.equal(required.prevent_self_review, true, 'Environment must prevent self-review');
-  // GitHub's documented REST environment response does not expose the admin
-  // bypass setting. Do not invent a false value or make live release impossible
-  // by requiring an undocumented field. Require a real, named reviewer below.
-  if (Object.hasOwn(environment, 'can_admins_bypass')) {
-    assert.equal(environment.can_admins_bypass, false, 'Disable administrator bypass for this environment');
-  }
-  assert.ok(required.reviewers.every((item) => item.type === 'User' && item.reviewer?.login),
-    'Configure named User reviewers; team membership cannot be verified with the read-only workflow token');
-  const allowed = new Set(required.reviewers.map((item) => item.reviewer.login.toLowerCase()));
+  const reviewers = environment.protection_rules?.filter((rule) => rule.type === 'required_reviewers') ?? [];
+  assert.equal(reviewers.length, 0, 'Normal iOS release must not require a second environment approval');
   const policy = environment.deployment_branch_policy;
-  assert.ok(policy?.protected_branches === true || policy?.custom_branch_policies === true,
-    'Restrict the environment to protected branches or a main-only branch policy');
-  if (policy.custom_branch_policies === true) {
-    assert.ok(expected.branchPolicies?.length > 0, 'Deployment branch policy metadata is missing');
-    assert.ok(expected.branchPolicies.every((item) => item.name === 'main' && item.type === 'branch'),
-      'Custom environment branch policy must allow main only, not tags');
-  }
-  const forbidden = new Set([expected.actor, expected.triggeringActor].filter(Boolean).map((login) => login.toLowerCase()));
-  const accepted = approvals.filter((approval) => approval.state === 'approved'
-    && approval.environments?.some((item) => item.id === environment.id && item.name === environment.name)
-    && approval.user?.login && allowed.has(approval.user.login.toLowerCase())
-    && !forbidden.has(approval.user.login.toLowerCase()));
-  assert.ok(accepted.length > 0, 'No independent named GitHub environment approval is available for this run');
+  assert.equal(policy?.protected_branches, false, 'Use an explicit main-only environment branch policy');
+  assert.equal(policy?.custom_branch_policies, true, 'Use an explicit main-only environment branch policy');
+  assert.ok(expected.branchPolicies?.length > 0, 'Deployment branch policy metadata is missing');
+  assert.ok(expected.branchPolicies.every((item) => item.name === 'main' && item.type === 'branch'),
+    'Custom environment branch policy must allow main only, not tags');
   return {
     environment: environment.name,
     environmentId: environment.id,
@@ -141,8 +128,9 @@ export function validateProtection(environment, approvals, expected) {
       protection_rules: environment.protection_rules,
       deployment_branch_policy: policy,
       branch_policies: expected.branchPolicies ?? [],
-      can_admins_bypass: environment.can_admins_bypass ?? 'not-exposed-by-rest',
     })),
-    reviewers: [...new Set(accepted.map((item) => item.user.login))].sort(),
+    authorization: 'workflow_dispatch',
+    actor: expected.actor,
+    triggeringActor: expected.triggeringActor,
   };
 }

@@ -4,8 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
-  IOS_ENVIRONMENTS, artifactName, requireId, requireSha, validateBuildRun,
-  validateCiRun, validateDispatch, validateProtection,
+  IOS_ENVIRONMENTS, allocateBuildNumber, artifactName, requireId, requireSha,
+  validateBuildRun, validateCiRun, validateDispatch, validateEnvironment,
 } from './ios-actions-policy.mjs';
 import { readJson, sealBundle, verifyBundle } from './ios-actions-artifacts.mjs';
 
@@ -65,6 +65,7 @@ function context() {
     sourceSha: requireSha(env.IOS_SOURCE_SHA),
     buildRunId: requireId(env.IOS_BUILD_RUN_ID, 'build run ID'),
     buildAttempt: requireId(env.IOS_BUILD_ATTEMPT, 'build attempt'),
+    buildNumber: env.IOS_BUILD_NUMBER,
     currentRunId: requireId(env.GITHUB_RUN_ID, 'current run ID'),
     workflowSha: requireSha(env.IOS_BUILD_WORKFLOW_SHA || env.GITHUB_SHA, 'workflow SHA'),
   };
@@ -112,6 +113,10 @@ async function plan() {
   }, event.inputs || {});
   assertMainSource(selected.sourceSha, false);
   const ci = await authorizeCi(selected.sourceSha);
+  const manifest = readJson(join(root, 'mobile/release-manifest.json'));
+  const buildNumber = selected.operation === 'submit'
+    ? ''
+    : allocateBuildNumber(manifest.version.iosBuildNumber, selected.buildRunId, selected.buildAttempt);
   output({
     source_sha: selected.sourceSha,
     do_build: selected.operation !== 'submit',
@@ -119,16 +124,15 @@ async function plan() {
     build_run_id: selected.buildRunId,
     build_run_attempt: selected.buildAttempt,
     artifact_name: artifactName(selected.sourceSha, selected.buildRunId, selected.buildAttempt),
+    build_number: buildNumber,
   });
-  summary(`### iOS release plan\n\nSource: \`${selected.sourceSha}\`\n\nOperation: \`${selected.operation}\` · main CI: ${ci.runId}/${ci.attempt}\n\nBuild run: ${selected.buildRunId}, attempt: ${selected.buildAttempt}\n\nBuild and submit use separate approvals. This workflow does not approve an App Store review or rollout.`);
+  summary(`### iOS release plan\n\nSource: \`${selected.sourceSha}\`\n\nOperation: \`${selected.operation}\` · main CI: ${ci.runId}/${ci.attempt}\n\nBuild run: ${selected.buildRunId}, attempt: ${selected.buildAttempt}${buildNumber ? ` · build number: ${buildNumber}` : ''}\n\nThe manual dispatch is the normal release authorization. No second environment approval is required.`);
 }
 
 async function guard(stage) {
   assert.ok(IOS_ENVIRONMENTS[stage], 'Unknown release stage');
   assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch');
   assert.equal(env.GITHUB_REF, 'refs/heads/main');
-  const flag = stage === 'build' ? env.MOBILE_RELEASE_CONFIGURED : env.MOBILE_SUBMIT_CONFIGURED;
-  assert.equal(flag, 'true', `Configure and enable the protected ${stage} integration first; see docs/mobile-ios-github-actions.md`);
   const current = context();
   assertMainSource(current.sourceSha);
   verifyManifest(current.sourceSha);
@@ -137,8 +141,7 @@ async function guard(stage) {
   const environment = await api(`/environments/${environmentName}`);
   const branchPolicies = environment.deployment_branch_policy?.custom_branch_policies
     ? await pages(`/environments/${environmentName}/deployment-branch-policies`, 'branch_policies') : [];
-  const approvals = await pages(`/actions/runs/${current.currentRunId}/approvals`);
-  const protection = validateProtection(environment, approvals, {
+  const protection = validateEnvironment(environment, {
     environment: environmentName, branchPolicies,
     actor: env.GITHUB_ACTOR, triggeringActor: env.GITHUB_TRIGGERING_ACTOR,
   });
@@ -149,7 +152,7 @@ async function guard(stage) {
     observedAt: new Date().toISOString(),
   };
   writeFileSync(join(temporary, `ios-${stage}-authorization.json`), `${JSON.stringify(authorization, null, 2)}\n`, { mode: 0o600 });
-  summary(`### ${environmentName}\n\nApproved source: \`${current.sourceSha}\`\n\nReviewers: ${protection.reviewers.join(', ')}\n\nProtection digest: \`${protection.protectionRulesSha256}\``);
+  summary(`### ${environmentName}\n\nAuthorized source: \`${current.sourceSha}\`\n\nTrigger: ${protection.authorization} by ${protection.actor}\n\nProtection digest: \`${protection.protectionRulesSha256}\``);
 }
 
 async function resolveArtifact() {
@@ -171,6 +174,7 @@ function seal() {
   assert.equal(authorization.sourceGitSha, current.sourceSha);
   assert.equal(authorization.runId, current.currentRunId);
   const toolchain = readJson(join(temporary, 'ios-toolchain.json'));
+  assert.equal(authorization.authorization, 'workflow_dispatch');
   const record = sealBundle(root, current, authorization, toolchain, authorization.ci);
   summary(`### Verified IPA saved\n\nSource: \`${record.sourceGitSha}\`\n\nVersion: ${record.version} (${record.buildNumber})\n\nIPA SHA256: \`${record.files[0].sha256}\`\n\nTo submit without rebuilding, select submit with source_sha=${record.sourceGitSha}, build_run_id=${record.buildRunId}, build_run_attempt=${record.buildRunAttempt}.`);
 }
@@ -188,13 +192,17 @@ function verify() {
 
 function receipt() {
   const current = context();
-  const { record, ipaPath } = verifyBundle(root, current);
-  assert.ok(readFileSync(`${ipaPath}.submit.log`).length > 0, 'The successful EAS submit log is missing');
-  const approval = readJson(join(temporary, 'ios-submit-authorization.json'));
-  assert.equal(approval.sourceGitSha, current.sourceSha);
-  assert.equal(approval.runId, current.currentRunId);
+  const { record } = verifyBundle(root, current);
+  const authorization = readJson(join(temporary, 'ios-submit-authorization.json'));
+  assert.equal(authorization.sourceGitSha, current.sourceSha);
+  assert.equal(authorization.runId, current.currentRunId);
+  assert.equal(authorization.authorization, 'workflow_dispatch');
+  const store = readJson(join(temporary, 'ios-app-store-result.json'));
+  assert.equal(store.appId, record.appStoreConnectAppId);
+  assert.equal(store.version, record.version);
+  assert.equal(store.buildNumber, String(record.buildNumber));
   const result = {
-    schemaVersion: 1, kind: 'github-ios-submit', status: 'eas-submit-finished',
+    schemaVersion: 2, kind: 'github-ios-submit', status: 'submitted-for-review',
     repository, sourceGitSha: current.sourceSha, appId: record.appId,
     appStoreConnectAppId: record.appStoreConnectAppId,
     version: record.version, buildNumber: record.buildNumber,
@@ -202,13 +210,13 @@ function receipt() {
     buildRunId: current.buildRunId, buildRunAttempt: current.buildAttempt,
     githubArtifactId: requireId(env.IOS_ARTIFACT_ID, 'artifact ID'),
     submitRunId: current.currentRunId, submitRunAttempt: requireId(env.GITHUB_RUN_ATTEMPT, 'submit attempt'),
-    approval, completedAt: new Date().toISOString(),
-    boundary: 'EAS submission finished. Apple processing, review, availability and M70 rollout are not asserted.',
+    authorization, store, completedAt: new Date().toISOString(),
+    boundary: 'Apple accepted the processed build into App Review with automatic release after approval. Review approval and App Store availability are not asserted.',
   };
   const path = join(temporary, 'ios-submit-receipt.json');
   writeFileSync(path, `${JSON.stringify(result, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
   output({ receipt_path: path });
-  summary(`### Submitted to App Store Connect / TestFlight\n\n${record.version} (${record.buildNumber}) · IPA SHA256: \`${result.ipaSha256}\`\n\nThe original IPA was submitted without rebuilding. Apple processing and review remain external. Raw submission logs and credentials are not uploaded as artifacts.`);
+  summary(`### Submitted to App Review\n\n${record.version} (${record.buildNumber}) · IPA SHA256: \`${result.ipaSha256}\`\n\nBuild processing: ${store.processingState} · review: ${store.reviewState} · release: AFTER_APPROVAL. The original IPA was reused without rebuilding. Apple review and public availability remain external.`);
 }
 
 try {

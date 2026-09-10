@@ -39,6 +39,8 @@ if [ ! -f "$SOURCE_PATH" ] || [ ! -f "$VERIFICATION_PATH" ]; then
 fi
 
 SOURCE_GIT_SHA="$(jq -er .sourceGitSha "$SOURCE_PATH")"
+IOS_BUILD_NUMBER="$(jq -er '.buildNumber | strings' "$SOURCE_PATH")"
+export MOBILE_IOS_BUILD_NUMBER="$IOS_BUILD_NUMBER"
 CURRENT_GIT_SHA="$(git -C "$MOBILE_DIR" rev-parse --verify HEAD)"
 if [ "$CURRENT_GIT_SHA" != "$SOURCE_GIT_SHA" ]; then
   echo "[M60-04] Current checkout does not match the IPA source commit." >&2
@@ -72,6 +74,7 @@ if ! cmp -s "$EXPECTED_SOURCE" "$SOURCE_PATH"; then
 fi
 cp -p "$IPA_PATH" "$SUBMIT_IPA"
 chmod 400 "$SUBMIT_IPA"
+cp "$EXPECTED_SOURCE" "$SUBMIT_IPA.source.json"
 bash "$MOBILE_DIR/scripts/verify-mobile-release-artifact.sh" \
   ios-store "$SUBMIT_IPA" "$EXPECTED_SOURCE" "$CURRENT_VERIFICATION"
 if ! cmp -s "$CURRENT_VERIFICATION" "$VERIFICATION_PATH"; then
@@ -79,28 +82,8 @@ if ! cmp -s "$CURRENT_VERIFICATION" "$VERIFICATION_PATH"; then
   exit 1
 fi
 
-# Pin the verified inode, then remove its pathname before EAS starts. EAS reads
-# /dev/fd/9 from the inherited descriptor, so unlink/recreate cannot swap the
-# uploaded bytes after verification.
-exec 9<"$SUBMIT_IPA"
-unlink "$SUBMIT_IPA"
-
 cd "$MOBILE_DIR"
-SUBMIT_LOG="$IPA_PATH.submit.log"
-SUBMIT_LOG_TMP="$WORK_DIR/submit.log"
-if [ -e "$SUBMIT_LOG" ]; then
-  echo "[M60-04] Refusing to overwrite an existing submit receipt log." >&2
-  exit 1
-fi
-EAS_CLI_ENTRY="$(node -p 'require.resolve("eas-cli/bin/run")')"
-set +e
-node "$EAS_CLI_ENTRY" submit -p ios -e production --path /dev/fd/9 --non-interactive --wait \
-  2>&1 | tee "$SUBMIT_LOG_TMP"
-SUBMIT_STATUS="${PIPESTATUS[0]}"
-set -e
-exec 9<&-
-if [ "$SUBMIT_STATUS" -ne 0 ]; then
-  echo "[M60-04] EAS submission failed; no success receipt log was written." >&2
-  exit "$SUBMIT_STATUS"
-fi
-mv "$SUBMIT_LOG_TMP" "$SUBMIT_LOG"
+node "$MOBILE_DIR/scripts/mobile-submit-credential-policy.mjs" ios-store
+export APP_STORE_CONNECT_APP_ID="$(node -p 'require("./release-manifest.json").identity.iosAscAppId')"
+RESULT_PATH="${APP_STORE_RESULT_PATH:-${RUNNER_TEMP:?RUNNER_TEMP is required}/ios-app-store-result.json}"
+node "$MOBILE_DIR/scripts/app-store-connect.mjs" --ipa "$SUBMIT_IPA" --result "$RESULT_PATH"

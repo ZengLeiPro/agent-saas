@@ -35,6 +35,13 @@ function expectedFiles(manifest) {
   return [ipa, `${ipa}.source.json`, `${ipa}.verification.json`];
 }
 
+function assertBuildNumber(value, manifest) {
+  const text = String(value ?? '');
+  assert.match(text, /^[1-9][0-9]*(?:\.[0-9]+){0,2}$/u, 'Invalid iOS build number');
+  assert.equal(text.split('.')[0], String(manifest.version.iosBuildNumber), 'iOS build number base mismatch');
+  return text;
+}
+
 function assertSource(source, manifest, sourceSha) {
   assert.equal(source.profile, 'ios-store');
   assert.equal(source.sourceGitSha, requireSha(sourceSha));
@@ -42,14 +49,15 @@ function assertSource(source, manifest, sourceSha) {
   assert.equal(source.iosTeamId, manifest.identity.iosAppleTeamId);
   assert.equal(source.iosAppGroup, manifest.identity.iosAppGroupIdentifier);
   assert.equal(source.version, manifest.version.marketingVersion);
-  assert.equal(source.buildNumber, manifest.version.iosBuildNumber);
+  return assertBuildNumber(source.buildNumber, manifest);
 }
 
 export function sealBundle(root, context, approval, toolchain, ci) {
   const manifest = readJson(join(root, 'mobile/release-manifest.json'));
   const files = expectedFiles(manifest);
   const directory = join(root, 'mobile/builds');
-  assertSource(readJson(join(directory, files[1])), manifest, context.sourceSha);
+  const buildNumber = assertSource(readJson(join(directory, files[1])), manifest, context.sourceSha);
+  if (context.buildNumber) assert.equal(buildNumber, context.buildNumber, 'Workflow build number mismatch');
   const record = {
     schemaVersion: 1,
     kind: 'github-ios-build',
@@ -61,11 +69,11 @@ export function sealBundle(root, context, approval, toolchain, ci) {
     appId: manifest.identity.iosBundleIdentifier,
     appStoreConnectAppId: manifest.identity.iosAscAppId,
     version: manifest.version.marketingVersion,
-    buildNumber: manifest.version.iosBuildNumber,
+    buildNumber,
     lockSha256: hashFile(join(root, 'pnpm-lock.yaml')).sha256,
     manifestSha256: hashFile(join(root, 'mobile/release-manifest.json')).sha256,
     files: files.map((filename) => ({ filename, ...hashFile(join(directory, filename)) })),
-    approval,
+    authorization: approval,
     ci,
     toolchain,
     createdAt: new Date().toISOString(),
@@ -92,7 +100,7 @@ export function verifyBundle(root, expected) {
   assert.equal(record.appId, manifest.identity.iosBundleIdentifier);
   assert.equal(record.appStoreConnectAppId, manifest.identity.iosAscAppId);
   assert.equal(record.version, manifest.version.marketingVersion);
-  assert.equal(record.buildNumber, manifest.version.iosBuildNumber);
+  assertBuildNumber(record.buildNumber, manifest);
   assert.equal(record.lockSha256, hashFile(join(root, 'pnpm-lock.yaml')).sha256, 'Lockfile digest changed');
   assert.equal(record.manifestSha256, hashFile(join(root, 'mobile/release-manifest.json')).sha256, 'Release manifest digest changed');
   assert.ok(Array.isArray(record.files));
@@ -103,10 +111,11 @@ export function verifyBundle(root, expected) {
     assert.equal(actual.sha256, file.sha256, `Artifact digest mismatch: ${file.filename}`);
     assert.equal(actual.size, file.size, `Artifact size mismatch: ${file.filename}`);
   }
-  assertSource(readJson(join(directory, names[1])), manifest, expected.sourceSha);
-  assert.equal(record.approval?.environment, 'mobile-build-production');
-  assert.match(record.approval?.protectionRulesSha256 ?? '', /^[0-9a-f]{64}$/u);
-  assert.ok(record.approval?.reviewers?.length > 0, 'Missing build approval metadata');
+  assert.equal(assertSource(readJson(join(directory, names[1])), manifest, expected.sourceSha), String(record.buildNumber));
+  assert.equal(record.authorization?.environment, 'mobile-build-production');
+  assert.equal(record.authorization?.authorization, 'workflow_dispatch');
+  assert.match(record.authorization?.protectionRulesSha256 ?? '', /^[0-9a-f]{64}$/u);
+  assert.ok(record.authorization?.actor, 'Missing build dispatch actor');
   assert.equal(record.ci?.sourceGitSha, expected.sourceSha, 'Missing same-source CI authority');
   return { record, ipaPath: join(directory, names[0]) };
 }

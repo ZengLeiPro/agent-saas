@@ -4,7 +4,6 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { validateMobileSubmitCredentials } from './mobile-submit-credential-policy.mjs';
-import { validateProtection } from './ios-actions-policy.mjs';
 import './ios-actions.test.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -104,15 +103,13 @@ test('M60-04 iOS build and submit are separate fail-closed operations', () => {
   assert.match(submit, /--print-artifact-identity/u);
   assert.match(submit, /SUBMIT_IPA/u);
   assert.match(submit, /chmod 400/u);
-  assert.match(submit, /exec 9<"\$SUBMIT_IPA"/u);
-  assert.match(submit, /unlink "\$SUBMIT_IPA"/u);
-  assert.match(submit, /--path \/dev\/fd\/9/u);
-  assert.match(submit, /require\.resolve\("eas-cli\/bin\/run"\)/u);
-  assert.match(submit, /no success receipt log was written/u);
+  assert.match(submit, /app-store-connect\.mjs/u);
+  assert.match(submit, /mobile-submit-credential-policy\.mjs/u);
   assert.match(submit, /Current checkout does not match the IPA source commit/u);
   assert.match(submit, /merge-base --is-ancestor/u);
-  assert.match(submit, /"\$EAS_CLI_ENTRY" submit -p ios/u);
-  assert.doesNotMatch(submit, /eas build/u);
+  assert.doesNotMatch(submit, /eas (?:build|submit)/u);
+  assert.match(build, /scripts\/build-ios-native\.sh/u);
+  assert.match(build, /MOBILE_BUILD_PLATFORM=android[\s\S]*eas build -p android/u);
 });
 
 test('M60-04 eas.json passes the schema bundled with the exact EAS CLI', async () => {
@@ -127,12 +124,11 @@ test('M60-04 eas.json passes the schema bundled with the exact EAS CLI', async (
   ]);
 });
 
-test('M60-04 EAS profiles pin exact CLI and immutable cloud images', () => {
+test('M60-04 keeps EAS only for existing Android profiles', () => {
   const eas = JSON.parse(readFileSync(resolve(root, 'mobile/eas.json'), 'utf8'));
   assert.equal(eas.cli.version, '18.1.0');
-  assert.equal(eas.build.production.ios.image, 'macos-sequoia-15.6-xcode-26.2');
+  assert.equal(eas.build.production.ios, undefined);
   assert.equal(eas.build.production.distribution, 'store');
-  assert.equal(eas.build.production.ios.credentialsSource, 'remote');
   assert.equal(eas.build['production-store'].android.image, 'ubuntu-24.04-jdk-17-ndk-r27b-sdk-55');
   assert.equal(
     eas.build['production-enterprise'].android.image,
@@ -142,26 +138,7 @@ test('M60-04 EAS profiles pin exact CLI and immutable cloud images', () => {
   assert.equal(eas.build['production-enterprise'].android.buildType, 'apk');
 });
 
-test('iOS approval accepts the documented REST response without inventing a bypass field', () => {
-  const environment = {
-    id: 7, name: 'mobile-build-production',
-    protection_rules: [{ type: 'required_reviewers', prevent_self_review: true,
-      reviewers: [{ type: 'User', reviewer: { login: 'reviewer' } }] }],
-    deployment_branch_policy: { protected_branches: true, custom_branch_policies: false },
-  };
-  const approval = { state: 'approved', user: { login: 'Reviewer' },
-    environments: [{ id: 7, name: environment.name }] };
-  const expected = { environment: environment.name, actor: 'author', triggeringActor: 'rerunner' };
-  assert.doesNotThrow(() => validateProtection(environment, [approval], expected));
-  assert.throws(() => validateProtection(environment, [{ ...approval, user: { login: 'unlisted-admin' } }], expected));
-  assert.throws(() => validateProtection(environment, [approval], { ...expected, actor: 'REVIEWER' }));
-  const team = structuredClone(environment);
-  team.protection_rules[0].reviewers = [{ type: 'Team', reviewer: { slug: 'release' } }];
-  assert.throws(() => validateProtection(team, [approval], expected), /named User/u);
-  assert.throws(() => validateProtection(environment, [], expected), /No independent named/u);
-});
-
-test('iOS dependency-free contract and planning jobs do not cache nonexistent stores', () => {
+test('iOS contract and planning jobs disable setup-node automatic package-manager cache', () => {
   const workflow = readFileSync(resolve(root, '.github/workflows/mobile-ios-release.yml'), 'utf8');
   const contracts = workflow.split('  contract:')[1].split('  plan:')[0];
   const planning = workflow.split('  plan:')[1].split('  build_ios:')[0];

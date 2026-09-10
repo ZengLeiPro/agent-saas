@@ -295,6 +295,27 @@ test('M10-03 development and preview configs generate without external store fac
   }
 });
 
+test('GitHub iOS build number preserves the reviewed base and reaches both signed targets', () => {
+  const { manifest, staticExpoConfig } = loadRepositoryInputs();
+  const context = resolveBuildContext({
+    skipGitLookup: true,
+    environment: {
+      MOBILE_RELEASE_PROFILE: 'production',
+      MOBILE_BUILD_PLATFORM: 'ios',
+      MOBILE_SOURCE_GIT_SHA: FULL_GIT_SHA,
+      MOBILE_IOS_BUILD_NUMBER: `${manifest.version.iosBuildNumber}.34567890123.2`,
+    },
+  });
+  const identity = createArtifactIdentity(manifest, context);
+  const config = createExpoConfig(staticExpoConfig, { manifest, context });
+  assert.equal(identity.version.iosBuildNumber, `${manifest.version.iosBuildNumber}.34567890123.2`);
+  assert.equal(config.ios.buildNumber, identity.version.iosBuildNumber);
+  assert.throws(
+    () => createArtifactIdentity(manifest, { ...context, iosBuildNumber: '7.1.1' }),
+    /retain the reviewed manifest build-number base/,
+  );
+});
+
 test('P4 APNs entitlement 的 aps-environment 由 release profile 决定', () => {
   const { manifest, staticExpoConfig } = loadRepositoryInputs();
   for (const profile of ['development', 'preview']) {

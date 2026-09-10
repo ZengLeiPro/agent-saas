@@ -540,11 +540,16 @@ function resolveSourceGitSha({
 function resolveBuildContext(options = {}) {
   const environment = options.environment ?? {};
   const distribution = resolveRequestedDistribution(environment, options.explicitDistribution);
+  const iosBuildNumber = environment.MOBILE_IOS_BUILD_NUMBER?.trim() || null;
+  if (iosBuildNumber && !/^[1-9][0-9]*(?:\.[0-9]+){0,2}$/.test(iosBuildNumber)) {
+    fail('MOBILE_IOS_BUILD_NUMBER must contain one to three dot-separated integers');
+  }
   return {
     profile: resolveRequestedProfile(environment, options.explicitProfile),
     platform: resolveBuildPlatform(environment, options.explicitPlatform),
     distribution,
     sourceGitSha: resolveSourceGitSha({ ...options, environment }),
+    iosBuildNumber,
     enterpriseUpdater: resolveEnterpriseUpdater(environment, distribution),
   };
 }
@@ -627,8 +632,8 @@ function assertEasVersionPolicy(easConfig, label, { requireProfiles = false } = 
   if (buildProfiles.production.distribution !== 'store') {
     fail(`${label} build.production.distribution must be store for the iOS release profile`);
   }
-  if (buildProfiles.production.ios?.credentialsSource !== 'remote') {
-    fail(`${label} build.production.ios.credentialsSource must be remote`);
+  if (buildProfiles.production.ios !== undefined) {
+    fail(`${label} build.production.ios is obsolete; GitHub xcodebuild owns the iOS toolchain and signing`);
   }
   const expectedProfiles = {
     'production-store': {
@@ -735,6 +740,10 @@ function assertIosSubmitConfiguration(easConfig, manifest) {
 }
 
 function createArtifactIdentity(manifest, context) {
+  const iosBuildNumber = context.iosBuildNumber ?? String(manifest.version.iosBuildNumber);
+  if (iosBuildNumber.split('.')[0] !== String(manifest.version.iosBuildNumber)) {
+    fail('MOBILE_IOS_BUILD_NUMBER must retain the reviewed manifest build-number base');
+  }
   return {
     schemaVersion: manifest.schemaVersion,
     profile: context.profile,
@@ -748,7 +757,7 @@ function createArtifactIdentity(manifest, context) {
     identity: { ...manifest.identity },
     version: {
       marketingVersion: manifest.version.marketingVersion,
-      iosBuildNumber: manifest.version.iosBuildNumber,
+      iosBuildNumber,
       androidVersionCode: manifest.version.androidVersionCode ?? 'not-set',
     },
     capabilities: {
@@ -812,7 +821,7 @@ function createExpoConfig(staticExpoConfig, options = {}) {
     ios: {
       ...(staticExpoConfig.ios ?? {}),
       bundleIdentifier: manifest.identity.iosBundleIdentifier,
-      buildNumber: String(manifest.version.iosBuildNumber),
+      buildNumber: artifactIdentity.version.iosBuildNumber,
       infoPlist: {
         ...(staticExpoConfig.ios?.infoPlist ?? {}),
         AgentSaaSReleaseSourceGitSHA: artifactIdentity.sourceGitSha,
@@ -881,7 +890,7 @@ function assertExpoIdentityMatchesManifest(expoConfig, manifest, context) {
       expoConfig.ios?.bundleIdentifier,
       manifest.identity.iosBundleIdentifier,
     ],
-    ['ios.buildNumber', expoConfig.ios?.buildNumber, String(manifest.version.iosBuildNumber)],
+    ['ios.buildNumber', expoConfig.ios?.buildNumber, expectedArtifact.version.iosBuildNumber],
     [
       'ios.infoPlist.AgentSaaSReleaseSourceGitSHA',
       expoConfig.ios?.infoPlist?.AgentSaaSReleaseSourceGitSHA,

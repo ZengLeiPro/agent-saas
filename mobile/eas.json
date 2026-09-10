@@ -33,10 +33,6 @@
         "MOBILE_IOS_APPLE_TEAM_ID": "T4D4M5B485",
         "MOBILE_IOS_SHARE_APP_GROUP": "group.com.agentsaas.mobile.share"
       },
-      "ios": {
-        "credentialsSource": "remote",
-        "image": "macos-sequoia-15.6-xcode-26.2"
-      },
       "android": {
         "credentialsSource": "local",
         "image": "ubuntu-24.04-jdk-17-ndk-r27b-sdk-55"

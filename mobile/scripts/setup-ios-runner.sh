@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
-# Select the native toolchain explicitly: eas build --local ignores eas.json image.
+# Select the reviewed GitHub-hosted native toolchain explicitly.
 # Keep this script compatible with the Bash 3.2 shipped by macOS.
 set -euo pipefail
 
 [ "$(uname -s)" = Darwin ] || { echo 'iOS requires a macOS runner' >&2; exit 1; }
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 : "${GITHUB_ENV:?GITHUB_ENV is required}"
-image="$(node -p 'require("./mobile/eas.json").build.production.ios.image')"
-case "$image" in
-  macos-sequoia-15.6-xcode-26.2) version=26.2 ;;
-  *) echo "Unreviewed iOS toolchain image: $image" >&2; exit 1 ;;
-esac
+version=26.2
 export DEVELOPER_DIR="/Applications/Xcode_${version}.app/Contents/Developer"
 [ -d "$DEVELOPER_DIR" ] || { echo "Pinned Xcode $version is absent; do not fall back to the runner default" >&2; exit 1; }
 [ "$(xcodebuild -version | head -n 1)" = "Xcode $version" ] || { echo 'Xcode selection failed' >&2; exit 1; }
 [ "$(xcrun --sdk iphoneos --show-sdk-version)" = 26.2 ] || { echo 'Unexpected iPhoneOS SDK' >&2; exit 1; }
-for tool in node pnpm pod fastlane jq security codesign plutil shasum unzip realpath; do
+for tool in node pnpm pod ruby xcrun xcodebuild openssl jq security codesign plutil shasum unzip realpath; do
   command -v "$tool" >/dev/null || { echo "Required iOS build tool is missing: $tool" >&2; exit 1; }
 done
 printf 'DEVELOPER_DIR=%s\n' "$DEVELOPER_DIR" >> "$GITHUB_ENV"
@@ -38,7 +34,7 @@ const toolchain = {
   xcode: run('xcodebuild', ['-version']),
   iphoneosSdk: run('xcrun', ['--sdk', 'iphoneos', '--show-sdk-version']),
   cocoapods: run('pod', ['--version']),
-  fastlane: run('fastlane', ['--version']).split('\n').at(-1),
+  ruby: run('ruby', ['--version']),
 };
 writeFileSync(join(process.env.RUNNER_TEMP, 'ios-toolchain.json'), `${JSON.stringify(toolchain, null, 2)}\n`, { mode: 0o600 });
 console.log(JSON.stringify(toolchain, null, 2));

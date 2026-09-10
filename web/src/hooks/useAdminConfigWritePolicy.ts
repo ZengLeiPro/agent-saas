@@ -12,52 +12,79 @@ function newOperationId(): string {
 }
 
 async function assertOperationRetrySafe(operationId: string): Promise<void> {
-  const response = await authFetch(`/api/admin/config-operations/${encodeURIComponent(operationId)}`);
-  const operation = await response.json().catch(() => ({})) as { state?: string };
-  if (response.ok && operation.state && !['not_committed', 'rolled_back'].includes(operation.state)) {
-    throw new Error(`${operationId} 状态 ${operation.state}，请刷新`);
+  let response: Response;
+  try {
+    response = await authFetch(`/api/admin/config-operations/${encodeURIComponent(operationId)}`);
+  } catch {
+    throw new Error(
+      `配置操作 ${operationId} 结果不确定：状态查询网络失败。请保留该 ID 并刷新配置，确认前勿重复提交`,
+    );
   }
+  const operation = (await response.json().catch(() => ({}))) as { state?: string };
+  if (!response.ok) {
+    throw new Error(
+      `配置操作 ${operationId} 结果不确定：状态查询返回 HTTP ${response.status}。请保留该 ID 并刷新配置，确认前勿重复提交`,
+    );
+  }
+  if (operation.state === 'not_committed' || operation.state === 'rolled_back') return;
+  const state = operation.state ?? 'unknown';
+  throw new Error(
+    `配置操作 ${operationId} 状态 ${state}${state === 'applied' || state === 'committed' ? '，可能已生效' : ''}。请刷新配置，确认前勿重复提交`,
+  );
 }
 
 /** 配置页统一使用服务端策略与 raw revision，不根据域名猜环境。 */
 export function useAdminConfigWritePolicy(accountReadOnly: boolean) {
   const [revision, setRevision] = useState('');
   const [policy, setPolicy] = useState<ConfigWritePolicy | null>(null);
+  const [uncertainOperationId, setUncertainOperationId] = useState<string | null>(null);
   const pendingOperationIdRef = useRef<string | null>(null);
 
   const acceptMetadata = useCallback((value: AdminConfigResponseMetadata) => {
-    if (typeof value.revision === 'string' && value.revision) setRevision(value.revision);
+    if (typeof value.revision === 'string' && value.revision) {
+      setRevision(value.revision);
+      pendingOperationIdRef.current = null;
+      setUncertainOperationId(null);
+    }
     const next = parseConfigWritePolicy(value.writePolicy);
     setPolicy(next);
   }, []);
 
   const confirmMutation = useCallback((): string | undefined | null => {
     if (!revision) throw new Error('配置版本尚未加载');
-    if (policy?.canSave !== true)
-      throw new Error(policy?.message ?? '未取得配置写入策略');
+    if (policy?.canSave !== true) throw new Error(policy?.message ?? '未取得配置写入策略');
     if (policy.environment !== 'production') return undefined;
-    return window.confirm('确认保存生产配置并等待双端生效？')
-      ? revision
-      : null;
+    return window.confirm('确认保存生产配置并等待双端生效？') ? revision : null;
   }, [policy, revision]);
 
   const bodyMetadata = useCallback(
     (confirmation?: string) => {
+      if (pendingOperationIdRef.current) {
+        throw new Error(
+          `配置操作 ${pendingOperationIdRef.current} 结果尚未确认，请刷新配置后再提交`,
+        );
+      }
       const operationId = newOperationId();
       pendingOperationIdRef.current = operationId;
       return {
-      expectedRevision: revision,
-      ...(confirmation ? { productionConfirmation: confirmation } : {}),
+        expectedRevision: revision,
+        ...(confirmation ? { productionConfirmation: confirmation } : {}),
         operationId,
       };
     },
     [revision],
   );
 
-  const deleteHeaders = useCallback((confirmation?: string): Record<string, string> => {
-    const operationId = newOperationId();
-    pendingOperationIdRef.current = operationId;
-    return {
+  const deleteHeaders = useCallback(
+    (confirmation?: string): Record<string, string> => {
+      if (pendingOperationIdRef.current) {
+        throw new Error(
+          `配置操作 ${pendingOperationIdRef.current} 结果尚未确认，请刷新配置后再提交`,
+        );
+      }
+      const operationId = newOperationId();
+      pendingOperationIdRef.current = operationId;
+      return {
         'X-Config-Revision': revision,
         'X-Config-Operation-Id': operationId,
         ...(confirmation ? { 'X-Production-Confirmation': confirmation } : {}),
@@ -66,36 +93,51 @@ export function useAdminConfigWritePolicy(accountReadOnly: boolean) {
     [revision],
   );
 
-  const mutationFetch = useCallback(async (
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    const operationId = pendingOperationIdRef.current;
-    try {
-      let response: Response;
+  const mutationFetch = useCallback(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const operationId = pendingOperationIdRef.current;
+      let preserveOperationId = false;
       try {
-        response = await authFetch(input, init);
-      } catch (error) {
-        if (operationId) {
+        let response: Response;
+        try {
+          response = await authFetch(input, init);
+        } catch (error) {
+          if (operationId) {
+            try {
+              await assertOperationRetrySafe(operationId);
+            } catch (statusError) {
+              preserveOperationId = true;
+              setUncertainOperationId(operationId);
+              throw statusError;
+            }
+          }
+          throw error;
+        }
+        if (response.status >= 500 && operationId) {
           try {
             await assertOperationRetrySafe(operationId);
           } catch (statusError) {
-            if (statusError instanceof Error && statusError.message.includes(operationId)) throw statusError;
+            preserveOperationId = true;
+            setUncertainOperationId(operationId);
+            throw statusError;
           }
         }
-        throw error;
+        return response;
+      } finally {
+        if (!preserveOperationId && pendingOperationIdRef.current === operationId) {
+          pendingOperationIdRef.current = null;
+          setUncertainOperationId(null);
+        }
       }
-      if (response.status >= 500 && operationId) await assertOperationRetrySafe(operationId);
-      return response;
-    } finally {
-      pendingOperationIdRef.current = null;
-    }
-  }, []);
+    },
+    [],
+  );
 
   return useMemo(
     () => ({
       revision,
       policy,
+      uncertainOperationId,
       readOnly: accountReadOnly || policy?.canSave !== true,
       acceptMetadata,
       confirmMutation,
@@ -112,6 +154,7 @@ export function useAdminConfigWritePolicy(accountReadOnly: boolean) {
       mutationFetch,
       policy,
       revision,
+      uncertainOperationId,
     ],
   );
 }

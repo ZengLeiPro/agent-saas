@@ -4,7 +4,7 @@
 
 实际 raw diff 必须通过 operation registry；候选基于锁内 fresh raw；生产写入先验证权限、CAS、确认、签名基线和双端旧版本回执，再创建候选 Secret；落盘后由共享刷新器真实消费者完成双端回执。缺消费者不成功。
 
-生图引擎与定价 scope 分离；系统提示语仅改目标合法 ID；工具描述、egress、ACS 运行控制继续使用自己的协议。Codex GET 不写配置，登记改为显式 complete，重授权使用新 ref。正常 token 刷新由服务器内部既有受管 ref 协调签名身份；事务外 Vault 改写仍触发 drift。
+生图引擎与定价 scope 分离；系统提示语仅改目标合法 ID；工具描述、egress、ACS 运行控制继续使用自己的协议。Codex GET 不写配置，登记改为显式 complete，重授权使用新 ref。成功的 device complete 结果仅保留 5 分钟且最多 100 项，用于响应丢失后的短期幂等读取；容量满时优先淘汰最旧已完成项，不淘汰进行中的发布。正常 token 刷新由服务器内部既有受管 ref 协调签名身份；事务外 Vault 改写仍触发 drift。
 
 每个生产 operationId 在私有签名权威目录下保存受 HMAC 保护的操作者与请求语义摘要，以及 `preparing`、`publishing`、`applied`、`committed_unconfirmed`、`rolled_back`、`not_committed` 或 `recovery_required` 状态；不保存请求正文或明文 Secret。候选 Secret 元数据绑定 operationId。`GET /api/admin/config-operations/:operationId` 只允许原操作者查询；浏览器遇到网络失败或 5xx 会查询原操作状态并停止自动重发。
 

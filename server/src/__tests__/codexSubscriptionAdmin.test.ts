@@ -38,13 +38,15 @@ function rawConfig() {
     models: {
       default: 'codex/gpt',
       allowCrossGroupSwitch: false,
-      groups: [{
-        id: 'codex',
-        name: 'Codex',
-        protocol: 'responses',
-        responses_transport: 'codex_subscription',
-        models: [{ id: 'gpt', name: 'GPT', value: 'gpt-5.4' }],
-      }],
+      groups: [
+        {
+          id: 'codex',
+          name: 'Codex',
+          protocol: 'responses',
+          responses_transport: 'codex_subscription',
+          models: [{ id: 'gpt', name: 'GPT', value: 'gpt-5.4' }],
+        },
+      ],
     },
   };
 }
@@ -82,29 +84,47 @@ describe('Codex subscription admin router', () => {
 
     const config = parseAppConfig(rawConfig());
     const vault = new InMemorySecretVault();
-    const credentialFetch = vi.fn(async () => new Response('', { status: 200 })) as unknown as typeof fetch;
+    const credentialFetch = vi.fn(
+      async () => new Response('', { status: 200 }),
+    ) as unknown as typeof fetch;
     const credentialManager = new CodexCredentialManager({
       vault,
       getConfig: () => config.codexSubscription,
       fetchImpl: credentialFetch,
     });
-    const oauthFetch = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        device_auth_id: 'private-device-id',
-        user_code: 'ABCD-EFGH',
-        interval: 0,
-      }), { status: 200, headers: { 'content-type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        authorization_code: 'auth-code',
-        code_verifier: 'code-verifier',
-        code_challenge: 'code-challenge',
-      }), { status: 200, headers: { 'content-type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: jwt('acct-access'),
-        refresh_token: 'refresh-secret-value',
-        id_token: jwt('acct-admin'),
-        expires_in: 3600,
-      }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const oauthFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            device_auth_id: 'private-device-id',
+            user_code: 'ABCD-EFGH',
+            interval: 0,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            authorization_code: 'auth-code',
+            code_verifier: 'code-verifier',
+            code_challenge: 'code-challenge',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: jwt('acct-access'),
+            refresh_token: 'refresh-secret-value',
+            id_token: jwt('acct-admin'),
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ) as unknown as typeof fetch;
     const deviceAuthService = new CodexDeviceAuthService(oauthFetch);
     const closeWebSockets = vi.fn();
 
@@ -119,13 +139,17 @@ describe('Codex subscription admin router', () => {
       };
       next();
     });
-    app.use('/api/admin/codex-subscription', createCodexSubscriptionAdminRouter({
-      processCwd,
-      config,
-      credentialManager,
-      deviceAuthService,
-      closeWebSockets,
-    }));
+    app.use(
+      '/api/admin/codex-subscription',
+      createCodexSubscriptionAdminRouter({
+        processCwd,
+        config,
+        credentialManager,
+        deviceAuthService,
+        closeWebSockets,
+        completionTaskTtlMs: 25,
+      }),
+    );
     const server = app.listen(0);
     servers.push(server);
     const address = server.address();
@@ -151,13 +175,19 @@ describe('Codex subscription admin router', () => {
 
     const startResponse = await fetch(`${baseUrl}/device/start`, { method: 'POST' });
     expect(startResponse.status).toBe(201);
-    const started = await startResponse.json() as { sessionId: string; userCode: string };
+    const started = (await startResponse.json()) as { sessionId: string; userCode: string };
     expect(started.userCode).toBe('ABCD-EFGH');
     expect(started).not.toHaveProperty('deviceAuthId');
 
     const pollResponse = await pollAndComplete(baseUrl, started.sessionId);
     expect(pollResponse.status).toBe(200);
-    const connected = await pollResponse.json() as any;
+    const connected = (await pollResponse.json()) as any;
+    const cachedCompletion = await fetch(`${baseUrl}/device/${started.sessionId}`);
+    expect(cachedCompletion.status).toBe(200);
+    expect(await cachedCompletion.json()).toMatchObject({ status: 'applied' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const expiredCompletion = await fetch(`${baseUrl}/device/${started.sessionId}`);
+    expect(expiredCompletion.status).toBe(400);
     expect(connected).toMatchObject({
       status: 'applied',
       config: { enabled: true, websocketEnabled: false, originator: 'kaiyan-agent' },
@@ -232,7 +262,9 @@ describe('Codex subscription admin router', () => {
     });
     expect(config.codexSubscription?.credentialRef).toBeUndefined();
     expect(closeWebSockets).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(readFileSync(configPath, 'utf-8')).codexSubscription.credentialRef).toBeUndefined();
+    expect(
+      JSON.parse(readFileSync(configPath, 'utf-8')).codexSubscription.credentialRef,
+    ).toBeUndefined();
     expect(credentialFetch).toHaveBeenCalledWith(
       'https://auth.openai.com/oauth/revoke',
       expect.objectContaining({
@@ -255,44 +287,103 @@ describe('Codex subscription admin router', () => {
 
     const config = parseAppConfig(rawConfig());
     const vault = new InMemorySecretVault();
-    const credentialFetch = vi.fn(async () => new Response('', { status: 200 })) as unknown as typeof fetch;
+    const credentialFetch = vi.fn(
+      async () => new Response('', { status: 200 }),
+    ) as unknown as typeof fetch;
     const credentialManager = new CodexCredentialManager({
       vault,
       getConfig: () => config.codexSubscription,
       fetchImpl: credentialFetch,
     });
-    const oauthFetch = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        device_auth_id: 'device-one', user_code: 'ONE-0001', interval: 0,
-      }), { status: 200, headers: { 'content-type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        authorization_code: 'auth-one', code_verifier: 'verifier-one', code_challenge: 'challenge-one',
-      }), { status: 200, headers: { 'content-type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: jwt('acct-one'), refresh_token: 'refresh-one', id_token: jwt('acct-one'), expires_in: 3600,
-      }), { status: 200, headers: { 'content-type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        device_auth_id: 'device-two', user_code: 'TWO-0002', interval: 0,
-      }), { status: 200, headers: { 'content-type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        authorization_code: 'auth-two', code_verifier: 'verifier-two', code_challenge: 'challenge-two',
-      }), { status: 200, headers: { 'content-type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: jwt('acct-two'), refresh_token: 'refresh-two', id_token: jwt('acct-two'), expires_in: 3600,
-      }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const oauthFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            device_auth_id: 'device-one',
+            user_code: 'ONE-0001',
+            interval: 0,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            authorization_code: 'auth-one',
+            code_verifier: 'verifier-one',
+            code_challenge: 'challenge-one',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: jwt('acct-one'),
+            refresh_token: 'refresh-one',
+            id_token: jwt('acct-one'),
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            device_auth_id: 'device-two',
+            user_code: 'TWO-0002',
+            interval: 0,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            authorization_code: 'auth-two',
+            code_verifier: 'verifier-two',
+            code_challenge: 'challenge-two',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            access_token: jwt('acct-two'),
+            refresh_token: 'refresh-two',
+            id_token: jwt('acct-two'),
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ) as unknown as typeof fetch;
     const deviceAuthService = new CodexDeviceAuthService(oauthFetch);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
       (req as any).user = {
-        sub: 'admin', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID,
+        sub: 'admin',
+        username: 'admin',
+        role: 'admin',
+        tenantId: DEFAULT_TENANT_ID,
       };
       next();
     });
     const closeWebSockets = vi.fn();
-    app.use('/api/admin/codex-subscription', createCodexSubscriptionAdminRouter({
-      processCwd, config, credentialManager, deviceAuthService, closeWebSockets,
-    }));
+    app.use(
+      '/api/admin/codex-subscription',
+      createCodexSubscriptionAdminRouter({
+        processCwd,
+        config,
+        credentialManager,
+        deviceAuthService,
+        closeWebSockets,
+        completionTaskLimit: 1,
+        completionTaskTtlMs: 60_000,
+      }),
+    );
     const server = app.listen(0);
     servers.push(server);
     const address = server.address();
@@ -301,22 +392,27 @@ describe('Codex subscription admin router', () => {
 
     const startOne = await fetch(`${baseUrl}/device/start`, { method: 'POST' });
     expect(startOne.status).toBe(201);
-    const sessionOne = await startOne.json() as { sessionId: string };
+    const sessionOne = (await startOne.json()) as { sessionId: string };
     const completeOne = await pollAndComplete(baseUrl, sessionOne.sessionId);
     expect(completeOne.status).toBe(200);
-    const oneState = await completeOne.json() as any;
+    const oneState = (await completeOne.json()) as any;
     expect(oneState.credentials).toHaveLength(1);
 
     const startTwo = await fetch(`${baseUrl}/device/start`, { method: 'POST' });
     expect(startTwo.status).toBe(201);
-    const sessionTwo = await startTwo.json() as { sessionId: string };
+    const sessionTwo = (await startTwo.json()) as { sessionId: string };
     const completeTwo = await pollAndComplete(baseUrl, sessionTwo.sessionId);
     expect(completeTwo.status).toBe(200);
-    const twoState = await completeTwo.json() as any;
+    const twoState = (await completeTwo.json()) as any;
     expect(twoState.credentials).toHaveLength(2);
     const firstId = twoState.credentials[0].id as string;
     const secondId = twoState.credentials[1].id as string;
     expect(closeWebSockets).not.toHaveBeenCalled();
+    const evictedFirstCompletion = await fetch(`${baseUrl}/device/${sessionOne.sessionId}`);
+    expect(evictedFirstCompletion.status).toBe(400);
+    const retainedLatestCompletion = await fetch(`${baseUrl}/device/${sessionTwo.sessionId}`);
+    expect(retainedLatestCompletion.status).toBe(200);
+    expect(await retainedLatestCompletion.json()).toMatchObject({ status: 'applied' });
 
     const reorder = await fetch(`${baseUrl}/credentials/order`, {
       method: 'PUT',
@@ -324,17 +420,21 @@ describe('Codex subscription admin router', () => {
       body: JSON.stringify({ credentialRefs: [secondId, firstId] }),
     });
     expect(reorder.status).toBe(200);
-    expect((await reorder.json() as any).credentials.map((item: any) => item.id))
-      .toEqual([secondId, firstId]);
+    expect(((await reorder.json()) as any).credentials.map((item: any) => item.id)).toEqual([
+      secondId,
+      firstId,
+    ]);
     expect(JSON.parse(readFileSync(configPath, 'utf-8')).codexSubscription).toMatchObject({
       credentialRef: secondId,
       credentialRefs: [secondId, firstId],
     });
     expect(closeWebSockets).not.toHaveBeenCalled();
 
-    const remove = await fetch(`${baseUrl}/credentials/${encodeURIComponent(secondId)}`, { method: 'DELETE' });
+    const remove = await fetch(`${baseUrl}/credentials/${encodeURIComponent(secondId)}`, {
+      method: 'DELETE',
+    });
     expect(remove.status).toBe(200);
-    const remaining = await remove.json() as any;
+    const remaining = (await remove.json()) as any;
     expect(remaining.credentials).toHaveLength(1);
     expect(remaining.credentials[0].id).toBe(firstId);
     expect(closeWebSockets).toHaveBeenCalledTimes(1);
@@ -361,13 +461,17 @@ describe('Codex subscription admin router', () => {
     const credentialManager = new CodexCredentialManager({
       vault: new InMemorySecretVault(),
       getConfig: () => config.codexSubscription,
-      fetchImpl: vi.fn().mockResolvedValue(new Response('', { status: 200 })) as unknown as typeof fetch,
+      fetchImpl: vi
+        .fn()
+        .mockResolvedValue(new Response('', { status: 200 })) as unknown as typeof fetch,
     });
     const persistLogin = credentialManager.persistLogin.bind(credentialManager);
-    const persistLoginSpy = vi.spyOn(credentialManager, 'persistLogin').mockImplementation(async (...args) => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      return persistLogin(...args);
-    });
+    const persistLoginSpy = vi
+      .spyOn(credentialManager, 'persistLogin')
+      .mockImplementation(async (...args) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return persistLogin(...args);
+      });
     const deviceAuthService = {
       poll: vi.fn().mockResolvedValue({
         status: 'completed',
@@ -382,8 +486,10 @@ describe('Codex subscription admin router', () => {
       completedResult: vi.fn().mockReturnValue({
         replaceCredentialRef: missingRef,
         tokens: {
-          accessToken: jwt('acct-repaired'), refreshToken: 'refresh-repaired',
-          idToken: jwt('acct-repaired'), expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+          accessToken: jwt('acct-repaired'),
+          refreshToken: 'refresh-repaired',
+          idToken: jwt('acct-repaired'),
+          expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
         },
       }),
       complete: vi.fn(),
@@ -393,13 +499,23 @@ describe('Codex subscription admin router', () => {
     app.use(express.json());
     app.use((req, _res, next) => {
       (req as any).user = {
-        sub: 'admin', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID,
+        sub: 'admin',
+        username: 'admin',
+        role: 'admin',
+        tenantId: DEFAULT_TENANT_ID,
       };
       next();
     });
-    app.use('/api/admin/codex-subscription', createCodexSubscriptionAdminRouter({
-      processCwd, config, credentialManager, deviceAuthService, closeWebSockets,
-    }));
+    app.use(
+      '/api/admin/codex-subscription',
+      createCodexSubscriptionAdminRouter({
+        processCwd,
+        config,
+        credentialManager,
+        deviceAuthService,
+        closeWebSockets,
+      }),
+    );
     const server = app.listen(0);
     servers.push(server);
     const address = server.address();
@@ -409,12 +525,13 @@ describe('Codex subscription admin router', () => {
     const poll = await fetch(`${baseUrl}/device/repair-session/poll`, { method: 'POST' });
     expect(poll.status).toBe(200);
     const url = `${baseUrl}/device/repair-session/complete`;
-    const request = () => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const request = () =>
+      fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     const [firstResponse, secondResponse] = await Promise.all([request(), request()]);
     expect(firstResponse.status).toBe(200);
     expect(secondResponse.status).toBe(200);
-    const state = await firstResponse.json() as any;
-    const duplicateState = await secondResponse.json() as any;
+    const state = (await firstResponse.json()) as any;
+    const duplicateState = (await secondResponse.json()) as any;
     const replacementRef = state.credentials[0]?.id as string;
     expect(replacementRef).toBeTruthy();
     expect(replacementRef).not.toBe(missingRef);
@@ -457,7 +574,9 @@ describe('Codex subscription admin router', () => {
     const credentialManager = new CodexCredentialManager({
       vault,
       getConfig: () => config.codexSubscription,
-      fetchImpl: vi.fn().mockResolvedValue(new Response('', { status: 200 })) as unknown as typeof fetch,
+      fetchImpl: vi
+        .fn()
+        .mockResolvedValue(new Response('', { status: 200 })) as unknown as typeof fetch,
     });
     const revoke = vi.spyOn(credentialManager, 'revoke');
     const deviceAuthService = {
@@ -474,33 +593,47 @@ describe('Codex subscription admin router', () => {
       completedResult: vi.fn().mockReturnValue({
         replaceCredentialRef: missingRef,
         tokens: {
-          accessToken: jwt('acct-repaired'), refreshToken: 'refresh-repaired',
-          idToken: jwt('acct-repaired'), expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+          accessToken: jwt('acct-repaired'),
+          refreshToken: 'refresh-repaired',
+          idToken: jwt('acct-repaired'),
+          expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
         },
       }),
       complete: vi.fn(),
     } as unknown as CodexDeviceAuthService;
     const configMutationService = {
-      mutate: vi.fn().mockImplementation(async (input: Parameters<AdminConfigMutationService['mutate']>[0]) => {
-        const text = JSON.stringify(initial, null, 2);
-        await input.buildCandidate(text, initial);
-        throw new RuntimeRestoreFailedError(
-          new Error('apply runtime failed'),
-          new Error('restore runtime failed'),
-        );
-      }),
+      mutate: vi
+        .fn()
+        .mockImplementation(async (input: Parameters<AdminConfigMutationService['mutate']>[0]) => {
+          const text = JSON.stringify(initial, null, 2);
+          await input.buildCandidate(text, initial);
+          throw new RuntimeRestoreFailedError(
+            new Error('apply runtime failed'),
+            new Error('restore runtime failed'),
+          );
+        }),
     } as unknown as AdminConfigMutationService;
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
       (req as any).user = {
-        sub: 'admin', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID,
+        sub: 'admin',
+        username: 'admin',
+        role: 'admin',
+        tenantId: DEFAULT_TENANT_ID,
       };
       next();
     });
-    app.use('/api/admin/codex-subscription', createCodexSubscriptionAdminRouter({
-      processCwd, config, credentialManager, deviceAuthService, configMutationService,
-    }));
+    app.use(
+      '/api/admin/codex-subscription',
+      createCodexSubscriptionAdminRouter({
+        processCwd,
+        config,
+        credentialManager,
+        deviceAuthService,
+        configMutationService,
+      }),
+    );
     const server = app.listen(0);
     servers.push(server);
     const address = server.address();
@@ -513,11 +646,13 @@ describe('Codex subscription admin router', () => {
 
     expect(response.status).toBe(500);
     expect(replacementRef).toBeTruthy();
-    await expect(vault.getSecret(replacementRef!, {
-      actor: 'system',
-      userId: '__system__',
-      scopes: ['secret:codex_subscription_oauth:read'],
-    })).resolves.toContain('refresh-repaired');
+    await expect(
+      vault.getSecret(replacementRef!, {
+        actor: 'system',
+        userId: '__system__',
+        scopes: ['secret:codex_subscription_oauth:read'],
+      }),
+    ).resolves.toContain('refresh-repaired');
     expect(revoke).not.toHaveBeenCalled();
     expect(deviceAuthService.complete).not.toHaveBeenCalled();
   });

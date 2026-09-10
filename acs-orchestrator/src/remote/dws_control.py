@@ -8,6 +8,9 @@ import re
 import subprocess
 import sys
 
+# 隔离模式不会加入脚本目录；只加载镜像内的受信模块，不恢复工作区搜索路径。
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 from dws_spool import DwsSpool, SpoolError, positive_integer, validate_owner
 from process_control import POD_IDENTITY_PATH, process_identity
 

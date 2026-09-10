@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acs-operation-ownership-v1
+  namespace: agent-saas-coding
+  labels:
+    app.kubernetes.io/managed-by: agent-saas-acs
+data:
+  journal.json: '{"protocolVersion":1,"records":[]}'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-saas-acs-orchestrator-ownership-journal
+  namespace: agent-saas-coding
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - configmaps
+    resourceNames:
+      - acs-operation-ownership-v1
+    verbs:
+      - get
+      - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-saas-acs-orchestrator-ownership-journal
+  namespace: agent-saas-coding
+subjects:
+  - kind: ServiceAccount
+    name: agent-saas-acs-orchestrator
+    namespace: agent-saas-coding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-saas-acs-orchestrator-ownership-journal

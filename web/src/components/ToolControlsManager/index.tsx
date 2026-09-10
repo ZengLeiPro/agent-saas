@@ -233,7 +233,7 @@ export function buildWebToolsPayload(
 
 export function ToolControlsManager(): JSX.Element {
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "工具配置");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly);
   const [toolControlsDraft, setToolControlsDraft] = useState<ToolControlsConfig>(() => normalizeToolControls(null));
   const [webToolsDraft, setWebToolsDraft] = useState<WebToolsConfig>(() => normalizeWebTools(null));
   const [tools, setTools] = useState<ToolCatalogItem[]>([]);

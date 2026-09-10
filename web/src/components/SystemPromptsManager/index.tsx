@@ -36,7 +36,7 @@ const CATEGORY_LABELS: Record<PromptCategory, string> = {
 
 export function SystemPromptsManager(): JSX.Element {
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, deleteHeaders, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "系统提示语");
+  const { acceptMetadata, bodyMetadata, confirmMutation, deleteHeaders, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly);
   const [prompts, setPrompts] = useState<SystemPromptItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [draft, setDraft] = useState("");

@@ -8,13 +8,19 @@ export interface AdminConfigResponseMetadata {
 }
 
 function newOperationId(): string {
-  return (
-    globalThis.crypto?.randomUUID?.() ?? `op-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
+  return crypto.randomUUID();
+}
+
+async function assertOperationRetrySafe(operationId: string): Promise<void> {
+  const response = await authFetch(`/api/admin/config-operations/${encodeURIComponent(operationId)}`);
+  const operation = await response.json().catch(() => ({})) as { state?: string };
+  if (response.ok && operation.state && !['not_committed', 'rolled_back'].includes(operation.state)) {
+    throw new Error(`${operationId} 状态 ${operation.state}，请刷新`);
+  }
 }
 
 /** 配置页统一使用服务端策略与 raw revision，不根据域名猜环境。 */
-export function useAdminConfigWritePolicy(accountReadOnly: boolean, operationLabel: string) {
+export function useAdminConfigWritePolicy(accountReadOnly: boolean) {
   const [revision, setRevision] = useState('');
   const [policy, setPolicy] = useState<ConfigWritePolicy | null>(null);
   const pendingOperationIdRef = useRef<string | null>(null);
@@ -22,20 +28,18 @@ export function useAdminConfigWritePolicy(accountReadOnly: boolean, operationLab
   const acceptMetadata = useCallback((value: AdminConfigResponseMetadata) => {
     if (typeof value.revision === 'string' && value.revision) setRevision(value.revision);
     const next = parseConfigWritePolicy(value.writePolicy);
-    setPolicy((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
+    setPolicy(next);
   }, []);
 
   const confirmMutation = useCallback((): string | undefined | null => {
-    if (!revision) throw new Error('配置版本尚未加载，请先刷新');
+    if (!revision) throw new Error('配置版本尚未加载');
     if (policy?.canSave !== true)
-      throw new Error(policy?.message ?? '尚未取得服务端配置写入策略，暂不可保存');
+      throw new Error(policy?.message ?? '未取得配置写入策略');
     if (policy.environment !== 'production') return undefined;
-    return window.confirm(
-      `当前为生产环境。保存${operationLabel}将修改当前环境，并等待 API 与 Worker 同时生效。确认继续？`,
-    )
+    return window.confirm('确认保存生产配置并等待双端生效？')
       ? revision
       : null;
-  }, [operationLabel, policy, revision]);
+  }, [policy, revision]);
 
   const bodyMetadata = useCallback(
     (confirmation?: string) => {
@@ -62,38 +66,27 @@ export function useAdminConfigWritePolicy(accountReadOnly: boolean, operationLab
     [revision],
   );
 
-  /** Network/5xx is ambiguous: query the original id once and never synthesize a retry. */
   const mutationFetch = useCallback(async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> => {
     const operationId = pendingOperationIdRef.current;
     try {
-      const response = await authFetch(input, init);
-      if (response.status < 500 || !operationId) {
-        pendingOperationIdRef.current = null;
-        return response;
-      }
-      const status = await authFetch(`/api/admin/config-operations/${encodeURIComponent(operationId)}`);
-      const operation = await status.json().catch(() => ({})) as { state?: string };
-      if (status.ok && operation.state && operation.state !== 'not_committed' && operation.state !== 'rolled_back') {
-        throw new Error(`配置操作 ${operationId} 当前状态为 ${operation.state}，请刷新读取结果，勿重复提交`);
-      }
-      pendingOperationIdRef.current = null;
-      return response;
-    } catch (error) {
-      if (operationId) {
-        try {
-          const status = await authFetch(`/api/admin/config-operations/${encodeURIComponent(operationId)}`);
-          const operation = await status.json().catch(() => ({})) as { state?: string };
-          if (status.ok && operation.state && operation.state !== 'not_committed' && operation.state !== 'rolled_back') {
-            throw new Error(`配置操作 ${operationId} 当前状态为 ${operation.state}，请刷新读取结果，勿重复提交`);
+      let response: Response;
+      try {
+        response = await authFetch(input, init);
+      } catch (error) {
+        if (operationId) {
+          try {
+            await assertOperationRetrySafe(operationId);
+          } catch (statusError) {
+            if (statusError instanceof Error && statusError.message.includes(operationId)) throw statusError;
           }
-        } catch (statusError) {
-          if (statusError instanceof Error && statusError.message.includes(operationId)) throw statusError;
         }
+        throw error;
       }
-      throw error;
+      if (response.status >= 500 && operationId) await assertOperationRetrySafe(operationId);
+      return response;
     } finally {
       pendingOperationIdRef.current = null;
     }

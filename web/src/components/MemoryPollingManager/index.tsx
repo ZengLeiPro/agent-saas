@@ -90,7 +90,7 @@ function Field({
 export function MemoryPollingManager() {
   // 只读平台 admin：保存配置与总开关 disabled
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "记忆轮询配置");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly);
   const [view, setView] = useState<MemoryPollingAdminView | null>(null);
   const [draft, setDraft] = useState<MemoryPollingDraft>(EMPTY_DRAFT);
   const [modelList, setModelList] = useState<ModelList | null>(null);

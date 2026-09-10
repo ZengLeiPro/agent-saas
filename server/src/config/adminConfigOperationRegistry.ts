@@ -38,12 +38,14 @@ export function changedConfigTokenPaths(
   after: unknown,
   prefix: readonly string[] = [],
 ): TokenPath[] {
-  if (isRecord(before) && isRecord(after)) {
-    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  if (isRecord(before) || isRecord(after)) {
+    const beforeRecord = isRecord(before) ? before : {};
+    const afterRecord = isRecord(after) ? after : {};
+    const keys = new Set([...Object.keys(beforeRecord), ...Object.keys(afterRecord)]);
     const changes: TokenPath[] = [];
     for (const key of [...keys].sort()) {
       if (UNSAFE_KEYS.has(key)) throw new Error('配置包含禁止的对象键');
-      changes.push(...changedConfigTokenPaths(before[key], after[key], [...prefix, key]));
+      changes.push(...changedConfigTokenPaths(beforeRecord[key], afterRecord[key], [...prefix, key]));
     }
     return changes;
   }
@@ -123,7 +125,7 @@ export function assertAdminConfigOperationScope(
     outside.push(...changed.filter((path) => startsWith(path, ['imageGenTools', 'pricing'])));
   }
   if (outside.length > 0) {
-    throw new Error(`操作 ${operation.id} 试图修改未授权配置范围`);
+    throw new Error(`操作 ${operation.id} 试图修改未授权配置范围（其他配置段）`);
   }
   return changed;
 }

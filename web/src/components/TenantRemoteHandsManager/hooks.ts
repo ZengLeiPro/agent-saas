@@ -89,7 +89,7 @@ export function useAcsRuntimeConfig(refreshBlocked = false) {
 }
 
 export function useTenantRemoteHands(refreshBlocked = false, accountReadOnly = false) {
-  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(accountReadOnly, "执行环境池配置");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(accountReadOnly);
   const [config, setConfig] = useState<TenantRemoteHandsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

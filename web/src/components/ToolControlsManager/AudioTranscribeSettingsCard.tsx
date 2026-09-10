@@ -88,7 +88,7 @@ function parsePricing(draft: AudioTranscribeDraft) {
 
 export function AudioTranscribeSettingsCard(): JSX.Element {
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "语音转写配置");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly);
   const [data, setData] = useState<AudioTranscribeAdminResponse | null>(null);
   const [draft, setDraft] = useState<AudioTranscribeDraft | null>(null);
   const [loading, setLoading] = useState(true);

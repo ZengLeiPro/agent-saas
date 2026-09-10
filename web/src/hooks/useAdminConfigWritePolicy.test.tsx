@@ -10,7 +10,7 @@ describe('useAdminConfigWritePolicy uncertain result handling', () => {
   beforeEach(() => vi.mocked(authFetch).mockReset());
 
   it('网络结果不确定时查询同一 operationId，已生效则阻止盲目重发', async () => {
-    const { result } = renderHook(() => useAdminConfigWritePolicy(false, '测试配置'));
+    const { result } = renderHook(() => useAdminConfigWritePolicy(false));
     act(() =>
       result.current.acceptMetadata({
         revision: 'raw-revision-1',

@@ -106,7 +106,7 @@ function accountList(state: CodexSubscriptionState | null): CodexCredentialState
 }
 
 export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
-  const write = useAdminConfigWritePolicy(readOnly, "Codex 订阅配置");
+  const write = useAdminConfigWritePolicy(readOnly);
   const { acceptMetadata } = write;
   const effectiveReadOnly = write.readOnly;
   const [state, setState] = useState<CodexSubscriptionState | null>(null);

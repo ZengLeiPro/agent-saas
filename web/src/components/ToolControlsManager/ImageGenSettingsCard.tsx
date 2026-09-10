@@ -116,7 +116,7 @@ function buildEnginePayload(key: EngineKey, draft: EngineDraft, platformEnabled:
 export function ImageGenSettingsCard() {
   // 只读平台 admin：保存引擎配置与引擎开关 disabled
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "生图引擎配置");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly);
   const [draft, setDraft] = useState<ImageGenDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

@@ -112,7 +112,7 @@ function formatPricing(entry: ImageGenEnginePricing | undefined): string {
 export function ImageGenPricingCard() {
   // 只读平台 admin：保存定价 disabled
   const { platformReadOnly } = useAuth();
-  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly, "生图定价");
+  const { acceptMetadata, bodyMetadata, confirmMutation, mutationFetch, readOnly } = useAdminConfigWritePolicy(platformReadOnly);
   const [data, setData] = useState<ImageGenPricingAdminResponse | null>(null);
   const [drafts, setDrafts] = useState<DraftTable>({});
   const [loading, setLoading] = useState(true);

@@ -133,18 +133,21 @@ export async function fetchToolControlsConfig(): Promise<ToolControlsAdminRespon
   );
 }
 
+async function update(
+  url: string,
+  payload: UpdateToolControlsRequest | UpdateSingleToolRequest,
+  request: typeof authFetch,
+): Promise<ToolControlsAdminResponse> {
+  return parseJsonResponse<ToolControlsAdminResponse>(await request(url, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }), '工具开关');
+}
+
 export async function updateToolControlsConfig(
   payload: UpdateToolControlsRequest,
-  request: typeof authFetch = authFetch,
+  request: typeof authFetch,
 ): Promise<ToolControlsAdminResponse> {
-  return parseJsonResponse<ToolControlsAdminResponse>(
-    await request(API_BASE, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-    '工具开关',
-  );
+  return update(API_BASE, payload, request);
 }
 
 export async function updateSingleTool(
@@ -152,12 +155,5 @@ export async function updateSingleTool(
   payload: UpdateSingleToolRequest,
   request: typeof authFetch = authFetch,
 ): Promise<ToolControlsAdminResponse> {
-  return parseJsonResponse<ToolControlsAdminResponse>(
-    await request(`${API_BASE}/${encodeURIComponent(toolId)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-    '工具开关',
-  );
+  return update(`${API_BASE}/${encodeURIComponent(toolId)}`, payload, request);
 }

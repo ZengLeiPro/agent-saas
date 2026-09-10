@@ -61,6 +61,7 @@ const NON_RUNTIME_FILES = new Set([
   'eslint.config.mjs',
   'scripts/check-env-var-count.mjs',
   'scripts/check-max-lines-ratchet.mjs',
+  'scripts/bootstrap-acs-ownership-journal.sh',
   'scripts/ratchets.test.mjs',
   'scripts/ci-plan.mjs',
   'scripts/ci-acs-plan.mjs',

@@ -156,6 +156,10 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('scripts/bootstrap-acs-ownership-journal.sh'), {
+    components: [],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('packages/ky-app-contract/src/index.ts'), {
     components: [],
     blockingReason: null,

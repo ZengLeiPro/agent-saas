@@ -626,7 +626,7 @@ jobs:
 
       - name: 上传生产基线观测诊断
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-baseline-observation-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
@@ -699,7 +699,7 @@ jobs:
           fi
       - name: 保存同一次运行的已验证镜像与诊断
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prepared-acs-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
@@ -871,7 +871,7 @@ jobs:
                <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
       - name: 下载本次运行已验证的 ACS 镜像证据
         if: env.REUSE_RC != 'true' && needs.prepare-acs.outputs.include_acs == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           # Failed-job reruns retain the successful producer's original attempt.
           name: ${{ needs.prepare-acs.outputs.artifact_name }}
@@ -1343,7 +1343,7 @@ jobs:
 
       - name: 上传独立测试环境证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: staging-evidence-${{ env.STAGING_RELEASE_ID }}-${{ github.run_attempt }}
           if-no-files-found: warn

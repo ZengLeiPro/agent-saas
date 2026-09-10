@@ -1494,7 +1494,7 @@ jobs:
 
       - name: 上传生产发布证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-promotion-${{ env.RELEASE_ID }}-${{ github.run_attempt }}
           if-no-files-found: warn

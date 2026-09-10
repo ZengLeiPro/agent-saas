@@ -1640,7 +1640,14 @@ hand_off_retired_authority() {
     # A clean exit also proves it cannot accept work. Failed/unknown states require investigation.
     [ "$state" != inactive ] || return 0
     main_pid="$(systemctl show "$unit" --property=MainPID --value)" || return 1
-    [ "$main_pid" = "$pid" ] || { echo "ERROR: retired PID changed: $unit" >&2; return 1; }
+    if [ "$main_pid" != "$pid" ]; then
+      # The process may exit cleanly between the ActiveState and MainPID reads.
+      # Re-read the authoritative state before treating the PID change as replacement.
+      state="$(systemctl show "$unit" --property=ActiveState --value)" || return 1
+      [ "$state" = inactive ] && return 0
+      echo "ERROR: retired PID changed: $unit" >&2
+      return 1
+    fi
     if [ "$state" = active ] && jq -se --argjson pid "$pid" \
       'length==1 and (.[0] | type=="object" and .pid==$pid and (.runtimeQuiesced|type)=="boolean" and (.activeStreams|type)=="number" and (.activeUploads|type)=="number")' \
       "$marker" >/dev/null 2>&1; then

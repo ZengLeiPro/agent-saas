@@ -15,6 +15,7 @@ const runUploader = (root, env = {}, cwd = repositoryRoot) =>
       'oss://web-bucket/assets',
       join(root, 'credentials.json'),
       join(root, 'fake-ali-oss.cjs'),
+      env.TEST_PUBLIC_ORIGIN ?? 'https://web.example.com',
     ],
     {
       cwd,
@@ -126,7 +127,11 @@ esac
   const curl = `#!/usr/bin/env bash
 set -euo pipefail
 url="\${!#}"
-relative="\${url#https://web-bucket.oss-cn-shenzhen.aliyuncs.com/}"
+case "$url" in
+  https://web.example.com/*) ;;
+  *) echo 'public verification must use the actual website origin' >&2; exit 90 ;;
+esac
+relative="\${url#https://web.example.com/}"
 relative="\${relative%%\\?*}"
 headers="$FAKE_OSS_ROOT/$relative.headers"
 test -f "$headers"
@@ -134,6 +139,9 @@ if [ "\${FAKE_BAD_HEADERS:-false}" = true ]; then
   sed 's/public, max-age=31536000, immutable/public, max-age=60/' "$headers"
 else
   cat "$headers"
+fi
+if [ "\${FAKE_PUBLIC_ATTACHMENT:-false}" = true ]; then
+  printf 'Content-Disposition: attachment\\r\\n'
 fi
 `;
   await writeFile(
@@ -186,6 +194,7 @@ test('atomically uploads final Web asset bytes from the Workflow working directo
   const second = runUploader(root);
   assert.equal(second.status, 0, second.stderr);
   assert.match(second.stdout, /uploaded=0 reused=3/u);
+  assert.doesNotMatch(second.stderr, /Web asset verification failed/u);
   const secondLog = await readFile(join(root, 'oss.log'), 'utf8');
   assert.doesNotMatch(secondLog, /^stat /mu);
 });
@@ -229,4 +238,35 @@ test('rejects immutable assets whose uploaded cache or content headers drift', a
   const result = runUploader(root, { FAKE_BAD_HEADERS: 'true' });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Web asset verification failed: key=app-abc.js/u);
+});
+
+test('公开站点仍拒绝强制下载响应头，不放宽资源契约', async () => {
+  const root = await setupFixture();
+  const result = runUploader(root, { FAKE_PUBLIC_ATTACHMENT: 'true' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unexpected mutable metadata/u);
+});
+
+test('缺失或非法公开入口在 OSS 写入前拒绝', async () => {
+  for (const origin of [
+    '',
+    'http://web.example.com',
+    'https://user:pass@web.example.com',
+    'https://web.example.com/path',
+  ]) {
+    const root = await setupFixture();
+    const result = runUploader(root, { TEST_PUBLIC_ORIGIN: origin });
+    assert.notEqual(result.status, 0);
+    await assert.rejects(readFile(join(root, 'oss.log')), { code: 'ENOENT' });
+  }
+});
+
+test('两条生产发布入口均显式传入真实站点域名', async () => {
+  for (const name of ['ci.yml', 'promote-release.yml']) {
+    const workflow = await readFile(join(repositoryRoot, '.github/workflows', name), 'utf8');
+    assert.match(
+      workflow,
+      /upload-web-assets-immutable\.sh \\\n[^\n]+"https:\/\/agent\.kaiyan\.net"/u,
+    );
+  }
 });

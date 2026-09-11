@@ -41,7 +41,7 @@
 | T26  | grokResponsesAdapter.test.ts、已有 Responses parser 回归                                        | 分片 UTF-8、arguments、canonical output、缺终态不成功                        |
 | T27  | grokTransportContracts.test.ts、grokResponsesAdapter.test.ts、既有 kernel/approval/billing 回归 | 取消不换号；transport 不执行工具；真实外部工具副作用未发起                   |
 | T28  | grokTransportContracts.test.ts、runtime continuation/replay 回归                                | tenant/session/account binding、移除 opaque、保留工具结果                    |
-| T29  | factory/主运行/子 Agent/标题/恢复相关 affected CI + 实施接线表                                  | 共享依赖已接线；真实 Grok 主/子/组织/标题/唤醒/审批多入口端到端留作上线验收  |
+| T29  | grokRuntimeEntrypoints.test.ts + factory/主运行/恢复相关 affected CI + 实施接线表               | 共享依赖已接线；真实 Grok 主/子/组织/标题/唤醒/审批多入口端到端留作上线验收  |
 | T30  | grokSchemaAndCapability.test.ts、grokTransportContracts.test.ts、既有压缩/记忆辅助回归          | 支持路径用原 runtime；媒体/门禁能力不符显式拒绝                              |
 | T31  | Web ModelManager/GrokSubscriptionCard.test.tsx、grokAdminContracts.test.ts                      | 独立卡片与账号 UI/HTTP 生命周期；不含真实浏览器到 xAI 登录                   |
 | T32  | Web GrokSubscriptionCard.test.tsx、productionSave/writePolicy.test.tsx                          | 只读/旧后端/弹窗受阻/确认/失败刷新                                           |
@@ -73,3 +73,7 @@ pnpm preflight:pr
 ```
 
 GitHub PR 正式 CI 按当前主分支的 affected/import 图和 source guards 选择相关测试；main 的全量 coverage 门禁不由本功能降低。诊断 action 还单独运行 shared/server/web 全量测试；只报告实际完成的结果，未执行项不能写成通过。
+
+### 原生入口补充验证
+
+`grokRuntimeEntrypoints.test.ts` 使用真实 `runSubagent`、自有 Agent loop、文件事件存储、计量记录和 `generateTitle`，只模拟 xAI 网络响应。它验证无 API Key 的子任务执行、父子事件隔离、逻辑模型权限、同一凭据管理器在排序后被标题入口复用、usage 只记录一次和不持久化 token。此测试不是实际账号授权或真实渠道部署验收。

@@ -9,9 +9,27 @@ const transport = 'server/src/runtime/httpTransport.ts';
 const evidence = 'docs/release/PR636-current-base-migration-review-20260911.md';
 const quotaSchema = 'server/src/app/modelQuotaSourceSchema.ts';
 const quotaEvidence = 'docs/release/PR641-zhipu-quota-config-review-20260911.md';
-const grokNeutralPaths = ["server/src/app/config.ts", "server/src/app/grokSubscriptionConfigSchema.ts", "server/src/runtime/responses/codexCredentialRuntimeState.ts"];
-const grokExpandPaths = ["server/src/runtime/responses/subscriptionCredentialRuntimeState.ts", "server/src/runtime/responses/subscriptionRefreshJournal.ts", "server/src/runtime/responses/grokSubscriptionSchema.ts"];
-const grokEvidencePaths = ["docs/reviews/grok-subscription-migration.md", "server/src/__tests__/grokSchemaPreservation.test.ts", "server/src/__tests__/fixtures/grok-codex-schema-baseline.json", "server/src/__tests__/grokSchemaPostconditions.pg.test.ts", "scripts/release/grok-subscription-postcondition.sql", "server/src/runtime/responses/grokSubscriptionTableNames.ts"];
+const grokNeutralPaths = [
+  'server/src/runtime/egressRequestPolicy.ts',
+  'server/src/runtime/responses/grokProtocol.ts',
+  'server/src/runtime/responses/grokSubscriptionTableNames.ts',
+  'server/src/app/config.ts',
+  'server/src/app/grokSubscriptionConfigSchema.ts',
+  'server/src/runtime/responses/codexCredentialRuntimeState.ts',
+];
+const grokExpandPaths = [
+  'server/src/runtime/responses/subscriptionCredentialRuntimeState.ts',
+  'server/src/runtime/responses/subscriptionRefreshJournal.ts',
+  'server/src/runtime/responses/grokSubscriptionSchema.ts',
+];
+const grokEvidencePaths = [
+  'docs/reviews/grok-subscription-migration.md',
+  'server/src/__tests__/grokSchemaPreservation.test.ts',
+  'server/src/__tests__/fixtures/grok-codex-schema-baseline.json',
+  'server/src/__tests__/grokSchemaPostconditions.pg.test.ts',
+  'scripts/release/grok-subscription-postcondition.sql',
+  'server/src/runtime/responses/grokSubscriptionTableNames.ts',
+];
 const auditedPaths = [transport, quotaSchema, ...grokNeutralPaths, ...grokExpandPaths];
 const evidencePaths = [evidence, quotaEvidence, ...grokEvidencePaths];
 const git = (...args) =>
@@ -38,7 +56,10 @@ test('HTTP baseline retains exact byte-bound reviews alongside the separately au
   // original paths plus the exact separately audited Grok scope, never a wildcard.
   assert.deepEqual([...loaded.entries.keys()].sort(), [...auditedPaths].sort());
   for (const path of auditedPaths) {
-    assert.equal(loaded.entries.get(path).classification, grokExpandPaths.includes(path) ? 'expand' : 'no-schema-change');
+    assert.equal(
+      loaded.entries.get(path).classification,
+      grokExpandPaths.includes(path) ? 'expand' : 'no-schema-change',
+    );
   }
   const result = createMigrationPlan({ baseline, target, changedPaths: auditedPaths });
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
@@ -94,9 +115,16 @@ test('PR641 current baseline preserves Zhipu and the independently byte-bound Gr
     baselineSnapshot: snapshot(quotaBaseline),
     targetSnapshot: snapshot(target),
   });
-  assert.deepEqual([...loaded.entries.keys()].sort(), [quotaSchema, ...grokNeutralPaths, ...grokExpandPaths].sort());
+  assert.deepEqual(
+    [...loaded.entries.keys()].sort(),
+    [quotaSchema, ...grokNeutralPaths, ...grokExpandPaths].sort(),
+  );
   assert.equal(loaded.entries.get(quotaSchema).classification, 'no-schema-change');
-  const result = createMigrationPlan({ baseline: quotaBaseline, target, changedPaths: [quotaSchema] });
+  const result = createMigrationPlan({
+    baseline: quotaBaseline,
+    target,
+    changedPaths: [quotaSchema],
+  });
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
   assert.notEqual(result.migrationPlan.phase, 'contract');
 });

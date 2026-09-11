@@ -226,7 +226,7 @@ function withTitleTimeout<T>(operation: Promise<T>, signal: AbortSignal): Promis
 }
 
 function runSubscriptionTitleOperation(input: TitleModelAdapterInput): Promise<TitleProviderResult> {
-  const key = JSON.stringify([input.config.responsesTransport, input.config.model, input.runtimeContext.tenantId ?? '', input.runtimeContext.sessionId]);
+  const key = JSON.stringify([input.config.responsesTransport, input.config.model]);
   const active = subscriptionTitleInFlight.get(input.factory) ?? new Set<string>();
   if (active.has(key)) return Promise.reject(new Error(`${input.config.responsesTransport} title generation is still in flight`));
   active.add(key);

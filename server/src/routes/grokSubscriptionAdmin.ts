@@ -95,6 +95,7 @@ export function createGrokSubscriptionAdminRouter(options: GrokSubscriptionAdmin
   router.post('/device/start', async (req, res) => {
     try {
       context.assertWritable();
+      context.assertOAuthAllowed();
       const body = grokAdminBody(req, ['credentialRef']);
       if (
         'credentialRef' in body &&
@@ -128,6 +129,7 @@ export function createGrokSubscriptionAdminRouter(options: GrokSubscriptionAdmin
   router.post('/device/:sessionId/poll', async (req, res) => {
     try {
       context.assertWritable();
+      context.assertOAuthAllowed();
       grokAdminBody(req, []);
       const result = await options.deviceAuthService.poll(
         req.params.sessionId,

@@ -25,3 +25,5 @@ Staging 必须用独立账号/Vault/namespace，显式提供 `grokSubscription` 
 仅 `enabled:false` 不够。先在新代码下使所有模型配置和辅助引用恢复旧版可解析集合，停用并移除 Grok 引用，等待相关任务结束。用待回退旧版的 parser 和真实配置/会话样本做隔离验证；含 `xai_grok_subscription` continuation 的历史可能使旧 reader 不兼容。
 
 不能证明旧 reader 能读取时选择修复性前向发布，限制回退到支持新枚举的版本。禁止删除生产事件/会话或删表来让旧版启动。新增表可以保留。遵循既有 release rollback 和签名身份恢复步骤，禁止直接编辑 publication/receipt 欺骗一致性校验。
+
+Staging 首次设备码申请、轮询和启用配置也检查 OAuth 开关及认证/订阅双域名白名单；不是等已启用后才检查。读取状态和取消本地授权不要求额外联网。

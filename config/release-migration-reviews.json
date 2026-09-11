@@ -451,6 +451,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -524,7 +545,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -1495,6 +1516,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -1704,7 +1746,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -2458,6 +2500,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -2647,7 +2710,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -3380,6 +3443,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -3553,7 +3637,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -4286,6 +4370,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -4459,7 +4564,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -5178,6 +5283,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -5343,7 +5469,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -6062,6 +6188,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -6227,7 +6374,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -6946,6 +7093,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -7111,7 +7279,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -8110,6 +8278,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -8287,7 +8476,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -9013,6 +9202,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -9198,7 +9408,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -9938,6 +10148,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -10115,7 +10346,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -10855,6 +11086,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -11032,7 +11284,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -11723,6 +11975,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -11884,7 +12157,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -12575,6 +12848,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -12736,7 +13030,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -13427,6 +13721,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -13588,7 +13903,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -14279,6 +14594,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -14440,7 +14776,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -15117,6 +15453,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -15274,7 +15631,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -15951,6 +16308,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -16108,7 +16486,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -16729,6 +17107,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -16866,7 +17265,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -17480,6 +17879,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -17613,7 +18033,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -18227,6 +18647,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -18352,7 +18793,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -18966,6 +19407,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -19091,7 +19553,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -19705,6 +20167,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -19830,7 +20313,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -20416,6 +20899,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -20533,7 +21037,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -21105,6 +21609,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -21230,7 +21755,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -21774,6 +22299,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -21883,7 +22429,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -22427,6 +22973,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -22536,7 +23103,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -23038,6 +23605,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -23131,7 +23719,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -23633,6 +24221,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -23718,7 +24327,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -24206,6 +24815,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -24279,7 +24909,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -24767,6 +25397,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -24836,7 +25487,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -25324,6 +25975,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -25397,7 +26069,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -25878,6 +26550,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -25943,7 +26636,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -26424,6 +27117,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -26489,7 +27203,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -26963,6 +27677,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -27024,7 +27759,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -27498,6 +28233,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -27571,7 +28327,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -28045,6 +28801,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -28118,7 +28895,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -28592,6 +29369,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -28665,7 +29463,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -29104,6 +29902,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -29133,7 +29952,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -29607,6 +30426,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -29660,7 +30500,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -29749,6 +30589,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -29778,7 +30639,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -29860,6 +30721,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -29873,7 +30755,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -29948,6 +30830,27 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
@@ -29957,7 +30860,7 @@
         },
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
@@ -30025,12 +30928,33 @@
           "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
           "classification": "expand",
           "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         }
       ],
       "evidence": [
         {
           "path": "docs/reviews/grok-subscription-migration.md",
-          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
         },
         {
           "path": "server/src/__tests__/grokSchemaPreservation.test.ts",

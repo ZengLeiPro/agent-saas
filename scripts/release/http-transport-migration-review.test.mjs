@@ -11,7 +11,11 @@ const evidencePath = 'docs/release/PR636-HTTP部署排空无结构变更复核-2
 const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8'));
 const review = inventory.reviews.find((entry) => entry.baselineSha === baseline);
 const baselineSnapshot = {
-  repositoryPaths: new Set(review.files.map((entry) => entry.path)),
+  repositoryPaths: new Set(
+    execFileSync('git', ['ls-tree', '-r', '--name-only', baseline], { encoding: 'utf8' })
+      .trim()
+      .split('\n'),
+  ),
   read: (path) => execFileSync('git', ['show', `${baseline}:${path}`], { encoding: 'utf8' }),
 };
 function targetSnapshot(overrides = {}) {

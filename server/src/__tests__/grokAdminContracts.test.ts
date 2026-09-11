@@ -1,3 +1,4 @@
+import * as runtimeIdentity from '../release/runtimeIdentity.js';
 import express from 'express';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -184,5 +185,28 @@ describe('Grok admin transactions T16-T23', () => {
     expect((await f.mutate(`/device/${session}/complete`, 'POST')).status).toBe(200);
     expect((await f.mutate('', 'DELETE')).status).toBe(200);
     expect(f.manager.getCredentialRefs()).toEqual([]);
+  });
+  it('does not contact xAI before Staging OAuth and both domains are explicitly admitted', async () => {
+    vi.spyOn(runtimeIdentity, 'readRuntimeIdentity').mockReturnValue({
+      environment: 'staging',
+      safetyAttested: true,
+    });
+    vi.stubEnv('AGENT_SAAS_STAGING_OAUTH_ENABLED', '0');
+    vi.stubEnv('AGENT_SAAS_STAGING_OAUTH_HOSTS', 'auth.x.ai,cli-chat-proxy.grok.com');
+    const f = await fixture();
+    expect((await f.call('/device/start', 'POST', {})).status).toBe(403);
+    expect(f.client.start).not.toHaveBeenCalled();
+    vi.stubEnv('AGENT_SAAS_STAGING_OAUTH_ENABLED', '1');
+    vi.stubEnv('AGENT_SAAS_STAGING_OAUTH_HOSTS', 'auth.x.ai');
+    expect((await f.call('/device/start', 'POST', {})).status).toBe(403);
+    expect(f.client.start).not.toHaveBeenCalled();
+    vi.stubEnv('AGENT_SAAS_STAGING_OAUTH_HOSTS', 'auth.x.ai,cli-chat-proxy.grok.com');
+    const response = await f.call('/device/start', 'POST', {});
+    expect(response.status).toBe(201);
+    const session = await response.json();
+    expect(f.client.start).toHaveBeenCalledOnce();
+    vi.stubEnv('AGENT_SAAS_STAGING_OAUTH_ENABLED', '0');
+    expect((await f.call(`/device/${session.sessionId}/poll`, 'POST', {})).status).toBe(403);
+    expect(f.client.poll).not.toHaveBeenCalled();
   });
 });

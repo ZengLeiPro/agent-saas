@@ -88,6 +88,26 @@ export function withGrokRefs(
   if (enabled !== undefined) next.enabled = enabled;
   return next;
 }
+function assertGrokOAuthEnvironment(): void {
+  if (readRuntimeIdentity().environment !== 'staging') return;
+  const hosts = new Set(
+    (process.env.AGENT_SAAS_STAGING_OAUTH_HOSTS ?? '')
+      .split(',')
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (
+    process.env.AGENT_SAAS_STAGING_OAUTH_ENABLED !== '1' ||
+    !hosts.has('auth.x.ai') ||
+    !hosts.has('cli-chat-proxy.grok.com')
+  ) {
+    throw new GrokAdminInputError(
+      'Staging 尚未明确启用 Grok OAuth 或缺少认证/订阅域名白名单',
+      403,
+      'GROK_STAGING_OAUTH_BLOCKED',
+    );
+  }
+}
 export function createGrokAdminContext(options: GrokSubscriptionAdminOptions) {
   const service =
     options.configMutationService ??
@@ -136,6 +156,7 @@ export function createGrokAdminContext(options: GrokSubscriptionAdminOptions) {
       buildCandidate: async (text, raw) => {
         const current = isRecord(raw.grokSubscription) ? raw.grokSubscription : {};
         const next = await build(current);
+        if (next.enabled === true) assertGrokOAuthEnvironment();
         const nextRaw = { ...raw, grokSubscription: next };
         parseAppConfig(nextRaw);
         assertAdminConfigOperationScope({ id: operation }, raw, nextRaw);
@@ -156,7 +177,14 @@ export function createGrokAdminContext(options: GrokSubscriptionAdminOptions) {
       },
     });
   };
-  return { options, service, assertWritable, publicState, mutate };
+  return {
+    options,
+    service,
+    assertWritable,
+    assertOAuthAllowed: assertGrokOAuthEnvironment,
+    publicState,
+    mutate,
+  };
 }
 export type GrokAdminContext = ReturnType<typeof createGrokAdminContext>;
 export function sendGrokAdminError(res: Response, error: unknown, warning?: string): void {

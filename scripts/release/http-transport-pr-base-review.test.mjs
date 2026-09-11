@@ -9,6 +9,8 @@ const transport = 'server/src/runtime/httpTransport.ts';
 const evidence = 'docs/release/PR636-current-base-migration-review-20260911.md';
 const quotaSchema = 'server/src/app/modelQuotaSourceSchema.ts';
 const quotaEvidence = 'docs/release/PR641-zhipu-quota-config-review-20260911.md';
+const scopeStore = 'server/src/data/entitlements/store.ts';
+const scopeEvidence = 'docs/release/PR642-integrated-system-scope-retirement-20260912.md';
 const grokNeutralPaths = [
   'server/src/runtime/egressRequestPolicy.ts',
   'server/src/runtime/responses/grokProtocol.ts',
@@ -30,8 +32,8 @@ const grokEvidencePaths = [
   'scripts/release/grok-subscription-postcondition.sql',
   'server/src/runtime/responses/grokSubscriptionTableNames.ts',
 ];
-const auditedPaths = [transport, quotaSchema, ...grokNeutralPaths, ...grokExpandPaths];
-const evidencePaths = [evidence, quotaEvidence, ...grokEvidencePaths];
+const auditedPaths = [transport, quotaSchema, scopeStore, ...grokNeutralPaths, ...grokExpandPaths];
+const evidencePaths = [evidence, quotaEvidence, scopeEvidence, ...grokEvidencePaths];
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 const target = git('rev-parse', 'HEAD').trim();
@@ -52,7 +54,7 @@ const missingOrChangedError = (path) =>
     ? /source changed and requires re-review/u
     : /evidence changed or is invalid/u;
 
-test('HTTP baseline retains exact byte-bound reviews alongside the separately audited Zhipu config', () => {
+test('HTTP baseline retains exact byte-bound reviews across Zhipu, scope retirement and Grok', () => {
   const loaded = loadMigrationReviews({
     baseline,
     baselineSnapshot,
@@ -114,7 +116,7 @@ test('both reviews reject changed target bytes, baseline bytes and changed or mi
   }
 });
 
-test('PR641 current baseline preserves Zhipu and the independently byte-bound Grok additive review', () => {
+test('PR641 baseline preserves Zhipu, scope retirement and the independently byte-bound Grok additive review', () => {
   const quotaBaseline = '9db36e8861304c9254e545c80a17ccc720595af9';
   const loaded = loadMigrationReviews({
     baseline: quotaBaseline,
@@ -123,7 +125,7 @@ test('PR641 current baseline preserves Zhipu and the independently byte-bound Gr
   });
   assert.deepEqual(
     [...loaded.entries.keys()].sort(),
-    [quotaSchema, ...grokNeutralPaths, ...grokExpandPaths].sort(),
+    [quotaSchema, scopeStore, ...grokNeutralPaths, ...grokExpandPaths].sort(),
   );
   assert.equal(loaded.entries.get(quotaSchema).classification, 'no-schema-change');
   const result = createMigrationPlan({
@@ -133,4 +135,38 @@ test('PR641 current baseline preserves Zhipu and the independently byte-bound Gr
   });
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
   assert.notEqual(result.migrationPlan.phase, 'contract');
+});
+
+
+test('PR642 baseline retains scope retirement plus the independently reviewed Grok migration', () => {
+  const scopeBaseline = 'eec01d4c1d043a3de0eec54f9fc1ab8d64651c4b';
+  const paths = [scopeStore, ...grokNeutralPaths, ...grokExpandPaths];
+  const loaded = loadMigrationReviews({
+    baseline: scopeBaseline,
+    baselineSnapshot: snapshot(scopeBaseline),
+    targetSnapshot: snapshot(target),
+  });
+  assert.deepEqual([...loaded.entries.keys()].sort(), paths.sort());
+  for (const path of paths) {
+    assert.equal(
+      loaded.entries.get(path).classification,
+      grokExpandPaths.includes(path) ? 'expand' : 'no-schema-change',
+    );
+  }
+  const result = createMigrationPlan({ baseline: scopeBaseline, target, changedPaths: paths });
+  assert.equal(result.ok, true, result.blockingReasons.join('\n'));
+  assert.notEqual(result.migrationPlan.phase, 'contract');
+  for (const path of [scopeStore, scopeEvidence]) {
+    assert.throws(
+      () =>
+        loadMigrationReviews({
+          baseline: scopeBaseline,
+          baselineSnapshot: snapshot(scopeBaseline),
+          targetSnapshot: snapshot(target, {
+            [path]: `${git('show', `${target}:${path}`)}\nchanged`,
+          }),
+        }),
+      /requires re-review|evidence changed or is invalid/u,
+    );
+  }
 });

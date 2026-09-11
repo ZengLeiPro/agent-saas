@@ -472,6 +472,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -533,7 +540,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -586,6 +593,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -854,9 +865,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:7b66409def5a89d2c8172594266c61e8ef168380226f55cc1190c342aefc1604",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -1730,7 +1741,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -1807,6 +1818,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -2047,9 +2062,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -2718,7 +2733,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -2791,6 +2806,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -3031,9 +3050,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -3665,7 +3684,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -3738,6 +3757,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -3978,9 +4001,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -4612,7 +4635,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -4685,6 +4708,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -4925,9 +4952,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -5537,7 +5564,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -5610,6 +5637,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -5850,9 +5881,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -6462,7 +6493,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -6535,6 +6566,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -6775,9 +6810,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -7387,7 +7422,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -7460,6 +7495,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -7735,9 +7774,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -8520,7 +8559,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -8600,7 +8639,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -8677,6 +8716,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -8917,9 +8960,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -9468,7 +9511,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",
@@ -9552,7 +9595,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -9629,6 +9672,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -9869,9 +9916,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -10430,7 +10477,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -10510,7 +10557,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -10587,6 +10634,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -10827,9 +10878,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -11388,7 +11439,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -11468,7 +11519,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -11545,6 +11596,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -11764,9 +11819,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -12289,7 +12344,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -12361,7 +12416,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -12438,6 +12493,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -12657,9 +12716,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -13182,7 +13241,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -13254,7 +13313,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -13331,6 +13390,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -13550,9 +13613,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -14075,7 +14138,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -14147,7 +14210,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -14224,6 +14287,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -14443,9 +14510,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -14968,7 +15035,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -15040,7 +15107,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -15117,6 +15184,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -15329,9 +15400,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -15843,7 +15914,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -15915,7 +15986,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -15992,6 +16063,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -16204,9 +16279,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "RC64（99b7496f）基线复审：completeResourceScopes 仅增加 integrated_system 默认 selected 空集，无 DDL、无启动回填；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+          "reason": "RC64（99b7496f）基线复审：completeResourceScopes 仅增加 integrated_system 默认 selected 空集，无 DDL、无启动回填；文件两端内容与已审核的 8cd1254e 基线完全相同。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -16718,7 +16793,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -16790,7 +16865,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -16867,6 +16942,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -17488,6 +17567,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -17593,7 +17679,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -17666,6 +17752,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -18280,6 +18370,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -18381,7 +18478,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -18454,6 +18551,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -19068,6 +19169,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -19165,7 +19273,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -19234,6 +19342,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -19848,6 +19960,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -19945,7 +20064,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -20014,6 +20133,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -20628,6 +20751,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -20725,7 +20855,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -20794,6 +20924,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -21380,6 +21514,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -21469,7 +21610,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -21538,6 +21679,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -22110,6 +22255,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -22207,7 +22359,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -22276,6 +22428,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -22820,6 +22976,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -22905,7 +23068,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -22970,6 +23133,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -23514,6 +23681,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -23599,7 +23773,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -23664,6 +23838,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -24166,6 +24344,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -24239,7 +24424,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -24300,6 +24485,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -24802,6 +24991,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -24871,7 +25067,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -24928,6 +25124,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -25416,6 +25616,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -25477,7 +25684,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -25530,6 +25737,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -26018,6 +26229,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -26075,7 +26293,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -26128,6 +26346,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -26616,6 +26838,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -26677,7 +26906,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -26730,6 +26959,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -27211,6 +27444,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -27264,7 +27504,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -27317,6 +27557,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -27798,6 +28042,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -27847,7 +28098,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/quota/providerQuotaPushedAccounts.pg.test.ts",
@@ -27904,6 +28155,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -28378,6 +28633,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -28427,7 +28689,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -28480,6 +28742,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -28954,6 +29220,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -29015,7 +29288,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -29068,6 +29341,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -29542,6 +29819,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -29603,7 +29887,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -29656,6 +29940,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -30130,6 +30418,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -30191,7 +30486,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -30244,6 +30539,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -30683,6 +30982,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -30733,6 +31039,10 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -31207,6 +31517,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -31305,6 +31622,10 @@
         {
           "path": "docs/reviews/grok-startup-root-evidence.md",
           "digest": "sha256:43b8c1dd6a1be575ee78770d63d2ddef4a9ee46e40de00810f3dd42bfd423afa"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -31394,6 +31715,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -31444,6 +31772,10 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -31526,6 +31858,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -31560,6 +31899,10 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -31635,6 +31978,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -31665,6 +32015,10 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -31733,6 +32087,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -31759,6 +32120,10 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     }

@@ -142,7 +142,10 @@ case "$task" in
       src/kyapp/gateway/snapshotStore.pg.test.ts \
       src/kyapp/__tests__/kyAppStores.pg.test.ts \
       src/kyapp/directory/store.pg.test.ts \
-      src/kyapp/delivery/store.pg.test.ts
+      src/kyapp/delivery/store.pg.test.ts \
+      src/kyapp/installations/scopeRetirement.pg.test.ts \
+      src/kyapp/installations/managementFlow.pg.test.ts \
+      src/kyapp/delivery/existingOnboard.pg.test.ts
     pnpm -F @kaiyan/ky-app-server exec vitest run src/sat/pgJtiStore.pg.test.ts src/pg/stores.pg.test.ts
     ;;
 

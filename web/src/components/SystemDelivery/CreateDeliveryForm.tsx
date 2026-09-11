@@ -199,13 +199,22 @@ function ConnectionForm({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const data = resource.data;
   const contactId = contact || data?.members.find((member) => member.isAdmin)?.userId || '';
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  // 安装白名单已退役；仍须取得本组织数据、有效联系人及已发布版本，不能把加载失败当作允许。
+  const canConnect = Boolean(
+    data &&
+      data.tenant.id === tenantId &&
+      !data.installation &&
+      data.members.some((member) => member.userId === contactId) &&
+      options.published &&
+      options.publishedDigest,
+  );
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!data?.eligible || !contactId || busy || !options.publishedDigest) return;
+    if (!canConnect || busy) return;
     setConfirmOpen(true);
   }
   async function confirmConnection() {
-    if (!data?.eligible || !contactId || busy || !options.publishedDigest) return;
+    if (!canConnect || busy) return;
     setBusy(true);
     onBusy(true);
     setError('');
@@ -236,32 +245,10 @@ function ConnectionForm({
         <Button onClick={onRefresh}>刷新接入记录</Button>
       </>
     );
-  if (!options.published) return <p>请先发布业务系统版本。</p>;
-  if (!data.eligible)
-    return (
-      <div role="alert">
-        <p>组织权益尚未包含此业务系统，请先配置组织权益。</p>
-        <Button
-          variant="link"
-          onClick={() =>
-            navigateGovernance(
-              governanceRoute('platform.org-business.tenants', {
-                entityId: tenantId,
-                search: '?tab=resource-scope',
-              }),
-            )
-          }
-        >
-          配置组织权益
-        </Button>
-        <Button variant="outline" onClick={resource.reload}>
-          重新检查
-        </Button>
-      </div>
-    );
+  if (!options.published || !options.publishedDigest) return <p>请先发布业务系统版本。</p>;
   return (
     <>
-      <form onSubmit={(event) => void submit(event)} className="space-y-4">
+      <form onSubmit={submit} className="space-y-4">
         <label className="block text-sm">
           技术联系人
           <select
@@ -343,7 +330,7 @@ function ConnectionForm({
             </Button>
           </div>
         )}
-        <Button disabled={busy || !contactId}>{busy ? '接入中…' : '确认接入'}</Button>
+        <Button disabled={busy || !canConnect}>{busy ? '接入中…' : '确认接入'}</Button>
       </form>
       <Dialog open={confirmOpen} onOpenChange={(open) => !busy && setConfirmOpen(open)}>
         <DialogContent>
@@ -359,7 +346,7 @@ function ConnectionForm({
             <Button variant="outline" disabled={busy} onClick={() => setConfirmOpen(false)}>
               取消
             </Button>
-            <Button disabled={busy} onClick={() => void confirmConnection()}>
+            <Button disabled={busy || !canConnect} onClick={() => void confirmConnection()}>
               {busy ? '接入中…' : '确认接入'}
             </Button>
           </DialogFooter>

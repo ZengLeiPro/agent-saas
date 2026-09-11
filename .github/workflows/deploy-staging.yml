@@ -1,4 +1,5 @@
 name: 测试环境部署
+run-name: ${{ inputs.automation_key || '测试环境部署' }}
 
 on:
   workflow_dispatch:
@@ -7,6 +8,15 @@ on:
         description: '发版说明'
         required: false
         type: string
+
+      automation_id:
+        description: '内部自动调度登记；人工操作留空'
+        type: string
+        required: false
+      automation_key:
+        description: '内部关联键；人工操作留空'
+        type: string
+        required: false
 
 permissions:
   contents: write
@@ -23,7 +33,29 @@ env:
   ACR_REPOSITORY: agent-saas/acs-sandbox
 
 jobs:
+  guard:
+    name: 验证部署请求与固定的业务源码
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+    outputs:
+      source_sha: ${{ steps.binding.outputs.source_sha }}
+      automatic: ${{ steps.binding.outputs.automatic }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: 在凭据分配前校验自动委派；普通人工部署仍绑定触发 SHA
+        id: binding
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs deploy-staging.yml
+
   ensure-evidence-writer:
+    needs: guard
     name: 按需升级发布证据 Writer
     concurrency:
       group: staging-evidence-writer
@@ -37,6 +69,7 @@ jobs:
       actions: read
       contents: read
       pull-requests: read
+      deployments: read
     env:
       RELEASE_EVIDENCE_SCHEMA_VERSION: '2'
       RELEASE_EVIDENCE_SCHEMA_REVISION: '3'
@@ -55,6 +88,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: 在准备变更前重新核验自动委派
+        if: inputs.automation_id != '' || inputs.automation_key != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs deploy-staging.yml
+
 
       - name: 记录实际部署引擎
         run: node scripts/release/deployment-engine.mjs .github/workflows/deploy-staging.yml "$RUNNER_TEMP/deployment-engine.json"
@@ -187,6 +226,12 @@ jobs:
             "$STAGING_SSH_HOST_KEY_SHA256"
           cat "$RUNNER_TEMP/staging-known-host" >> ~/.ssh/known_hosts
 
+      - name: 原子升级并验证 Writer前重新核对父请求
+        if: steps.capability.outputs.needs_upgrade == 'true' && inputs.automation_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs deploy-staging.yml
+
       - name: 原子升级并验证 Writer
         if: steps.capability.outputs.needs_upgrade == 'true'
         run: |
@@ -238,7 +283,10 @@ jobs:
     outputs:
       app_ci_run_id: ${{ steps.trusted_ci.outputs.run_id }}
       app_ci_run_attempt: ${{ steps.trusted_ci.outputs.run_attempt }}
-    needs: ensure-evidence-writer
+      source_sha: ${{ needs.guard.outputs.source_sha }}
+      automatic: ${{ needs.guard.outputs.automatic }}
+      evidence_artifact_id: ${{ steps.fresh_authority.outputs.artifact-id }}
+    needs: [ensure-evidence-writer, guard]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -247,6 +295,7 @@ jobs:
       actions: read
       contents: read
       pull-requests: read
+      deployments: read
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       ECS_HOST: ${{ secrets.ECS_HOST }}
@@ -259,7 +308,8 @@ jobs:
       ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       RELEASE_EVIDENCE_SCHEMA_VERSION: '2'
       RELEASE_EVIDENCE_SCHEMA_REVISION: '3'
-      RELEASE_SHA: ${{ github.sha }}
+      RELEASE_SHA: ${{ needs.guard.outputs.source_sha }}
+      AUTOMATIC_RELEASE: ${{ needs.guard.outputs.automatic }}
       PRODUCTION_CONFIG_IDENTITY_STAGE: steady-state
 
     steps:
@@ -314,6 +364,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: 在准备变更前重新核验自动委派
+        if: inputs.automation_id != '' || inputs.automation_key != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs deploy-staging.yml
+
 
       - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
@@ -332,7 +388,8 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$RELEASE_SHA" | grep -Eq '^[a-f0-9]{40}$'
-          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git cat-file -e "$RELEASE_SHA^{commit}"
           git fetch --quiet --no-tags origin main
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
 
@@ -473,6 +530,7 @@ jobs:
             "$RELEASE_SHA" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/checks.json"
 
       - name: 存在时复用不可变发布证据
+        if: env.AUTOMATIC_RELEASE != 'true'
         env:
           PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
           RELEASE_EVIDENCE_READ_TOKEN: ${{ secrets.PRODUCTION_OBSERVATION_TOKEN }}
@@ -549,6 +607,10 @@ jobs:
           if ! ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" \
             "node '$remote/read-production-state.mjs' --config-identity-stage '$PRODUCTION_CONFIG_IDENTITY_STAGE' --output '$remote/production.json' >/dev/null" \
             2> "$RUNNER_TEMP/production-live-observation-error.log"; then
+            if [ "$AUTOMATIC_RELEASE" = true ]; then
+              echo 'Automatic refresh requires a live production baseline; checkpoint fallback is not allowed' >&2
+              exit 1
+            fi
             echo 'Live Production baseline is unavailable; trying the last committed release checkpoint'
             ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" \
               "sudo node '$remote/production-checkpoint.mjs' baseline --checkpoint /etc/agent-saas/last-committed-production.json --output '$remote/production.json'"
@@ -619,9 +681,14 @@ jobs:
           process.stdout.write(value.toString());
           NODE
           )"
-          node scripts/release/publish-release-evidence.mjs \
-            --input "$RUNNER_TEMP/release-evidence.json" \
-            --url "$release_evidence_url"
+          if [ "$AUTOMATIC_RELEASE" = true ]; then
+            cp "$RUNNER_TEMP/release-evidence.json" "$RUNNER_TEMP/authoritative-evidence.json"
+            test "$(jq -r '.baselineObservation // empty' "$RUNNER_TEMP/authoritative-evidence.json")" = ''
+          else
+            node scripts/release/publish-release-evidence.mjs \
+              --input "$RUNNER_TEMP/release-evidence.json" \
+              --url "$release_evidence_url"
+          fi
 
           {
             echo '### Immutable Release Evidence'
@@ -629,8 +696,18 @@ jobs:
             echo "- Release SHA: \`$RELEASE_SHA\`"
             echo "- Evidence digest: \`$(jq -r .evidenceDigest "$RUNNER_TEMP/release-evidence.json")\`"
             echo "- Release PR: #$(jq -r .finalPullRequest.number "$RUNNER_TEMP/merge.json")"
-            echo '- Result: generated, written once, and read back with the separate read identity'
+            echo "- Result: generated; automatic=$AUTOMATIC_RELEASE (automatic authority is archived per run; manual authority uses Writer readback)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 保存本次自动刷新独立的权威证据（不覆盖旧 SHA 记录）
+        if: env.AUTOMATIC_RELEASE == 'true'
+        id: fresh_authority
+        uses: actions/upload-artifact@v7
+        with:
+          name: automatic-authority-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/authoritative-evidence.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: 上传生产基线观测诊断
         if: always()
@@ -645,7 +722,7 @@ jobs:
     name: 准备精确 ACS 镜像（含自动恢复）
     needs: prepare-evidence
     concurrency:
-      group: acr-image-${{ github.sha }}
+      group: acr-image-${{ needs.prepare-evidence.outputs.source_sha }}
       cancel-in-progress: false
       queue: max
     if: github.ref == 'refs/heads/main'
@@ -655,6 +732,10 @@ jobs:
     permissions:
       actions: read
       contents: read
+      deployments: read
+    env:
+      RELEASE_SOURCE_SHA: ${{ needs.prepare-evidence.outputs.source_sha }}
+      AUTOMATIC_RELEASE: ${{ needs.prepare-evidence.outputs.automatic }}
     outputs:
       include_acs: ${{ steps.image.outputs.include_acs }}
       artifact_name: ${{ steps.image.outputs.artifact_name }}
@@ -664,12 +745,25 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: 在准备变更前重新核验自动委派
+        if: inputs.automation_id != '' || inputs.automation_key != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs deploy-staging.yml
+
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           # This dependency-free job runs only Node/Python CLI scripts.
           package-manager-cache: false
+      - name: 读取同一次自动刷新生成的独立权威证据
+        if: needs.prepare-evidence.outputs.automatic == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          artifact-ids: ${{ needs.prepare-evidence.outputs.evidence_artifact_id }}
+          path: ${{ runner.temp }}
+          merge-multiple: true
       - name: 安装阿里云 CLI
         run: |
           set -euo pipefail
@@ -697,12 +791,16 @@ jobs:
           echo 'include_acs=false' >> "$GITHUB_OUTPUT"
           # Existing RCs are validated and reused by the deployment job, never rebuilt.
           if gh release view "$release_id" >/dev/null 2>&1; then exit 0; fi
-          curl -fsS --connect-timeout 10 --max-time 60 --retry 2 \
-            -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
-            "$RELEASE_EVIDENCE_URL?sha=$GITHUB_SHA" > "$RUNNER_TEMP/acs-authority.json"
-          jq -e --arg sha "$GITHUB_SHA" '.ok == true and .releaseSha == $sha and (.affectedComponents | type == "array")' "$RUNNER_TEMP/acs-authority.json" >/dev/null
+          if [ "$AUTOMATIC_RELEASE" = true ]; then
+            cp "$RUNNER_TEMP/authoritative-evidence.json" "$RUNNER_TEMP/acs-authority.json"
+          else
+            curl -fsS --connect-timeout 10 --max-time 60 --retry 2 \
+              -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
+              "$RELEASE_EVIDENCE_URL?sha=$RELEASE_SOURCE_SHA" > "$RUNNER_TEMP/acs-authority.json"
+          fi
+          jq -e --arg sha "$RELEASE_SOURCE_SHA" '.ok == true and .releaseSha == $sha and (.affectedComponents | type == "array")' "$RUNNER_TEMP/acs-authority.json" >/dev/null
           if jq -e '.affectedComponents | index("acs") != null' "$RUNNER_TEMP/acs-authority.json" >/dev/null; then
-            RELEASE_SHA="$GITHUB_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image-prepared.json" \
+            RELEASE_SHA="$RELEASE_SOURCE_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image-prepared.json" \
               bash scripts/release/wait-for-acr-image.sh
             echo 'include_acs=true' >> "$GITHUB_OUTPUT"
           fi
@@ -731,6 +829,8 @@ jobs:
     timeout-minutes: 120
     environment: staging
     env:
+      RELEASE_SOURCE_SHA: ${{ needs.prepare-evidence.outputs.source_sha }}
+      AUTOMATIC_RELEASE: ${{ needs.prepare-evidence.outputs.automatic }}
       APP_CI_RUN_ID: ${{ needs.prepare-evidence.outputs.app_ci_run_id }}
       APP_CI_RUN_ATTEMPT: ${{ needs.prepare-evidence.outputs.app_ci_run_attempt }}
       STAGING_E2E_USERNAME: ${{ secrets.STAGING_E2E_USERNAME }}
@@ -759,7 +859,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
+          printf '%s' "$RELEASE_SOURCE_SHA" | grep -Eq '^[a-f0-9]{40}$'
           test "$GITHUB_REF" = refs/heads/main
           test "$STAGING_E2E_USERNAME" = staging-e2e-admin
           : "${STAGING_E2E_PASSWORD:?Missing dedicated Staging smoke password}"
@@ -770,7 +870,7 @@ jobs:
           expires_at="$(node -e "process.stdout.write(new Date(Date.parse(process.argv[1])+86400000).toISOString())" "$created_at")"
           {
             echo "STAGING_RELEASE_ID=$release_id"
-            echo "STAGING_RELEASE_SHA=$GITHUB_SHA"
+            echo "STAGING_RELEASE_SHA=$RELEASE_SOURCE_SHA"
             echo "RELEASE_CREATED_AT=$created_at"
             echo "RELEASE_EXPIRES_AT=$expires_at"
           } >> "$GITHUB_ENV"
@@ -780,13 +880,20 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: 在准备变更前重新核验自动委派
+        if: inputs.automation_id != '' || inputs.automation_key != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs deploy-staging.yml
+
 
       - name: 确认 SHA 属于可信 main 历史
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git cat-file -e "$RELEASE_SOURCE_SHA^{commit}"
           git fetch --no-tags origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          git merge-base --is-ancestor "$RELEASE_SOURCE_SHA" origin/main
 
       - name: 确认测试环境资源已准备好首次部署
         run: |
@@ -842,41 +949,50 @@ jobs:
             "$RUNNER_TEMP/attestations/$STAGING_RELEASE_ID.jsonl"
           pnpm exec tsx server/src/release/validateReleaseManifestCli.ts \
             "$RUNNER_TEMP/manifest.json" "$STAGING_RELEASE_ID"
-          test "$(jq -r .releaseSha "$RUNNER_TEMP/manifest.json")" = "$GITHUB_SHA"
+          test "$(jq -r .releaseSha "$RUNNER_TEMP/manifest.json")" = "$RELEASE_SOURCE_SHA"
           manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
           git fetch --no-tags origin "refs/tags/$STAGING_RELEASE_ID:refs/tags/$STAGING_RELEASE_ID"
-          test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$GITHUB_SHA"
+          test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$RELEASE_SOURCE_SHA"
           tag_object="$(git rev-parse "$STAGING_RELEASE_ID^{tag}")"
           git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $manifest_digest"
-          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$GITHUB_SHA" || {
+          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$RELEASE_SOURCE_SHA" || {
             destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
             rm -rf "$RUNNER_TEMP/release" && mkdir -p "$RUNNER_TEMP/release"
             aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release/" --recursive \
               --region "$RELEASE_RECORD_OSS_REGION"
-            node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$GITHUB_SHA"
+            node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$RELEASE_SOURCE_SHA"
           }
           echo "MANIFEST_DIGEST=$manifest_digest" >> "$GITHUB_ENV"
           echo 'REUSE_RC=true' >> "$GITHUB_ENV"
 
+      - name: 读取同一次自动刷新生成的独立权威证据
+        if: needs.prepare-evidence.outputs.automatic == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          artifact-ids: ${{ needs.prepare-evidence.outputs.evidence_artifact_id }}
+          path: ${{ runner.temp }}
+          merge-multiple: true
       - name: 读取权威候选与生产证据
         if: env.REUSE_RC != 'true'
         run: |
           set -euo pipefail
           : "${RELEASE_EVIDENCE_URL:?Missing staging variable RELEASE_EVIDENCE_URL}"
           : "${RELEASE_EVIDENCE_TOKEN:?Missing staging secret RELEASE_EVIDENCE_TOKEN}"
-          curl -fsS --retry 3 \
-            -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
-            "$RELEASE_EVIDENCE_URL?sha=$GITHUB_SHA" > "$RUNNER_TEMP/authoritative-evidence.json"
-          test "$(jq -r .releaseSha "$RUNNER_TEMP/authoritative-evidence.json")" = "$GITHUB_SHA"
+          if [ "$AUTOMATIC_RELEASE" != true ]; then
+            curl -fsS --retry 3 \
+              -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
+              "$RELEASE_EVIDENCE_URL?sha=$RELEASE_SOURCE_SHA" > "$RUNNER_TEMP/authoritative-evidence.json"
+          fi
+          test "$(jq -r .releaseSha "$RUNNER_TEMP/authoritative-evidence.json")" = "$RELEASE_SOURCE_SHA"
           test "$(jq -r .ok "$RUNNER_TEMP/authoritative-evidence.json")" = true
           baseline="$(jq -r .productionBaseline.api.sourceSha "$RUNNER_TEMP/authoritative-evidence.json")"
           git cat-file -e "$baseline^{commit}"
-          git merge-base --is-ancestor "$baseline" "$GITHUB_SHA"
-          node scripts/release/classify-components.mjs --baseline "$baseline" --target "$GITHUB_SHA" > "$RUNNER_TEMP/classification.json"
+          git merge-base --is-ancestor "$baseline" "$RELEASE_SOURCE_SHA"
+          node scripts/release/classify-components.mjs --baseline "$baseline" --target "$RELEASE_SOURCE_SHA" > "$RUNNER_TEMP/classification.json"
           diff <(jq -S .components "$RUNNER_TEMP/classification.json") \
                <(jq -S .affectedComponents "$RUNNER_TEMP/authoritative-evidence.json")
           if ! node scripts/release/migration-plan.mjs --changed-paths "$RUNNER_TEMP/classification.json" \
-            --baseline "$baseline" --target "$GITHUB_SHA" > "$RUNNER_TEMP/migration-plan.json"; then
+            --baseline "$baseline" --target "$RELEASE_SOURCE_SHA" > "$RUNNER_TEMP/migration-plan.json"; then
             cat "$RUNNER_TEMP/migration-plan.json" >&2
             exit 1
           fi
@@ -905,7 +1021,7 @@ jobs:
             test -s "$RUNNER_TEMP/acs-image-prepared.json"
             # Recheck immutable build identity immediately before mutation; no waiting
             # or webhook writes while holding the Staging deployment slot.
-            ACR_SINGLE_PROBE=true RELEASE_SHA="$GITHUB_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image.json" \
+            ACR_SINGLE_PROBE=true RELEASE_SHA="$RELEASE_SOURCE_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image.json" \
               timeout --kill-after=5s 120s bash scripts/release/wait-for-acr-image.sh
             diff <(jq -S . "$RUNNER_TEMP/acs-image-prepared.json") \
                  <(jq -S . "$RUNNER_TEMP/acs-image.json")
@@ -920,26 +1036,26 @@ jobs:
           set -euo pipefail
           printf '%s:%s' "$APP_CI_RUN_ID" "$APP_CI_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*:[1-9][0-9]*$'
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_CI_RUN_ID" > "$RUNNER_TEMP/producer-run.json"
-          jq -e --arg sha "$GITHUB_SHA" --argjson attempt "$APP_CI_RUN_ATTEMPT" '
+          jq -e --arg sha "$RELEASE_SOURCE_SHA" --argjson attempt "$APP_CI_RUN_ATTEMPT" '
             .head_sha == $sha and .head_branch == "main" and .event == "push" and
             .path == ".github/workflows/ci.yml" and .run_attempt == $attempt and
             .status == "completed" and .conclusion == "success"
           ' "$RUNNER_TEMP/producer-run.json" >/dev/null
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$APP_CI_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/producer-artifacts.json"
-          node scripts/release/select-prepared-release-artifact.mjs "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
+          node scripts/release/select-prepared-release-artifact.mjs "$GITHUB_REPOSITORY" "$RELEASE_SOURCE_SHA" \
             "$APP_CI_RUN_ID" "$APP_CI_RUN_ATTEMPT" "$RUNNER_TEMP/producer-artifacts.json" "$RUNNER_TEMP/prepared-selection.env"
           source "$RUNNER_TEMP/prepared-selection.env"
           gh run download "$APP_CI_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "$PREPARED_ARTIFACT_NAME" \
             --dir "$RUNNER_TEMP/prepared-release"
           args=(--directory="$RUNNER_TEMP/prepared-release" --out="$RUNNER_TEMP/release" \
-            --sha="$GITHUB_SHA" --repository="$GITHUB_REPOSITORY" \
+            --sha="$RELEASE_SOURCE_SHA" --repository="$GITHUB_REPOSITORY" \
             --run-id="$APP_CI_RUN_ID" --run-attempt="$PREPARED_RUN_ATTEMPT")
           if [ "$INCLUDE_ACS" = true ]; then
             args+=(--acs-image="$(jq -r .reference "$RUNNER_TEMP/acs-image.json")")
           fi
           node scripts/release/consume-prepared-release.mjs "${args[@]}"
-          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$GITHUB_SHA"
+          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$RELEASE_SOURCE_SHA"
 
       - name: 持久化内容寻址产物
         if: env.REUSE_RC != 'true'
@@ -948,12 +1064,12 @@ jobs:
           : "${STAGING_RELEASE_OSS_URI:?Missing staging variable STAGING_RELEASE_OSS_URI}"
           case "$STAGING_RELEASE_OSS_URI" in oss://*) ;; *) echo 'Release URI must be OSS'; exit 1 ;; esac
           destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
-          bash scripts/release/publish-artifact-set.sh "$RUNNER_TEMP/release" "$destination" "$GITHUB_SHA"
+          bash scripts/release/publish-artifact-set.sh "$RUNNER_TEMP/release" "$destination" "$RELEASE_SOURCE_SHA"
           rm -rf "$RUNNER_TEMP/release-saved"
           mkdir -p "$RUNNER_TEMP/release-saved"
           aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release-saved/" \
             --recursive --region "$RELEASE_RECORD_OSS_REGION"
-          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release-saved/artifact-index.json" "$GITHUB_SHA"
+          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release-saved/artifact-index.json" "$RELEASE_SOURCE_SHA"
 
       - name: 创建规范发布清单
         if: env.REUSE_RC != 'true'
@@ -962,7 +1078,7 @@ jobs:
           node scripts/release/assemble-release-evidence.mjs \
             --authoritative "$RUNNER_TEMP/authoritative-evidence.json" \
             --index "$RUNNER_TEMP/release/artifact-index.json" \
-            --sha "$GITHUB_SHA" --release-id "$STAGING_RELEASE_ID" \
+            --sha "$RELEASE_SOURCE_SHA" --release-id "$STAGING_RELEASE_ID" \
             --actor "$GITHUB_ACTOR" --created-at "$RELEASE_CREATED_AT" \
             --expires-at "$RELEASE_EXPIRES_AT" --artifact-base-uri "$STAGING_RELEASE_OSS_URI" \
             --output "$RUNNER_TEMP/release-evidence.json"
@@ -1017,6 +1133,15 @@ jobs:
             '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,serverDigest:$serverDigest,webDigest:$webDigest,acsOrchestratorDigest:$acsOrchestratorDigest,acsImageDigest:$acsImageDigest,stagingRuntimeAssetsDigest:$stagingRuntimeAssetsDigest}' \
             > "$RUNNER_TEMP/staging-runtime-summary.json"
 
+      - name: 创建源码与当前部署引擎的明确委派证明
+        if: env.AUTOMATIC_RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/release/automatic-release-child.mjs deploy-staging.yml "$RUNNER_TEMP/automation-context.json"
+          node scripts/release/staging-source-authority.mjs create "$RUNNER_TEMP" "$RUNNER_TEMP/manifest.json" "$GITHUB_REPOSITORY"
+
       - name: 创建不可变 RC 标签、Release 与构建证明
         if: env.REUSE_RC != 'true'
         env:
@@ -1024,13 +1149,13 @@ jobs:
         run: |
           set -euo pipefail
           if git rev-parse "$STAGING_RELEASE_ID^{commit}" >/dev/null 2>&1; then
-            test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$GITHUB_SHA"
+            test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$RELEASE_SOURCE_SHA"
             tag_object="$(git rev-parse "$STAGING_RELEASE_ID^{tag}")"
             git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $MANIFEST_DIGEST"
           else
             git config user.name github-actions
             git config user.email github-actions@github.com
-            git tag -a "$STAGING_RELEASE_ID" "$GITHUB_SHA" \
+            git tag -a "$STAGING_RELEASE_ID" "$RELEASE_SOURCE_SHA" \
               -m "Agent SaaS $STAGING_RELEASE_ID" -m "manifest-digest: $MANIFEST_DIGEST"
             git push origin "refs/tags/$STAGING_RELEASE_ID"
           fi
@@ -1066,6 +1191,12 @@ jobs:
             --title "$STAGING_RELEASE_ID" --notes "$DISPATCH_REASON" \
             "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/release/artifact-index.json" \
             "$snapshot_path"
+          if [ "$AUTOMATIC_RELEASE" = true ]; then
+            for file in staging-source-binding.json authoritative-evidence.json; do
+              bash scripts/release/upload-github-release-asset-immutable.sh "$STAGING_RELEASE_ID" "$RUNNER_TEMP/$file"
+              bash scripts/release/upload-oss-object-immutable.sh "$RUNNER_TEMP/$file" "$record_uri/$file"
+            done
+          fi
 
       - name: 创建 GitHub 测试环境部署记录
         env:
@@ -1078,14 +1209,18 @@ jobs:
             "$RUNNER_TEMP/attestations/$STAGING_RELEASE_ID.jsonl" "$STAGING_RELEASE_ID" "$MANIFEST_DIGEST" "$GITHUB_RUN_ID")"
           if [ -n "$deployment_id" ]; then
             gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id" > "$RUNNER_TEMP/staging-deployment.json"
-            jq -e --arg sha "$GITHUB_SHA" --arg rc "$STAGING_RELEASE_ID" \
+            jq -e --arg sha "$RELEASE_SOURCE_SHA" --arg rc "$STAGING_RELEASE_ID" \
               '.environment=="staging" and .sha==$sha and .payload.releaseId==$rc' \
               "$RUNNER_TEMP/staging-deployment.json" >/dev/null
           else
-            deployment_id="$(jq -n --arg ref "$GITHUB_SHA" --arg releaseId "$STAGING_RELEASE_ID" \
+            source_binding=null
+            if [ "$AUTOMATIC_RELEASE" = true ]; then
+              source_binding="$(jq -c '{digest,stepId}' "$RUNNER_TEMP/staging-source-binding.json")"
+            fi
+            deployment_id="$(jq -n --arg ref "$RELEASE_SOURCE_SHA" --arg releaseId "$STAGING_RELEASE_ID" \
               --arg runId "$GITHUB_RUN_ID" --arg digest "$MANIFEST_DIGEST" \
-              --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
-              '{ref:$ref,environment:"staging",auto_merge:false,required_contexts:[],payload:{releaseId:$releaseId,stagingRunId:$runId,stagingRunAttempt:$runAttempt,manifestDigest:$digest}}' \
+              --arg runAttempt "$GITHUB_RUN_ATTEMPT" --argjson sourceBinding "$source_binding" \
+              '{ref:$ref,environment:"staging",auto_merge:false,required_contexts:[],payload:({releaseId:$releaseId,stagingRunId:$runId,stagingRunAttempt:$runAttempt,manifestDigest:$digest} + if $sourceBinding == null then {} else {automaticSource:$sourceBinding} end)}' \
               | gh api --method POST "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)"
           fi
           test "$deployment_id" -gt 0
@@ -1138,6 +1273,12 @@ jobs:
 
       - name: 记录部署前测试环境组件状态
         run: bash scripts/release/observe-staging-state.sh before
+
+      - name: 部署精确的测试环境 API、Worker 与 ACS 产物前重新核对父请求
+        if: inputs.automation_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs deploy-staging.yml
 
       - name: 部署精确的测试环境 API、Worker 与 ACS 产物
         run: |
@@ -1357,6 +1498,8 @@ jobs:
             ${{ runner.temp }}/staging-database-readback.json
             ${{ runner.temp }}/staging-public-web.json
             ${{ runner.temp }}/deployment-engine.json
+            ${{ runner.temp }}/staging-source-binding.json
+            ${{ runner.temp }}/authoritative-evidence.json
             ${{ runner.temp }}/staging-before.json
             ${{ runner.temp }}/staging-final.json
 

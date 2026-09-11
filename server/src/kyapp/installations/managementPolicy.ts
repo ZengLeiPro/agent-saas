@@ -1,6 +1,5 @@
 import type { JwtPayload } from '../../auth/types.js';
 import { isPlatformAdmin } from '../../auth/types.js';
-import type { PgEntitlementStore } from '../../data/entitlements/store.js';
 import type { KyAppInstallation } from '../systems/types.js';
 import { KyAppInstallationError } from './service.js';
 
@@ -14,26 +13,6 @@ export function managementTenant(
     throw new KyAppInstallationError('只能管理本组织业务系统', 'forbidden');
   }
   return user.tenantId;
-}
-
-export async function installableScope(
-  store: Pick<PgEntitlementStore, 'getEntitlementSet' | 'listResourceScopes'> | undefined,
-  tenantId: string,
-): Promise<(id: string) => boolean> {
-  if (!store) throw new KyAppInstallationError('组织权益服务不可用', 'memberships_unavailable');
-  const [set, scopes] = await Promise.all([
-    store.getEntitlementSet(tenantId),
-    store.listResourceScopes(tenantId),
-  ]);
-  const now = Date.now();
-  const valid =
-    set &&
-    ['active', 'trial'].includes(set.status) &&
-    (!set.effectiveFrom || Date.parse(set.effectiveFrom) <= now) &&
-    (!set.effectiveTo || Date.parse(set.effectiveTo) > now);
-  const scope = scopes.find((item) => item.resourceType === 'integrated_system');
-  return (id) =>
-    Boolean(valid && scope && (scope.mode === 'all' || (scope.mode === 'selected' && scope.resourceIds.includes(id))));
 }
 
 export function installationActions(

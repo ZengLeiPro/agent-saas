@@ -150,7 +150,6 @@ export function registerKyAppRoutes(
     createKyAppSystemsRouter({
       systems: assembly.systems,
       management,
-      ...(runtime.entitlementStore ? { entitlements: runtime.entitlementStore } : {}),
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
       // WP3 填充 WP2a 预留的钩子：未显式注入时用 Gateway 自带的真实注册 dry-run
       // （`skipped` 不等于通过，所以这里必须给默认值，不能留空）。
@@ -163,7 +162,6 @@ export function registerKyAppRoutes(
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
       systems: assembly.systems,
       management,
-      ...(runtime.entitlementStore ? { entitlements: runtime.entitlementStore } : {}),
       installations: assembly.installations,
       credentials: assembly.credentials,
       runtimeStore: assembly.runtimeStore,

@@ -11,21 +11,35 @@ permissions:
 jobs:
   snapshot:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
           fetch-depth: 1
-      - name: Archive tracked source only (no credentials or working files)
+      - uses: ./.github/actions/setup-pnpm
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.1'
+          cache: pnpm
+      - name: Install exact lockfile dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Export development dependencies without credentials
         run: |
-          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/grok-source.tar.gz"
-          git rev-parse HEAD > "$RUNNER_TEMP/grok-source-sha.txt"
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/grok-toolchain"
+          cp "$(command -v node)" "$RUNNER_TEMP/grok-toolchain/node"
+          cp "$(command -v pnpm)" "$RUNNER_TEMP/grok-toolchain/pnpm"
+          find . -type d -name node_modules -prune -print0 > "$RUNNER_TEMP/grok-modules.list"
+          tar --null -czf "$RUNNER_TEMP/grok-dependencies.tar.gz" -T "$RUNNER_TEMP/grok-modules.list"
+          tar -czf "$RUNNER_TEMP/grok-toolchain.tar.gz" -C "$RUNNER_TEMP/grok-toolchain" .
+          sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/grok-lockfile-sha256.txt"
       - uses: actions/upload-artifact@v4
         with:
-          name: grok-development-source
+          name: grok-development-dependencies
           path: |
-            ${{ runner.temp }}/grok-source.tar.gz
-            ${{ runner.temp }}/grok-source-sha.txt
+            ${{ runner.temp }}/grok-dependencies.tar.gz
+            ${{ runner.temp }}/grok-toolchain.tar.gz
+            ${{ runner.temp }}/grok-lockfile-sha256.txt
           retention-days: 1
           if-no-files-found: error

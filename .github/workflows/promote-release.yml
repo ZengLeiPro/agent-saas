@@ -543,6 +543,8 @@ jobs:
             scripts/release/verify-installed-release.mjs \
             scripts/release/read-live-production-components.mjs scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/verify-promotion-phase-state.mjs scripts/release/verify-app-retirement.sh scripts/release/observe-app-retirement.sh \
+            scripts/release/app-retirement-evidence.mjs scripts/release/register-app-retirement-observer.sh \
+            scripts/release/web-recovery-journal.mjs scripts/rollback-recovery-web.sh \
             scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
             scripts/release/artifact-lib.mjs scripts/release/reuse-promotion-artifacts.mjs \
             "$upload_root/"
@@ -735,8 +737,9 @@ jobs:
               --arg runId "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
               '.schemaVersion==1 and .status=="acknowledged" and .releaseId==$releaseId and .manifestDigest==$digest and .runId==$runId and .runAttempt==$attempt' \
               "$RUNNER_TEMP/app-handoff.json" >/dev/null
+            # The host installed its durable observer before signalling either old generation.
             ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-              "sudo systemd-run --quiet --collect --unit='agent-saas-retirement-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT' --property=RuntimeMaxSec=7300 --property=Nice=10 bash '$PROMOTION_REMOTE/observe-app-retirement.sh' '$PROMOTION_REMOTE'"
+              "sudo cat '$PROMOTION_REMOTE/app-retirement-targets.json'" > "$RUNNER_TEMP/app-retirement-targets.json"
           fi
 
       - name: 持久化 API 与 Worker 操作回执
@@ -772,6 +775,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$PROMOTION_REMOTE/web-recovery-journal.mjs' check '$RELEASE_ID' '$MANIFEST_DIGEST'" > "$RUNNER_TEMP/web-recovery-state.json"
+          if [ "$(jq -r .pending "$RUNNER_TEMP/web-recovery-state.json")" = true ]; then
+            WEB_ALREADY_TARGET=false
+            echo 'WEB_ALREADY_TARGET=false' >> "$GITHUB_ENV"
+          fi
           outcome=started
           [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
           [ "$WEB_ALREADY_TARGET" = true ] && outcome=skipped
@@ -795,7 +804,9 @@ jobs:
             echo 'Web already equals the frozen production baseline; keep the current entry'
             exit 0
           fi
-          if [ "$WEB_ALREADY_TARGET" = true ]; then
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$PROMOTION_REMOTE/web-recovery-journal.mjs' check '$RELEASE_ID' '$MANIFEST_DIGEST'" > "$RUNNER_TEMP/web-recovery-state.json"
+          if [ "$WEB_ALREADY_TARGET" = true ] && [ "$(jq -r .pending "$RUNNER_TEMP/web-recovery-state.json")" != true ]; then
             echo 'Web already equals the immutable target; keep the current entry'
             exit 0
           fi
@@ -808,6 +819,7 @@ jobs:
           web_committed=false
           recovery_started=false
           web_operation_deadline=0
+          web_budget_started=$SECONDS
           web_lock_is_alive() {
             [ -n "$web_lock_pid" ] && kill -0 "$web_lock_pid" 2>/dev/null
           }
@@ -953,6 +965,11 @@ jobs:
               return "$lock_status"
             fi
           }
+          write_web_budget() {
+            jq -nc --argjson elapsed "$((SECONDS - web_budget_started))" --argjson deploy "$1" --argjson rollback "$2" \
+              '{operationSeconds:1200,rollbackSeconds:300,lockLeaseSeconds:1700,elapsedSeconds:$elapsed,deployExitCode:$deploy,rollbackExitCode:$rollback}' \
+              > "$RUNNER_TEMP/web-budget.json"
+          }
           # 单一 EXIT trap 同时负责回滚与释放/保留主机锁，禁止在后文覆盖。
           cleanup_web_on_exit() {
             local deploy_status=$?
@@ -966,6 +983,7 @@ jobs:
                   run_with_web_lock bash -euo pipefail -c rollback_recovery_web || rollback_status=$?
                 fi
                 restore_web_entry || rollback_status=$?
+                if [ "$rollback_status" -eq 0 ]; then finish_web_recovery rolled_back || rollback_status=$?; fi
               else
                 echo 'Web lock was lost; refusing an unlocked rollback' >&2
                 rollback_status=1
@@ -979,6 +997,7 @@ jobs:
               web_lock_pid=''
             fi
             [ "$rollback_status" -eq 0 ] || deploy_status=1
+            write_web_budget "$deploy_status" "$rollback_status" || true
             exit "$deploy_status"
           }
           trap cleanup_web_on_exit EXIT
@@ -1007,7 +1026,6 @@ jobs:
           web_lock_ready_confirmed=true
           web_operation_deadline=$((SECONDS + 1200))
           # 任何 OSS/冷备 mutation 之前先快照冷备 current；deploy/rollback-recovery-web.sh 都以它为准。
-          run_with_web_lock bash -euo pipefail -c snapshot_recovery_web
           mkdir -p "$RUNNER_TEMP/web-assets" "$RUNNER_TEMP/web-before"
           tar -xzf "$RUNNER_TEMP/selected/web-assets.tgz" -C "$RUNNER_TEMP/web-assets"
           test -s "$RUNNER_TEMP/web-assets/index.html"
@@ -1027,6 +1045,9 @@ jobs:
               --arg accessKeySecret "$ALIBABACLOUD_ACCESS_KEY_SECRET" \
               '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$web_oss_credentials"
           )
+          source scripts/release/web-shell-recovery.sh
+          recover_previous_web_transaction
+          run_with_web_lock bash -euo pipefail -c snapshot_recovery_web
           run_with_web_lock node scripts/release/web-shell-transaction.mjs snapshot \
             "$RUNNER_TEMP/web-assets" "$PRODUCTION_WEB_OSS_URI" "$web_oss_credentials" \
             "$RUNNER_TEMP/web-before" "$RELEASE_ID" "$MANIFEST_DIGEST" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RELEASE_RECORD_OSS_REGION"
@@ -1035,9 +1056,10 @@ jobs:
             printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.attempted"
             run_with_web_lock node scripts/release/web-shell-transaction.mjs restore \
               "$RUNNER_TEMP/web-assets" "$PRODUCTION_WEB_OSS_URI" "$web_oss_credentials" \
-              "$RUNNER_TEMP/web-before" "$RELEASE_ID" "$MANIFEST_DIGEST" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RELEASE_RECORD_OSS_REGION" || return 1
+              "$RUNNER_TEMP/web-before" "$RELEASE_ID" "$MANIFEST_DIGEST" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RELEASE_RECORD_OSS_REGION" > "$RUNNER_TEMP/web-rollback.json" || return 1
             printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.succeeded"
           }
+          persist_web_recovery
           web_backup_ready=true
           # Immutable assets retain the PR #634 byte/header/cancellation gates.
           test -d "$RUNNER_TEMP/web-assets/assets"
@@ -1088,7 +1110,10 @@ jobs:
           run_with_web_lock bash -euo pipefail -c publish_recovery_web
           run_with_web_lock bash -euo pipefail -c verify_recovery_web
           web_lock_is_alive
+          # A lost commit acknowledgement is UNKNOWN, not permission to undo a committed transaction.
+          if ! finish_web_recovery committed; then web_backup_ready=false; exit 1; fi
           web_committed=true
+          write_web_budget 0 0
           release_web_lock
           trap - EXIT
 
@@ -1297,8 +1322,12 @@ jobs:
           remote_receipt_exists() {
             local component="$1" state="$2"
             # The reader runs as root inside a sealed 0700 directory. Only ENOENT means absent.
+            mkdir -p "$RUNNER_TEMP/rollback-receipts"
             ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-              "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/rollback-$component.$state' '$component' '$state' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT'"
+              "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/rollback-$component.$state' '$component' '$state' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
+              > "$RUNNER_TEMP/rollback-receipts/$component-$state.json" || return 1
+            jq -r 'if .readState=="present" then true elif .readState=="absent" then false else error("unverified rollback receipt") end' \
+              "$RUNNER_TEMP/rollback-receipts/$component-$state.json"
           }
           acs_attempted="$(remote_receipt_exists acs attempted)"
           acs_succeeded="$(remote_receipt_exists acs succeeded)"
@@ -1476,6 +1505,27 @@ jobs:
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
             || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
+      - name: 收集持久化恢复与退役观察回执
+        if: always() && env.PROMOTION_REMOTE != ''
+        run: |
+          set -euo pipefail
+          timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$PROMOTION_REMOTE/web-recovery-journal.mjs' check '$RELEASE_ID' '$MANIFEST_DIGEST'" \
+            > "$RUNNER_TEMP/web-recovery-last.json" || true
+          mkdir -p "$RUNNER_TEMP/rollback-receipts"
+          for component in acs app web; do
+            for state in attempted succeeded; do
+              timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+                "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/rollback-$component.$state' '$component' '$state' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
+                > "$RUNNER_TEMP/rollback-receipts/$component-$state.json" || true
+            done
+          done
+          for suffix in observation alert; do
+            timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              "sudo cat '/var/lib/agent-saas-release-recovery/retirements/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/app-retirement-$suffix.json'" \
+              > "$RUNNER_TEMP/app-retirement-$suffix.json" || true
+          done
+
       - name: 汇总脱敏的逐阶段诊断
         if: always()
         run: node scripts/release/collect-promotion-diagnostics.mjs "$RUNNER_TEMP" "$RUNNER_TEMP/promotion-diagnostics"
@@ -1493,6 +1543,17 @@ jobs:
             ${{ runner.temp }}/production-confirmed.json
             ${{ runner.temp }}/deployment-engine.json
             ${{ runner.temp }}/promotion-diagnostics/
+            ${{ runner.temp }}/operation-receipts/
+            ${{ runner.temp }}/rollback-receipts/
+            ${{ runner.temp }}/web-recovery-state.json
+            ${{ runner.temp }}/web-recovery-receipt.json
+            ${{ runner.temp }}/web-recovery-readback.json
+            ${{ runner.temp }}/web-recovery-replay.json
+            ${{ runner.temp }}/web-recovery-final.json
+            ${{ runner.temp }}/web-recovery-last.json
+            ${{ runner.temp }}/web-recovery-restore.json
+            ${{ runner.temp }}/web-rollback.json
+            ${{ runner.temp }}/web-budget.json
             ${{ runner.temp }}/reconcile-input.json
             ${{ runner.temp }}/checkpoint-maintenance.json
             ${{ runner.temp }}/production-checkpoint.json

@@ -30,8 +30,8 @@ export class RuntimeDrainState {
     }
   }
 
-  complete(activeStreams: number, activeUploads: number): boolean {
-    if (this.phase !== 'draining' || !this.quiesced || activeStreams !== 0 || activeUploads !== 0)
+  complete(activeStreams: number, activeUploads: number, registeredRuns = 0): boolean {
+    if (this.phase !== 'draining' || !this.quiesced || activeStreams !== 0 || activeUploads !== 0 || registeredRuns !== 0)
       return false;
     this.phase = 'completed';
     return true;

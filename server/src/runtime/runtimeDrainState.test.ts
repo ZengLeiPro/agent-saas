@@ -29,8 +29,12 @@ describe('runtime drain outcome', () => {
     );
     expect(drain.complete(1, 0)).toBe(false);
     expect(drain.complete(0, 1)).toBe(false);
+    expect(drain.complete(0, 0, 1)).toBe(false);
     expect(drain.complete(0, 0)).toBe(true);
     expect(drain.snapshot().drainState).toBe('completed');
+    drain.fail('shutdown_cleanup_failed');
+    expect(drain.snapshot().drainState).toBe('failed');
+    expect(drain.runtimeQuiesced).toBe(false);
   });
   it('does not turn late quiescence or cleanup failure into normal completion', async () => {
     let resolve!: () => void;

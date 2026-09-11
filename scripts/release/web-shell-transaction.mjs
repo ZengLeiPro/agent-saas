@@ -20,7 +20,7 @@ const metadata = (headers = {}) =>
 const safeKey = (key) =>
   typeof key === 'string' &&
   /^[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(key) &&
-  !key.split('/').some((part) => part === '..' || !part) &&
+  !key.split('/').some((part) => part === '..' || part === '.' || !part) &&
   !key.startsWith('assets/');
 
 export async function listMutableShell(root, prefix = '') {
@@ -50,16 +50,17 @@ async function head(client, key) {
   }
 }
 
-export async function snapshotShell({ client, keys, prefix = '', backup, identity }) {
+export async function snapshotShell({ client, keys, prefix = '', backup, identity, targetRoot }) {
   assert(keys.length > 0 && keys.length <= 1024 && keys.every(safeKey), 'Invalid shell key set');
   assert(new Set(keys).size === keys.length, 'Duplicate shell key');
   const entries = [];
   let total = 0;
   await mkdir(backup, { recursive: true, mode: 0o700 });
   for (const key of keys) {
+    const targetDigest = targetRoot ? digest(await readFile(join(targetRoot, key))) : undefined;
     const current = await head(client, prefix + key);
     if (!current) {
-      entries.push({ key, existed: false });
+      entries.push({ key, existed: false, ...(targetDigest ? { targetDigest } : {}) });
       continue;
     }
     const stored = await readStoredWebAsset(client, prefix + key);
@@ -76,6 +77,7 @@ export async function snapshotShell({ client, keys, prefix = '', backup, identit
     entries.push({
       key,
       existed: true,
+      ...(targetDigest ? { targetDigest } : {}),
       file,
       digest: digest(stored.content),
       metadata: metadata(stored.res.headers),
@@ -89,7 +91,7 @@ export async function snapshotShell({ client, keys, prefix = '', backup, identit
   return snapshot;
 }
 
-export async function restoreShell({ client, backup, prefix = '', identity }) {
+export async function restoreShell({ client, backup, prefix = '', identity, verifyOnly = false }) {
   const snapshot = JSON.parse(await readFile(join(backup, 'snapshot.json'), 'utf8'));
   assert.equal(snapshot.schemaVersion, 1);
   assert.deepEqual(
@@ -97,7 +99,8 @@ export async function restoreShell({ client, backup, prefix = '', identity }) {
     identity,
     'Web backup belongs to a different release operation',
   );
-  assert(Array.isArray(snapshot.entries) && snapshot.entries.length <= 1024);
+  assert(Array.isArray(snapshot.entries) && snapshot.entries.length > 0 && snapshot.entries.length <= 1024);
+  assert(new Set(snapshot.entries.map((entry) => entry.key)).size === snapshot.entries.length, 'Duplicate shell recovery key');
   // Validate the complete backup before the first restoration or removal.
   const prepared = [];
   for (const entry of snapshot.entries) {
@@ -113,6 +116,19 @@ export async function restoreShell({ client, backup, prefix = '', identity }) {
     assert.equal(digest(bytes), entry.digest, 'Corrupt shell backup');
     prepared.push({ ...entry, bytes });
   }
+  // A later runner must not overwrite an unrelated release or an operator's changes.
+  // Validate the ENTIRE observed key set before the first compensating write.
+  for (const entry of prepared) {
+    if (!entry.targetDigest) continue; // Legacy same-run snapshots are never accepted by the durable journal.
+    const current = await head(client, prefix + entry.key);
+    if (!current) { assert.equal(entry.existed, false, 'Previously existing shell key disappeared'); continue; }
+    const stored = await readStoredWebAsset(client, prefix + entry.key);
+    assert.equal(stored.res?.headers?.etag, current.res.headers.etag, 'Web shell changed during recovery preflight');
+    const observedDigest = digest(stored.content);
+    assert(observedDigest === entry.digest || observedDigest === entry.targetDigest,
+      'Web shell drifted outside the original transaction; refusing stale recovery');
+  }
+  if (verifyOnly) return { schemaVersion: 1, verified: true, phase: 'recovery_preflight' };
   // Restore the complete PWA shell before the pointer/entry HTML, retain all hash assets.
   prepared.sort((a, b) => Number(a.key === 'index.html') - Number(b.key === 'index.html'));
   const failures = [];
@@ -140,7 +156,8 @@ export async function restoreShell({ client, backup, prefix = '', identity }) {
     }
   }
   assert.equal(failures.length, 0, `Shell restoration failed for ${failures.length} key(s)`);
-  return { schemaVersion: 1, restored: prepared.length, verified: true };
+  return { schemaVersion: 1, restored: prepared.length, verified: true,
+    objects: prepared.map(({ key, existed, digest, targetDigest }) => ({ key, existed, digest, targetDigest })) };
 }
 
 async function main() {
@@ -174,10 +191,11 @@ async function main() {
     backup,
     identity: { releaseId, manifestDigest, runId, runAttempt },
   };
-  if (mode === 'snapshot') await snapshotShell({ ...options, keys: await listMutableShell(root) });
-  else if (mode === 'restore') await restoreShell(options);
+  let report;
+  if (mode === 'snapshot') await snapshotShell({ ...options, keys: await listMutableShell(root), targetRoot: root });
+  else if (mode === 'restore' || mode === 'verify-restore') report = await restoreShell({ ...options, verifyOnly: mode === 'verify-restore' });
   else throw new Error('Expected snapshot or restore');
-  console.log(JSON.stringify({ status: 'verified', phase: mode }));
+  console.log(JSON.stringify({ status: 'verified', phase: mode, ...report }));
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   main().catch(() => {

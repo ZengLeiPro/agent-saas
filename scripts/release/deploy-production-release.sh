@@ -438,6 +438,8 @@ lock=/run/lock/agent-saas/promotion.lock
 mkdir -p "$(dirname "$lock")"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another production promotion is active' >&2; exit 1; }
+# An unfinished Web transaction must not be overwritten by a later RC, even before ACS/App changes.
+node "$(dirname "$MANIFEST_PATH")/web-recovery-journal.mjs" check "$release_id" "$manifest_digest" >/dev/null
 
 # Promotion preflight uploads this contract module. Local/manual harnesses may keep it
 # next to this script; the production workflow uses a run-attempt-isolated preflight directory.
@@ -1570,7 +1572,7 @@ wait_for_idle_app_slots() {
         return 1
       fi
       if [ $((waited % 30)) -eq 0 ]; then
-        echo "idle slot still draining from the previous handoff (waited=${waited}s): $unit marker=$(tr -d '\n' <"$marker" 2>/dev/null || echo unreadable)"
+        echo "idle slot still draining from the previous handoff (waited=${waited}s): $unit marker=$marker"
       fi
     done
     if [ "$waited" -ge "$IDLE_SLOT_DRAIN_WAIT_SECONDS" ]; then
@@ -1676,6 +1678,14 @@ hand_off_retired_authority() {
 
 # A successful target readback alone cannot establish that the retired generation
 # stopped accepting work. Repeat this operation on already-target retries as well.
+capture_app_retirement() {
+  node "$(dirname "$MANIFEST_PATH")/app-retirement-evidence.mjs" capture "$(dirname "$MANIFEST_PATH")" \
+    "$1" "$2" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+}
+start_app_retirement_observer() {
+  bash "$(dirname "$MANIFEST_PATH")/register-app-retirement-observer.sh" "$(dirname "$MANIFEST_PATH")"
+}
+
 complete_app_handoff() {
   local current_api current_worker retired_api retired_worker evidence
   current_api="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
@@ -1683,9 +1693,13 @@ complete_app_handoff() {
   case "$current_api:$current_worker" in blue:blue|blue:green|green:blue|green:green) ;; *) return 1 ;; esac
   retired_api="$(other_color "$current_api")"
   retired_worker="$(other_color "$current_worker")"
+  capture_app_retirement "$current_api" "$current_worker" || return 1
+  start_app_retirement_observer || return 1
+  node "$(dirname "$MANIFEST_PATH")/app-retirement-evidence.mjs" check-handoff "$(dirname "$MANIFEST_PATH")" runtimeWorker || return 1
   hand_off_retired_authority "agent-saas-runtime-worker@$retired_worker" \
     "/run/agent-saas-runtime-worker-$retired_worker.draining" \
     "/run/agent-saas-runtime-worker-$retired_worker.pid" || return 1
+  node "$(dirname "$MANIFEST_PATH")/app-retirement-evidence.mjs" check-handoff "$(dirname "$MANIFEST_PATH")" api || return 1
   hand_off_retired_authority "agent-saas-server@$retired_api" \
     "/run/agent-saas-server-$retired_api.draining" \
     "/run/agent-saas-server-$retired_api.pid" || return 1

@@ -1,3 +1,4 @@
+import { RetirementInventory } from './retirementInventory.js';
 import type { RuntimeDrainHandoffState } from '../agent/types.js';
 
 interface RuntimeRunControllerEntry {
@@ -7,6 +8,7 @@ interface RuntimeRunControllerEntry {
   drainHandoff?: RuntimeDrainHandoffState;
   userId?: string;
   tenantId?: string;
+  workerId?: string;
 }
 
 interface RuntimeRunControllerOptions {
@@ -14,6 +16,7 @@ interface RuntimeRunControllerOptions {
   drainHandoff?: RuntimeDrainHandoffState;
   userId?: string;
   tenantId?: string;
+  workerId?: string;
 }
 
 interface WallClockEntry {
@@ -26,6 +29,7 @@ export const DEFAULT_FOREGROUND_RUN_MAX_WALL_CLOCK_MS = 6 * 60 * 60 * 1000;
 const wallClockTimers = new Map<string, WallClockEntry>();
 
 const controllers = new Map<string, RuntimeRunControllerEntry>();
+let retirementInventory: RetirementInventory | undefined;
 
 export const runtimeRunController = {
   register(runId: string, controller: AbortController, options: RuntimeRunControllerOptions = {}): void {
@@ -36,7 +40,23 @@ export const runtimeRunController = {
       drainHandoff: options.drainHandoff,
       userId: options.userId,
       tenantId: options.tenantId,
+      workerId: options.workerId,
     });
+    retirementInventory?.add(runId, options.workerId, options.tenantId);
+  },
+
+  /** Bind registration to the durable run identity without duplicating tenant/owner plumbing at callers. */
+  registerOwnedRun(run: { runId: string; tenantId?: string; workerId?: string }, controller: AbortController, options: RuntimeRunControllerOptions = {}): void {
+    this.register(run.runId, controller, { ...options, tenantId: run.tenantId, workerId: options.workerId ?? run.workerId });
+  },
+
+  beginRetirementTracking(): void {
+    retirementInventory ??= new RetirementInventory();
+    for (const [runId, entry] of controllers) retirementInventory.add(runId, entry.workerId, entry.tenantId);
+  },
+
+  retirementSnapshot() {
+    return retirementInventory?.snapshot() ?? { inventoryComplete: false, drainRuns: [] };
   },
 
   drainSnapshot(): { registeredRuns: number; cancelledAwaitingFinalization: number; handoffRequested: number; oldestRunAgeMs: number } {

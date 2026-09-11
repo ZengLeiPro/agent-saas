@@ -31,7 +31,7 @@ export async function readRollbackReceipt(path, expected, io = { lstat, readFile
   }
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  const [path, component, state, releaseId, manifestDigest, runId, runAttempt] =
+  const [path, component, state, releaseId, manifestDigest, runId, runAttempt, format] =
     process.argv.slice(2);
   const result = await readRollbackReceipt(path, {
     component,
@@ -41,7 +41,11 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     runId,
     runAttempt,
   });
-  if (result.state === 'present' || result.state === 'absent')
+  if (format === '--json') {
+    const expected = { schemaVersion: 1, component, state, releaseId, manifestDigest, runId, runAttempt };
+    console.log(JSON.stringify({ readState: result.state, receipt: result.state === 'present' ? expected : null }));
+    if (!['present', 'absent'].includes(result.state)) process.exitCode = 1;
+  } else if (result.state === 'present' || result.state === 'absent')
     console.log(result.state === 'present');
   else {
     console.error(`Rollback receipt is ${result.state}`);

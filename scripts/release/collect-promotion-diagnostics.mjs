@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile, lstat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { safeReceipt, safeRecovery, safeRestoration, safeMatrices, safeBudget, safeNextAction } from './promotion-diagnostics-summary.mjs';
 
 export function safeAssetEvent(value) {
   if (
@@ -36,7 +37,9 @@ export function safeAssetEvent(value) {
 export async function collectDiagnostics(root, output) {
   const json = async (name) => {
     try {
-      return JSON.parse(await readFile(join(root, name), 'utf8'));
+      const path = join(root, name); const info = await lstat(path);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 256_000) return null;
+      return JSON.parse(await readFile(path, 'utf8'));
     } catch {
       return null;
     }
@@ -48,8 +51,10 @@ export async function collectDiagnostics(root, output) {
   const directory = join(root, 'web-asset-diagnostics');
   for (const name of (await readdir(directory).catch(() => []))
     .filter((name) => /^worker-[0-9]+\.jsonl$/.test(name))
-    .sort()) {
-    const bytes = await readFile(join(directory, name));
+    .sort().slice(0, 8)) {
+    const file = join(directory, name); const info = await lstat(file);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 512_000) { truncated = true; continue; }
+    const bytes = await readFile(file);
     if (bytes.length > 512_000) {
       truncated = true;
       continue;
@@ -84,7 +89,20 @@ export async function collectDiagnostics(root, output) {
       : 'unknown',
     webAssets: { events, truncated },
     evidencePresent: {},
+    matrices: safeMatrices(await json('reconcile-input.json')),
+    budget: safeBudget(await json('web-budget.json')),
+    restoration: safeRestoration(await json('web-rollback.json')),
+    priorTransactionRestoration: safeRestoration(await json('web-recovery-restore.json')),
+    webRecovery: safeRecovery(await json('web-recovery-last.json')),
+    nextAction: safeNextAction(reconciliation?.recovery),
+    operationReceipts: [],
   };
+  const receipts = (await readdir(join(root, 'operation-receipts')).catch(() => [])).filter((name) => /^operation-[A-Za-z0-9_.-]+\.json$/u.test(name)).sort();
+  for (const name of receipts.slice(0, 64)) {
+    const receipt = safeReceipt(await json('operation-receipts/' + name));
+    if (receipt) result.operationReceipts.push(receipt);
+  }
+  result.receiptsTruncated = receipts.length > 64;
   for (const name of [
     'production-before.json',
     'production-after.json',

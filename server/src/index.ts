@@ -143,6 +143,17 @@ async function syncRuntimeWorkerReadyFile(): Promise<void> {
   }
 }
 
+// PID alone can be reused after restart. These Linux identities are fixed for this process.
+const drainProcessIdentity = (() => {
+  try {
+    const stat = fs.readFileSync('/proc/self/stat', 'utf8');
+    return {
+      bootId: fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(),
+      processStartTicks: stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19],
+    };
+  } catch { return {}; } // Unsupported hosts remain explicitly unverifiable, never presumed clean.
+})();
+
 function writeDrainMarker(snapshot?: {
   activeStreams: number;
   activeUploads: number;
@@ -152,9 +163,9 @@ function writeDrainMarker(snapshot?: {
   if (!drainMarker) return;
   try {
     const body = snapshot
-      ? JSON.stringify({ pid: process.pid, ...snapshot, ...runtimeDrainState?.snapshot(), ...runtimeRunController.drainSnapshot(), releaseSha: process.env.AGENT_SAAS_RELEASE_SHA })
+      ? JSON.stringify({ pid: process.pid, ...snapshot, ...runtimeDrainState?.snapshot(), ...runtimeRunController.drainSnapshot(), ...runtimeRunController.retirementSnapshot(), ...drainProcessIdentity, releaseSha: process.env.AGENT_SAAS_RELEASE_SHA })
       : String(process.pid);
-    fs.writeFileSync(`${drainMarker}.candidate`, `${body}\n`, 'utf-8');
+    fs.writeFileSync(`${drainMarker}.candidate`, `${body}\n`, { encoding: 'utf-8', mode: 0o600 });
     fs.renameSync(`${drainMarker}.candidate`, drainMarker);
   } catch (err) {
     serverLogger.error(`Failed to write drain marker ${drainMarker}: ${err instanceof Error ? err.message : String(err)}`);
@@ -472,6 +483,7 @@ process.on('SIGUSR2', () => {
   if (isDraining || shuttingDown) return;
   isDraining = true;
   runtimeDrainState = new RuntimeDrainState();
+  runtimeRunController.beginRetirementTracking();
   // 进程进入 drain 后可能仍在等待长 run 的安全交棒。先写 /run marker，配合
   // systemd ExecCondition 阻止它被 cgroup/global OOM 杀死后按 Restart=on-failure
   // 复活并丢失 drain 状态。下一次显式蓝绿启动由部署脚本清除此 marker。
@@ -514,9 +526,16 @@ process.on('SIGUSR2', () => {
     if (shuttingDown) return;
     shuttingDown = true;
     serverLogger.info(`Drain ${why}; cleaning up and exiting`);
-    const forceTimer = setTimeout(() => process.exit(0), 30_000);
+    const forceTimer = setTimeout(() => {
+      drain.fail('shutdown_cleanup_failed');
+      writeDrainMarker({ activeStreams: runtime?.channelManager.getActiveStreamCount() ?? 0, activeUploads: runtime?.uploadManager.getActiveUploadCount() ?? 0, runtimeQuiesced: false });
+      process.exit(0);
+    }, 30_000);
     forceTimer.unref();
-    void shutdownCleanup().finally(() => {
+    void shutdownCleanup().catch((error) => {
+      drain.fail('shutdown_cleanup_failed');
+      serverLogger.error('Drain cleanup failed:', error);
+    }).finally(() => {
       writeDrainMarker({ activeStreams: runtime?.channelManager.getActiveStreamCount() ?? 0, activeUploads: runtime?.uploadManager.getActiveUploadCount() ?? 0, runtimeQuiesced: drain.runtimeQuiesced });
       process.exit(0); // Keep Restart=on-failure from resurrecting a drained generation; the marker is authoritative.
     });
@@ -530,7 +549,7 @@ process.on('SIGUSR2', () => {
     const runtimeQuiesced = drain.runtimeQuiesced;
     writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced });
     serverLogger.info(`Drain: ${active} active stream(s), ${activeUploads} active upload(s) remaining, runtimeQuiesced=${runtimeQuiesced}`);
-    if (drain.complete(active, activeUploads)) {
+    if (drain.complete(active, activeUploads, runtimeRunController.drainSnapshot().registeredRuns)) {
       clearInterval(drainPoll);
       clearTimeout(drainDeadline);
       finishDrain('complete');

@@ -71,13 +71,16 @@ test('handoff recovery repeats both retired-generation checks and writes proof o
       deploy.indexOf('complete_app_handoff() {'),
       deploy.indexOf('\ndeploy_app() {'),
     );
-    for (const failRole of ['worker', 'api', 'none']) {
+    for (const failRole of ['capture', 'observer', 'identity', 'worker', 'api', 'none']) {
       const result = spawnSync(
         'bash',
         [
           '-c',
           `set -euo pipefail
 other_color() { [ "$1" = blue ] && echo green || echo blue; }
+capture_app_retirement() { echo capture >&2; [ "$FAIL_ROLE" != capture ]; }
+start_app_retirement_observer() { echo observer >&2; [ "$FAIL_ROLE" != observer ]; }
+node() { echo identity >&2; [ "$FAIL_ROLE" != identity ]; }
 hand_off_retired_authority() {
   echo "$1" >&2
   case "$FAIL_ROLE:$1" in worker:agent-saas-runtime-worker*|api:agent-saas-server*) return 1 ;; esac
@@ -104,7 +107,7 @@ complete_app_handoff`,
       if (failRole === 'none') {
         assert.match(
           result.stderr,
-          /agent-saas-runtime-worker@green[\s\S]*agent-saas-server@blue/u,
+          /capture[\s\S]*observer[\s\S]*identity[\s\S]*agent-saas-runtime-worker@green[\s\S]*identity[\s\S]*agent-saas-server@blue/u,
         );
         const proof = JSON.parse(await readFile(join(root, 'app-handoff-123-2.json'), 'utf8'));
         assert.deepEqual(proof.active, { api: 'green', runtimeWorker: 'blue' });

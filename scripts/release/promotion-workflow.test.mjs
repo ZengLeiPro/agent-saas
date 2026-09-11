@@ -517,7 +517,10 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /"\$RUNNER_TEMP\/built\/artifact-index\.json"/u);
   assert.doesNotMatch(workflow, /release\/wait-for-acr-image\.sh/u);
   assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
-  assert.match(workflow, /run_with_web_lock node scripts\/release\/web-shell-transaction\.mjs snapshot/u);
+  assert.match(
+    workflow,
+    /run_with_web_lock node scripts\/release\/web-shell-transaction\.mjs snapshot/u,
+  );
   assert.doesNotMatch(workflow, /run_with_web_lock aliyun --secure oss stat/u);
   assert.match(workflow, /PROMOTION_RETRY_MODE/u);
   assert.match(workflow, /OSS attestation mirror/u);
@@ -541,7 +544,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   );
   assert.match(
     workflow,
-    /if \[ "\$WEB_ALREADY_TARGET" = true \]; then[\s\S]*Web already equals the immutable target/u,
+    /if \[ "\$WEB_ALREADY_TARGET" = true \] && \[ "\$\(jq -r \.pending "\$RUNNER_TEMP\/web-recovery-state\.json"\)" != true \]; then[\s\S]*Web already equals the immutable target/u,
   );
   assert.match(workflow, /--state failed_before_change/u);
   assert.match(workflow, /already equals the immutable target/u);
@@ -877,7 +880,18 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(webStep, /run_control_ssh/u);
   assert.match(webStep, /web_lock_ready_confirmed/u);
   assert.match(webStep, /if ! web_lock_is_alive/u);
-  assert.match(webStep, /web_lock_is_alive\n\s+web_committed=true/u);
+  // Completion now has a durable commit point; a lost acknowledgement must not undo it.
+  ordered(
+    webStep.slice(
+      webStep.lastIndexOf('run_with_web_lock bash -euo pipefail -c verify_recovery_web'),
+    ),
+    [
+      'web_lock_is_alive',
+      'if ! finish_web_recovery committed; then web_backup_ready=false; exit 1; fi',
+      'web_committed=true',
+      'release_web_lock',
+    ],
+  );
   assert.match(webStep, /Web lock was lost; refusing an unlocked rollback/u);
   assert.match(webStep, /restore_web_entry \|\| rollback_status=\$\?/u);
   assert.match(

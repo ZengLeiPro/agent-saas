@@ -41,8 +41,15 @@ command_pid=''
 key=unknown
 stage=preflight
 declare -A workers=()
+write_batch_receipt() {
+  [ -n "$diagnostics" ] || return 0
+  printf '{"schemaVersion":1,"status":"%s","total":%s,"completed":%s,"uploaded":%s,"reused":%s,"concurrency":%s,"requestTimeoutSeconds":%s,"elapsedSeconds":%s,"exitCode":%s}\n' \
+    "$1" "${total:-0}" "${completed:-0}" "${uploaded:-0}" "${reused:-0}" \
+    "$concurrency" "$request_timeout" "$SECONDS" "$2" > "$diagnostics/batch.json.tmp" || return
+  mv -- "$diagnostics/batch.json.tmp" "$diagnostics/batch.json"
+}
 cleanup() {
-  local status=$? pid
+  local status=$? pid batch_status=failed
   trap - EXIT
   trap '' INT TERM HUP
   # Signal the timeout supervisor, then reap it. --foreground below prevents nested
@@ -57,7 +64,23 @@ cleanup() {
     printf 'Web asset verification failed: key=%s phase=%s exit=%s elapsed=%ss\n' \
       "$key" "$stage" "$status" "$SECONDS" >&2
   fi
-  if [ -n "$diagnostics" ] && [ "$mode" = asset ] && [ "$status" -ne 0 ]; then
+  if [ "$mode" = batch ]; then
+    [ "$status" -ne 0 ] || batch_status=completed
+    if ! write_batch_receipt "$batch_status" "$status"; then
+      echo 'Unable to persist Web asset batch evidence' >&2
+      [ "$status" -ne 0 ] || status=1
+    fi
+  fi
+  if [ -n "$diagnostics" ] && [ "$mode" = asset ] && \
+    [[ "$key" =~ ^[A-Za-z0-9._/-]{1,512}$ ]]; then
+    if [ "$status" -ne 0 ]; then
+      case "$stage" in
+        compress|put|readback|metadata|public-head|public-headers|byte-compare|preflight)
+          printf '{"key":"%s","phase":"%s","attempt":0,"exitCode":%s,"durationSeconds":%s}\n' \
+            "$key" "$stage" "$status" "$SECONDS" >> "$diagnostics/worker-$$.jsonl" ;;
+      esac
+    fi
+    # Every started asset gets a terminal event, including success. Missing events remain unknown.
     printf '{"key":"%s","phase":"verify","attempt":0,"exitCode":%s,"durationSeconds":%s}\n' \
       "$key" "$status" "$SECONDS" >> "$diagnostics/worker-$$.jsonl"
   fi
@@ -91,6 +114,7 @@ if [ "$mode" = batch ]; then
   uploaded=0
   reused=0
   completed=0
+  write_batch_receipt running 0
   active=0
   wait_one() {
     local pid status result

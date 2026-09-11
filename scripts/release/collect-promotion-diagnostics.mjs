@@ -1,74 +1,24 @@
 #!/usr/bin/env node
-import { mkdir, readFile, readdir, writeFile, lstat } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { safeReceipt, safeRecovery, safeRestoration, safeMatrices, safeBudget, safeNextAction } from './promotion-diagnostics-summary.mjs';
 
-export function safeAssetEvent(value) {
-  if (
-    !value ||
-    !/^[A-Za-z0-9._/-]{1,512}$/.test(value.key ?? '') ||
-    ![
-      'compress',
-      'put',
-      'readback',
-      'metadata',
-      'public-head',
-      'public-headers',
-      'verify',
-      'get',
-    ].includes(value.phase)
-  )
-    return null;
-  if (
-    ![value.attempt, value.exitCode, value.durationSeconds].every(
-      (item) => Number.isSafeInteger(item) && item >= 0,
-    )
-  )
-    return null;
-  return {
-    key: value.key,
-    phase: value.phase,
-    attempt: value.attempt,
-    exitCode: value.exitCode,
-    durationSeconds: value.durationSeconds,
-  };
-}
+import { readEvidenceJson } from './evidence-file.mjs';
+import { collectAssetDiagnostics } from './web-asset-diagnostics.mjs';
+export { safeAssetEvent } from './web-asset-diagnostics.mjs';
+
 export async function collectDiagnostics(root, output) {
   const json = async (name) => {
     try {
-      const path = join(root, name); const info = await lstat(path);
-      if (!info.isFile() || info.isSymbolicLink() || info.size > 256_000) return null;
-      return JSON.parse(await readFile(path, 'utf8'));
+      return await readEvidenceJson(join(root, name));
     } catch {
       return null;
     }
   };
   const engine = await json('deployment-engine.json');
   const reconciliation = await json('reconcile.json');
-  const events = [];
-  let truncated = false;
-  const directory = join(root, 'web-asset-diagnostics');
-  for (const name of (await readdir(directory).catch(() => []))
-    .filter((name) => /^worker-[0-9]+\.jsonl$/.test(name))
-    .sort().slice(0, 8)) {
-    const file = join(directory, name); const info = await lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > 512_000) { truncated = true; continue; }
-    const bytes = await readFile(file);
-    if (bytes.length > 512_000) {
-      truncated = true;
-      continue;
-    }
-    for (const line of bytes.toString().split('\n').filter(Boolean)) {
-      try {
-        const value = safeAssetEvent(JSON.parse(line));
-        if (value && events.length < 2000) events.push(value);
-        else truncated = true;
-      } catch {
-        truncated = true;
-      }
-    }
-  }
+  const webAssets = await collectAssetDiagnostics(join(root, 'web-asset-diagnostics'));
   const result = {
     schemaVersion: 1,
     engine: engine
@@ -87,7 +37,7 @@ export async function collectDiagnostics(root, output) {
     ].includes(reconciliation?.outcome)
       ? reconciliation.outcome
       : 'unknown',
-    webAssets: { events, truncated },
+    webAssets,
     evidencePresent: {},
     matrices: safeMatrices(await json('reconcile-input.json')),
     budget: safeBudget(await json('web-budget.json')),

@@ -22,6 +22,7 @@ function fixture(now = Date.now()) {
     releaseSha: 'a'.repeat(40),
     digest: `sha256:${'b'.repeat(64)}`,
     promotionPolicy: { expiresAt: iso(now + 3600000) },
+    migrationPlan: { phase: 'none', planDigest: `sha256:${'c'.repeat(64)}` },
   };
   const entry = (state, operationKey, recordedAt) => ({
     state,
@@ -306,6 +307,11 @@ async function files(root, f) {
     join(root, 'history.jsonl'),
     f.history.map((x) => JSON.stringify(x)).join('\n') + '\n',
   );
+  await writeFile(join(root, 'staging-database-readback.json'), JSON.stringify({
+    schemaVersion: 1, releaseId: f.manifest.releaseId, manifestDigest: f.manifest.digest,
+    planDigest: f.manifest.migrationPlan.planDigest, environment: 'staging',
+    observedAt: f.history[2].recordedAt, status: 'not_required', checks: [],
+  }));
   const smoke = {
     schemaVersion: 1,
     status: 'passed',
@@ -360,7 +366,9 @@ if (process.env.GH_FAIL && endpoint?.includes(process.env.GH_FAIL)) process.exit
 if (args[0]==='run') {
   if (process.env.GH_FAIL === 'download') process.exit(23);
   const out=args[args.indexOf('--dir')+1]; fs.mkdirSync(out,{recursive:true});
-  fs.copyFileSync(p.join(root,'staging-core-smoke.json'),p.join(out,'staging-core-smoke.json')); process.exit(0);
+  fs.copyFileSync(p.join(root,'staging-core-smoke.json'),p.join(out,'staging-core-smoke.json'));
+  const db = p.join(root,'staging-database-readback.json');
+  if (fs.existsSync(db)) fs.copyFileSync(db,p.join(out,'staging-database-readback.json')); process.exit(0);
 }
 let name = endpoint?.includes('/statuses?') ? 'deployment-statuses' : endpoint?.includes('/deployments/') ? 'deployment' : endpoint?.includes('/attempts/') ? 'staging-attempt' : 'staging-run';
 let value=JSON.parse(fs.readFileSync(p.join(root,name+'.json')));
@@ -369,7 +377,8 @@ if (process.env.GH_RERUN && name==='staging-run') {
 }
 process.stdout.write(JSON.stringify(value));
 `;
-for (const mode of ['success', 'pagination-failure', 'download-failure', 'rerun-during-download']) {
+for (const mode of ['success', 'pagination-failure', 'download-failure', 'rerun-during-download',
+  'invalid-readback', 'missing-readback', 'wrong-readback', 'stale-readback']) {
   test(`real shell/validator orchestration: ${mode}`, async (t) => {
     if (spawnSync('jq', ['--version']).status !== 0)
       return t.skip('jq is required for the workflow shell integration');
@@ -388,6 +397,15 @@ for (const mode of ['success', 'pagination-failure', 'download-failure', 'rerun-
       if (mode === 'pagination-failure') env.GH_FAIL = '/statuses?';
       if (mode === 'download-failure') env.GH_FAIL = 'download';
       if (mode === 'rerun-during-download') env.GH_RERUN = '1';
+      const dbPath = join(root, 'staging-database-readback.json');
+      if (mode === 'invalid-readback') await writeFile(dbPath, '{"postconditionsDigest":undefined}');
+      if (mode === 'missing-readback') await rm(dbPath);
+      if (mode === 'wrong-readback' || mode === 'stale-readback') {
+        const db = JSON.parse(await readFile(dbPath));
+        if (mode === 'wrong-readback') db.environment = 'production';
+        else db.observedAt = iso(f.now - 3600000);
+        await writeFile(dbPath, JSON.stringify(db));
+      }
       const out = join(root, 'diagnostics');
       const result = spawnSync(
         'bash',
@@ -401,6 +419,12 @@ for (const mode of ['success', 'pagination-failure', 'download-failure', 'rerun-
       );
       const report = JSON.parse(await readFile(join(out, 'report.json')));
       assert.equal(report.status, mode === 'success' ? 'passed' : 'rejected');
+      if (mode.endsWith('readback')) {
+        assert.equal(report.check, 'database_readback_validation');
+        assert.equal(report.phase, 'before_production_mutation');
+      }
+      if (mode === 'success') assert.equal(
+        JSON.parse(await readFile(join(out, 'database-readback-validation.json'))).status, 'passed');
       const calls = (await readFile(join(root, 'calls.txt'), 'utf8'))
         .trim()
         .split('\n')
@@ -423,3 +447,4 @@ for (const mode of ['success', 'pagination-failure', 'download-failure', 'rerun-
 test('shell is syntactically valid', () => {
   execFileSync('bash', ['-n', script]);
 });
+

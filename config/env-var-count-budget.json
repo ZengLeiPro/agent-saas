@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "reason": "CI/CD hardening: ACS_ORCH_DRAIN_STATE_FILE binds durable drain acknowledgment; AGENT_SAAS_EVIDENCE_IMPLEMENTATION_DIGEST identifies Writer implementation; CI_TEST_MATRIX validates coverage completeness; GITHUB_ENV and GITHUB_RUN_ID/GITHUB_RUN_ATTEMPT bind evidence; MP_TEST_DATABASE_URL is restricted to an isolated loopback PostgreSQL; STAGING_API_URL selects the fixed smoke target; PATH is preserved explicitly for the isolated ACS package child without inheriting deployment secrets.",
-  "updatedAt": "2026-09-08",
+  "reason": "Staging memory admission: register the existing AGENT_SAAS_ENVIRONMENT in the server inventory because MemoryPressureGuard now directly reads it to select Staging-only reserves. Deployed units and runtime identity already require this variable; no new operator setting is introduced. Preserve all other domain budgets and prior CI/CD hardening entries.",
+  "updatedAt": "2026-09-11",
   "domains": {
     "server": {
-      "budget": 64,
+      "budget": 65,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
@@ -17,6 +17,7 @@
         "AGENT_SAAS_DRAIN_DEADLINE_MS",
         "AGENT_SAAS_DRAIN_MARKER",
         "AGENT_SAAS_DRAIN_UPLOAD_STALE_MS",
+        "AGENT_SAAS_ENVIRONMENT",
         "AGENT_SAAS_PIDFILE",
         "AGENT_SAAS_PROCESS_ROLE",
         "AGENT_SAAS_READYFILE",

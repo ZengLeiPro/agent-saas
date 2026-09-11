@@ -104,11 +104,12 @@ describe('Zhipu quota model configuration', () => {
 });
 
 describe('Zhipu quota dashboard card', () => {
-  it('renders the provider, actual windows, shared-account warning and refresh actions', async () => {
+  it('renders the provider, actual windows and refresh actions without the scope disclaimer', async () => {
     render(<ProviderQuotaPage />);
     await waitFor(() => expect(screen.getByTestId('quota-account-zhipu:glm')).toBeTruthy());
     expect(screen.getByText('智谱 Coding Plan')).toBeTruthy();
-    expect(screen.getByTestId('zhipu-quota-scope').textContent).toContain('不是单 Key');
+    expect(screen.queryByTestId('zhipu-quota-scope')).toBeNull();
+    expect(screen.queryByText(/个人套餐|账号共享额度|不能相加|不做推算/u)).toBeNull();
     expect(screen.getByText('25.0%')).toBeTruthy();
     expect(screen.getByText('80.0%')).toBeTruthy();
     expect(screen.getByText('接近上限')).toBeTruthy();

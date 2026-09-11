@@ -1,3 +1,4 @@
+import { GrokSubscriptionCard } from "./GrokSubscriptionCard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CircleAlert, CircleCheck, Copy, Database, GripVertical, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { authFetch } from "@/lib/authFetch";
@@ -891,6 +892,7 @@ export function ModelManager() {
               <UtilityModelSettings groups={models.groups} readOnly={platformReadOnly} settings={titleSettings} onDirty={() => setSavedAt(null)} />
 
               <CodexSubscriptionCard readOnly={accountReadOnly} />
+              <GrokSubscriptionCard readOnly={accountReadOnly} />
 
               <Card className="h-fit">
                 <CardHeader className="pb-3">

@@ -1,3 +1,5 @@
+import { grokSubscriptionTableName } from './grokSubscriptionTableNames.js';
+import { grokRefreshJournalSchemaStatements } from './grokSubscriptionSchema.js';
 import pg from 'pg';
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
@@ -28,16 +30,13 @@ export class PgGrokRefreshJournal implements SubscriptionRefreshJournal {
   ) {
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(prefix))
       throw new Error('Invalid runtime table prefix');
-    this.table = `${prefix.slice(0, 30)}_grok_credential_refresh_journal`;
+    this.table = grokSubscriptionTableName(prefix, 'refresh_journal');
   }
   async init(): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [`${this.table}:init`]);
-      await client.query(`CREATE TABLE IF NOT EXISTS ${this.table} (
-        credential_ref TEXT PRIMARY KEY, credential_generation BIGINT NOT NULL CHECK (credential_generation > 0),
-        started_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )`);
+      for (const statement of grokRefreshJournalSchemaStatements(this.table)) await client.query(statement);
     } finally {
       await client
         .query('SELECT pg_advisory_unlock(hashtext($1))', [`${this.table}:init`])

@@ -146,6 +146,8 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/runtime/pgEventStore.ts',
   'server/src/runtime/pgSessionLock.ts',
   'server/src/runtime/responses/codexCredentialRuntimeState.ts',
+  'server/src/runtime/responses/subscriptionCredentialRuntimeState.ts',
+  'server/src/runtime/responses/subscriptionRefreshJournal.ts',
   'server/src/runtime/runResolutionSnapshotStore.ts',
   'server/src/runtime/runStore.ts',
   'server/src/runtime/runStoreSchema.ts',

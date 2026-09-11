@@ -1,3 +1,5 @@
+import { grokSubscriptionTableName } from './grokSubscriptionTableNames.js';
+import { grokRuntimeStateSchemaStatements } from './grokSubscriptionSchema.js';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -130,17 +132,20 @@ export class PgSubscriptionCredentialRuntimeStateStore implements SubscriptionCr
   constructor(
     private readonly pool: PgPool,
     tablePrefix = 'runtime',
-    provider: 'codex' | 'grok' = 'codex',
+    private readonly provider: 'codex' | 'grok' = 'codex',
   ) {
     if (provider !== 'codex' && provider !== 'grok')
       throw new Error('Unknown subscription provider');
-    this.table = `${sanitizeIdentifier(tablePrefix)}_${provider}_credential_runtime_state`;
+    this.table = provider === 'grok' ? grokSubscriptionTableName(tablePrefix, 'runtime_state') : `${sanitizeIdentifier(tablePrefix)}_codex_credential_runtime_state`;
   }
 
   async init(): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [`${this.table}:init`]);
+      if (this.provider === 'grok') {
+        for (const statement of grokRuntimeStateSchemaStatements(this.table)) await client.query(statement);
+      } else {
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.table} (
           credential_ref TEXT PRIMARY KEY,
@@ -156,6 +161,7 @@ export class PgSubscriptionCredentialRuntimeStateStore implements SubscriptionCr
       await client.query(
         `CREATE INDEX IF NOT EXISTS ${this.table}_cooldown_idx ON ${this.table} (cooldown_until)`,
       );
+      }
     } finally {
       await client
         .query('SELECT pg_advisory_unlock(hashtext($1))', [`${this.table}:init`])

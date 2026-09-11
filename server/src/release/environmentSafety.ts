@@ -1,3 +1,4 @@
+import { GROK_DISCOVERY_ENDPOINT, GROK_RESPONSES_ENDPOINT } from '../runtime/responses/grokProtocol.js';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
@@ -239,6 +240,14 @@ export function assertRuntimeEnvironmentSafety(
   )
     failures.push('Google OAuth endpoint is not staging-allowlisted');
   const oauthEnabled = env.AGENT_SAAS_STAGING_OAUTH_ENABLED;
+  if (config.grokSubscription?.enabled) {
+    if (oauthEnabled !== '1') failures.push('Grok subscription requires explicitly enabled Staging OAuth');
+    if (!urlAllowed(config.grokSubscription.endpoint ?? GROK_RESPONSES_ENDPOINT, oauthHosts)
+        || !urlAllowed(GROK_DISCOVERY_ENDPOINT, oauthHosts)) {
+      failures.push('Grok authentication and subscription endpoints must both be staging-allowlisted');
+    }
+  }
+
   if (oauthEnabled !== '0' && oauthEnabled !== '1') {
     failures.push('AGENT_SAAS_STAGING_OAUTH_ENABLED must explicitly be 0 or 1');
   }

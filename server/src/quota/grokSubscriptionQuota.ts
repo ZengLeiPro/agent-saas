@@ -36,7 +36,7 @@ export function normalizeGrokBilling(raw: unknown): GrokNormalizedQuota {
   const period = currentPeriod as Record<string, unknown> | undefined;
   const used = integerValue(config.used);
   const limit = integerValue(config.monthlyLimit ?? config.monthly_limit);
-  const explicitValue = config.creditUsagePercent ?? config.credit_usage_percent;
+  const explicitValue = Object.hasOwn(config, 'creditUsagePercent') ? config.creditUsagePercent : config.credit_usage_percent;
   const explicitPercent = percent(explicitValue);
   // An explicitly malformed value is not repaired by a speculative zero or fallback percentage.
   const usedPercent =

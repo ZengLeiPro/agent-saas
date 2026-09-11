@@ -1,3 +1,4 @@
+import { createGrokCredentialPersistence } from '../runtime/responses/grokCredentialPersistence.js';
 import type { AppConfig } from './config.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
 import type { SecretVault } from '../security/secretVault.js';
@@ -12,9 +13,6 @@ import { GrokCredentialManager } from '../runtime/responses/grokCredentialManage
 import { GrokDeviceAuthService } from '../runtime/responses/grokOAuth.js';
 import { GrokOAuthClient } from '../runtime/responses/grokOAuthClient.js';
 import { GrokModelCatalogService } from '../runtime/responses/grokModelCatalog.js';
-import { PgSubscriptionCredentialLock } from '../runtime/responses/subscriptionCredentialLock.js';
-import { createSubscriptionCredentialRuntimeStateStore } from '../runtime/responses/subscriptionCredentialRuntimeState.js';
-import { createGrokRefreshJournal } from '../runtime/responses/subscriptionRefreshJournal.js';
 export async function createModelSubscriptionRuntime(options: {
   config: AppConfig;
   secretVault: SecretVault;
@@ -34,16 +32,7 @@ export async function createModelSubscriptionRuntime(options: {
   const grokCredentialManager = new GrokCredentialManager({
     vault: secretVault,
     getConfig: () => config.grokSubscription,
-    ...(pool ? { lock: new PgSubscriptionCredentialLock(pool) } : {}),
-    runtimeStateStore: await createSubscriptionCredentialRuntimeStateStore(
-      pool,
-      config.runtimeEventStore,
-      'grok',
-    ),
-    refreshJournal: await createGrokRefreshJournal(
-      pool,
-      config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined,
-    ),
+    ...await createGrokCredentialPersistence(pool, config.runtimeEventStore),
     oauthClient,
     requireRotationCoordinator: readRuntimeIdentity().environment === 'production',
   });

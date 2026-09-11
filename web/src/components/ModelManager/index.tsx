@@ -110,6 +110,14 @@ export function ModelManager() {
     }
   }, [acceptResponse, hydrateAdvancedText, titleSettings.applyResponse]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (loading) return;
+    const capability = new URLSearchParams(window.location.search).get('capability');
+    if (capability !== 'grok' && capability !== 'codex') return;
+    setSelectedPanel({ type: 'general' });
+    const timer = setTimeout(() => document.getElementById(`${capability}-subscription`)?.scrollIntoView?.({ block: 'start' }), 0);
+    return () => clearTimeout(timer);
+  }, [loading]);
   const updateModels = useCallback((updater: (current: EditableModelsConfig) => EditableModelsConfig) => {
     setModels((current) => current ? updater(current) : current);
     setSavedAt(null);

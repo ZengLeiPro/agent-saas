@@ -11,14 +11,18 @@ export interface PgLockPool {
   connect(): Promise<PgLockClient>;
 }
 
+export interface PgSubscriptionLockScope {
+  <T>(client: PgLockClient, action: () => Promise<T>): Promise<T>;
+}
+
 export class PgSubscriptionCredentialLock implements SubscriptionCredentialLock {
-  constructor(private readonly pool: PgLockPool) {}
+  constructor(private readonly pool: PgLockPool, private readonly scope?: PgSubscriptionLockScope) {}
 
   async runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [key]);
-      return await fn();
+      return await (this.scope ? this.scope(client, fn) : fn());
     } finally {
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]).catch(() => undefined);
       client.release();

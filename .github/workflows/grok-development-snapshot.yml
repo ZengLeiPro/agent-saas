@@ -1,17 +1,13 @@
 name: Grok development snapshot
-
 on:
   push:
     branches: [feat/grok-subscription-global-pool]
-    paths: [.github/workflows/grok-development-snapshot.yml, scripts/grok-apply.py, scripts/grok-followup.py]
-
+    paths: [.github/workflows/grok-development-snapshot.yml, scripts/grok-apply.py, scripts/grok-followup.py, scripts/grok-prepare.py]
 permissions:
   contents: write
-
 concurrency:
   group: grok-isolated-development
   cancel-in-progress: false
-
 jobs:
   implementation:
     if: github.ref == 'refs/heads/feat/grok-subscription-global-pool'
@@ -46,27 +42,25 @@ jobs:
       - name: Apply reviewed feature changes
         run: |
           set -euo pipefail
-          test "$(git branch --show-current)" = feat/grok-subscription-global-pool
-          if [ -f scripts/grok-apply.py ]; then
-            python3 scripts/grok-apply.py
-            python3 - <<'PY'
-          from pathlib import Path
-          p = Path('server/src/__tests__/grokCredentialLifecycle.test.ts')
-          s = p.read_text().replace("actor: 'user'", "actor: 'mcp_proxy'")
-          p.write_text(s)
-          PY
-            rm scripts/grok-apply.py
-          fi
-          if [ -f scripts/grok-followup.py ]; then
-            python3 scripts/grok-followup.py
-            rm scripts/grok-followup.py
-          fi
-          git add -A
-          if ! git diff --cached --quiet; then
-            git -c user.name='OpenAI' -c user.email='noreply@openai.com' commit -m 'fix(grok): complete reviewed integration and regression coverage'
-            git push origin HEAD:refs/heads/feat/grok-subscription-global-pool
-          fi
-      - name: Validate every check independently and preserve exact-SHA diagnostics
+          {
+            test "$(git branch --show-current)" = feat/grok-subscription-global-pool
+            if [ -f scripts/grok-prepare.py ]; then
+              python3 scripts/grok-prepare.py
+              rm scripts/grok-prepare.py
+            fi
+            for script in scripts/grok-apply.py scripts/grok-followup.py; do
+              if [ -f "$script" ]; then
+                python3 "$script"
+                rm "$script"
+              fi
+            done
+            git add -A
+            if ! git diff --cached --quiet; then
+              git -c user.name='OpenAI' -c user.email='noreply@openai.com' commit -m 'fix(grok): complete reviewed integration and regression coverage'
+              git push origin HEAD:refs/heads/feat/grok-subscription-global-pool
+            fi
+          } 2>&1 | tee /tmp/grok-apply.log
+      - name: Validate independently and preserve exact-SHA diagnostics
         if: always()
         run: |
           python3 - <<'PY'
@@ -74,49 +68,60 @@ jobs:
           from pathlib import Path
           def git(*args, **kwargs):
               return subprocess.check_output(['git', *args], text=True, **kwargs).strip()
-          report = {'sha': git('rev-parse', 'HEAD'), 'main': git('rev-parse', 'origin/main'), 'run': os.environ['GITHUB_RUN_ID'], 'checks': []}
-          report['changedFiles'] = git('diff', '--name-status', 'origin/main...HEAD').splitlines()
-          report['instructions'] = {p: Path(p).read_text() for p in git('ls-files').splitlines() if p.endswith('AGENTS.md') and not p.startswith('packages/')}
-          report['groktests'] = [p for p in git('ls-files').splitlines() if ('grok' in p.lower() or 'subscription' in p.lower()) and ('test' in p.lower())]
+          status=git('status','--porcelain')
+          report={'sha':git('rev-parse','HEAD'),'main':git('rev-parse','origin/main'),'run':os.environ['GITHUB_RUN_ID'],'worktreeClean':not status,'worktreeStatus':status.splitlines(),'checks':[]}
+          if Path('/tmp/grok-apply.log').exists():
+              report['applyTail']=Path('/tmp/grok-apply.log').read_text().splitlines()[-70:]
+          report['changedFiles']=git('diff','--name-status','origin/main...HEAD').splitlines()
+          report['instructions']={p:Path(p).read_text() for p in git('ls-files').splitlines() if p.endswith('AGENTS.md') and not p.startswith('packages/')}
           def publish():
-              raw = json.dumps(report, ensure_ascii=False, indent=2)
+              raw=json.dumps(report,ensure_ascii=False,indent=2)
               Path('/tmp/grok-validation.json').write_text(raw)
-              blob = git('hash-object', '-w', '--stdin', input=raw)
-              tree = git('mktree', input=f'100644 blob {blob}\treport.json\n')
-              prior = subprocess.run(['git', 'rev-parse', '--verify', 'refs/remotes/origin/workbench/grok-validation'], capture_output=True, text=True)
-              parents = ['-p', prior.stdout.strip()] if prior.returncode == 0 else []
-              env = dict(os.environ, GIT_AUTHOR_NAME='OpenAI', GIT_AUTHOR_EMAIL='noreply@openai.com', GIT_COMMITTER_NAME='OpenAI', GIT_COMMITTER_EMAIL='noreply@openai.com')
-              commit = git('commit-tree', tree, *parents, input='Grok isolated validation evidence\n', env=env)
-              subprocess.run(['git', 'push', 'origin', f'{commit}:refs/heads/workbench/grok-validation'], check=True)
-              subprocess.run(['git', 'update-ref', 'refs/remotes/origin/workbench/grok-validation', commit], check=True)
+              blob=git('hash-object','-w','--stdin',input=raw)
+              tree=git('mktree',input=f'100644 blob {blob}\treport.json\n')
+              prior=subprocess.run(['git','rev-parse','--verify','refs/remotes/origin/workbench/grok-validation'],capture_output=True,text=True)
+              parents=['-p',prior.stdout.strip()] if prior.returncode==0 else []
+              env=dict(os.environ,GIT_AUTHOR_NAME='OpenAI',GIT_AUTHOR_EMAIL='noreply@openai.com',GIT_COMMITTER_NAME='OpenAI',GIT_COMMITTER_EMAIL='noreply@openai.com')
+              commit=git('commit-tree',tree,*parents,input='Grok isolated validation evidence\n',env=env)
+              subprocess.run(['git','push','origin',f'{commit}:refs/heads/workbench/grok-validation'],check=True)
+              subprocess.run(['git','update-ref','refs/remotes/origin/workbench/grok-validation',commit],check=True)
           publish()
-          commands = [
-              ('server-types', 'pnpm -F server typecheck'),
-              ('web-types', 'pnpm -F web typecheck'),
-              ('shared-types', 'pnpm -F @agent/shared typecheck'),
-              ('mobile-types', 'pnpm -F mobile typecheck'),
-              ('subscription-tests', 'pnpm -F server exec vitest run codex grok subscription'),
-              ('ui-tests', 'pnpm -F web exec vitest run src/components/ModelManager src/components/PlatformAdmin/pages/ProviderQuota'),
-              ('ratchets', 'pnpm check:ratchets'),
-              ('config-governance', 'pnpm test:config-governance'),
-              ('release-contracts', 'pnpm test:release-contracts'),
+          commands=[
+              ('server-types','pnpm -F server typecheck'),
+              ('web-types','pnpm -F web typecheck'),
+              ('shared-types','pnpm -F @agent/shared typecheck'),
+              ('mobile-types','pnpm -F mobile typecheck'),
+              ('subscription-tests','pnpm -F server exec vitest run codex grok subscription'),
+              ('publication-tests','pnpm -F server exec vitest run productionModelPublication configIdentity sharedConfigRefresher'),
+              ('ui-tests','pnpm -F web exec vitest run src/components/ModelManager src/components/PlatformAdmin/pages/ProviderQuota'),
+              ('ratchets','pnpm check:ratchets'),
+              ('config-governance','pnpm test:config-governance'),
+              ('release-contracts','pnpm test:release-contracts'),
+              ('server-build','pnpm -F server build'),
+              ('web-build','pnpm -F web build'),
           ]
-          failed = False
-          for name, command in commands:
-              started = time.monotonic()
+          failed=False
+          for name,command in commands:
+              started=time.monotonic()
               try:
-                  result = subprocess.run(command, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
-                  code, output = result.returncode, result.stdout
+                  result=subprocess.run(command,shell=True,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=600)
+                  code,output=result.returncode,result.stdout
               except subprocess.TimeoutExpired as error:
-                  code, output = 124, str(error.stdout)
-              output = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
+                  code,output=124,str(error.stdout)
+              output=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',output)
               Path(f'/tmp/grok-{name}.log').write_text(output)
-              summary = output[-18000:] if code else '\n'.join(output.splitlines()[-14:])
-              report['checks'].append({'name': name, 'command': command, 'exitCode': code, 'seconds': round(time.monotonic()-started, 2), 'output': summary})
-              failed |= code != 0
-              print(name, code, flush=True)
+              lines=output.splitlines()
+              selected=set(range(max(0,len(lines)-24),len(lines)))
+              if code:
+                  for i,line in enumerate(lines):
+                      if re.search(r'not ok|FAIL|Error|error TS|GROWN|LOWERED|Assertion|conflict',line):
+                          selected.update(range(max(0,i-1),min(len(lines),i+12)))
+              summary=[lines[i] for i in sorted(selected)]
+              report['checks'].append({'name':name,'command':command,'exitCode':code,'seconds':round(time.monotonic()-started,2),'outputLines':summary[:240]})
+              failed|=code!=0
+              print(name,code,flush=True)
               publish()
-          raise SystemExit(1 if failed else 0)
+          raise SystemExit(1 if failed or not report['worktreeClean'] else 0)
           PY
       - uses: actions/upload-artifact@v4
         if: always()

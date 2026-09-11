@@ -145,9 +145,26 @@ function validateTopology(identity, reasons, now, refreshTopologyObservation) {
   }
 }
 
+function observationErrorCode(error) {
+  const code = typeof error?.code === 'string' ? error.code : 'UNKNOWN';
+  return /^[A-Z0-9_]+$/u.test(code) ? code : 'UNKNOWN';
+}
+
+function observationCheck(checks, dimension, component, check, status, reasonCode, error) {
+  checks.push({
+    dimension,
+    component,
+    check,
+    status,
+    reasonCode,
+    ...(error ? { errno: observationErrorCode(error) } : {}),
+  });
+}
+
 function observeTopology(
   identity,
   reasons,
+  checks,
   { readFileSync, realpathSync, execFileSync, processExists },
 ) {
   for (const [role, contract] of Object.entries(TOPOLOGY_ROLES)) {
@@ -156,30 +173,33 @@ function observeTopology(
     let pid;
     try {
       const observedColor = String(readFileSync(entry.activeColorFile, 'utf8')).trim();
-      if (observedColor !== entry.activeColor)
-        reasons.push(
-          `Production runtime identity topology ${role}.activeColor does not match its color file.`,
-        );
-    } catch {
+      if (observedColor !== entry.activeColor) {
+        reasons.push(`Production runtime identity topology ${role}.activeColor does not match its color file.`);
+        observationCheck(checks, 'identity', role, 'active_color', 'blocked', 'active_color_mismatch');
+      } else observationCheck(checks, 'identity', role, 'active_color', 'passed', 'matched');
+    } catch (error) {
       reasons.push(`Unable to read production active-color file for ${role}.`);
+      observationCheck(checks, 'identity', role, 'active_color', 'blocked', 'active_color_unreadable', error);
     }
     try {
       const target = String(realpathSync(entry.releaseSymlink));
-      if (target !== entry.releaseTarget)
-        reasons.push(
-          `Production runtime identity topology ${role}.releaseSymlink does not resolve to releaseTarget.`,
-        );
-    } catch {
+      if (target !== entry.releaseTarget) {
+        reasons.push(`Production runtime identity topology ${role}.releaseSymlink does not resolve to releaseTarget.`);
+        observationCheck(checks, 'identity', role, 'release_symlink', 'blocked', 'release_symlink_mismatch');
+      } else observationCheck(checks, 'identity', role, 'release_symlink', 'passed', 'matched');
+    } catch (error) {
       reasons.push(`Unable to resolve production release symlink for ${role}.`);
+      observationCheck(checks, 'identity', role, 'release_symlink', 'blocked', 'release_symlink_unreadable', error);
     }
     try {
       pid = Number.parseInt(String(readFileSync(entry.pidfile, 'utf8')).trim(), 10);
-      if (!Number.isSafeInteger(pid) || pid <= 0 || !processExists(pid))
-        reasons.push(
-          `Production runtime identity topology ${role}.pidfile does not identify a live process.`,
-        );
-    } catch {
+      if (!Number.isSafeInteger(pid) || pid <= 0 || !processExists(pid)) {
+        reasons.push(`Production runtime identity topology ${role}.pidfile does not identify a live process.`);
+        observationCheck(checks, 'liveness', role, 'pidfile', 'blocked', 'pidfile_not_live');
+      } else observationCheck(checks, 'liveness', role, 'pidfile', 'passed', 'live');
+    } catch (error) {
       reasons.push(`Unable to read production pidfile for ${role}.`);
+      observationCheck(checks, 'liveness', role, 'pidfile', 'blocked', 'pidfile_unreadable', error);
     }
     try {
       const mainPid = Number.parseInt(
@@ -205,22 +225,22 @@ function observeTopology(
         !processExists(mainPid) ||
         !controlGroup ||
         !pidCgroup.includes(controlGroup)
-      )
-        reasons.push(
-          `Production runtime identity topology ${role} pidfile PID must equal the live systemd MainPID in the unit cgroup.`,
-        );
-    } catch {
+      ) {
+        reasons.push(`Production runtime identity topology ${role} pidfile PID must equal the live systemd MainPID in the unit cgroup.`);
+        observationCheck(checks, 'liveness', role, 'systemd_process', 'blocked', 'systemd_identity_mismatch');
+      } else observationCheck(checks, 'liveness', role, 'systemd_process', 'passed', 'matched');
+    } catch (error) {
       reasons.push(`Unable to observe systemd process identity for ${role}.`);
+      observationCheck(checks, 'liveness', role, 'systemd_process', 'blocked', 'systemd_observation_failed', error);
     }
     if (contract.readyfile) {
       try {
         const readyPid = Number.parseInt(String(readFileSync(entry.readyfile, 'utf8')).trim(), 10);
-        if (!Number.isSafeInteger(readyPid) || readyPid !== pid)
-          reasons.push(
-            `Production runtime identity topology ${role}.readyfile does not match its pidfile.`,
-          );
-      } catch {
-        reasons.push(`Unable to read production readyfile for ${role}.`);
+        if (!Number.isSafeInteger(readyPid) || readyPid !== pid) {
+          observationCheck(checks, 'admission', role, 'readyfile', 'blocked', 'readyfile_pid_mismatch');
+        } else observationCheck(checks, 'admission', role, 'readyfile', 'passed', 'admitting');
+      } catch (error) {
+        observationCheck(checks, 'admission', role, 'readyfile', 'blocked', 'readyfile_unreadable', error);
       }
     }
   }
@@ -228,6 +248,7 @@ function observeTopology(
 
 export function validateRuntimeIdentity(identity, options = {}) {
   const blockingReasons = [];
+  const checks = [];
   if (!identity || typeof identity !== 'object' || Array.isArray(identity))
     return { ok: false, blockingReasons: ['Production runtime identity must be a JSON object.'] };
   if (identity.schemaVersion !== 1)
@@ -310,7 +331,7 @@ export function validateRuntimeIdentity(identity, options = {}) {
     options.now ?? Date.now(),
     options.refreshTopologyObservation === true,
   );
-  observeTopology(identity, blockingReasons, {
+  observeTopology(identity, blockingReasons, checks, {
     readFileSync: options.topologyReadFileSync ?? defaultReadFileSync,
     realpathSync: options.topologyRealpathSync ?? defaultRealpathSync,
     execFileSync: options.topologyExecFileSync ?? defaultExecFileSync,
@@ -325,7 +346,15 @@ export function validateRuntimeIdentity(identity, options = {}) {
         }
       }),
   });
-  return { ok: blockingReasons.length === 0, blockingReasons };
+  return {
+    ok: blockingReasons.length === 0,
+    blockingReasons,
+    diagnostics: {
+      schemaVersion: 1,
+      observedAt: new Date(options.now ?? Date.now()).toISOString(),
+      checks,
+    },
+  };
 }
 
 export function readRuntimeIdentity({
@@ -375,5 +404,10 @@ export function readRuntimeIdentity({
     refreshTopologyObservation,
   });
   if (validation.ok && refreshTopologyObservation) identity = candidateIdentity;
-  return { ok: validation.ok, identity, blockingReasons: validation.blockingReasons };
+  return {
+    ok: validation.ok,
+    identity,
+    blockingReasons: validation.blockingReasons,
+    diagnostics: validation.diagnostics,
+  };
 }

@@ -31220,7 +31220,7 @@
         },
         {
           "path": "scripts/release/migration-plan.mjs",
-          "digest": "sha256:64b72aab325049835813417134c5f071164a81a5392bb7d0faac3b99ff051cd8"
+          "digest": "sha256:e9af03df61510f49dcf3329294783185530ca367c6603e9ff70d30c43da3d438"
         },
         {
           "path": "scripts/release/migration-plan.test.mjs",
@@ -31301,6 +31301,10 @@
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
           "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+        },
+        {
+          "path": "docs/reviews/grok-startup-root-evidence.md",
+          "digest": "sha256:43b8c1dd6a1be575ee78770d63d2ddef4a9ee46e40de00810f3dd42bfd423afa"
         }
       ]
     },

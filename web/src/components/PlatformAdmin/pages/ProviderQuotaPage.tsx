@@ -31,6 +31,7 @@ const SOURCE_LABEL: Record<ProviderQuotaSnapshot['sourceKind'], string> = {
   codex_subscription: 'Codex 订阅',
   volcengine_ark_plan: '火山 Agent Plan',
   claude_subscription: 'Claude 订阅',
+  zhipu_coding_plan: '智谱 Coding Plan',
 };
 
 /** 推送型来源：平台没有可取数的管控面，由采集端主动上报，不提供单账号刷新。 */
@@ -203,6 +204,7 @@ function AccountCard({
   const credential = snapshot.credential;
   const isCodex = snapshot.sourceKind === 'codex_subscription';
   const isClaude = snapshot.sourceKind === 'claude_subscription';
+  const isZhipu = snapshot.sourceKind === 'zhipu_coding_plan';
   const isPushOnly = PUSH_ONLY_SOURCES.has(snapshot.sourceKind);
   const mainWindows = snapshot.windows
     .filter((window) => isMainSubscriptionWindow(snapshot.sourceKind, window))
@@ -280,6 +282,12 @@ function AccountCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {isZhipu && (
+          <p className="text-xs text-muted-foreground" data-testid="zhipu-quota-scope">
+            个人套餐 · 账号共享额度，不是单 Key 用量。同账号多个 Key 的卡片可能重复，不能相加。
+            未返回的周期、上限或重置时间不做推算。
+          </p>
+        )}
         {!snapshot.ok && (
           <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger-ink">
             {snapshot.error ?? '未知错误'}
@@ -439,7 +447,7 @@ export function ProviderQuotaPage() {
         <EmptyState
           icon={EntityIcons.credits}
           title="尚未配置任何套餐用量来源"
-          description="在「平台配置 → 模型」里为火山 Agent Plan 分组填写管控面 AccessKey，或完成 Codex 订阅账号授权后，这里会自动出现对应账号。"
+          description="在「平台配置 → 模型」里配置智谱分组的 API Key 和官方 Base URL（也可显式选择智谱 Coding Plan），为火山 Agent Plan 填写管控面 AccessKey，或完成 Codex 订阅授权。首次采集后会出现对应卡片，也可点击「立即采集」。"
         />
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">

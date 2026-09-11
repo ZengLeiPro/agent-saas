@@ -58,11 +58,25 @@ node "$script_dir/staging-core-smoke-evidence.mjs" \
   "$directory/staging-core-smoke.json" "$manifest" "$staging_run_id" "$staging_run_attempt"
 # Every phase requires a parseable, bound database readback. A none plan is not a bypass.
 preflight_check=database_readback_validation
-node "$script_dir/verify-migration-readback.mjs" "$manifest" \
+legacy_revalidation=false
+if ! node "$script_dir/verify-migration-readback.mjs" "$manifest" \
   "$directory/attempt-evidence/staging-database-readback.json" \
   "$directory/staging-attempt.json" "$staging_run_id" "$staging_run_attempt" "$GITHUB_REPOSITORY" \
-  > "$directory/database-readback-validation.json"
+  > "$directory/database-readback-validation.json"; then
+  # Only a proven interrupted transaction and the pinned historical NONE producer qualify.
+  # Preserve the invalid archive; append a separately hashed revalidation, never rewrite it.
+  # Non-qualifying archives retain the existing database-readback failure classification.
+  node "$script_dir/legacy-none-readback-revalidation.mjs" revalidate \
+    "$manifest" "$history" "$directory" "$GITHUB_REPOSITORY" \
+    > "$directory/database-readback-validation.json"
+  legacy_revalidation=true
+fi
 # Fail closed if a rerun/failure appeared while downloading the evidence.
 read_metadata
 preflight_check=final_staging_evidence
 node "$validator" complete "$directory" "$manifest" "$history" "$GITHUB_REPOSITORY"
+if [ "$legacy_revalidation" = true ]; then
+  preflight_check=legacy_none_revalidation_binding
+  node "$script_dir/legacy-none-readback-revalidation.mjs" bind \
+    "$manifest" "$history" "$directory" "$GITHUB_REPOSITORY"
+fi

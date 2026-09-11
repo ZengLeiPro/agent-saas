@@ -603,7 +603,7 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   assert.match(appRecovery, /restore_candidate_app_disk/u);
   const deployAppStart = production.indexOf('deploy_app() {');
   const routedReady = production.indexOf(
-    "curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready",
+    'validate_api_routing_boundary "$api_idle" "$release_id"',
     deployAppStart,
   );
   const forwardApiFinalCheck = production.indexOf(

@@ -565,8 +565,14 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
     /\/tmp\/agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-identity-lock\.ready/u,
   );
   assert.doesNotMatch(readbackBlock, /\$PROMOTION_REMOTE\/identity-lock/u);
-  assert.match(readbackBlock, /WEB_LOCK_TIMEOUT_SECONDS=900/u);
-  assert.match(readbackBlock, /PHASE=web/u);
+  assert.match(readbackBlock, /OBSERVATION_LOCK_TIMEOUT_SECONDS=900/u);
+  assert.doesNotMatch(readbackBlock, /PHASE=web|deploy-production-release\.sh/u);
+  assert.match(readbackBlock, /hold-production-observation-lock\.sh/u);
+  ordered(readbackBlock, [
+    '> "$RUNNER_TEMP/production-after.json"',
+    'node scripts/release/verify-promotion-observation.mjs',
+    'write-live-production-identity.mjs',
+  ]);
   assert.match(readbackBlock, /trap cleanup_identity_lock EXIT/u);
   assert.match(readbackBlock, /run_identity_ssh\(\)/u);
   assert.match(
@@ -685,10 +691,10 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
-test('both Production Web shell entrypoints satisfy the real deploy script parameter contract', async () => {
+test('only Web mutation uses the forward deployment shell parameter contract', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const entrypoints = productionWebEntrypoints(workflow);
-  assert.equal(entrypoints.length, 2);
+  assert.equal(entrypoints.length, 1);
   const values = {
     PHASE: 'web',
     RELEASE_DIR: '/nonexistent/release',

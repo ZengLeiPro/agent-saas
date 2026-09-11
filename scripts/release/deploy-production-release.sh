@@ -811,33 +811,72 @@ NODE
 validate_api_routing_boundary() {
   local color="$1" expected_release_id="$2"
   local upstream="${AGENT_SAAS_NGINX_UPSTREAM_FILE:-/etc/nginx/conf.d/agent-saas-upstream.conf}"
-  local ready_path
-  if ! systemctl is-active --quiet nginx \
-    || ! nginx -t \
-    || ! grep -Fx "# active=$color release=$expected_release_id" "$upstream" >/dev/null; then
-    return 1
-  fi
+  local ready_path deadline remaining request_timeout curl_status http_status verdict validation_status attempt=0
+  local wait_seconds="${API_ROUTED_READY_WAIT_SECONDS:-30}"
+  [[ "$wait_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$wait_seconds" -le 30 ] || return 1
+  if ! systemctl is-active --quiet nginx || ! nginx -t; then return 1; fi
   ready_path="$(mktemp)" || return 1
-  if ! curl -kfsS -H 'Host: api.agent.kaiyan.net' \
-      https://127.0.0.1/api/healthz/ready >"$ready_path" \
-    || ! node --input-type=module - "$ready_path" "$expected_release_id" <<'NODE'
+  deadline=$((SECONDS + wait_seconds))
+  # nginx reload acknowledges the signal, not the new workers' readiness. Poll only
+  # this read-only route, bounded by one deadline; an old healthy backup is not success.
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if ! systemctl is-active --quiet nginx \
+      || ! grep -Fx "# active=$color release=$expected_release_id" "$upstream" >/dev/null; then
+      rm -f "$ready_path" "$ready_path.headers"
+      return 1
+    fi
+    remaining=$((deadline - SECONDS))
+    request_timeout=5
+    [ "$remaining" -ge "$request_timeout" ] || request_timeout=$remaining
+    [ "$request_timeout" -gt 0 ] || break
+    attempt=$((attempt + 1))
+    curl_status=0
+    : > "$ready_path.headers"
+    curl -ksS --fail-with-body --connect-timeout 1 --max-time "$request_timeout" \
+      --max-filesize 65536 --dump-header "$ready_path.headers" -H 'Host: api.agent.kaiyan.net' \
+      https://127.0.0.1/api/healthz/ready >"$ready_path" 2>/dev/null || curl_status=$?
+    http_status="$(awk '/^HTTP\// { code=$2 } END { print code+0 }' "$ready_path.headers")"
+    verdict=transport_failure
+    if [ "$curl_status" -eq 0 ]; then
+      validation_status=0
+      node --input-type=module - "$ready_path" "$expected_release_id" <<'NODE' || validation_status=$?
 import fs from 'node:fs';
 const [readyPath, expectedReleaseId] = process.argv.slice(2);
-const readiness = JSON.parse(fs.readFileSync(readyPath, 'utf8'));
-if (
-  readiness?.status !== 'ok'
-  || readiness?.release?.environment !== 'production'
-  || readiness?.release?.releaseId !== expectedReleaseId
-  || readiness?.release?.safetyAttested !== true
-) {
-  throw new Error('Routed API readiness disagrees with the selected release');
-}
+let readiness;
+try { readiness = JSON.parse(fs.readFileSync(readyPath, 'utf8')); }
+catch { process.exit(11); }
+const release = readiness?.release;
+if (readiness?.status !== 'ok' || release?.environment !== 'production'
+  || release?.safetyAttested !== true) process.exit(11);
+if (release.releaseId !== expectedReleaseId) process.exit(10);
 NODE
-  then
-    rm -f "$ready_path"
-    return 1
-  fi
-  rm -f "$ready_path"
+      case "$validation_status" in
+        0) verdict=ready ;;
+        10) verdict=wrong_release ;;
+        *) verdict=invalid_readiness ;;
+      esac
+      if [ "$verdict" = ready ]; then
+        # Do not admit authority if the route/config changed during the request.
+        if ! systemctl is-active --quiet nginx \
+          || ! grep -Fx "# active=$color release=$expected_release_id" "$upstream" >/dev/null; then
+          rm -f "$ready_path" "$ready_path.headers"
+          return 1
+        fi
+        rm -f "$ready_path" "$ready_path.headers"
+        return 0
+      fi
+    fi
+    # Never print readiness bodies, which may contain private dependency details.
+    echo "Routed API probe: attempt=$attempt curlExit=$curl_status httpStatus=$http_status verdict=$verdict remainingSeconds=$((deadline - SECONDS))" >&2
+    case "$curl_status:$http_status:$verdict" in
+      0:*:wrong_release|7:*|22:502:*|22:503:*|22:504:*|28:*) ;;
+      *) rm -f "$ready_path" "$ready_path.headers"; return 1 ;;
+    esac
+    [ "$SECONDS" -ge "$deadline" ] || sleep 1
+  done
+  rm -f "$ready_path" "$ready_path.headers"
+  echo 'Routed API readiness did not converge within its bounded deadline' >&2
+  return 1
 }
 
 read_release_id_from_env() {
@@ -1044,8 +1083,7 @@ restore_candidate_api_authority() {
     || ! grep -F "# active=$candidate_color " "$upstream" >/dev/null \
     || ! nginx -t >/dev/null 2>&1 \
     || ! systemctl reload nginx >/dev/null 2>&1 \
-    || ! curl -kfsS -H 'Host: api.agent.kaiyan.net' \
-      https://127.0.0.1/api/healthz/ready >/dev/null 2>&1 \
+    || ! validate_api_routing_boundary "$candidate_color" "$release_id" \
     || ! validate_api_release_boundary "$candidate_color" "$expected_json" \
       'Rollback candidate API final ConfigIdentity'; then
     restore_old_api_authority "$active_color" "$candidate_color" \
@@ -2136,7 +2174,7 @@ EOF
     exit 1
   fi
   systemctl reload nginx
-  curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready >/dev/null
+  validate_api_routing_boundary "$api_idle" "$release_id"
   validate_api_release_boundary "$api_idle" "$config_identity" \
     'Candidate API final ConfigIdentity'
 

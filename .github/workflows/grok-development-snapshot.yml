@@ -1,0 +1,31 @@
+name: Grok development snapshot
+
+on:
+  push:
+    branches: [feat/grok-subscription-global-pool]
+    paths: [.github/workflows/grok-development-snapshot.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Archive tracked source only (no credentials or working files)
+        run: |
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/grok-source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/grok-source-sha.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grok-development-source
+          path: |
+            ${{ runner.temp }}/grok-source.tar.gz
+            ${{ runner.temp }}/grok-source-sha.txt
+          retention-days: 1
+          if-no-files-found: error

@@ -473,7 +473,7 @@ export function ProviderQuotaPage() {
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {criticalCount > 0 && <Badge variant="danger" title={`采集失败 ${statusCounts.collectionFailed} · 额度耗尽 ${statusCounts.collectionFailed} · 凭据不可用 ${statusCounts.credentialUnavailable}`}>{criticalCount} 个异常</Badge>}
+            {criticalCount > 0 && <Badge variant="danger" title={`采集失败 ${statusCounts.collectionFailed} · 额度耗尽 ${statusCounts.exhausted} · 凭据不可用 ${statusCounts.credentialUnavailable}`}>{criticalCount} 个异常</Badge>}
             {statusCounts.warning > 0 && <Badge variant="warning">{statusCounts.warning} 个需关注</Badge>}
             <Button
               variant="outline"

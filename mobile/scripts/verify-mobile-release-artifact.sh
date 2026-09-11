@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 # Compatible with the Bash 3.2 shipped on the pinned macOS runner.
-set -Eeuo pipefail
+set -euo pipefail
 umask 077
 
-# Log only a fixed phase name, never BASH_COMMAND, plist contents or credentials.
+# Report only the FINAL top-level exit status. Bash 3.2 can inherit an ERR
+# trap into command substitutions used for expected-failure field probes.
+# Such a probe must not print a failed stage on a successful verification.
 VERIFY_STAGE=validate-source
-trap 'status=$?; printf "[M60-04] artifact verification stage=%s failed (exit=%s)\n" "$VERIFY_STAGE" "$status" >&2; exit "$status"' ERR
+work=""
+finish_verification() {
+  local status="$?"
+  trap - EXIT
+  if [ "${BASH_SUBSHELL:-0}" -eq 0 ]; then
+    if [ "$status" -ne 0 ]; then
+      printf '[M60-04] artifact verification stage=%s failed (exit=%s)\n' "$VERIFY_STAGE" "$status" >&2
+    fi
+    if [ -n "$work" ]; then rm -rf -- "$work"; fi
+  fi
+  exit "$status"
+}
+trap finish_verification EXIT
 
 profile="${1:?profile required}"
 artifact="${2:?artifact path required}"
@@ -20,7 +34,7 @@ expected_app="$(jq -er .appId "$source_json")"
 expected_version="$(jq -er .version "$source_json")"
 artifact_hash="sha256:$(shasum -a 256 "$artifact" | awk '{print $1}')"
 artifact_size="$(wc -c < "$artifact" | tr -d ' ')"
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d)"
 
 normalize_fp() { sed -E 's/.*(=|SHA256:)[[:space:]]*//' | tr '[:upper:]' '[:lower:]' | tr -cd '0-9a-f' | awk '{print "sha256:" $0}'; }
 reject_debug_subject() { if printf '%s' "$1" | grep -Eiq 'Android Debug|AndroidDebugKey|CN[=:][[:space:]]*debug'; then echo '[M60-04] debug signer rejected' >&2; exit 1; fi; }

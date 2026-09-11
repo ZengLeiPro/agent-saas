@@ -3,7 +3,7 @@
 ## 运行边界
 
 `.github/workflows/mobile-ios-release.yml` 是 iOS 内部测试发布入口。正常发版只手动触发一次，默认操作
-`build-and-testflight`，依次完成：
+「构建并发布到 TestFlight」，依次完成：
 
 1. 校验完整 `main` source SHA 及该提交最新一次 push-main `Build & Check`。
 2. 分配唯一构建号 `<manifest 基数>.<GitHub run ID>.<attempt>`。
@@ -86,17 +86,60 @@ bash mobile/scripts/init-ios-github-release.sh \
 
 这不会创建伪造的上传凭据，也不会触发上传。
 
-## 日常发布
+## 日常发布：两项表单，默认直接运行
 
-在 Actions 选择“iOS 构建与发布”，保留默认 `build-and-testflight`，`source_sha` 留空并运行。
-Workflow 使用调度时的 `main` SHA，完成构建、上传、Apple 处理确认和内部组分发。构建与发布仍是两个 job，
-这是凭据隔离，不是两次人工审批。
+在 Actions 选择「iOS 构建与发布」，分支保留 `main`。只保留以下两项：
 
-`build` 只生成并保存已签名 IPA，不上传。`testflight` 用于上传或 Apple 处理失败后的恢复：填写原构建摘要中的
-完整 `source_sha`、`build_run_id` 和 `build_run_attempt`。它只下载该次成功构建保存的 artifact，
-重新验签后上传，不重新构建。若 Apple 已收到相同版本和构建号，脚本跳过二次上传并继续查询处理及内部测试状态。
+| 表单项 | 正常发布 | 故障恢复 |
+| --- | --- | --- |
+| 执行操作（`operation`） | 默认「构建并发布到 TestFlight」 | 选择「重试已有构建的发布」 |
+| 原构建运行链接或编号（`build_run`） | 留空 | 粘贴原构建运行链接或纯数字编号 |
 
-IPA artifact 保留 7 天，提交状态回执保留 30 天。过期后不静默重建旧构建；应明确发布新构建。
+另外保留「仅构建，不发布」，只生成并保存已签名 IPA。GitHub 表单仍会显示第二项，
+但仅重试时填写；系统会拒绝「新构建 + 原运行编号」以及「重试 + 未填原运行」的组合。
+
+新构建固定使用点击运行时的 `main` SHA，不再手填 `source_sha`。若该提交的 push-main CI
+尚未出现或未结束，准入步骤每 15 秒查询一次，最多等待 20 分钟（job 总超时 25 分钟）。
+只认可该提交最新一次 CI/attempt 和 `Build & Check`；CI 失败立即终止，超时明确报错。
+等待期间不会跟随 main 更新，也不会退回旧的绿色提交。构建和发布阶段仍各自复核授权。
+
+构建与发布仍是两个 job，用于凭据隔离，不需要两次人工审批。
+
+## 重试发布：只粘贴原运行
+
+选择「重试已有构建的发布」，在 `build_run` 填写原**签名构建**运行，例如：
+`https://github.com/ZengLeiPro/agent-saas/actions/runs/123456789` 或 `123456789`。
+也可粘贴该运行的 `/job/...` 页面链接；它引用整次运行，不把页面中的 Job ID 当作 Run ID。
+不接受其他仓库、非 GitHub 域名、`/attempts/...` 链接或本次新运行自身。
+
+系统分页读取原运行制品，以制品命名中的源码 SHA 和 attempt 为候选，再查询该**精确 attempt**
+的已成功签名构建任务，并核对仓库、工作流、main、事件类型、制品归属与 digest。
+不会用最新 attempt 代替真正产生 IPA 的 attempt，也不会用原 workflow SHA 代替应用源码 SHA。
+过期制品和失败构建不是可用候选；找不到候选或有多个可用 IPA 时明确停止，不猜测、不重建。
+同一原运行正在重跑或解析期间发生重跑，也会停止。
+
+计划锁定唯一制品的 ID、digest、workflow SHA。下载前再次核对这些绑定值，下载后继续核对
+`ios-release.json` 中的源码、attempt、版本和文件哈希，并执行原有签名/应用身份校验，最后才上传。
+即使后来 main 已前进，重试仍检出原 IPA 对应的源码。只上传原 IPA，不调用任何构建步骤。
+若 Apple 已收到相同版本和构建号，上传程序沿用原有幂等查询逻辑。
+
+IPA artifact 保留 7 天，提交状态回执保留 30 天。过期或无法唯一解析时，应明确发起一次新的构建发布。
+上传失败后，推荐新建「重试已有构建的发布」运行，而不是对整条旧 Workflow 执行 Re-run。
+旧四参数 API/CLI 调用也必须迁移；删除的 `source_sha`、`build_run_id`、`build_run_attempt` 不作为隐藏覆盖项接受。
+
+```bash
+# 正常发布，无需填写输入（读取 Workflow 默认值）
+gh workflow run mobile-ios-release.yml --ref main
+
+# 仅重试原构建的发布
+gh workflow run mobile-ios-release.yml --ref main \
+  -f operation='重试已有构建的发布' \
+  -f build_run='123456789'
+```
+
+本次表单简化不新增 Secrets，不修改两套 Environment、原有签名门禁或正式上架边界。
+自动解析与等待逻辑通过 `node --test mobile/scripts/ios-release-inputs.test.mjs` 验证；
+测试使用模拟 GitHub API、真实 Git/CLI/文件处理，不触发真实签名或 Apple 发布。
 
 ## 正式上架边界
 

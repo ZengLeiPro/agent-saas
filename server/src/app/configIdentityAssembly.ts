@@ -50,6 +50,7 @@ export interface RuntimeConfigIdentityAssembly {
   getSummary: () => ConfigIdentitySummary;
   refreshSummary: () => Promise<ConfigIdentitySummary>;
   isPrivateSummaryCurrent: () => boolean;
+  getRefreshFailure: () => 'config_refresh_timeout' | 'config_refresh_failed' | undefined;
 }
 
 /** Release code identity remains immutable; online config has a signed authority. */
@@ -121,6 +122,7 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
       privatePublisher?.(summary);
       return summary;
     },
+    getRefreshFailure: runtime.getRefreshFailure,
     isPrivateSummaryCurrent: () => {
       if (!snapshotPath) return false;
       try { return readFileSync(snapshotPath, 'utf8') === `${JSON.stringify(getSummary())}\n`; }

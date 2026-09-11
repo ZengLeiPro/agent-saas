@@ -1,6 +1,9 @@
 import { execFileSync as defaultExecFileSync } from 'node:child_process';
 import { readFileSync as defaultReadFileSync, realpathSync as defaultRealpathSync } from 'node:fs';
 
+const READ_ERRNOS = new Set(['ENOENT', 'EACCES', 'EPERM', 'EIO', 'ENOTDIR', 'ELOOP', 'ETIMEDOUT']);
+const readErrorCode = (error) => READ_ERRNOS.has(error?.code) ? error.code : 'UNKNOWN';
+
 export const COMPONENTS = Object.freeze(['web', 'api', 'runtimeWorker', 'acs']);
 export const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 export const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -160,8 +163,8 @@ function observeTopology(
         reasons.push(
           `Production runtime identity topology ${role}.activeColor does not match its color file.`,
         );
-    } catch {
-      reasons.push(`Unable to read production active-color file for ${role}.`);
+    } catch (error) {
+      reasons.push(`Unable to read production active-color file for ${role}. [${readErrorCode(error)}]`);
     }
     try {
       const target = String(realpathSync(entry.releaseSymlink));
@@ -169,8 +172,8 @@ function observeTopology(
         reasons.push(
           `Production runtime identity topology ${role}.releaseSymlink does not resolve to releaseTarget.`,
         );
-    } catch {
-      reasons.push(`Unable to resolve production release symlink for ${role}.`);
+    } catch (error) {
+      reasons.push(`Unable to resolve production release symlink for ${role}. [${readErrorCode(error)}]`);
     }
     try {
       pid = Number.parseInt(String(readFileSync(entry.pidfile, 'utf8')).trim(), 10);
@@ -178,15 +181,15 @@ function observeTopology(
         reasons.push(
           `Production runtime identity topology ${role}.pidfile does not identify a live process.`,
         );
-    } catch {
-      reasons.push(`Unable to read production pidfile for ${role}.`);
+    } catch (error) {
+      reasons.push(`Unable to read production pidfile for ${role}. [${readErrorCode(error)}]`);
     }
     try {
       const mainPid = Number.parseInt(
         String(
           execFileSync('systemctl', ['show', entry.unit, '--property', 'MainPID', '--value'], {
             encoding: 'utf8',
-            stdio: 'pipe',
+            stdio: 'pipe', timeout: 2000, maxBuffer: 16384,
           }),
         ).trim(),
         10,
@@ -194,7 +197,7 @@ function observeTopology(
       const controlGroup = String(
         execFileSync('systemctl', ['show', entry.unit, '--property', 'ControlGroup', '--value'], {
           encoding: 'utf8',
-          stdio: 'pipe',
+          stdio: 'pipe', timeout: 2000, maxBuffer: 16384,
         }),
       ).trim();
       const pidCgroup = String(readFileSync(`/proc/${pid}/cgroup`, 'utf8'));
@@ -204,13 +207,13 @@ function observeTopology(
         mainPid !== pid ||
         !processExists(mainPid) ||
         !controlGroup ||
-        !pidCgroup.includes(controlGroup)
+        !pidCgroup.split('\n').some((line) => line.split(':').slice(2).join(':') === controlGroup)
       )
         reasons.push(
           `Production runtime identity topology ${role} pidfile PID must equal the live systemd MainPID in the unit cgroup.`,
         );
-    } catch {
-      reasons.push(`Unable to observe systemd process identity for ${role}.`);
+    } catch (error) {
+      reasons.push(`Unable to observe systemd process identity for ${role}. [${readErrorCode(error)}]`);
     }
     if (contract.readyfile) {
       try {
@@ -219,8 +222,8 @@ function observeTopology(
           reasons.push(
             `Production runtime identity topology ${role}.readyfile does not match its pidfile.`,
           );
-      } catch {
-        reasons.push(`Unable to read production readyfile for ${role}.`);
+      } catch (error) {
+        reasons.push(`Unable to read production readyfile for ${role}. [${readErrorCode(error)}]`);
       }
     }
   }
@@ -347,7 +350,7 @@ export function readRuntimeIdentity({
     return {
       ok: false,
       identity: null,
-      blockingReasons: [`Unable to read production runtime identity JSON: ${error.message}`],
+      blockingReasons: [`Unable to read production runtime identity JSON: [${readErrorCode(error)}]`],
     };
   }
   const now = validationOptions.now ?? Date.now();
@@ -365,7 +368,7 @@ export function readRuntimeIdentity({
       return {
         ok: false,
         identity,
-        blockingReasons: [`Unable to refresh live production topology: ${error.message}`],
+        blockingReasons: [`Unable to refresh live production topology: [${readErrorCode(error)}]`],
       };
     }
   }

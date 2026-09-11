@@ -4,12 +4,13 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { safeReceipt, safeRecovery, safeRestoration, safeMatrices, safeBudget, safeNextAction } from './promotion-diagnostics-summary.mjs';
 
+import { safePreflightSummary, safePrechangeFailure } from './production-preflight-report.mjs';
 import { readEvidenceJson } from './evidence-file.mjs';
 import { collectAssetDiagnostics } from './web-asset-diagnostics.mjs';
 import { safeComponentResults } from './promotion-diagnostics-scopes.mjs';
 export { safeAssetEvent } from './web-asset-diagnostics.mjs';
 
-export async function collectDiagnostics(root, output) {
+export async function collectDiagnostics(root, output, context = { runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT }) {
   const json = async (name) => {
     try {
       return await readEvidenceJson(join(root, name));
@@ -20,7 +21,10 @@ export async function collectDiagnostics(root, output) {
   const engine = await json('deployment-engine.json');
   const reconciliation = await json('reconcile.json');
   const webAssets = await collectAssetDiagnostics(join(root, 'web-asset-diagnostics'));
+  const preflight = safePreflightSummary(await json('production-preflight.json'), context);
+  const prechangeFailure = safePrechangeFailure(await json('promotion-prechange-failure.json'), context);
   const result = {
+    preflight, prechangeFailure,
     schemaVersion: 1,
     engine: engine
       ? {
@@ -37,7 +41,7 @@ export async function collectDiagnostics(root, output) {
       'needs_human',
     ].includes(reconciliation?.outcome)
       ? reconciliation.outcome
-      : 'unknown',
+      : (prechangeFailure || preflight?.status === 'failed') ? 'failed_before_change' : 'unknown',
     componentResults: safeComponentResults(reconciliation?.componentResults),
     webAssets,
     evidencePresent: {},

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Compatible with the Bash 3.2 shipped on the pinned macOS runner.
-set -euo pipefail
+set -Eeuo pipefail
 umask 077
+
+# Log only a fixed phase name, never BASH_COMMAND, plist contents or credentials.
+VERIFY_STAGE=validate-source
+trap 'status=$?; printf "[M60-04] artifact verification stage=%s failed (exit=%s)\n" "$VERIFY_STAGE" "$status" >&2; exit "$status"' ERR
 
 profile="${1:?profile required}"
 artifact="${2:?artifact path required}"
@@ -21,6 +25,22 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 normalize_fp() { sed -E 's/.*(=|SHA256:)[[:space:]]*//' | tr '[:upper:]' '[:lower:]' | tr -cd '0-9a-f' | awk '{print "sha256:" $0}'; }
 reject_debug_subject() { if printf '%s' "$1" | grep -Eiq 'Android Debug|AndroidDebugKey|CN[=:][[:space:]]*debug'; then echo '[M60-04] debug signer rejected' >&2; exit 1; fi; }
 
+# Convert only the extracted dictionary, not a complete provisioning profile:
+# profiles contain date/data values that cannot be represented as JSON by plutil.
+# Keep conversion errors out of jq's input and do not print plist contents.
+read_ios_entitlements() {
+  local input="$1" context="$2" json="$work/$2.json"
+  if ! plutil -convert json -o "$json" "$input" >"$work/plutil-error.txt" 2>&1; then
+    echo "[M60-04] $context: entitlements plist-to-JSON conversion failed" >&2
+    exit 1
+  fi
+  if ! jq -e -sS -c 'if length == 1 and (.[0] | type == "object") then .[0] else error("expected one entitlements object") end' \
+    "$json" 2>"$work/jq-error.txt"; then
+    echo "[M60-04] $context: expected one valid entitlements JSON object" >&2
+    exit 1
+  fi
+}
+
 verify_ios_store_profile() {
   bundle="$1"
   bundle_id="$2"
@@ -35,10 +55,17 @@ verify_ios_store_profile() {
   security cms -D -i "$bundle/embedded.mobileprovision" > "$profile_plist"
   profile_team="$(plutil -extract TeamIdentifier.0 raw -o - "$profile_plist")"
   profile_prefix="$(plutil -extract ApplicationIdentifierPrefix.0 raw -o - "$profile_plist")"
-  profile_entitlements="$(plutil -extract Entitlements json -o - "$profile_plist" | jq -S -c .)"
-  signed_entitlements="$(plutil -convert json -o - "$entitlements_plist" | jq -S -c .)"
+  # Extract as plist first; unrelated CreationDate/ExpirationDate and certificate
+  # data must not participate in the entitlements JSON conversion.
+  if ! plutil -extract Entitlements xml1 -o "$work/$label-profile-entitlements.plist" \
+    "$profile_plist" >"$work/plutil-error.txt" 2>&1; then
+    echo "[M60-04] $label: provisioning profile Entitlements extraction failed" >&2
+    exit 1
+  fi
+  profile_entitlements="$(read_ios_entitlements "$work/$label-profile-entitlements.plist" "$label-profile")"
+  signed_entitlements="$(read_ios_entitlements "$entitlements_plist" "$label-signed")"
   test "$profile_team" = "$expected_team" || { echo "[M60-04] $label provisioning profile Apple Team mismatch" >&2; exit 1; }
-  if plutil -extract ProvisionedDevices raw -o - "$profile_plist" >/dev/null 2>&1 \
+  if plutil -extract ProvisionedDevices xml1 -o - "$profile_plist" >/dev/null 2>&1 \
     || plutil -extract ProvisionsAllDevices raw -o - "$profile_plist" 2>/dev/null | grep -Fxq true \
     || ! printf '%s' "$profile_entitlements" | jq -e '.["get-task-allow"] != true and .["beta-reports-active"] == true' >/dev/null; then
     echo "[M60-04] $label provisioning profile is not App Store distribution" >&2
@@ -83,10 +110,11 @@ verify_ios_store_profile() {
       printf '%s' "$certificate" | openssl base64 -d -A | shasum -a 256 | awk '{print $1}'
       certificate_index=$((certificate_index + 1))
     done
-  } | grep -Fxq "$signing_cert_sha" || { echo "[M60-04] $label signer is absent from its provisioning profile" >&2; exit 1; }
+  } | grep -Fx "$signing_cert_sha" >/dev/null || { echo "[M60-04] $label signer is absent from its provisioning profile" >&2; exit 1; }
 }
 
 if [ "$profile" = ios-store ]; then
+  VERIFY_STAGE=verify-main-app
   command -v codesign >/dev/null && command -v security >/dev/null && command -v plutil >/dev/null && command -v openssl >/dev/null || { echo '[M60-04] macOS signing tools are required' >&2; exit 1; }
   case "$artifact" in *.ipa) ;; *) echo '[M60-04] iOS Store artifact must be IPA' >&2; exit 1;; esac
   unzip -q "$artifact" -d "$work/ipa"
@@ -109,11 +137,12 @@ if [ "$profile" = ios-store ]; then
   verify_ios_store_profile "$app" "$expected_app" "$work/entitlements.plist" "$work/profile.plist" main-app "$expected_team" "$expected_app_group" production
   signer_subject="$(openssl x509 -inform DER -in "$work/main-app-signing-cert-0" -noout -subject)"; reject_debug_subject "$signer_subject"
   signer="$(openssl x509 -inform DER -in "$work/main-app-signing-cert-0" -noout -fingerprint -sha256 | normalize_fp)"
-  permissions="$(plutil -convert json -o - "$work/entitlements.plist" | jq -S -c .)"
+  permissions="$signed_entitlements"
   printf '%s' "$permissions" | jq -e --arg group "$expected_app_group" '.["com.apple.security.application-groups"] | index($group) != null' >/dev/null || { echo '[M60-04] signed App Group entitlement mismatch' >&2; exit 1; }
   printf '%s' "$permissions" | jq -e --arg group "$profile_prefix.$expected_app_group" '.["keychain-access-groups"] | index($group) != null' >/dev/null || { echo '[M60-04] signed Keychain Group entitlement mismatch' >&2; exit 1; }
   appex=("$app"/PlugIns/*.appex)
   test "${#appex[@]}" -eq 1 && test -d "${appex[0]}" || { echo '[M60-04] IPA must contain exactly one Share Extension' >&2; exit 1; }
+  VERIFY_STAGE=verify-share-extension
   extension="${appex[0]}"
   extension_id="$(plutil -extract CFBundleIdentifier raw -o - "$extension/Info.plist")"
   test "$extension_id" = "$expected_app.share-extension" || { echo '[M60-04] Share Extension bundle identifier mismatch' >&2; exit 1; }
@@ -121,7 +150,7 @@ if [ "$profile" = ios-store ]; then
   codesign --verify --strict "$extension" >/dev/null
   codesign -d --entitlements :- "$extension" > "$work/extension-entitlements.plist" 2>/dev/null
   verify_ios_store_profile "$extension" "$expected_app.share-extension" "$work/extension-entitlements.plist" "$work/extension-profile.plist" share-extension "$expected_team" "$expected_app_group" absent
-  extension_permissions="$(plutil -convert json -o - "$work/extension-entitlements.plist" | jq -S -c .)"
+  extension_permissions="$signed_entitlements"
   printf '%s' "$extension_permissions" | jq -e --arg group "$expected_app_group" '.["com.apple.security.application-groups"] | index($group) != null' >/dev/null || { echo '[M60-04] Share Extension App Group entitlement mismatch' >&2; exit 1; }
   version_code=null
   build_number_json="$(printf '%s' "$build_number" | jq -R .)"
@@ -160,11 +189,13 @@ else
 fi
 
 test "$signer" != 'sha256:' && printf '%s' "$signer" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo '[M60-04] signer fingerprint unavailable' >&2; exit 1; }
+VERIFY_STAGE=write-verification-record
 permissions_hash="sha256:$(printf '%s' "$permissions" | shasum -a 256 | awk '{print $1}')"
 jq -nS \
   --arg profile "$profile" --arg appId "$app_id" --arg version "$version" \
   --argjson buildNumber "$build_number_json" --argjson versionCode "$version_code" \
   --arg artifactSha256 "$artifact_hash" --argjson size "$artifact_size" \
   --arg signerFingerprint "$signer" --arg permissionsSha256 "$permissions_hash" \
-  '{profile:$profile,appId:$appId,version:$version,buildNumber:$buildNumber,versionCode:$versionCode,artifactSha256:$artifactSha256,size:$size,signerFingerprint:$signerFingerprint,permissionsSha256:$permissionsSha256}' > "$output"
+  '{profile:$profile,appId:$appId,version:$version,buildNumber:$buildNumber,versionCode:$versionCode,artifactSha256:$artifactSha256,size:$size,signerFingerprint:$signerFingerprint,permissionsSha256:$permissionsSha256}' > "$work/verification.json"
+cp "$work/verification.json" "$output"
 echo "M60-04 artifact verified profile=$profile digest=$artifact_hash"

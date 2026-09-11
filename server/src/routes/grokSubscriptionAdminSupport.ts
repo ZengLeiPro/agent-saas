@@ -25,6 +25,7 @@ import {
   type AdminConfigOperationId,
 } from '../config/adminConfigOperationRegistry.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
+import { readStagingOAuthPolicy } from '../release/environmentSafety.js';
 import {
   GrokCredentialError,
   type GrokCredentialManager,
@@ -90,16 +91,11 @@ export function withGrokRefs(
 }
 function assertGrokOAuthEnvironment(): void {
   if (readRuntimeIdentity().environment !== 'staging') return;
-  const hosts = new Set(
-    (process.env.AGENT_SAAS_STAGING_OAUTH_HOSTS ?? '')
-      .split(',')
-      .map((host) => host.trim().toLowerCase())
-      .filter(Boolean),
-  );
+  const policy = readStagingOAuthPolicy();
   if (
-    process.env.AGENT_SAAS_STAGING_OAUTH_ENABLED !== '1' ||
-    !hosts.has('auth.x.ai') ||
-    !hosts.has('cli-chat-proxy.grok.com')
+    policy.mode !== '1' ||
+    !policy.hosts.has('auth.x.ai') ||
+    !policy.hosts.has('cli-chat-proxy.grok.com')
   ) {
     throw new GrokAdminInputError(
       'Staging 尚未明确启用 Grok OAuth 或缺少认证/订阅域名白名单',

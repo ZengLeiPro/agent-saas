@@ -161,9 +161,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -566,6 +566,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -764,9 +784,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:2f4422bc42e1eb6c29beeed6aeb3122ab91f940e5e02ba15b3087d32a5258421",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -1191,16 +1211,16 @@
         {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "targetDigest": "sha256:31d07274b3fdabf0710972a463f0f3f7dcd39f122da80611d33b31c19738a328",
           "classification": "no-schema-change",
-          "reason": "配置投影、摘要和凭据元数据读取，无数据库迁移；新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+          "reason": "配置投影、摘要和凭据元数据读取，无数据库迁移；新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/release/environmentSafety.ts",
           "baselineDigest": "sha256:4d1f2137965efa2d9f4dc1fbb47b267392e7800bb01825f5e022b1742ae10c67",
-          "targetDigest": "sha256:8dd36cfec73ef3f3ab70f7d9ad49c1a55ec372b756c731d52faa6e93d93759b3",
+          "targetDigest": "sha256:cdbb192d6682e7d390d85c3dbe199bf82b93fa6e8517047c3e172e1bde8cc4a4",
           "classification": "no-schema-change",
-          "reason": "环境和内联凭据校验，无数据库迁移。"
+          "reason": "环境和内联凭据校验，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/release/runtimeIdentity.ts",
@@ -1310,9 +1330,9 @@
         {
           "path": "server/src/runtime/responses/responsesTransport.ts",
           "baselineDigest": "sha256:98aff918699e6dc7cb21b6338f8875089bc73d8e9910a50a9ad707c388d4ae8f",
-          "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
+          "targetDigest": "sha256:ebd8f4e9d8786a0066affd6fefebc0a9dff35d891aba34efdee79b8e9aae5b4d",
           "classification": "no-schema-change",
-          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
+          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/runtime/runRecoveryQueries.ts",
@@ -1767,6 +1787,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -1951,9 +1991,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -2294,9 +2334,9 @@
         {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "targetDigest": "sha256:31d07274b3fdabf0710972a463f0f3f7dcd39f122da80611d33b31c19738a328",
           "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -2385,9 +2425,9 @@
         {
           "path": "server/src/runtime/responses/responsesTransport.ts",
           "baselineDigest": "sha256:98aff918699e6dc7cb21b6338f8875089bc73d8e9910a50a9ad707c388d4ae8f",
-          "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
+          "targetDigest": "sha256:ebd8f4e9d8786a0066affd6fefebc0a9dff35d891aba34efdee79b8e9aae5b4d",
           "classification": "no-schema-change",
-          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
+          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/runtime/runStoreSchema.ts",
@@ -2731,6 +2771,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -2915,9 +2975,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -3258,9 +3318,9 @@
         {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "targetDigest": "sha256:31d07274b3fdabf0710972a463f0f3f7dcd39f122da80611d33b31c19738a328",
           "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -3658,6 +3718,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -3842,9 +3922,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -4185,9 +4265,9 @@
         {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "targetDigest": "sha256:31d07274b3fdabf0710972a463f0f3f7dcd39f122da80611d33b31c19738a328",
           "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -4585,6 +4665,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -4769,9 +4869,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -5098,9 +5198,9 @@
         {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "targetDigest": "sha256:31d07274b3fdabf0710972a463f0f3f7dcd39f122da80611d33b31c19738a328",
           "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5490,6 +5590,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -5674,9 +5794,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -6003,9 +6123,9 @@
         {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "targetDigest": "sha256:31d07274b3fdabf0710972a463f0f3f7dcd39f122da80611d33b31c19738a328",
           "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -6395,6 +6515,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -6579,9 +6719,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -6908,9 +7048,9 @@
         {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "targetDigest": "sha256:31d07274b3fdabf0710972a463f0f3f7dcd39f122da80611d33b31c19738a328",
           "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -7300,6 +7440,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -7498,9 +7658,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -7953,16 +8113,16 @@
         {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "targetDigest": "sha256:31d07274b3fdabf0710972a463f0f3f7dcd39f122da80611d33b31c19738a328",
           "classification": "no-schema-change",
-          "reason": "配置投影、摘要和凭据元数据读取，无数据库迁移；新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+          "reason": "配置投影、摘要和凭据元数据读取，无数据库迁移；新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/release/environmentSafety.ts",
           "baselineDigest": "sha256:8dd36cfec73ef3f3ab70f7d9ad49c1a55ec372b756c731d52faa6e93d93759b3",
-          "targetDigest": "sha256:8dd36cfec73ef3f3ab70f7d9ad49c1a55ec372b756c731d52faa6e93d93759b3",
+          "targetDigest": "sha256:cdbb192d6682e7d390d85c3dbe199bf82b93fa6e8517047c3e172e1bde8cc4a4",
           "classification": "no-schema-change",
-          "reason": "环境和内联凭据校验，无数据库迁移。"
+          "reason": "环境和内联凭据校验，无数据库迁移。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/release/runtimeIdentity.ts",
@@ -8072,9 +8232,9 @@
         {
           "path": "server/src/runtime/responses/responsesTransport.ts",
           "baselineDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
-          "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
+          "targetDigest": "sha256:ebd8f4e9d8786a0066affd6fefebc0a9dff35d891aba34efdee79b8e9aae5b4d",
           "classification": "no-schema-change",
-          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
+          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/runtime/runRecoveryQueries.ts",
@@ -8497,6 +8657,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -8681,9 +8861,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -9429,6 +9609,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -9606,9 +9806,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -10367,6 +10567,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -10544,9 +10764,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -11305,6 +11525,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -11475,9 +11715,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -12178,6 +12418,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -12348,9 +12608,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -13051,6 +13311,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -13221,9 +13501,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -13924,6 +14204,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -14094,9 +14394,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -14797,6 +15097,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -14960,9 +15280,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -15652,6 +15972,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -15815,9 +16155,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -16507,6 +16847,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -16670,9 +17030,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -17286,6 +17646,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -17449,9 +17829,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -18054,6 +18434,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -18217,9 +18617,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -18814,6 +19214,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -18977,9 +19397,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -19574,6 +19994,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -19737,9 +20177,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -20334,6 +20774,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -20497,9 +20957,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -21058,6 +21518,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -21221,9 +21701,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -21776,6 +22256,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -21939,9 +22439,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -22450,6 +22950,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -22613,9 +23133,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -23124,6 +23644,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -23287,9 +23827,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -23740,6 +24280,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -23903,9 +24463,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -24348,6 +24908,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -24511,9 +25091,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -24930,6 +25510,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -25093,9 +25693,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -25508,6 +26108,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -25671,9 +26291,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -26090,6 +26710,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -26253,9 +26893,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -26657,6 +27297,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -26820,9 +27480,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -27224,6 +27884,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -27387,9 +28067,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -27780,6 +28460,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -27943,9 +28643,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -28348,6 +29048,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -28511,9 +29231,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -28916,6 +29636,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -29079,9 +29819,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -29484,6 +30224,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },
@@ -30150,16 +30910,16 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:069baebe507675a57cdd22ae8391c8cab83539371f5ee6304cb37ae978d58994",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
           "classification": "no-schema-change",
-          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。"
+          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/app/runtimeContracts.ts",
           "baselineDigest": "sha256:5033ecfe2bb6852ae1d3aedf0f8f058ef804832365638d92dac90c23c74be2ae",
-          "targetDigest": "sha256:c18e290507fd70d3124c22a0047810b940e435f843f8f7142105e014862f7fe7",
+          "targetDigest": "sha256:ea5ad8f3791c29327a0ea6eb5073a33416dd489ad0e6b7727c71dcc540d2ac54",
           "classification": "no-schema-change",
-          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged."
+          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
         },
         {
           "path": "server/src/context/sync/dwsContextRuntime.ts",
@@ -30521,6 +31281,26 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
+        },
+        {
+          "path": "scripts/release/grok-runtime-review.test.mjs",
+          "digest": "sha256:a00fafc70ddba11bce222b2f3d22a8907271901bf9776e8f1a47745b478cb232"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimeEntrypoints.test.ts",
+          "digest": "sha256:1043789687741d567ac86538accdd713716efa3364e8773c1b858d4cb56a4396"
+        },
+        {
+          "path": "server/src/__tests__/grokRuntimePersistence.test.ts",
+          "digest": "sha256:48c72392f680e326cd9c0fc398da5f525b8cdabe554332171cd4fdc02fc88e17"
+        },
+        {
+          "path": "server/src/__tests__/grokProductionPublication.test.ts",
+          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
         }
       ]
     },

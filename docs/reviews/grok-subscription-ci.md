@@ -21,3 +21,5 @@ Grok 新表的后置条件在隔离 PostgreSQL 实际执行，覆盖短/长前�
 真实 SuperGrok 账号资格、OAuth client/scopes 的适用性、真实订阅推理和额度、双账号上游行为，以及生产蓝绿部署不由这些模拟测试证明，仍需按[发布指南](../grok-subscription-rollout.md)由获授权管理员验收。本 PR 不合并、不部署、不修改生产配置，也不以 API Key 成功替代订阅验收。
 
 测试语义映射见 [T01–T36 对照](grok-subscription-validation.md)，日常使用见[操作指南](../grok-subscription.md)。
+
+历史审核已对五个受本功能影响的既有运行时/类型/配置投影文件进行精确重审；不改变旧分类或放宽依赖闭包门禁。详细依据见 [运行时装配重审](grok-runtime-assembly-migration.md)。

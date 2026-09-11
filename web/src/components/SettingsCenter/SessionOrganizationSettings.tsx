@@ -109,6 +109,7 @@ export function SessionOrganizationSettings() {
       <SettingsPanelHeader
         title="会话智能整理"
         description="设置个人标题风格和智能分组习惯。个人要求会追加在平台规则之后。"
+        className="md:pr-0"
         actions={
           <>
             {saved && <span className="text-sm text-success">已保存</span>}
@@ -142,31 +143,35 @@ export function SessionOrganizationSettings() {
             }}
           />
         </div>
-        <PromptEditor
-          id="title-prompt-addition"
-          label="我的标题生成要求"
-          description="例如：标题优先使用客户名称，并体现本次要处理的事项。留空则完全使用平台默认规则。"
-          value={titlePrompt}
-          disabled={saving}
-          onChange={(value) => {
-            setTitlePrompt(value);
-            setSaved(false);
-          }}
-        />
-        <PromptEditor
-          id="grouping-prompt-addition"
-          label="我的智能分组要求"
-          description="例如：优先按客户名称分组；没有明确客户时再按销售、采购、财务、研发分类。"
-          value={groupingPrompt}
-          disabled={saving}
-          onChange={(value) => {
-            setGroupingPrompt(value);
-            setSaved(false);
-          }}
-        />
-        <p className="px-1 text-xs text-muted-foreground">
-          请勿在提示语中填写密码、密钥或其他敏感信息。
-        </p>
+        {enabled ? (
+          <>
+            <PromptEditor
+              id="title-prompt-addition"
+              label="我的标题生成要求"
+              description="例如：标题优先使用客户名称，并体现本次要处理的事项。留空则完全使用平台默认规则。"
+              value={titlePrompt}
+              disabled={saving}
+              onChange={(value) => {
+                setTitlePrompt(value);
+                setSaved(false);
+              }}
+            />
+            <PromptEditor
+              id="grouping-prompt-addition"
+              label="我的智能分组要求"
+              description="例如：优先按客户名称分组；没有明确客户时再按销售、采购、财务、研发分类。"
+              value={groupingPrompt}
+              disabled={saving}
+              onChange={(value) => {
+                setGroupingPrompt(value);
+                setSaved(false);
+              }}
+            />
+            <p className="px-1 text-xs text-muted-foreground">
+              请勿在提示语中填写密码、密钥或其他敏感信息。
+            </p>
+          </>
+        ) : null}
       </div>
     </div>
   );

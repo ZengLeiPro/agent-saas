@@ -31,7 +31,10 @@ describe('SessionOrganizationSettings', () => {
     });
     render(<SessionOrganizationSettings />);
     expect(screen.getByRole('switch', { name: '启用会话智能整理' }).getAttribute('aria-checked')).toBe('false');
+    expect(screen.queryByLabelText('我的标题生成要求')).toBeNull();
+    expect(screen.queryByLabelText('我的智能分组要求')).toBeNull();
     await userEvent.click(screen.getByRole('switch', { name: '启用会话智能整理' }));
+    expect(screen.getByLabelText('我的智能分组要求')).not.toBeNull();
     const title = screen.getByLabelText('我的标题生成要求');
     await userEvent.clear(title);
     await userEvent.type(title, '按项目命名');

@@ -49,6 +49,8 @@ jobs:
                   raise SystemExit(f'{label}: expected one match, found {count}')
               return text.replace(old, new, 1)
 
+          runner_temp = '${' + '{ runner.temp }}'
+
           # Keep #653 automatic-release semantics from current main and layer PR654's
           # bounded production preflight/evidence behavior on top.
           path = '.github/workflows/deploy-staging.yml'
@@ -79,8 +81,8 @@ jobs:
           )
           text = replace_once(
               text,
-              "          path: ${{ runner.temp }}/production-live-observation-error.log\n",
-              "          path: |\n            ${{ runner.temp }}/production-live-observation-error.log\n            ${{ runner.temp }}/production-preflight*.json\n            ${{ runner.temp }}/production-baseline-provenance.json\n",
+              f"          path: {runner_temp}/production-live-observation-error.log\n",
+              f"          path: |\n            {runner_temp}/production-live-observation-error.log\n            {runner_temp}/production-preflight*.json\n            {runner_temp}/production-baseline-provenance.json\n",
               'deploy diagnostic artifact',
           )
           Path(path).write_text(text)
@@ -107,8 +109,8 @@ jobs:
           )
           text = replace_once(
               text,
-              "            ${{ runner.temp }}/production-before.json\n            ${{ runner.temp }}/production-after.json\n",
-              "            ${{ runner.temp }}/production-before.json\n            ${{ runner.temp }}/production-preflight*.json\n            ${{ runner.temp }}/promotion-prechange-failure.json\n            ${{ runner.temp }}/production-after.json\n",
+              f"            {runner_temp}/production-before.json\n            {runner_temp}/production-after.json\n",
+              f"            {runner_temp}/production-before.json\n            {runner_temp}/production-preflight*.json\n            {runner_temp}/promotion-prechange-failure.json\n            {runner_temp}/production-after.json\n",
               'promotion diagnostic artifact',
           )
           Path(path).write_text(text)

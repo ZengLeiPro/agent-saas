@@ -15,6 +15,7 @@ const PLAN_PALETTES: Record<
   { fallback: Palette; plans: Record<string, Palette> }
 > = {
   codex_subscription: { fallback: 'blue', plans: {} },
+  grok_subscription: { fallback: 'teal', plans: {} },
   claude_subscription: {
     fallback: 'clay',
     plans: { max: 'amber', team: 'blue', enterprise: 'violet' },

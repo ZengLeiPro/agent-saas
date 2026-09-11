@@ -1,3 +1,5 @@
+import { grokQuotaSources, grokQuotaCredentialStates } from './grokQuotaSources.js';
+import type { GrokQuotaCredentialSource } from './grokSubscriptionQuota.js';
 import type {
   ProviderQuotaCredentialState,
   ProviderQuotaHistoryResponse,
@@ -32,6 +34,7 @@ export interface ProviderQuotaServiceOptions {
   getModelsConfig: () => AppConfig['models'];
   secretVault?: SecretVault;
   codexCredentialManager?: CodexCredentialManagerLike;
+  grokCredentialManager?: GrokQuotaCredentialSource;
   /** 只有 singleton Worker 角色跑周期采集；ws-only 进程仅服务按需刷新与读取。 */
   enableCollector: boolean;
   intervalMs?: number;
@@ -157,7 +160,8 @@ export class ProviderQuotaService {
       this.options.store.latestSuccessful(),
     ]);
     const okByKey = new Map(latestOk.map((snapshot) => [snapshot.accountKey, snapshot]));
-    const liveCredentials = await this.codexCredentialStates();
+    const liveCredentials = new Map([...await this.codexCredentialStates(), ...await grokQuotaCredentialStates(this.options.grokCredentialManager)]);
+    const sourceOrder = new Map(sources.map((source, index) => [source.accountKey, index]));
     const items = latest
       .filter((snapshot) => activeKeys.has(snapshot.accountKey))
       .map((snapshot) => {
@@ -190,7 +194,9 @@ export class ProviderQuotaService {
       })
       .sort(
         (a, b) =>
-          a.sourceKind.localeCompare(b.sourceKind) || a.accountLabel.localeCompare(b.accountLabel),
+          a.sourceKind.localeCompare(b.sourceKind) || (a.sourceKind === 'grok_subscription'
+            ? (sourceOrder.get(a.accountKey) ?? 0) - (sourceOrder.get(b.accountKey) ?? 0)
+            : a.accountLabel.localeCompare(b.accountLabel)),
       );
     return {
       items,
@@ -300,8 +306,8 @@ export class ProviderQuotaService {
   }
 
   private async sources(): Promise<QuotaSource[]> {
-    const [codex, claude] = await Promise.all([this.codexSources(), this.claudeSources()]);
-    return [...this.volcengineSources(), ...this.zhipuSources(), ...codex, ...claude];
+    const [codex, grok, claude] = await Promise.all([this.codexSources(), grokQuotaSources(this.options.grokCredentialManager, this.fetchImpl, this.now), this.claudeSources()]);
+    return [...this.volcengineSources(), ...this.zhipuSources(), ...codex, ...grok, ...claude];
   }
 
   /**

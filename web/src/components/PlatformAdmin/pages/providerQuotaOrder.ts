@@ -4,6 +4,7 @@ export const PROVIDER_QUOTA_ORDER_STORAGE_KEY = 'platform-console.provider-quota
 
 const SOURCE_ORDER: Record<ProviderQuotaSnapshot['sourceKind'], number> = {
   codex_subscription: 0,
+  grok_subscription: 0.5,
   claude_subscription: 1,
   volcengine_ark_plan: 2,
   zhipu_coding_plan: 3,

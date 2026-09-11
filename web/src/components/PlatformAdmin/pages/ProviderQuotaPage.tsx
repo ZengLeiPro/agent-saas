@@ -1,3 +1,4 @@
+import { GrokQuotaDetails } from './GrokQuotaDetails';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight, GripVertical, Loader2, RefreshCw, TriangleAlert } from 'lucide-react';
 import type {
@@ -29,6 +30,7 @@ import { formatTime } from '../format';
 
 const SOURCE_LABEL: Record<ProviderQuotaSnapshot['sourceKind'], string> = {
   codex_subscription: 'Codex 订阅',
+  grok_subscription: 'Grok 订阅',
   volcengine_ark_plan: '火山 Agent Plan',
   claude_subscription: 'Claude 订阅',
   zhipu_coding_plan: '智谱 Coding Plan',
@@ -85,6 +87,7 @@ export function accountStatus(
   if (snapshot.credential?.availability === 'auth_unavailable') {
     return { tone: 'critical', label: '凭据不可用' };
   }
+  if (snapshot.sourceKind === 'grok_subscription' && snapshot.windows.length === 0) return { tone: 'warning', label: '额度未知' };
   const tones = snapshot.windows
     .filter((window) => isMainSubscriptionWindow(snapshot.sourceKind, window))
     .map(windowTone);
@@ -282,6 +285,7 @@ function AccountCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {snapshot.sourceKind === 'grok_subscription' && <GrokQuotaDetails snapshot={snapshot} />} 
         {isZhipu && (
           <p className="text-xs text-muted-foreground" data-testid="zhipu-quota-scope">
             个人套餐 · 账号共享额度，不是单 Key 用量。同账号多个 Key 的卡片可能重复，不能相加。

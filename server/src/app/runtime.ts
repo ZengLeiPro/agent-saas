@@ -2807,7 +2807,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   if (pgEventStore && config.runtimeEventStore?.backend === 'pg') {
     providerQuotaRuntime = await createProviderQuotaRuntime({
       pool: pgEventStore.pool, tablePrefix: config.runtimeEventStore.tablePrefix,
-      getModelsConfig: () => config.models, secretVault, codexCredentialManager,
+      getModelsConfig: () => config.models, secretVault, codexCredentialManager, grokCredentialManager,
       enableCollector: enableSingletonWorkers, fetchImpl: egressFetch, logger: serverLogger.child('ProviderQuota'),
     });
   }

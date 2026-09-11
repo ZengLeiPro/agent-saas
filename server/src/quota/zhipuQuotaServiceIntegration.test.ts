@@ -77,7 +77,7 @@ describe('Zhipu ProviderQuotaService integration', () => {
   it('reuses the saved API Key ref without storing another quota secret', async () => {
     const vault = new InMemorySecretVault();
     const ref = await vault.putSecret('__global__', 'models', 'dummy-vault-key', {
-      actor: 'system', userId: 'test', scopes: ['secret:models:write'],
+      actor: 'system', userId: 'models_config_admin', scopes: ['secret:models:write'],
     });
     const { service, fetchImpl, store } = setup([group({ apiKey: undefined, apiKeyRef: ref.id })], vault);
     await service.refresh('zhipu:glm');

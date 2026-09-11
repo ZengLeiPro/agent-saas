@@ -1543,6 +1543,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     prepareMemoryPollingUpdate: (next) => () => applyMemoryPollingRuntimeUpdate?.(next),
     prepareMemoryIndexUpdate: prepareMemoryIndexRuntimeUpdate,
     prepareImageGenUpdate: (next) => prepareImageGenRuntimeUpdate(next), prepareTenantRemoteHandsUpdate: (next) => tenantRemoteHandsRuntime.prepare(next), requireRuntimeConsumers: true,
+    onGrokSubscriptionUpdated: () => grokModelCatalog.invalidate(),
     onCodexSubscriptionUpdated: (refs) => {
       if (refs) codexWebSocketPool.closeCredentialRefs(refs);
       else codexWebSocketPool.close();

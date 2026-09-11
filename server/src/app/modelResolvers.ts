@@ -86,6 +86,7 @@ export function createModelResolvers(params: {
   requireRuntimeConsumers?: boolean;
   /** Codex 配置变化后，undefined 表示关闭全池，否则只关闭指定 credential refs。 */
   onCodexSubscriptionUpdated?: (credentialRefs?: readonly string[]) => void;
+  onGrokSubscriptionUpdated?: () => void;
   initialRuntimeModels?: NonNullable<AppConfig['models']>;
   resolveRuntimeModels?: (
     next: NonNullable<AppConfig['models']>,
@@ -138,6 +139,7 @@ export function createModelResolvers(params: {
     ...(params.onCodexSubscriptionUpdated
       ? { onCodexSubscriptionUpdated: params.onCodexSubscriptionUpdated }
       : {}),
+    ...(params.onGrokSubscriptionUpdated ? { onGrokSubscriptionUpdated: params.onGrokSubscriptionUpdated } : {}),
     onModelsUpdated: async (nextConfig) => {
       if (!nextConfig.models) throw new Error('models 未配置');
       const resolved = params.resolveRuntimeModels

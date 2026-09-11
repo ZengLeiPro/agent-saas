@@ -1,3 +1,4 @@
+import { isSubscriptionTransport } from '../runtime/subscriptionModelAuthentication.js';
 /**
  * Model Resolver
  *
@@ -85,7 +86,7 @@ export function resolveContextAccountingFromModels(
   const disableResponseChaining = model.disable_response_chaining ?? group.disable_response_chaining ?? false;
   if (
     protocol === 'responses'
-    && responsesTransport !== 'codex_subscription'
+    && !isSubscriptionTransport(responsesTransport)
     && !disableResponseChaining
   ) {
     // previous_response_id 接力 + prompt cache 下，上游每 leg usage.input_tokens

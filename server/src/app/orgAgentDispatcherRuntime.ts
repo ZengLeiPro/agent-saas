@@ -1,3 +1,4 @@
+import { isSubscriptionTransport } from '../runtime/subscriptionModelAuthentication.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import {
   mergeOrgAgentWorkerRuntimePolicy,
@@ -53,7 +54,7 @@ export function createOrgAgentDispatcherRuntimeValidator(deps: DispatcherValidat
       const hasConnection = Boolean(
         resolved &&
         (resolved.connection?.apiKey ||
-          resolved.providerOptions?.responsesTransport === 'codex_subscription' ||
+          isSubscriptionTransport(resolved.providerOptions?.responsesTransport) ||
           process.env.OPENAI_API_KEY),
       );
       if (!resolved || !hasConnection)

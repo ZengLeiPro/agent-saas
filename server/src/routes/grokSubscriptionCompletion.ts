@@ -143,12 +143,14 @@ export class GrokSubscriptionCompletion {
         warning = '新账号凭据已登记，旧凭据的本地清理未确认；未远端撤销可能共享的授权 grant。';
       }
     }
+    try {
     return {
       ...(await this.context.publicState()),
       revision: result.revision,
       status: 'applied',
       ...(warning ? { warning } : {}),
     };
+    } catch (error) { throw new ConfigMutationCommittedError(error); }
   }
   private key(sessionId: string, owner: string): string {
     return `${owner}\0${sessionId}`;

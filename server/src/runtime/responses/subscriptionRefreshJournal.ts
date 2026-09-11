@@ -26,9 +26,9 @@ export class PgGrokRefreshJournal implements SubscriptionRefreshJournal {
     private readonly pool: PgPool,
     prefix = 'runtime',
   ) {
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,29}$/.test(prefix))
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(prefix))
       throw new Error('Invalid runtime table prefix');
-    this.table = `${prefix}_grok_credential_refresh_journal`;
+    this.table = `${prefix.slice(0, 30)}_grok_credential_refresh_journal`;
   }
   async init(): Promise<void> {
     const client = await this.pool.connect();

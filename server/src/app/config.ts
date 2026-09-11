@@ -1,3 +1,4 @@
+import { validateSubscriptionModels } from './subscriptionModelConfigValidation.js';
 import { grokSubscriptionConfigSchema } from './grokSubscriptionConfigSchema.js';
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
@@ -1220,28 +1221,7 @@ export const appConfigSchema = z.object({
       message: `${path} requires runtimeEventStore.backend="pg" ${reason}`,
     });
   }
-  for (const [groupIndex, group] of (value.models?.groups ?? []).entries()) {
-    for (const [modelIndex, model] of group.models.entries()) {
-      const transport = model.responses_transport ?? group.responses_transport;
-      if (transport !== 'codex_subscription' && transport !== 'grok_subscription') continue;
-      const subscriptionRoot = transport === 'grok_subscription' ? 'grokSubscription' : 'codexSubscription';
-      const protocol = model.protocol ?? group.protocol ?? 'chat_completions';
-      if (protocol !== 'responses') {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['models', 'groups', groupIndex, 'models', modelIndex, 'responses_transport'],
-          message: `${transport} 只能用于 protocol="responses"`,
-        });
-      }
-      if (!value[subscriptionRoot]) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [subscriptionRoot],
-          message: `存在 ${transport} 模型时必须配置 ${subscriptionRoot}`,
-        });
-      }
-    }
-  }
+  validateSubscriptionModels(value, ctx);
 });
 
 export type ProxyConfig = z.infer<typeof proxyConfigSchema>;

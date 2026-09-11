@@ -165,6 +165,7 @@ const MANAGED_CREDENTIAL_PAIRS: ReadonlyArray<{
 /** ref-only 受管字段（无 inline 形态；schema 已禁止凭据进 config）。 */
 const MANAGED_REF_ONLY_FIELDS: ReadonlyArray<PathPattern> = [
   ['codexSubscription', 'credentialRef'],
+  ['grokSubscription', 'credentialRef'],
 ];
 
 /** 值整体脱敏的 secret 字段（没有 ref 替代方案，不参与 fail-closed）。 */
@@ -226,6 +227,7 @@ const URL_REDACT_FIELDS: ReadonlyArray<PathPattern> = [
   ['memory', 'index', 'embedding', 'baseUrl'],
   ['models', 'groups', '*', 'baseUrl'],
   ['codexSubscription', 'endpoint'],
+  ['grokSubscription', 'endpoint'],
   ['auth', 'selfSignup', 'dingtalkLeadWebhook'],
   ['artifact', 'publicBaseUrl'],
   ['artifact', 'endpoint'],
@@ -468,7 +470,7 @@ function projectValue(
     return credentialEntryForRef(value);
   }
   // credentialRefs 数组：每项都是受管 ref。
-  if (pathMatches(path, ['codexSubscription', 'credentialRefs'])) {
+  if (pathMatches(path, ['codexSubscription', 'credentialRefs']) || pathMatches(path, ['grokSubscription', 'credentialRefs'])) {
     if (!Array.isArray(value)) return undefined;
     return value
       .filter((item): item is string => typeof item === 'string' && item.length > 0)

@@ -173,6 +173,43 @@ test('iOS file readers reject symlinks and oversized metadata', (t) => {
   assert.throws(() => readJson(item.recordPath), /size bound/u);
 });
 
+function assertSecretFreeContract(contract) {
+  assert.doesNotMatch(contract, /EXPO_TOKEN|environment:/u);
+  // Only expressions can read the secrets context; a filename such as
+  // ios-signing-secrets.test.mjs is not a credential reference. Respect quoted
+  // strings (including escaped quotes and braces) when finding expressions.
+  const expressions = contract.matchAll(/\$\{\{(?:'(?:[^']|'')*'|(?!\}\})[^'])*\}\}/gu);
+  for (const [expression] of expressions) {
+    const code = expression.replace(/'(?:[^']|'')*'/gu, "''");
+    assert.doesNotMatch(code, /\bsecrets\b/iu, 'PR validation must not read the secrets context');
+  }
+}
+
+test('iOS PR credential guard allows secret-related test filenames and literal strings', () => {
+  for (const contract of [
+    'run: node --test mobile/scripts/ios-signing-secrets.test.mjs',
+    "run: ${{ format('node --test {0}', 'mobile/scripts/ios-signing-secrets.test.mjs') }}",
+    "run: ${{ format('it''s a literal secrets.KEY and }}', github.sha) }}",
+    'run: echo ${{ github.sha }} # secrets.TEST is not an expression',
+  ]) assert.doesNotThrow(() => assertSecretFreeContract(contract));
+});
+
+for (const [name, contract] of [
+  ['dot access', 'env: { KEY: "${{secrets.IOS_DISTRIBUTION_P12_BASE64}}" }'],
+  ['bracket access', "env: { KEY: \"${{ secrets['IOS_DISTRIBUTION_P12_BASE64'] }}\" }"],
+  ['multiline access', 'env:\n  KEY: ${{\n    secrets\n      .IOS_DISTRIBUTION_P12_BASE64\n  }}'],
+  ['whole context', 'run: echo ${{ toJSON(secrets) }}'],
+  ['mixed-case context', 'env: { KEY: "${{ SeCrEtS.KEY }}" }'],
+  ['quoted braces before access', "run: ${{ format('}} {0}', secrets.KEY) }}"],
+  ['later expression', 'run: echo ${{ github.sha }} ${{ secrets.KEY }}'],
+  ['protected environment', 'environment: mobile-build-production'],
+  ['Expo credential', 'env: { EXPO_TOKEN: external-value }'],
+]) {
+  test(`iOS PR credential guard rejects ${name}`, () => {
+    assert.throws(() => assertSecretFreeContract(contract), assert.AssertionError);
+  });
+}
+
 test('iOS workflow keeps PR validation secret-free, uses one dispatch and keeps TestFlight publishing build-free', () => {
   const workflow = readFileSync(join(root, IOS_WORKFLOW), 'utf8');
   const contract = workflow.split('  contract:')[1].split('  plan:')[0];
@@ -180,7 +217,7 @@ test('iOS workflow keeps PR validation secret-free, uses one dispatch and keeps 
   const publish = workflow.split('  publish_testflight:')[1];
   assert.doesNotMatch(workflow, /pull_request_target|workflow_run:|--auto-submit|--latest|EXPO_TOKEN|eas build|eas submit/u);
   assert.match(contract, /node --test mobile\/scripts\/ios-actions\.test\.mjs/u);
-  assert.doesNotMatch(contract, /secrets\.|EXPO_TOKEN|environment:/u);
+  assertSecretFreeContract(contract);
   assert.match(build, /environment: mobile-build-production/u);
   assert.match(build, /IOS_DISTRIBUTION_P12_BASE64/u);
   assert.match(build, /build\.sh ios --build/u);

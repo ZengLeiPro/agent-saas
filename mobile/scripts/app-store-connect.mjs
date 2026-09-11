@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { createPrivateKey, sign } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, unlinkSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+import { SubmissionProgress, uploadIpa } from './app-store-progress.mjs';
 
 const API = 'https://api.appstoreconnect.apple.com/v1';
-const sleep = (milliseconds) => new Promise((done) => setTimeout(done, milliseconds));
 const base64url = (value) => Buffer.from(value).toString('base64url');
 
 export function createAppStoreToken({ keyId, issuerId, privateKey, now = Date.now() }) {
@@ -46,38 +47,43 @@ export function validateInternalGroup(group, expected) {
   return group;
 }
 
-class AppStoreClient {
-  constructor(credentials) {
+export class AppStoreClient {
+  constructor(credentials, { fetchImpl = fetch } = {}) {
     this.credentials = credentials;
+    this.fetch = fetchImpl;
   }
 
-  async request(path) {
+  async request(path, { signal } = {}) {
     assert.ok(path.startsWith('/') && !path.includes('..'), 'Unsafe App Store Connect API path');
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const response = await fetch(`${API}${path}`, {
-        headers: {
-          Authorization: `Bearer ${createAppStoreToken(this.credentials)}`,
-          Accept: 'application/json',
-        },
-        redirect: 'error',
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (response.status === 204) return null;
-      const payload = await response.json().catch(() => ({}));
-      if (response.ok) return payload;
-      if ((response.status === 429 || response.status >= 500) && attempt < 3) {
-        await sleep(2_000 * (attempt + 1));
+      signal?.throwIfAborted();
+      let response;
+      let payload;
+      try {
+        response = await this.fetch(`${API}${path}`, {
+          headers: {
+            Authorization: `Bearer ${createAppStoreToken(this.credentials)}`,
+            Accept: 'application/json',
+          },
+          redirect: 'error',
+          signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
+        });
+        if (response.status === 204) return null;
+        payload = await response.json();
+      } catch {
+        signal?.throwIfAborted();
+        if (attempt === 3) throw new Error('App Store Connect request failed (network, timeout or invalid JSON)');
+        await delay(2_000 * (attempt + 1), undefined, { signal });
         continue;
       }
-      const details = (payload.errors ?? [])
-        .map(
-          (error) =>
-            `${error.code ?? response.status}: ${error.detail ?? error.title ?? 'request failed'}`,
-        )
-        .join('; ');
-      throw new Error(
-        `App Store Connect GET ${path.split('?')[0]} failed: ${details || `HTTP ${response.status}`}`,
-      );
+      if (response.ok) return payload;
+      if ((response.status === 429 || response.status >= 500) && attempt < 3) {
+        await delay(2_000 * (attempt + 1), undefined, { signal });
+        continue;
+      }
+      // Response bodies can echo credentials or arbitrary content. Keep them
+      // out of logs and workflow summaries, including on permission failures.
+      throw new Error(`App Store Connect request failed (HTTP ${response.status}); inspect API key permissions and Build Uploads`);
     }
     throw new Error('App Store Connect retry limit exceeded');
   }
@@ -87,7 +93,7 @@ function query(values) {
   return new URLSearchParams(values).toString();
 }
 
-async function findBuild(client, appId, version, buildNumber) {
+async function findBuild(client, appId, version, buildNumber, signal) {
   const response = await client.request(
     `/builds?${query({
       'filter[app]': appId,
@@ -96,75 +102,31 @@ async function findBuild(client, appId, version, buildNumber) {
       include: 'preReleaseVersion',
       limit: '200',
     })}`,
+    { signal },
   );
-  const matches = response.data ?? [];
+  const matches = response.data;
+  assert.ok(Array.isArray(matches), 'App Store Connect build collection is missing');
   assert.ok(matches.length <= 1, 'App Store Connect returned ambiguous exact-version builds');
   return matches[0] ?? null;
 }
 
-async function waitForBuild(
-  client,
-  identity,
-  { timeoutMs = 90 * 60_000, intervalMs = 20_000 } = {},
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const build = await findBuild(client, identity.appId, identity.version, identity.buildNumber);
+async function waitForBuild(client, identity, phase, intervalMs) {
+  for (;;) {
+    phase.signal.throwIfAborted();
+    const build = await findBuild(client, identity.appId, identity.version, identity.buildNumber, phase.signal);
     const state = build?.attributes?.processingState;
+    phase.state(build ? state : 'NOT_VISIBLE');
     if (state === 'VALID') return build;
     if (state === 'FAILED' || state === 'INVALID')
       throw new Error(`Apple build processing failed with state ${state}`);
-    await sleep(intervalMs);
-  }
-  throw new Error('Timed out waiting for Apple to finish build processing');
-}
-
-function uploadIpa(ipaPath, credentials, privateKeysDirectory) {
-  mkdirSync(privateKeysDirectory, { recursive: true, mode: 0o700 });
-  const keyPath = join(privateKeysDirectory, `AuthKey_${credentials.keyId}.p8`);
-  writeFileSync(keyPath, credentials.privateKey, { mode: 0o600, flag: 'wx' });
-  const descriptor = openSync(ipaPath, 'r');
-  try {
-    const result = spawnSync(
-      'xcrun',
-      [
-        'altool',
-        '--upload-app',
-        '--file',
-        '/dev/fd/3',
-        '--type',
-        'ios',
-        '--apiKey',
-        credentials.keyId,
-        '--apiIssuer',
-        credentials.issuerId,
-        '--output-format',
-        'json',
-      ],
-      {
-        encoding: 'utf8',
-        env: { ...process.env, API_PRIVATE_KEYS_DIR: privateKeysDirectory },
-        stdio: ['ignore', 'pipe', 'pipe', descriptor],
-        timeout: 45 * 60_000,
-      },
-    );
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      const message = `${result.stdout}\n${result.stderr}`
-        .replaceAll(credentials.keyId, '[key-id]')
-        .slice(-6000);
-      throw new Error(`Apple binary upload failed (exit ${result.status}): ${message}`);
-    }
-    return `${result.stdout}\n${result.stderr}`.trim().slice(-6000);
-  } finally {
-    closeSync(descriptor);
-    unlinkSync(keyPath);
+    await phase.sleep(intervalMs);
   }
 }
 
-async function findInternalGroup(client, identity) {
+async function findInternalGroup(client, identity, signal) {
   const response = await client.request(
     `/betaGroups?${query({ 'filter[app]': identity.appId, limit: '200' })}`,
+    { signal },
   );
   const group = (response.data ?? []).find((item) => item.id === identity.betaGroupId);
   assert.ok(group, 'Configured internal TestFlight group does not belong to the app');
@@ -174,15 +136,12 @@ async function findInternalGroup(client, identity) {
   });
 }
 
-async function waitForInternalTesting(
-  client,
-  build,
-  { timeoutMs = 30 * 60_000, intervalMs = 20_000 } = {},
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const detail = (await client.request(`/builds/${build.id}/buildBetaDetail`)).data;
+async function waitForInternalTesting(client, build, phase, intervalMs) {
+  for (;;) {
+    phase.signal.throwIfAborted();
+    const detail = (await client.request(`/builds/${build.id}/buildBetaDetail`, { signal: phase.signal })).data;
     const state = detail?.attributes?.internalBuildState;
+    phase.state(state);
     const classification = classifyInternalBuildState(state);
     if (classification === 'ready') return detail;
     if (classification === 'blocked') {
@@ -191,9 +150,42 @@ async function waitForInternalTesting(
     if (classification === 'failed') {
       throw new Error(`TestFlight internal distribution failed with state ${state}`);
     }
-    await sleep(intervalMs);
+    await phase.sleep(intervalMs);
   }
-  throw new Error('Timed out waiting for the build to enter internal TestFlight testing');
+}
+
+export async function submitToTestFlight({ client, identity, upload, progress }) {
+  const limits = progress.limits;
+  let group;
+  let build = await progress.run('inspect', limits.preflightMs, async (phase) => {
+    group = await findInternalGroup(client, identity, phase.signal);
+    const found = await findBuild(client, identity.appId, identity.version, identity.buildNumber, phase.signal);
+    phase.state(found ? 'BUILD_FOUND' : 'BUILD_NOT_FOUND');
+    return found;
+  });
+  let uploadStatus = 'already-present';
+  if (!build) {
+    try {
+      await progress.run('upload', limits.uploadMs, upload);
+      uploadStatus = 'uploaded';
+    } catch (error) {
+      // A failed client can follow an accepted upload. Reconcile exact identity,
+      // but never ignore cancellation or reset an exhausted overall deadline.
+      progress.check();
+      build = await progress.run('reconcile-upload', limits.preflightMs, async (phase) => {
+        const found = await findBuild(client, identity.appId, identity.version, identity.buildNumber, phase.signal);
+        phase.state(found ? 'BUILD_FOUND' : 'BUILD_NOT_FOUND');
+        return found;
+      });
+      if (!build) throw error;
+      uploadStatus = 'accepted-before-client-error';
+    }
+  }
+  build = await progress.run('apple-processing', limits.processingMs,
+    (phase) => waitForBuild(client, identity, phase, limits.pollMs));
+  const betaDetail = await progress.run('internal-testflight', limits.internalMs,
+    (phase) => waitForInternalTesting(client, build, phase, limits.pollMs));
+  return { group, build, betaDetail, uploadStatus };
 }
 
 function parseArguments(argv) {
@@ -240,28 +232,23 @@ async function main() {
     betaGroupId,
     betaGroupName,
   };
-  const client = new AppStoreClient(credentials);
-  const group = await findInternalGroup(client, identity);
-  let build = await findBuild(client, appId, identity.version, identity.buildNumber);
-  let uploadStatus = 'already-present';
-  let uploadSummary = '';
-  if (!build) {
-    try {
-      uploadSummary = uploadIpa(
-        ipaPath,
-        credentials,
-        join(process.env.HOME, '.appstoreconnect/private_keys'),
-      );
-      uploadStatus = 'uploaded';
-    } catch (error) {
-      build = await findBuild(client, appId, identity.version, identity.buildNumber);
-      if (!build) throw error;
-      uploadStatus = 'accepted-before-client-error';
-      uploadSummary = error.message.slice(-2000);
-    }
+  const controller = new AbortController();
+  const onInterrupt = () => controller.abort(new Error('Submission cancelled (SIGINT)'));
+  const onTerminate = () => controller.abort(new Error('Submission cancelled (SIGTERM)'));
+  process.once('SIGINT', onInterrupt);
+  process.once('SIGTERM', onTerminate);
+  let submission;
+  try {
+    submission = await submitToTestFlight({
+      client: new AppStoreClient(credentials), identity,
+      upload: (phase) => uploadIpa(ipaPath, credentials, join(process.env.HOME, '.appstoreconnect/private_keys'), phase),
+      progress: new SubmissionProgress({ signal: controller.signal, summaryPath: process.env.GITHUB_STEP_SUMMARY }),
+    });
+  } finally {
+    process.removeListener('SIGINT', onInterrupt);
+    process.removeListener('SIGTERM', onTerminate);
   }
-  build = await waitForBuild(client, identity);
-  const betaDetail = await waitForInternalTesting(client, build);
+  const { group, build, betaDetail, uploadStatus } = submission;
   const result = {
     schemaVersion: 1,
     appId,
@@ -285,12 +272,9 @@ async function main() {
     flag: 'wx',
   });
   if (process.env.GITHUB_STEP_SUMMARY) {
-    const uploadNote = uploadSummary
-      ? `\n\nApple upload tool: ${uploadSummary.split('\n').at(-1)}`
-      : '';
     writeFileSync(
       process.env.GITHUB_STEP_SUMMARY,
-      `### Internal TestFlight\n\nBuild ${identity.version} (${identity.buildNumber}): ${result.processingState}\n\nInternal testing: ${result.internalBuildState}\n\nGroup: ${result.betaGroupName} (all builds)${uploadNote}\n`,
+      `### Internal TestFlight\n\nBuild ${identity.version} (${identity.buildNumber}): ${result.processingState}\n\nInternal testing: ${result.internalBuildState}\n\nGroup: ${result.betaGroupName} (all builds)\n`,
       { flag: 'a' },
     );
   }

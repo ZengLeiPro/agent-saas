@@ -1,0 +1,238 @@
+name: PR654 sync latest main
+
+on:
+  push:
+    branches:
+      - fix/production-preflight-readiness-20260912
+    paths:
+      - .github/workflows/pr654-sync.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr654-sync-latest-main
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/production-preflight-readiness-20260912
+          fetch-depth: 0
+
+      - name: Merge latest main and resolve the reviewed overlaps
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch --no-tags origin main
+          git merge --no-commit --no-ff origin/main || true
+
+          python3 - <<'PY'
+          from __future__ import annotations
+          import hashlib
+          import json
+          from pathlib import Path
+          import subprocess
+
+          def from_main(path: str) -> str:
+              return subprocess.check_output(['git', 'show', f'origin/main:{path}'], text=True)
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          # Keep #653 automatic-release semantics from current main and layer PR654's
+          # bounded production preflight/evidence behavior on top.
+          path = '.github/workflows/deploy-staging.yml'
+          text = from_main(path)
+          text = replace_once(
+              text,
+              "          scp -i ~/.ssh/production_evidence_key scripts/release/read-production-state.mjs \\\n            scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/artifact-lib.mjs \\\n",
+              "          scp -i ~/.ssh/production_evidence_key scripts/release/production-preflight.mjs \\\n            scripts/release/production-preflight-report.mjs scripts/release/production-runtime-observation.mjs \\\n            scripts/release/read-production-state.mjs \\\n            scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/artifact-lib.mjs \\\n",
+              'deploy scp preflight',
+          )
+          text = replace_once(
+              text,
+              "          if ! ssh -i ~/.ssh/production_evidence_key \"$ECS_USER@$ECS_HOST\" \\\n            \"node '$remote/read-production-state.mjs' --config-identity-stage '$PRODUCTION_CONFIG_IDENTITY_STAGE' --output '$remote/production.json' >/dev/null\" \\\n            2> \"$RUNNER_TEMP/production-live-observation-error.log\"; then\n",
+              "          baseline_source=live\n          if ! bash scripts/release/run-production-preflight.sh \"$remote\" ~/.ssh/production_evidence_key \\\n            read-production-state.mjs \"$PRODUCTION_CONFIG_IDENTITY_STAGE\" production.json fresh \\\n            2> \"$RUNNER_TEMP/production-live-observation-error.log\"; then\n",
+              'deploy strict preflight wrapper',
+          )
+          text = replace_once(
+              text,
+              "            fi\n            echo 'Live Production baseline is unavailable; trying the last committed release checkpoint'\n",
+              "            fi\n            baseline_source=last_committed\n            echo '::warning title=Production preflight failed::Using last_committed as a historical build baseline only; current production readiness has NOT passed.'\n",
+              'deploy fallback provenance',
+          )
+          text = replace_once(
+              text,
+              "          test \"$(jq -r .environment \"$RUNNER_TEMP/production.json\")\" = production\n\n      - name: 安装用于生产证据的阿里云 CLI\n",
+              "          test \"$(jq -r .environment \"$RUNNER_TEMP/production.json\")\" = production\n          node scripts/release/production-preflight-report.mjs baseline \\\n            \"$RUNNER_TEMP/production-baseline-provenance.json\" \"$baseline_source\" \"$RUNNER_TEMP/production.json\" \\\n            | tee -a \"$GITHUB_STEP_SUMMARY\"\n          if [ \"$baseline_source\" = last_committed ]; then\n            echo '**Production preflight failed. Staging may validate a candidate built against historical evidence; production promotion remains blocked until a fresh strict preflight passes.**' >> \"$GITHUB_STEP_SUMMARY\"\n          fi\n\n      - name: 安装用于生产证据的阿里云 CLI\n",
+              'deploy baseline report',
+          )
+          text = replace_once(
+              text,
+              "          path: ${{ runner.temp }}/production-live-observation-error.log\n",
+              "          path: |\n            ${{ runner.temp }}/production-live-observation-error.log\n            ${{ runner.temp }}/production-preflight*.json\n            ${{ runner.temp }}/production-baseline-provenance.json\n",
+              'deploy diagnostic artifact',
+          )
+          Path(path).write_text(text)
+
+          path = '.github/workflows/promote-release.yml'
+          text = from_main(path)
+          text = replace_once(
+              text,
+              "          scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \\\n            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \\\n",
+              "          scp -i ~/.ssh/production_key scripts/release/production-preflight.mjs \\\n            scripts/release/production-preflight-report.mjs scripts/release/production-runtime-observation.mjs \\\n            scripts/release/read-live-production-components.mjs \\\n            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \\\n",
+              'promotion scp preflight',
+          )
+          text = replace_once(
+              text,
+              "          if ! ssh -i ~/.ssh/production_key \"$ECS_USER@$ECS_HOST\" \\\n            \"node '$remote/$reader' --config-identity-stage '$reader_stage' --output '$remote/production-before.json' >/dev/null\"; then\n",
+              "          if ! bash scripts/release/run-production-preflight.sh \"$remote\" ~/.ssh/production_key \\\n            \"$reader\" \"$reader_stage\" production-before.json \"$PROMOTION_RETRY_MODE\"; then\n",
+              'promotion strict preflight wrapper',
+          )
+          text = replace_once(
+              text,
+              "        run: |\n          set -euo pipefail\n          summary='promotion failed before the durable promoting marker and before production mutation'\n",
+              "        run: |\n          set -euo pipefail\n          node scripts/release/production-preflight-report.mjs prechange-failure \\\n            \"$RUNNER_TEMP/promotion-prechange-failure.json\" \"$PROMOTION_RETRY_MODE\" \\\n            || echo \"::warning title=Production preflight diagnostics::Could not persist prechange diagnostic; recording authoritative attestation next\"\n          summary='promotion failed before the durable promoting marker and before production mutation'\n",
+              'promotion prechange evidence',
+          )
+          text = replace_once(
+              text,
+              "            ${{ runner.temp }}/production-before.json\n            ${{ runner.temp }}/production-after.json\n",
+              "            ${{ runner.temp }}/production-before.json\n            ${{ runner.temp }}/production-preflight*.json\n            ${{ runner.temp }}/promotion-prechange-failure.json\n            ${{ runner.temp }}/production-after.json\n",
+              'promotion diagnostic artifact',
+          )
+          Path(path).write_text(text)
+
+          # The staging contract test follows the new wrapper command while retaining
+          # all automatic-release assertions from current main.
+          path = 'scripts/release/staging-workflow.test.mjs'
+          text = from_main(path)
+          text = replace_once(
+              text,
+              "/read-production-state\\.mjs' --config-identity-stage '\\$PRODUCTION_CONFIG_IDENTITY_STAGE'/u",
+              "/read-production-state\\.mjs \"\\$PRODUCTION_CONFIG_IDENTITY_STAGE\" production\\.json fresh/u",
+              'staging workflow preflight assertion',
+          )
+          Path(path).write_text(text)
+
+          # Preserve #655's key semantic boundary: runtime-worker readyfile is dynamic
+          # admission diagnostics, not production baseline identity. Reapply only the
+          # PR654 hardening that remains additive: errno allowlist, bounded systemctl,
+          # exact cgroup match, and error-message redaction.
+          path = 'scripts/release/read-runtime-identity.mjs'
+          text = from_main(path)
+          text = replace_once(
+              text,
+              "function observationErrorCode(error) {\n  const code = typeof error?.code === 'string' ? error.code : 'UNKNOWN';\n  return /^[A-Z0-9_]+$/u.test(code) ? code : 'UNKNOWN';\n}\n",
+              "const READ_ERRNOS = new Set(['ENOENT', 'EACCES', 'EPERM', 'EIO', 'ENOTDIR', 'ELOOP', 'ETIMEDOUT']);\n\nfunction observationErrorCode(error) {\n  const code = typeof error?.code === 'string' ? error.code : 'UNKNOWN';\n  return READ_ERRNOS.has(code) ? code : 'UNKNOWN';\n}\n",
+              'runtime identity errno allowlist',
+          )
+          text = text.replace("            stdio: 'pipe',\n", "            stdio: 'pipe', timeout: 2000, maxBuffer: 16384,\n", 2)
+          text = replace_once(
+              text,
+              "        !pidCgroup.includes(controlGroup)\n",
+              "        !pidCgroup.split('\\n').some((line) => line.split(':').slice(2).join(':') === controlGroup)\n",
+              'runtime identity exact cgroup',
+          )
+          text = replace_once(
+              text,
+              "      blockingReasons: [`Unable to read production runtime identity JSON: ${error.message}`],\n",
+              "      blockingReasons: [`Unable to read production runtime identity JSON: [${observationErrorCode(error)}]`],\n",
+              'runtime identity read error redaction',
+          )
+          text = replace_once(
+              text,
+              "        blockingReasons: [`Unable to refresh live production topology: ${error.message}`],\n",
+              "        blockingReasons: [`Unable to refresh live production topology: [${observationErrorCode(error)}]`],\n",
+              'runtime identity refresh error redaction',
+          )
+          Path(path).write_text(text)
+
+          # Refresh only already-reviewed PR654 runtime sources whose bytes actually
+          # changed. Any unrelated drift aborts rather than broadening audit authority.
+          review_path = Path('config/release-migration-reviews.json')
+          document = json.loads(review_path.read_text())
+          allowed_sources = {
+              'server/src/__tests__/runtimeWorkerDeployment.test.ts',
+              'server/src/app/configIdentityAssembly.ts',
+              'server/src/app/runtime.ts',
+              'server/src/app/runtimeContracts.ts',
+              'server/src/index.ts',
+              'server/src/runtime/configIdentityObservationDeadline.test.ts',
+              'server/src/runtime/configIdentityRuntime.ts',
+              'server/src/runtime/configObservationDeadline.ts',
+              'server/src/runtime/runtimeWorkerReadinessMonitor.test.ts',
+              'server/src/runtime/runtimeWorkerReadinessMonitor.ts',
+          }
+          allowed_evidence = allowed_sources | {
+              'docs/reviews/production-preflight-readiness-2026-09-12.md',
+              'scripts/release/production-preflight-cli.test.mjs',
+              'scripts/release/production-preflight-evidence.test.mjs',
+              'scripts/release/production-preflight.test.mjs',
+              'scripts/release/production-runtime-observation.test.mjs',
+              'scripts/release/promotion-workflow.test.mjs',
+              'scripts/release/staging-workflow.test.mjs',
+          }
+          def digest(path: str):
+              p = Path(path)
+              return None if not p.exists() else 'sha256:' + hashlib.sha256(p.read_bytes()).hexdigest()
+
+          refreshed = []
+          evidence_refreshed = []
+          unexpected = []
+          note = ' PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change.'
+          for review in document.get('reviews', []):
+              for entry in review.get('files', []):
+                  current = digest(entry['path'])
+                  if entry.get('targetDigest') != current:
+                      if entry['path'] not in allowed_sources:
+                          unexpected.append(f"source:{entry['path']}")
+                          continue
+                      entry['targetDigest'] = current
+                      if note.strip() not in entry['reason']:
+                          entry['reason'] += note
+                      refreshed.append(entry['path'])
+              for evidence in review.get('evidence', []):
+                  current = digest(evidence['path'])
+                  if evidence.get('digest') != current:
+                      if evidence['path'] not in allowed_evidence:
+                          unexpected.append(f"evidence:{evidence['path']}")
+                          continue
+                      evidence['digest'] = current
+                      evidence_refreshed.append(evidence['path'])
+          if unexpected:
+              raise SystemExit('Unreviewed migration inventory drift: ' + ', '.join(sorted(set(unexpected))))
+          if not refreshed:
+              raise SystemExit('Expected PR654 runtime review refresh was not required; refusing blind inventory rewrite')
+          review_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + '\n')
+          print('refreshed reviewed sources:', ', '.join(sorted(set(refreshed))))
+          print('refreshed evidence:', ', '.join(sorted(set(evidence_refreshed))) or 'none')
+          PY
+
+          git add .github/workflows/deploy-staging.yml .github/workflows/promote-release.yml \
+            scripts/release/staging-workflow.test.mjs scripts/release/read-runtime-identity.mjs \
+            config/release-migration-reviews.json
+          unresolved="$(git diff --name-only --diff-filter=U)"
+          if [ -n "$unresolved" ]; then
+            echo "Unexpected unresolved paths:" >&2
+            printf '%s\n' "$unresolved" >&2
+            exit 1
+          fi
+
+          git rm .github/workflows/pr654-sync.yml
+          git add -A
+          git commit -m 'chore(release): reconcile PR 654 with latest main'
+
+          node scripts/release/check-reviewed-migrations.mjs
+          node --test scripts/release/staging-workflow.test.mjs scripts/release/production-preflight.test.mjs scripts/release/production-runtime-observation.test.mjs
+          git push origin HEAD:fix/production-preflight-readiness-20260912

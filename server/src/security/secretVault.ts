@@ -141,6 +141,7 @@ export class InMemorySecretVault implements SecretVault {
 const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<VaultOperation, readonly string[]>>>> = {
   client_daemon: { read: ['__system__'] },
   client_daemon_device: { read: ['__system__'], write: ['__system__'] },
+  grok_subscription_oauth: { read: ['__system__'], write: ['__system__'], rotate: ['__system__'], revoke: ['__system__'] },
   codex_subscription_oauth: {
     read: ['__system__'],
     write: ['__system__'],
@@ -228,6 +229,9 @@ function assertAllowed(
 ): void {
   if (!['system', 'mcp_proxy', 'connector_proxy', 'git_proxy'].includes(caller.actor)) {
     throw new Error(`vault access denied (${operation}): unknown actor`);
+  }
+  if (secret.kind === 'grok_subscription_oauth' && caller.actor !== 'system') {
+    throw new Error('vault access denied: Grok subscription credentials are system-only');
   }
   const requiredScope = `secret:${secret.kind}:${operation}`;
   if (!(caller.scopes ?? []).includes(requiredScope)) {

@@ -1,3 +1,4 @@
+import { singleAttemptEgressFetch } from '../egressRequestPolicy.js';
 import {
   GROK_DEVICE_GRANT,
   GROK_DISCOVERY_ENDPOINT,
@@ -124,7 +125,7 @@ export class GrokOAuthClient {
   async revoke(tokens: GrokOAuthTokens): Promise<boolean> {
     const { revocationEndpoint } = await this.discover();
     if (!revocationEndpoint) return false;
-    const response = await this.fetchImpl(revocationEndpoint, {
+    const response = await singleAttemptEgressFetch(this.fetchImpl)(revocationEndpoint, {
       method: 'POST',
       redirect: 'error',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
@@ -136,7 +137,7 @@ export class GrokOAuthClient {
       signal: AbortSignal.timeout(15_000),
     });
     await response.body?.cancel().catch(() => undefined);
-    return response.ok;
+    return response.ok && !/text\/html/i.test(response.headers.get('content-type') ?? '');
   }
   private async validateTokens(
     raw: unknown,

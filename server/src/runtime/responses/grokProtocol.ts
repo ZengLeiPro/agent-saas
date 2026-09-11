@@ -1,3 +1,4 @@
+import { singleAttemptEgressFetch } from '../egressRequestPolicy.js';
 /** xAI subscription protocol. No Console/API-key fallback. */
 export const GROK_OAUTH_ISSUER = 'https://auth.x.ai';
 export const GROK_DISCOVERY_ENDPOINT = `${GROK_OAUTH_ISSUER}/.well-known/openid-configuration`;
@@ -128,7 +129,7 @@ export async function grokOAuthRequest(
   trustedGrokOAuthUrl(url);
   let response: Response;
   try {
-    response = await fetchImpl(url, {
+    response = await singleAttemptEgressFetch(fetchImpl)(url, {
       method: body ? 'POST' : 'GET',
       redirect: 'error',
       headers: {

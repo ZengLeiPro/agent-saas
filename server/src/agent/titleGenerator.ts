@@ -103,7 +103,7 @@ export interface TitleGeneratorConfig {
   modelRef?: string;
   connection?: { apiKey?: string; baseUrl?: string };
   protocol?: 'chat_completions' | 'responses';
-  responsesTransport?: 'openai_compatible' | 'codex_subscription';
+  responsesTransport?: 'openai_compatible' | 'codex_subscription' | 'grok_subscription';
   providerOptions?: ModelProviderOptions;
 }
 

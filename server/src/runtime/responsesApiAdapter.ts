@@ -1,3 +1,4 @@
+import { resolveContinuationBinding } from './responses/resolveContinuationBinding.js';
 /**
  * ResponsesApiAdapter（RFC v1 P0.1）
  *
@@ -258,7 +259,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         tools: request.tools,
         context,
       });
-    const expectedContinuationBinding = await this.transport.getContinuationBinding?.();
+    const expectedContinuationBinding = await resolveContinuationBinding(this.transport, context, request.model);
     const buildRequestBody = async (): Promise<Record<string, unknown>> => {
       const { instructions, input } = usePrevious
         ? { instructions: undefined, input: await this.extractIncrementalInput(request.messages, context.cwd, sessionIdShort) }

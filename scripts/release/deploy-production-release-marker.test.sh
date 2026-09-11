@@ -297,7 +297,7 @@ systemctl() { [ "$1" = is-active ]; }
 nginx() { return 0; }
 curl() { cat "$READINESS_FIXTURE"; }
 printf '# active=green release=%s\n' "$EXPECTED_RELEASE_ID" >"$AGENT_SAAS_NGINX_UPSTREAM_FILE"
-validate_api_routing_boundary green "$EXPECTED_RELEASE_ID"
+API_ROUTED_READY_WAIT_SECONDS=1 validate_api_routing_boundary green "$EXPECTED_RELEASE_ID"
 HARNESS
 chmod +x "$api_route_harness"
 route_case="$tmp/api-route"
@@ -317,6 +317,7 @@ cat > "$api_rollback_harness" <<'HARNESS'
 #!/usr/bin/env bash
 set -euo pipefail
 source "$API_HELPERS"
+release_id=candidate
 
 systemctl() {
   local action="$1" unit="${*: -1}"
@@ -341,6 +342,7 @@ systemctl() {
       return 0
       ;;
     is-active)
+      [ "$unit" != nginx ] || return 0
       if [[ "$unit" == *@green ]]; then
         test "$CANDIDATE_ACTIVE" = true
       else

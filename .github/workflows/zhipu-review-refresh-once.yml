@@ -1,0 +1,94 @@
+name: One-off Zhipu quota review integration
+
+on:
+  push:
+    branches: ['feat/zhipu-coding-plan-quota']
+    paths: ['.github/workflows/zhipu-review-refresh-once.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.repository == 'ZengLeiPro/agent-saas' && github.ref == 'refs/heads/feat/zhipu-coding-plan-quota'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: feat/zhipu-coding-plan-quota
+      - name: Integrate reviewed main and resolve only the migration inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          BASE=9db36e8861304c9254e545c80a17ccc720595af9
+          git merge --no-ff --no-commit "$BASE" || {
+            test "$(git diff --name-only --diff-filter=U)" = 'config/release-migration-reviews.json'
+          }
+          # Preserve every unrelated main review, then reapply only the audited Zod delta.
+          git show "$BASE:config/release-migration-reviews.json" > config/release-migration-reviews.json
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          const inventory = 'config/release-migration-reviews.json';
+          const path = 'server/src/app/modelQuotaSourceSchema.ts';
+          const evidencePath = 'docs/release/PR641-zhipu-quota-config-review-20260911.md';
+          const oldDigest = 'sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f';
+          const targetDigest = 'sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638';
+          const digest = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+          assert.equal(digest(readFileSync(path)), targetDigest, 'Reviewed target changed; stop');
+          const evidence = { path: evidencePath, digest: digest(readFileSync(evidencePath)) };
+          const doc = JSON.parse(readFileSync(inventory, 'utf8'));
+          assert.equal(doc.schemaVersion, 1);
+          assert.ok(Array.isArray(doc.reviews));
+          const baseline = '9db36e8861304c9254e545c80a17ccc720595af9';
+          if (!doc.reviews.some(review => review.baselineSha === baseline)) {
+            doc.reviews.push({ baselineSha: baseline, files: [], evidence: [] });
+          }
+          let changed = 0;
+          for (const review of doc.reviews) {
+            assert.match(review.baselineSha, /^[a-f0-9]{40}$/);
+            let baselineDigest = null;
+            let exists = true;
+            try {
+              execFileSync('git', ['cat-file', '-e', `${review.baselineSha}:${path}`], { stdio: 'ignore' });
+            } catch {
+              execFileSync('git', ['cat-file', '-e', `${review.baselineSha}^{commit}`], { stdio: 'ignore' });
+              exists = false;
+            }
+            if (exists) {
+              baselineDigest = digest(execFileSync('git', ['show', `${review.baselineSha}:${path}`]));
+              assert.equal(baselineDigest, oldDigest, `Unreviewed historical bytes: ${review.baselineSha}`);
+            }
+            const matches = review.files.filter(entry => entry.path === path);
+            assert.ok(matches.length <= 1, 'Duplicate review entry');
+            const entry = matches[0];
+            if (entry) {
+              assert.equal(entry.classification, 'no-schema-change');
+              assert.equal(entry.baselineDigest, baselineDigest, 'Do not overwrite a stale baseline');
+              assert.equal(entry.targetDigest, oldDigest, 'Do not overwrite other target evidence');
+              entry.targetDigest = targetDigest;
+              entry.reason += ' PR641 增加智谱与禁用来源的纯 Zod 配置校验；无 SQL、DDL 或启动迁移，见专门审核说明。';
+            } else {
+              review.files.push({
+                path, baselineDigest, targetDigest, classification: 'no-schema-change',
+                reason: 'PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。',
+              });
+            }
+            assert.ok(!review.evidence.some(item => item.path === evidencePath));
+            review.evidence.push(evidence);
+            changed += 1;
+          }
+          writeFileSync(inventory, `${JSON.stringify(doc, null, 2)}\n`);
+          unlinkSync('.github/workflows/zhipu-review-refresh-once.yml');
+          console.log(`Preserved main; reviewed only ${path} across ${changed} baselines.`);
+          NODE
+          git add -- config/release-migration-reviews.json .github/workflows/zhipu-review-refresh-once.yml
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git commit -m 'chore: merge main and preserve both HTTP and Zhipu migration reviews'
+          git push origin HEAD:refs/heads/feat/zhipu-coding-plan-quota

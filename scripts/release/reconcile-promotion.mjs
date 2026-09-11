@@ -10,14 +10,53 @@ export const PROMOTION_OUTCOMES = Object.freeze([
   'needs_human',
 ]);
 
+const ROLLBACK_SCOPES = Object.freeze({
+  acs: ['acs'],
+  app: ['api', 'runtimeWorker'],
+  web: ['web'],
+});
+
+function hasIdentityFields(value, fields) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    fields.every((field) => typeof value[field] === 'string' && value[field].trim().length > 0)
+  );
+}
+
+function summarizeComponentRestorations(receipts, before, target, observed) {
+  return Object.fromEntries(
+    Object.entries(ROLLBACK_SCOPES).map(([scope, names]) => {
+      const receipt = receipts[scope];
+      const restored = names.every((name) => matrixEquals(observed[name], before[name]));
+      const atTarget = names.every((name) => matrixEquals(observed[name], target[name]));
+      return [
+        scope,
+        {
+          rollbackAttempted: receipt.attempted,
+          rollbackVerified: receipt.attempted && receipt.succeeded && restored,
+          state: restored ? 'before' : atTarget ? 'target' : 'mixed_or_unknown',
+        },
+      ];
+    }),
+  );
+}
+
 function matrixEquals(left, right) {
   return canonicalJson(left ?? null) === canonicalJson(right ?? null);
 }
 
 export function componentIdentityMatrix(components) {
-  if (!components || typeof components !== 'object') return null;
+  if (!components || typeof components !== 'object' || Array.isArray(components)) return null;
   const { web, api, runtimeWorker, acs } = components;
-  if (!web || !api || !runtimeWorker || !acs) return null;
+  if (
+    ![web, api, runtimeWorker].every((value) =>
+      hasIdentityFields(value, ['gitSha', 'artifactDigest']),
+    ) ||
+    !hasIdentityFields(acs, ['gitSha', 'orchestratorArtifactDigest', 'sandboxImageDigest'])
+  )
+    return null;
   return {
     web: { gitSha: web.gitSha, artifactDigest: web.artifactDigest },
     api: { gitSha: api.gitSha, artifactDigest: api.artifactDigest },
@@ -98,41 +137,56 @@ export function reconcilePromotion(input) {
     };
   }
   if (rollback.attempted) {
+    // Compute every scope before any terminal return. A global identity match
+    // cannot attest to external side effects or erase failed byte restoration.
+    const componentResults = summarizeComponentRestorations(
+      input.rollbackReceipts,
+      before,
+      target,
+      observed,
+    );
     if (!rollback.succeeded)
       return {
         outcome: 'needs_human',
         reason: 'rollback was attempted but one or more component restorations were not verified',
+        componentResults,
+        recovery: 'verify_failed_rollback_scope',
+      };
+    const contradictsReceipt = Object.values(componentResults).some(
+      (value) => value.rollbackAttempted && !value.rollbackVerified,
+    );
+    if (contradictsReceipt)
+      return {
+        outcome: 'needs_human',
+        reason: 'a component rollback receipt contradicts the readback within its own scope',
+        componentResults,
+        recovery: 'verify_failed_rollback_scope',
+      };
+    if (input.externalSideEffects === 'unknown')
+      return {
+        outcome: 'needs_human',
+        reason: 'local rollback verified; external side effects are unknown',
+        componentResults,
+        recovery: 'inspect_external_side_effects_before_resume',
       };
     if (matrixEquals(observed, before))
       return {
         outcome: 'rolled_back',
         reason: 'all components and restored entry bytes match the frozen pre-promotion state',
+        componentResults,
       };
-    const scopes = { acs: ['acs'], app: ['api', 'runtimeWorker'], web: ['web'] };
-    const componentResults = Object.fromEntries(Object.entries(scopes).map(([scope, names]) => {
-      const receipt = input.rollbackReceipts[scope];
-      const restored = names.every((name) => matrixEquals(observed[name], before[name]));
-      const atTarget = names.every((name) => matrixEquals(observed[name], target[name]));
-      return [scope, {
-        rollbackAttempted: receipt.attempted,
-        rollbackVerified: receipt.attempted && receipt.succeeded && restored,
-        state: restored ? 'before' : atTarget ? 'target' : 'mixed_or_unknown',
-      }];
-    }));
-    const contradictsReceipt = Object.values(componentResults).some(
-      (value) => value.rollbackAttempted && !value.rollbackVerified,
-    );
-    const unknownEffects = input.externalSideEffects === 'unknown';
+    if (Object.values(componentResults).some((value) => value.state === 'mixed_or_unknown'))
+      return {
+        outcome: 'needs_human',
+        reason: 'local rollback verified; another component has a mixed or unknown identity',
+        componentResults,
+        recovery: 'inspect_unverified_component_identity',
+      };
     return {
-      outcome: contradictsReceipt || unknownEffects ? 'needs_human' : 'partial_failed',
-      reason: contradictsReceipt
-        ? 'a component rollback receipt contradicts the readback within its own scope'
-        : unknownEffects
-          ? 'local rollback verified; other components remain updated and external side effects are unknown'
-          : 'local rollback verified; other components remain updated (not a global rollback)',
+      outcome: 'partial_failed',
+      reason: 'local rollback verified; other components remain updated (not a global rollback)',
       componentResults,
-      recovery: contradictsReceipt ? 'verify_failed_rollback_scope'
-        : unknownEffects ? 'inspect_external_side_effects_before_resume' : 'resume_uncommitted_components',
+      recovery: 'resume_uncommitted_components',
     };
   }
   if (matrixEquals(observed, target)) {
@@ -148,16 +202,16 @@ export function reconcilePromotion(input) {
       reason: 'all components match the Manifest target with confirmed ConfigIdentity',
     };
   }
-  if (matrixEquals(observed, before)) {
-    return {
-      outcome: 'failed_before_change',
-      reason: 'no production component changed before the failure',
-    };
-  }
   if (input.externalSideEffects === 'unknown') {
     return {
       outcome: 'needs_human',
       reason: 'promotion has non-reversible or unknown side effects',
+    };
+  }
+  if (matrixEquals(observed, before)) {
+    return {
+      outcome: 'failed_before_change',
+      reason: 'no production component changed before the failure',
     };
   }
   return {

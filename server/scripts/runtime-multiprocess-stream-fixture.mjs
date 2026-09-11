@@ -7,7 +7,7 @@ const FIRST_TEXT = 'MULTIPROCESS_';
 const FINAL_TEXT = `${FIRST_TEXT}DONE`;
 
 /** Fake provider used only by the multiprocess smoke tests. */
-export function createFakeOpenAI({ gateFinalText = false, firstTextTimeoutMs = 10_000, toolCommand } = {}) {
+export function createFakeOpenAI({ gateFinalText = false, firstTextTimeoutMs = 10_000, toolCommand, toolTimeoutMs = 15_000 } = {}) {
   let count = 0;
   let closed = false;
   let gateFailed = false;
@@ -27,7 +27,7 @@ export function createFakeOpenAI({ gateFinalText = false, firstTextTimeoutMs = 1
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
     if (!hasToolOutput) {
-      send({ choices: [{ delta: { tool_calls: [{ index: 0, id: `call-${randomUUID()}`, type: 'function', function: { name: 'Shell', arguments: JSON.stringify({ command: toolCommand ?? 'for i in 1 2 3; do echo MP_E2E_$i; sleep 1; done', timeoutMs: 15_000 }) } }] } }] });
+      send({ choices: [{ delta: { tool_calls: [{ index: 0, id: `call-${randomUUID()}`, type: 'function', function: { name: 'Shell', arguments: JSON.stringify({ command: toolCommand ?? 'for i in 1 2 3; do echo MP_E2E_$i; sleep 1; done', timeoutMs: toolTimeoutMs }) } }] } }] });
       send({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] });
       res.end('data: [DONE]\n\n');
       return;

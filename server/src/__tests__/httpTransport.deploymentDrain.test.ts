@@ -112,3 +112,70 @@ describe('HttpTransport deployment drain', () => {
     }
   });
 });
+
+describe('advertised ACS remaining budget', () => {
+  it('shortens the local deadline once and never extends it on later responses', async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const fetchImpl = vi.fn(async () => {
+        calls += 1;
+        return new Response('draining', {
+          status: 503,
+          headers: {
+            'retry-after': '1',
+            'x-acs-error-code': 'ACS_DEPLOYMENT_DRAINING',
+            'x-acs-execution-started': 'false',
+            'x-acs-drain-remaining-ms': calls === 1 ? '0' : '1200000',
+          },
+        });
+      }) as unknown as typeof fetch;
+      const transport = new HttpTransport({
+        baseUrl: 'http://h',
+        authToken: 'secret-token-12345',
+        fetchImpl,
+        invokeTimeoutMs: 100,
+        deploymentDrainWaitMs: 120_000,
+      });
+      const waiting = transport.invoke(buildRequest());
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect((await waiting).status).toBe('error');
+      expect(calls).toBe(61);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores malformed remote budgets without changing the configured local bound', async () => {
+    for (const remaining of ['NaN', '-1', 'Infinity']) {
+      vi.useFakeTimers();
+      try {
+        const fetchImpl = vi.fn(
+          async () =>
+            new Response('draining', {
+              status: 503,
+              headers: {
+                'retry-after': '1',
+                'x-acs-error-code': 'ACS_DEPLOYMENT_DRAINING',
+                'x-acs-execution-started': 'false',
+                'x-acs-drain-remaining-ms': remaining,
+              },
+            }),
+        ) as unknown as typeof fetch;
+        const transport = new HttpTransport({
+          baseUrl: 'http://h',
+          authToken: 'secret-token-12345',
+          fetchImpl,
+          invokeTimeoutMs: 100,
+          deploymentDrainWaitMs: 2_000,
+        });
+        const waiting = transport.invoke(buildRequest());
+        await vi.advanceTimersByTimeAsync(2_001);
+        expect((await waiting).status).toBe('error');
+        expect(fetchImpl).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  });
+});

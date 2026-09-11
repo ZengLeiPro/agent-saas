@@ -371,7 +371,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -1166,7 +1166,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:72964d22248be9240188ff24480c3d619eebb3ea4648bb35bddecd591ccde810",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -2160,7 +2160,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -3029,7 +3029,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -3861,7 +3861,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -4679,7 +4679,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -5489,7 +5489,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -6299,7 +6299,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -7270,7 +7270,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -8225,7 +8225,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -9076,7 +9076,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -9919,7 +9919,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -10706,7 +10706,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -11477,7 +11477,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -12248,7 +12248,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -13019,7 +13019,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -13783,7 +13783,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -14536,7 +14536,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:db6e1af8caea0ede2438140b25aef99e3536cc67626f541ddbe69d4548f1397a",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -15233,7 +15233,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -15910,7 +15910,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -16576,7 +16576,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -17234,7 +17234,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -17892,7 +17892,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -18550,7 +18550,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -19172,7 +19172,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -19760,7 +19760,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -20332,7 +20332,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -20862,7 +20862,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -21376,7 +21376,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -21868,7 +21868,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -22348,7 +22348,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -22824,7 +22824,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -23297,7 +23297,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -23762,7 +23762,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -24220,7 +24220,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -24674,7 +24674,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:130fc2e6446c041c9e7caa8366ab3ceba9159916fc4206220c23314ebc9f8e75",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -25140,7 +25140,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -25606,7 +25606,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -26037,7 +26037,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -26459,7 +26459,7 @@
         {
           "path": "server/src/runtime/httpTransport.ts",
           "baselineDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
-          "targetDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged."
         },

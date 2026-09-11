@@ -1,3 +1,4 @@
+import { executeOrderedSubscriptionFailover } from './orderedSubscriptionFailover.js';
 import {
   CodexOAuthResponseError,
   hashAccountBinding,
@@ -37,118 +38,45 @@ export async function executeCodexCredentialFailover(input: {
     token: Awaited<ReturnType<CodexCredentialManager['getCredentials']>>,
   ) => Promise<ResponsesTransportExecuteResult>;
 }): Promise<ResponsesTransportExecuteResult> {
-  let lastQuota: LastQuota | undefined;
-  let retainLastQuota = false;
-  let earliestCooldownUntil: string | undefined;
-  let authUnavailableCount = 0;
-  try {
-    for (const credentialRef of input.credentialRefs) {
-      const runtimeState = await getRuntimeState(input.credentials, credentialRef);
-      if (runtimeState?.availability === 'quota_cooldown') {
-        if (
-          runtimeState.cooldownUntil
-          && (!earliestCooldownUntil || runtimeState.cooldownUntil < earliestCooldownUntil)
-        ) earliestCooldownUntil = runtimeState.cooldownUntil;
-        continue;
-      }
-      if (runtimeState?.availability === 'auth_unavailable') {
-        authUnavailableCount += 1;
-        continue;
-      }
-
-      let token: Awaited<ReturnType<CodexCredentialManager['getCredentials']>>;
-      try {
-        token = await getCredentialsForCredential(input.credentials, credentialRef);
-      } catch (error) {
-        if (!isPermanentCredentialError(error)) throw error;
-        await markAuthUnavailable(
-          input.credentials,
-          credentialRef,
-          credentialFailureCode(error),
-          await resolveCredentialFailureGeneration(input.credentials, credentialRef, error),
-        );
-        authUnavailableCount += 1;
-        continue;
-      }
-
+  return executeOrderedSubscriptionFailover<Awaited<ReturnType<typeof getCredentialsForCredential>>, ResponsesTransportExecuteResult, LastQuota>({
+    credentialRefs: input.credentialRefs, signal: input.request.signal,
+    getRuntimeState: (ref) => getRuntimeState(input.credentials, ref),
+    getCredentials: (ref) => getCredentialsForCredential(input.credentials, ref),
+    handleCredentialError: async (ref, error) => {
+      if (!isPermanentCredentialError(error)) return false;
+      await markAuthUnavailable(input.credentials, ref, credentialFailureCode(error), await resolveCredentialFailureGeneration(input.credentials, ref, error));
+      return true;
+    },
+    attempt: async (credentialRef, token) => {
       try {
         const result = await input.executeWithCredential(token);
-        if (input.request.recoveryAttempt) return result;
+        if (input.request.recoveryAttempt) return { kind: 'result', result };
         const quotaCode = await codexQuotaResponseCode(result.response);
-        if (quotaCode) {
-          let cooldownUntil: string;
-          try {
-            cooldownUntil = await markQuotaCooldown(
-              input.credentials,
-              credentialRef,
-              quotaCode,
-              token.generation,
-            );
-          } catch (error) {
-            await result.response.body?.cancel().catch(() => undefined);
-            throw error;
-          }
-          if (!earliestCooldownUntil || cooldownUntil < earliestCooldownUntil) {
-            earliestCooldownUntil = cooldownUntil;
-          }
-          await cancelQuotaResponse(lastQuota);
-          lastQuota = { kind: 'response', result };
-          continue;
-        }
-        return result;
+        if (!quotaCode) return { kind: 'result', result };
+        let cooldownUntil: string;
+        try { cooldownUntil = await markQuotaCooldown(input.credentials, credentialRef, quotaCode, token.generation); }
+        catch (error) { await result.response.body?.cancel().catch(() => undefined); throw error; }
+        return { kind: 'quota', quota: { kind: 'response', result } as LastQuota, cooldownUntil };
       } catch (error) {
         if (isCodexQuotaTransportError(error)) {
           if (input.request.recoveryAttempt || input.request.signal?.aborted) throw error;
-          const cooldownUntil = await markQuotaCooldown(
-            input.credentials,
-            credentialRef,
-            error.code,
-            token.generation,
-          );
-          if (!earliestCooldownUntil || cooldownUntil < earliestCooldownUntil) {
-            earliestCooldownUntil = cooldownUntil;
-          }
-          await cancelQuotaResponse(lastQuota);
-          lastQuota = { kind: 'transport_error', accountId: token.accountId, error };
-          continue;
+          const cooldownUntil = await markQuotaCooldown(input.credentials, credentialRef, error.code, token.generation);
+          return { kind: 'quota', quota: { kind: 'transport_error', accountId: token.accountId, error } as LastQuota, cooldownUntil };
         }
         if (error instanceof CodexAccountAuthUnavailableError) {
           if (input.request.recoveryAttempt || input.request.signal?.aborted) throw error;
-          await markAuthUnavailable(
-            input.credentials,
-            credentialRef,
-            error.code,
-            error.credentialGeneration,
-          );
-          authUnavailableCount += 1;
-          continue;
+          await markAuthUnavailable(input.credentials, credentialRef, error.code, error.credentialGeneration);
+          return { kind: 'auth_unavailable' };
         }
         throw error;
       }
-    }
-
-    if (lastQuota) {
-      const retryAt = earliestCooldownUntil ?? new Date().toISOString();
-      const result = lastQuota.kind === 'response'
-        ? await quotaResponseResult(lastQuota.result, retryAt)
-        : quotaErrorResult(
-          input.request,
-          lastQuota.accountId,
-          lastQuota.error,
-          retryAt,
-          input.credentials.getConfiguration().endpoint,
-        );
-      retainLastQuota = true;
-      return result;
-    }
-    return unavailableAccountsResult(input.request, {
-      earliestCooldownUntil,
-      authUnavailableCount,
-      accountCount: input.credentialRefs.length,
-    });
-  } finally {
-    if (!retainLastQuota) await cancelQuotaResponse(lastQuota);
-  }
+    },
+    disposeQuota: cancelQuotaResponse,
+    finishQuota: async (lastQuota, retryAt) => lastQuota.kind === 'response'
+      ? quotaResponseResult(lastQuota.result, retryAt)
+      : quotaErrorResult(input.request, lastQuota.accountId, lastQuota.error, retryAt, input.credentials.getConfiguration().endpoint),
+    finishUnavailable: (state) => unavailableAccountsResult(input.request, state),
+  });
 }
 
 async function getRuntimeState(manager: CodexCredentialManager, credentialRef: string) {

@@ -24,6 +24,18 @@ jobs:
           ref: fix/production-preflight-readiness-20260912
           fetch-depth: 0
 
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: 配置 pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: 安装根级审核依赖
+        run: pnpm install --frozen-lockfile --filter agent-saas
+
       - name: Merge latest main and resolve the reviewed overlaps
         shell: bash
         run: |
@@ -51,8 +63,6 @@ jobs:
 
           runner_temp = '${' + '{ runner.temp }}'
 
-          # Keep #653 automatic-release semantics from current main and layer PR654's
-          # bounded production preflight/evidence behavior on top.
           path = '.github/workflows/deploy-staging.yml'
           text = from_main(path)
           text = replace_once(
@@ -115,8 +125,6 @@ jobs:
           )
           Path(path).write_text(text)
 
-          # The staging contract test follows the new wrapper command while retaining
-          # all automatic-release assertions from current main.
           path = 'scripts/release/staging-workflow.test.mjs'
           text = from_main(path)
           text = replace_once(
@@ -127,10 +135,6 @@ jobs:
           )
           Path(path).write_text(text)
 
-          # Preserve #655's key semantic boundary: runtime-worker readyfile is dynamic
-          # admission diagnostics, not production baseline identity. Reapply only the
-          # PR654 hardening that remains additive: errno allowlist, bounded systemctl,
-          # exact cgroup match, and error-message redaction.
           path = 'scripts/release/read-runtime-identity.mjs'
           text = from_main(path)
           text = replace_once(
@@ -160,8 +164,6 @@ jobs:
           )
           Path(path).write_text(text)
 
-          # Refresh only already-reviewed PR654 runtime sources whose bytes actually
-          # changed. Any unrelated drift aborts rather than broadening audit authority.
           review_path = Path('config/release-migration-reviews.json')
           document = json.loads(review_path.read_text())
           allowed_sources = {

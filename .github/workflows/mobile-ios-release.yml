@@ -70,6 +70,10 @@ jobs:
         run: node --test mobile/scripts/ios-signing-secrets.test.mjs
       - name: 验证实际 Xcode 与本机构建工具
         run: bash mobile/scripts/setup-ios-runner.sh
+      - name: 回归测试 IPA 制品校验（真实 macOS plist 工具，无发布凭据）
+        env:
+          IOS_ARTIFACT_REQUIRE_NATIVE: '1'
+        run: node --test mobile/scripts/ios-artifact-verification.test.mjs
       - name: 安装锁定依赖
         run: pnpm install --frozen-lockfile
       - name: 测试来源、授权、制品与重试契约（不连接 Apple）

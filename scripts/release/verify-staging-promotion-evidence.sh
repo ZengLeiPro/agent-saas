@@ -65,7 +65,7 @@ if ! node "$script_dir/verify-migration-readback.mjs" "$manifest" \
   > "$directory/database-readback-validation.json"; then
   # Only a proven interrupted transaction and the pinned historical NONE producer qualify.
   # Preserve the invalid archive; append a separately hashed revalidation, never rewrite it.
-  preflight_check=legacy_none_revalidation
+  # Non-qualifying archives retain the existing database-readback failure classification.
   node "$script_dir/legacy-none-readback-revalidation.mjs" revalidate \
     "$manifest" "$history" "$directory" "$GITHUB_REPOSITORY" \
     > "$directory/database-readback-validation.json"

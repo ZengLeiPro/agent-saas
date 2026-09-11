@@ -6,7 +6,7 @@ import { writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { SubmissionProgress, uploadIpa } from './app-store-progress.mjs';
+import { SubmissionProgress, UploadIntegrityError, uploadIpa } from './app-store-progress.mjs';
 
 const API = 'https://api.appstoreconnect.apple.com/v1';
 const base64url = (value) => Buffer.from(value).toString('base64url');
@@ -15,7 +15,7 @@ export function createAppStoreToken({ keyId, issuerId, privateKey, now = Date.no
   assert.match(keyId, /^[A-Z0-9]{10}$/u, 'Invalid App Store Connect key ID');
   assert.match(
     issuerId,
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu,
     'Invalid App Store Connect issuer ID',
   );
   const issuedAt = Math.floor(now / 1000);
@@ -83,7 +83,7 @@ export class AppStoreClient {
       }
       // Response bodies can echo credentials or arbitrary content. Keep them
       // out of logs and workflow summaries, including on permission failures.
-      throw new Error(`App Store Connect request failed (HTTP ${response.status}); inspect API key permissions and Build Uploads`);
+      throw new Error(`App Store Connect request failed (HTTP ${response.status}); check the HTTP status and API key permissions in the Actions diagnostic`);
     }
     throw new Error('App Store Connect retry limit exceeded');
   }
@@ -110,12 +110,23 @@ async function findBuild(client, appId, version, buildNumber, signal) {
   return matches[0] ?? null;
 }
 
+async function waitForVisibility(client, identity, phase, intervalMs) {
+  for (;;) {
+    phase.signal.throwIfAborted();
+    const build = await findBuild(client, identity.appId, identity.version, identity.buildNumber, phase.signal);
+    phase.state(build ? 'BUILD_FOUND' : 'NOT_VISIBLE');
+    if (build) return build;
+    await phase.sleep(intervalMs);
+  }
+}
+
 async function waitForBuild(client, identity, phase, intervalMs) {
   for (;;) {
     phase.signal.throwIfAborted();
     const build = await findBuild(client, identity.appId, identity.version, identity.buildNumber, phase.signal);
     const state = build?.attributes?.processingState;
-    phase.state(build ? state : 'NOT_VISIBLE');
+    assert.ok(build, 'Previously observed exact build is no longer visible; refusing to infer Apple processing');
+    phase.state(state);
     if (state === 'VALID') return build;
     if (state === 'FAILED' || state === 'INVALID')
       throw new Error(`Apple build processing failed with state ${state}`);
@@ -156,6 +167,8 @@ async function waitForInternalTesting(client, build, phase, intervalMs) {
 
 export async function submitToTestFlight({ client, identity, upload, progress }) {
   const limits = progress.limits;
+  progress.identify(identity);
+  let uploadEvidence = null;
   let group;
   let build = await progress.run('inspect', limits.preflightMs, async (phase) => {
     group = await findInternalGroup(client, identity, phase.signal);
@@ -166,12 +179,19 @@ export async function submitToTestFlight({ client, identity, upload, progress })
   let uploadStatus = 'already-present';
   if (!build) {
     try {
-      await progress.run('upload', limits.uploadMs, upload);
+      uploadEvidence = await progress.run('upload', limits.uploadMs, async (phase) => {
+        const result = await upload(phase);
+        assert.equal(result?.accepted, true, 'Upload success evidence is required');
+        phase.state('UPLOAD_REPORTED_SUCCESS');
+        return result;
+      });
       uploadStatus = 'uploaded';
     } catch (error) {
       // A failed client can follow an accepted upload. Reconcile exact identity,
       // but never ignore cancellation or reset an exhausted overall deadline.
       progress.check();
+      if (error instanceof UploadIntegrityError) throw error;
+      uploadEvidence = error.diagnostic || null;
       build = await progress.run('reconcile-upload', limits.preflightMs, async (phase) => {
         const found = await findBuild(client, identity.appId, identity.version, identity.buildNumber, phase.signal);
         phase.state(found ? 'BUILD_FOUND' : 'BUILD_NOT_FOUND');
@@ -181,11 +201,23 @@ export async function submitToTestFlight({ client, identity, upload, progress })
       uploadStatus = 'accepted-before-client-error';
     }
   }
+  if (!build) {
+    try {
+      build = await progress.run('build-visibility', limits.visibilityMs,
+        (phase) => waitForVisibility(client, identity, phase, limits.pollMs));
+    } catch (error) {
+      progress.check();
+      if (error.message === 'build-visibility deadline exceeded') {
+        throw new Error('Upload tool reported success, but the exact app/version/build did not become visible before the deadline. Apple processing is NOT confirmed; see the target identity and upload diagnostic in this Actions summary. No automatic reupload was attempted.');
+      }
+      throw error;
+    }
+  }
   build = await progress.run('apple-processing', limits.processingMs,
     (phase) => waitForBuild(client, identity, phase, limits.pollMs));
   const betaDetail = await progress.run('internal-testflight', limits.internalMs,
     (phase) => waitForInternalTesting(client, build, phase, limits.pollMs));
-  return { group, build, betaDetail, uploadStatus };
+  return { group, build, betaDetail, uploadStatus, uploadEvidence };
 }
 
 function parseArguments(argv) {
@@ -216,7 +248,7 @@ async function main() {
   assert.match(appId ?? '', /^[1-9][0-9]+$/u, 'APP_STORE_CONNECT_APP_ID is required');
   assert.match(
     betaGroupId ?? '',
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu,
     'TESTFLIGHT_INTERNAL_GROUP_ID is required',
   );
   assert.ok(betaGroupName, 'TESTFLIGHT_INTERNAL_GROUP_NAME is required');
@@ -248,7 +280,7 @@ async function main() {
     process.removeListener('SIGINT', onInterrupt);
     process.removeListener('SIGTERM', onTerminate);
   }
-  const { group, build, betaDetail, uploadStatus } = submission;
+  const { group, build, betaDetail, uploadStatus, uploadEvidence } = submission;
   const result = {
     schemaVersion: 1,
     appId,
@@ -257,6 +289,7 @@ async function main() {
     buildId: build.id,
     processingState: build.attributes.processingState,
     uploadStatus,
+    uploadEvidence,
     betaGroupId: group.id,
     betaGroupName: group.attributes.name,
     hasAccessToAllBuilds: group.attributes.hasAccessToAllBuilds,

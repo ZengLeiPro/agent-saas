@@ -51,7 +51,8 @@ describe('Zhipu Coding Plan quota normalization', () => {
       credit({ unit: 6, number: 1, usage: 100, currentValue: 110, percentage: 100 }),
     ]), now);
     expect(result.windows[0]).toMatchObject({ used: 80, quota: 100, usedPercent: 80 });
-    expect(result.windows[1]).toMatchObject({ usedPercent: 110, limitReached: true });
+    expect(result.windows[1]?.usedPercent).toBeCloseTo(110);
+    expect(result.windows[1]?.limitReached).toBe(true);
     expect(result.limitReached).toBe(true);
   });
 

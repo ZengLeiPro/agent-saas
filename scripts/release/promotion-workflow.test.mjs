@@ -623,8 +623,10 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   );
   assert.match(
     workflow,
-    /node '\$remote\/\$reader' --config-identity-stage '\$reader_stage' --output '\$remote\/production-before\.json/u,
+    /bash scripts\/release\/run-production-preflight\.sh "\$remote" ~\/\.ssh\/production_key \\\n\s*"\$reader" "\$reader_stage" production-before\.json "\$PROMOTION_RETRY_MODE"/u,
   );
+  const preflightTransport = await readFile(new URL('./run-production-preflight.sh', import.meta.url), 'utf8');
+  assert.match(preflightTransport, /--reader '\$reader' --config-identity-stage '\$stage' --output '\$remote\/\$output'/u);
   assert.doesNotMatch(workflow, /install -m 0444 daemon-packaging\/systemd/u);
   assert.match(workflow, /extract_control_file\(\)/u);
   assert.match(workflow, /tar -xOf "\$archive" -- "\$raw" > "\$candidate"/u);

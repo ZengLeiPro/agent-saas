@@ -206,7 +206,7 @@ test('预发固定使用稳态基线，拒绝配置身份缺失与漂移', async
   assert.match(workflow, /PRODUCTION_CONFIG_IDENTITY_STAGE: steady-state/u);
   assert.match(
     workflow,
-    /read-production-state\.mjs' --config-identity-stage '\$PRODUCTION_CONFIG_IDENTITY_STAGE'/u,
+    /read-production-state\.mjs "\$PRODUCTION_CONFIG_IDENTITY_STAGE" production\.json fresh/u,
   );
   assert.throws(
     () => validateExpectedConfigIdentityObservers(undefined, undefined),

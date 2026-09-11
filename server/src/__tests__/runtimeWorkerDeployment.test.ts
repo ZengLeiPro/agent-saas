@@ -274,10 +274,13 @@ describe('Runtime Worker 生产部署契约', () => {
       'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',
     );
     expect(serverEntry).toContain('runtime?.getRuntimeAdmissionSnapshot?.(),');
-    expect(serverEntry).toContain('await runtime.refreshConfigIdentitySummary()');
-    expect(serverEntry).toContain('if (!readyFile || runtimeReadyFileSyncPending) return;');
-    expect(serverEntry).toContain('identityRefreshWatchdog = setTimeout(() => {');
-    expect(serverEntry).toContain('fs.rmSync(readyFile, { force: true })');
+    expect(serverEntry).toContain('runtime.refreshConfigIdentitySummary()');
+    const monitorSource = await readFile(join(repoRoot, 'server/src/runtime/runtimeWorkerReadinessMonitor.ts'), 'utf8');
+    expect(monitorSource).toContain('await options.refreshConfigIdentity()');
+    expect(serverEntry).toContain('if (!readyFile || isDraining || shuttingDown) return;');
+    expect(monitorSource).toMatch(/if \(pending\)/u);
+    expect(monitorSource).toContain('watchdog = setTimeout(() => {');
+    expect(monitorSource).toContain('removeRuntimeWorkerReadyFiles(options.readyFile)');
     expect(serverEntry).toContain('await syncRuntimeWorkerReadyFile()');
     expect(serverEntry).toContain(
       'runtimeReadyFileTimer = setInterval(() => { void syncRuntimeWorkerReadyFile(); }, 1_000)',

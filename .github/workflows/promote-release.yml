@@ -390,7 +390,9 @@ jobs:
           set -euo pipefail
           remote="/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
+          scp -i ~/.ssh/production_key scripts/release/production-preflight.mjs \
+            scripts/release/production-preflight-report.mjs scripts/release/production-runtime-observation.mjs \
+            scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \
             scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
@@ -402,8 +404,8 @@ jobs:
             --runtime-worker-action "$worker_action")"
           reader="$(printf '%s' "$baseline_plan" | jq -r .reader)"
           reader_stage="$(printf '%s' "$baseline_plan" | jq -r .configIdentityStage)"
-          if ! ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/$reader' --config-identity-stage '$reader_stage' --output '$remote/production-before.json' >/dev/null"; then
+          if ! bash scripts/release/run-production-preflight.sh "$remote" ~/.ssh/production_key \
+            "$reader" "$reader_stage" production-before.json "$PROMOTION_RETRY_MODE"; then
             test "$PRODUCTION_RECOVERY_MODE" = repair
             ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
               "sudo node '$remote/read-production-recovery-state.mjs' --manifest '$remote/manifest.json' --output '$remote/production-before.json' >/dev/null"
@@ -1556,6 +1558,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          node scripts/release/production-preflight-report.mjs prechange-failure \
+            "$RUNNER_TEMP/promotion-prechange-failure.json" "$PROMOTION_RETRY_MODE" \
+            || echo "::warning title=Production preflight diagnostics::Could not persist prechange diagnostic; recording authoritative attestation next"
           summary='promotion failed before the durable promoting marker and before production mutation'
           if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
             summary='recovery attempt failed before a new promoting marker; prior post-mutation recovery remains required'
@@ -1609,6 +1614,8 @@ jobs:
           retention-days: 90
           path: |
             ${{ runner.temp }}/production-before.json
+            ${{ runner.temp }}/production-preflight*.json
+            ${{ runner.temp }}/promotion-prechange-failure.json
             ${{ runner.temp }}/production-after.json
             ${{ runner.temp }}/production-confirmed.json
             ${{ runner.temp }}/production-partial-confirmed.json

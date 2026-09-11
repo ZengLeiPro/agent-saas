@@ -145,9 +145,11 @@ function validateTopology(identity, reasons, now, refreshTopologyObservation) {
   }
 }
 
+const READ_ERRNOS = new Set(['ENOENT', 'EACCES', 'EPERM', 'EIO', 'ENOTDIR', 'ELOOP', 'ETIMEDOUT']);
+
 function observationErrorCode(error) {
   const code = typeof error?.code === 'string' ? error.code : 'UNKNOWN';
-  return /^[A-Z0-9_]+$/u.test(code) ? code : 'UNKNOWN';
+  return READ_ERRNOS.has(code) ? code : 'UNKNOWN';
 }
 
 function observationCheck(checks, dimension, component, check, status, reasonCode, error) {
@@ -206,7 +208,7 @@ function observeTopology(
         String(
           execFileSync('systemctl', ['show', entry.unit, '--property', 'MainPID', '--value'], {
             encoding: 'utf8',
-            stdio: 'pipe',
+            stdio: 'pipe', timeout: 2000, maxBuffer: 16384,
           }),
         ).trim(),
         10,
@@ -224,7 +226,7 @@ function observeTopology(
         mainPid !== pid ||
         !processExists(mainPid) ||
         !controlGroup ||
-        !pidCgroup.includes(controlGroup)
+        !pidCgroup.split('\n').some((line) => line.split(':').slice(2).join(':') === controlGroup)
       ) {
         reasons.push(`Production runtime identity topology ${role} pidfile PID must equal the live systemd MainPID in the unit cgroup.`);
         observationCheck(checks, 'liveness', role, 'systemd_process', 'blocked', 'systemd_identity_mismatch');
@@ -376,7 +378,7 @@ export function readRuntimeIdentity({
     return {
       ok: false,
       identity: null,
-      blockingReasons: [`Unable to read production runtime identity JSON: ${error.message}`],
+      blockingReasons: [`Unable to read production runtime identity JSON: [${observationErrorCode(error)}]`],
     };
   }
   const now = validationOptions.now ?? Date.now();
@@ -394,7 +396,7 @@ export function readRuntimeIdentity({
       return {
         ok: false,
         identity,
-        blockingReasons: [`Unable to refresh live production topology: ${error.message}`],
+        blockingReasons: [`Unable to refresh live production topology: [${observationErrorCode(error)}]`],
       };
     }
   }

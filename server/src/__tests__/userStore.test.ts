@@ -63,6 +63,7 @@ describe("UserStore user ids", () => {
     expect(user.debugMode).toBe(false);
     expect(user.preferences).toEqual({
       authorizationModeEnabled: true,
+      sessionOrganizationEnabled: false,
       sidebarLayout: "single",
       showSessionListAvatar: false,
     });
@@ -72,6 +73,7 @@ describe("UserStore user ids", () => {
     expect(persisted?.username).toBe("alice");
     expect(persisted?.preferences).toEqual({
       authorizationModeEnabled: true,
+      sessionOrganizationEnabled: false,
       sidebarLayout: "single",
       showSessionListAvatar: false,
     });

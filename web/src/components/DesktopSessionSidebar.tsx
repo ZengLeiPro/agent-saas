@@ -606,7 +606,7 @@ export function DesktopSessionSidebar({
   const { installations: workspaceSystems } = useMySystems();
   const { summary: billingSummary, allowance: billingAllowance } = useTenantBillingAllowance(authUser?.tenantId);
   // 会话列表头像开关：默认不显示（=== true 才显示），关闭时列表走紧凑单行布局
-  const compactList = authUser?.preferences?.showSessionListAvatar !== true;
+  const compactList = authUser?.preferences?.showSessionListAvatar !== true; const sessionOrganizationEnabled = authUser?.preferences?.sessionOrganizationEnabled === true; // 新老账号均默认关闭
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -1355,7 +1355,7 @@ export function DesktopSessionSidebar({
                 />
               ) : (
                 <div className="flex shrink-0 items-center gap-1">
-                  <SmartGroupingButton onApplied={groupsHook.loadGroups} />
+                  {sessionOrganizationEnabled && <SmartGroupingButton onApplied={groupsHook.loadGroups} />}
                   <Button
                     type="button"
                     variant="ghost"
@@ -1627,7 +1627,7 @@ export function DesktopSessionSidebar({
 
                   {/* 新建分组 + 右侧排序状态按钮 */}
                   <div className="flex items-center gap-1">
-                    {!groupsHook.editing && <SmartGroupingButton compact onApplied={groupsHook.loadGroups} />}
+                    {!groupsHook.editing && sessionOrganizationEnabled && <SmartGroupingButton compact onApplied={groupsHook.loadGroups} />}
                     {!groupsHook.editing && (
                       <button
                         type="button"

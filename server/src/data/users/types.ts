@@ -37,15 +37,18 @@ export interface UserPreferences {
   titlePromptAddition?: string;
   /** 追加在平台智能分组提示语后的个人偏好。 */
   sessionGroupingPromptAddition?: string;
+  /** 是否启用会话智能整理；默认关闭。 */
+  sessionOrganizationEnabled?: boolean;
 }
 
 export const DEFAULT_USER_PREFERENCES = {
   sidebarLayout: "single",
   authorizationModeEnabled: true,
   showSessionListAvatar: false,
+  sessionOrganizationEnabled: false,
 } as const satisfies Pick<
   UserPreferences,
-  "sidebarLayout" | "authorizationModeEnabled" | "showSessionListAvatar"
+  "sidebarLayout" | "authorizationModeEnabled" | "showSessionListAvatar" | "sessionOrganizationEnabled"
 >;
 
 export interface UserRecord {

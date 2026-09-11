@@ -7,6 +7,7 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     user: {
       preferences: {
+        sessionOrganizationEnabled: false,
         titlePromptAddition: '按客户命名',
         sessionGroupingPromptAddition: '按部门分组',
       },
@@ -24,16 +25,20 @@ import { SessionOrganizationSettings } from './SessionOrganizationSettings';
 describe('SessionOrganizationSettings', () => {
   it('保存两个个人追加提示语', async () => {
     mocks.save.mockResolvedValue({
+      sessionOrganizationEnabled: true,
       titlePromptAddition: '按项目命名',
       sessionGroupingPromptAddition: '按部门分组',
     });
     render(<SessionOrganizationSettings />);
+    expect(screen.getByRole('switch', { name: '启用会话智能整理' }).getAttribute('aria-checked')).toBe('false');
+    await userEvent.click(screen.getByRole('switch', { name: '启用会话智能整理' }));
     const title = screen.getByLabelText('我的标题生成要求');
     await userEvent.clear(title);
     await userEvent.type(title, '按项目命名');
     await userEvent.click(screen.getByRole('button', { name: '保存' }));
     await waitFor(() =>
       expect(mocks.save).toHaveBeenCalledWith({
+        sessionOrganizationEnabled: true,
         titlePromptAddition: '按项目命名',
         sessionGroupingPromptAddition: '按部门分组',
       }),

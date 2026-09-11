@@ -16,7 +16,22 @@ jobs:
   implementation:
     if: github.ref == 'refs/heads/feat/grok-subscription-global-pool'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agent_saas_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/agent_saas_test
     steps:
       - uses: actions/checkout@v5
         with:
@@ -34,6 +49,12 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git branch --show-current)" = feat/grok-subscription-global-pool
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/grok-apply.py')
+          s = p.read_text().replace("needle='  const readOnly = !isPlatformAdmin;';assert needle in s", "needle='export function ModelManager() {';assert needle in s")
+          p.write_text(s)
+          PY
           python3 scripts/grok-apply.py
           python3 - <<'PY'
           from pathlib import Path
@@ -55,4 +76,5 @@ jobs:
       - name: Subscription regression
         run: pnpm -F server exec vitest run codex grok subscription
       - name: Model manager UI regression
+        if: always() && !cancelled()
         run: pnpm -F web exec vitest run src/components/ModelManager

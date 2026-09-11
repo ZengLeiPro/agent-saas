@@ -11,11 +11,9 @@ import {
  * 平台管理员或技术联系人本人：一次性领取凭据明文。
  * 服务凭据 Bearer：`credential-ack`（该路径已进 `PUBLIC_ROUTES`，在本 router 内自鉴权）。
  */
-import type { PgEntitlementStore } from '../../data/entitlements/store.js';
 import type { KyAppManagementQueries } from '../installations/managementQueries.js';
 import {
   managementTenant,
-  installableScope,
   installationActions,
 } from '../installations/managementPolicy.js';
 import { Router } from 'express';
@@ -58,7 +56,6 @@ const ticketSchema = z
 export interface KyAppInstallationRoutesOptions {
   systems: PgKyAppSystemStore;
   management?: KyAppManagementQueries;
-  entitlements?: PgEntitlementStore;
   audit?: GovernanceAuditStore;
   installations: KyAppInstallationService;
   credentials: KyAppCredentialManager;
@@ -119,11 +116,6 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
     if (!body.success) return sendKyAppError(req, res, 'invalid_input', '安装实例参数非法');
     try {
       managementTenant(req.user, body.data.tenantId);
-      if (!isPlatformAdmin(req.user!)) {
-        const allows = await installableScope(options.entitlements, body.data.tenantId);
-        if (!allows(body.data.systemId))
-          return sendKyAppError(req, res, 'forbidden', '组织权益未授权此业务系统');
-      }
       const installation = await options.installations.create(
         body.data,
         governanceActorOf(req.user!),

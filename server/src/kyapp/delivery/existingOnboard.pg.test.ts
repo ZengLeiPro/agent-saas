@@ -87,7 +87,6 @@ const url = process.env.TEST_DATABASE_URL;
   function rig() {
     const tenantId = `org-${++sequence}`;
     const state = {
-      eligible: true,
       active: true,
       tenantDisabled: false,
       userDisabled: false,
@@ -159,16 +158,6 @@ const url = process.env.TEST_DATABASE_URL;
             : undefined,
       },
       memberships,
-      entitlementStore: {
-        getEntitlementSet: async () => ({ status: 'active' }),
-        listResourceScopes: async () => [
-          {
-            resourceType: 'integrated_system',
-            mode: 'selected',
-            resourceIds: state.eligible ? [TEST_SYSTEM] : [],
-          },
-        ],
-      },
       credentials: {
         listMetadata: async () =>
           issued ? [{ credentialId: 'cred', status: state.acked ? 'active' : 'pending_ack' }] : [],
@@ -214,8 +203,8 @@ const url = process.env.TEST_DATABASE_URL;
       expect(first.execution.request).not.toHaveProperty(field);
     expect(await systems.listInstallationsForTenant(r.input.tenantId)).toHaveLength(1);
   });
-  it.each(['eligible', 'active', 'tenantDisabled', 'userDisabled', 'userTenant'] as const)(
-    '在任何业务写入前拒绝非法身份或权益：%s',
+  it.each(['active', 'tenantDisabled', 'userDisabled', 'userTenant'] as const)(
+    '在任何业务写入前拒绝非法身份：%s',
     async (field) => {
       const r = rig();
       if (field === 'userTenant') r.state.userTenant = 'another-tenant';
@@ -256,11 +245,12 @@ const url = process.env.TEST_DATABASE_URL;
       ),
     ).rejects.toThrow('参数已变化');
     const options = await r.service.organizationOptions(TEST_SYSTEM, r.input.tenantId);
+    expect(options).not.toHaveProperty('eligible');
     expect(options.members).toEqual([{ userId: 'contact', name: '已有管理员', isAdmin: true }]);
     expect(options.installation?.status).toBe('pending');
     expect(r.issue).toHaveBeenCalledTimes(1);
   });
-  it('凭据、DNS、ready、成员授权依次检查；恢复时重新校验权益，完成后保留审计和交付状态', async () => {
+  it('凭据、DNS、ready、成员授权依次检查；完成后保留审计和交付状态', async () => {
     const r = rig();
     const initial = await r.service.start(r.input, PLATFORM_ADMIN);
     const resume = () => r.service.resume(initial.execution.executionId, PLATFORM_ADMIN);
@@ -272,9 +262,6 @@ const url = process.env.TEST_DATABASE_URL;
     r.state.ready = true;
     expect((await resume()).execution.lastErrorCode).toBe('assignment_required');
     expect(r.options.runSmoke).not.toHaveBeenCalled();
-    r.state.eligible = false;
-    await expect(resume()).rejects.toMatchObject({ code: 'forbidden' });
-    r.state.eligible = true;
     r.state.assigned = true;
     const done = await resume();
     expect(done.execution.status).toBe('completed');
@@ -285,6 +272,17 @@ const url = process.env.TEST_DATABASE_URL;
     });
     expect(r.issue).toHaveBeenCalledTimes(1);
   });
+  it.each(['active', 'tenantDisabled', 'userDisabled'] as const)(
+    '恢复执行仍重新检查组织和联系人状态：%s', async (field) => {
+      const r = rig();
+      const initial = await r.service.start(r.input, PLATFORM_ADMIN);
+      r.state[field] = field.endsWith('Disabled');
+      await expect(r.service.resume(initial.execution.executionId, PLATFORM_ADMIN)).rejects.toThrow();
+      expect(r.issue).toHaveBeenCalledTimes(1);
+      expect(r.options.runSmoke).not.toHaveBeenCalled();
+      expect((await store.get(initial.execution.executionId))?.status).toBe('waiting_external');
+    },
+  );
   it('配置 CAS 冲突不覆盖原值，非法地址占位符拒绝', async () => {
     await expect(
       settings.save(TEST_SYSTEM, { baseUrl: '', origin: '' }, 0, 'actor'),
@@ -354,6 +352,9 @@ const url = process.env.TEST_DATABASE_URL;
         body: JSON.stringify(body),
       });
     expect((await send({ ...r.input, grantCredits: 100 })).status).toBe(400);
+    const organization = await fetch(`${base}/systems/${TEST_SYSTEM}/connection-options/${r.input.tenantId}`);
+    expect(organization.status).toBe(200);
+    expect(await organization.json()).not.toHaveProperty('eligible');
     const created = await send(r.input);
     expect(created.status).toBe(202);
     const body = await created.json();

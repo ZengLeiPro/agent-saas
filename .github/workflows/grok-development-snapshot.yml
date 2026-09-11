@@ -26,7 +26,7 @@ jobs:
           POSTGRES_DB: agent_saas_test
         ports: ['5432:5432']
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -53,6 +53,7 @@ jobs:
           from pathlib import Path
           p = Path('scripts/grok-apply.py')
           s = p.read_text().replace("needle='  const readOnly = !isPlatformAdmin;';assert needle in s", "needle='export function ModelManager() {';assert needle in s")
+          s = s.replace('scripts/staging/deploy-staging-release.sh', 'scripts/release/deploy-staging-release.sh')
           p.write_text(s)
           PY
           python3 scripts/grok-apply.py

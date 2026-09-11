@@ -128,8 +128,7 @@ export function GroupCredentialsFields({
   if (!hasOpenAiCompatible) {
     return (
       <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
-        Codex 订阅分组直接使用上方已授权账号，不读取 API Key 或 Base URL；现有值会保留，切回 API Key
-        transport 时可继续使用。 各账号的套餐额度由平台自动采集，见「平台分析 → 套餐额度」。
+        Codex 使用已授权账号，自动采集套餐额度。API Key 与 Base URL 保留，但仅用于 API Key transport。
       </div>
     );
   }
@@ -162,7 +161,7 @@ export function GroupCredentialsFields({
           <div className="space-y-0.5">
             <Label>套餐用量查询</Label>
             <p className="text-xs text-muted-foreground">
-              智谱复用本分组 API Key；火山需独立管控面凭据。配置后，「平台分析 → 套餐额度」每 5 分钟采集一次。
+              每 5 分钟采集，见「套餐额度」。智谱复用 API Key；火山需管控面凭据。
             </p>
           </div>
           <select
@@ -189,9 +188,8 @@ export function GroupCredentialsFields({
         </div>
         {isZhipu && (
           <p className="rounded-md bg-muted/30 p-3 text-xs text-muted-foreground" role="note">
-            已启用智谱个人 Coding Plan 额度查询，复用上方已保存的 API Key，无需第二套密钥。
-            监控请求仅发送至智谱中国站官方接口。返回的是账号共享套餐额度，不是单 Key 用量；
-            同账号多个 Key 对应的卡片可能重复，不能相加。套餐等级与重置时间仅在上游返回时显示。
+            复用本分组 API Key，查询智谱中国站个人套餐。
+            这是账号共享额度，不是单 Key 用量；同账号多个 Key 的卡片可能重复，不能相加。
           </p>
         )}
         {volcSource && (

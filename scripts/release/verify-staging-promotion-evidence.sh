@@ -56,6 +56,12 @@ cp "$directory/attempt-evidence/staging-core-smoke.json" "$directory/staging-cor
 preflight_check=core_smoke_validation
 node "$script_dir/staging-core-smoke-evidence.mjs" \
   "$directory/staging-core-smoke.json" "$manifest" "$staging_run_id" "$staging_run_attempt"
+# Every phase requires a parseable, bound database readback. A none plan is not a bypass.
+preflight_check=database_readback_validation
+node "$script_dir/verify-migration-readback.mjs" "$manifest" \
+  "$directory/attempt-evidence/staging-database-readback.json" \
+  "$directory/staging-attempt.json" "$staging_run_id" "$staging_run_attempt" \
+  > "$directory/database-readback-validation.json"
 # Fail closed if a rerun/failure appeared while downloading the evidence.
 read_metadata
 preflight_check=final_staging_evidence

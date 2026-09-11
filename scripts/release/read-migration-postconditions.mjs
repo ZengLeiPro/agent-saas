@@ -7,18 +7,24 @@ import { assertDatabaseEvidence } from './migration-postconditions.mjs';
 /** No application startup, DDL or writes. Named extended queries forbid multiple statements. */
 export async function readMigrationPostconditions({ manifest, config, environment, Pool }) {
   const plan = manifest.migrationPlan;
+  if (!['none', 'expand'].includes(plan?.phase))
+    throw new Error('Unsupported migration readback phase');
   const evidence = {
     schemaVersion: 1,
     releaseId: manifest.releaseId,
     manifestDigest: manifest.digest,
     planDigest: plan.planDigest,
-    postconditionsDigest: plan.postconditionsDigest,
+    ...(plan.phase === 'expand' ? { postconditionsDigest: plan.postconditionsDigest } : {}),
     environment,
     observedAt: new Date().toISOString(),
     status: 'passed',
     checks: [],
   };
-  if (plan.phase === 'none') return { ...evidence, status: 'not_required' };
+  if (plan.phase === 'none') {
+    evidence.status = 'not_required';
+    assertDatabaseEvidence(manifest, evidence, environment);
+    return evidence;
+  }
   if (
     !plan.postconditions?.length ||
     digestBuffer(canonicalJson(plan.postconditions)) !== plan.postconditionsDigest
@@ -82,8 +88,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       'Usage: read-migration-postconditions.mjs <manifest> <config> <server-root> <environment> <output>',
     );
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
-  const { Pool } = createRequire(resolve(serverRoot, 'package.json'))('pg');
+  // A no-migration readback must not need credentials, a server install or the PG driver.
+  const required = manifest.migrationPlan?.phase !== 'none';
+  const config = required ? JSON.parse(await readFile(configPath, 'utf8')) : {};
+  const Pool = required ? createRequire(resolve(serverRoot, 'package.json'))('pg').Pool : null;
   const evidence = await readMigrationPostconditions({ manifest, config, environment, Pool });
-  await writeFile(output, canonicalJson(evidence) + '\n', { mode: 0o600 });
+  const serialized = canonicalJson(evidence) + '\n';
+  JSON.parse(serialized); // Never publish a malformed evidence file.
+  await writeFile(output, serialized, { mode: 0o600 });
 }

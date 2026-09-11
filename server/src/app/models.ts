@@ -374,6 +374,7 @@ function resolveProviderOptions(
   if (disablePromptCacheKey !== undefined) options.disablePromptCacheKey = disablePromptCacheKey;
   if (mcpLoadingMode !== undefined) options.mcpLoadingMode = mcpLoadingMode;
   if (toolSearchProtocol !== undefined) options.toolSearchProtocol = toolSearchProtocol;
+  if (responsesTransport === 'grok_subscription') { options.mcpLoadingMode = 'eager'; options.toolSearchProtocol = 'none'; options.disableResponseChaining = true; options.disablePromptCacheKey = true; }
   return Object.keys(options).length > 0 ? options : undefined;
 }
 

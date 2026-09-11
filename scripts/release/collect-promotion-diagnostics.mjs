@@ -6,6 +6,7 @@ import { safeReceipt, safeRecovery, safeRestoration, safeMatrices, safeBudget, s
 
 import { readEvidenceJson } from './evidence-file.mjs';
 import { collectAssetDiagnostics } from './web-asset-diagnostics.mjs';
+import { safeComponentResults } from './promotion-diagnostics-scopes.mjs';
 export { safeAssetEvent } from './web-asset-diagnostics.mjs';
 
 export async function collectDiagnostics(root, output) {
@@ -37,6 +38,7 @@ export async function collectDiagnostics(root, output) {
     ].includes(reconciliation?.outcome)
       ? reconciliation.outcome
       : 'unknown',
+    componentResults: safeComponentResults(reconciliation?.componentResults),
     webAssets,
     evidencePresent: {},
     matrices: safeMatrices(await json('reconcile-input.json')),

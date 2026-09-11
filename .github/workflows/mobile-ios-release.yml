@@ -66,6 +66,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      - name: 回归测试签名凭据初始化与安全诊断（不连接 GitHub 或 Apple）
+        run: node --test mobile/scripts/ios-signing-secrets.test.mjs
       - name: 验证实际 Xcode 与本机构建工具
         run: bash mobile/scripts/setup-ios-runner.sh
       - name: 安装锁定依赖

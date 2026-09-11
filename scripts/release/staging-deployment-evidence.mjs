@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { readOptionalSourceAuthority, validateSourceAuthority } from './staging-source-authority.mjs';
 import { validateCoreSmokeEvidence } from './staging-core-smoke-evidence.mjs';
 
 import {
@@ -34,6 +35,7 @@ export function validateStagingDeployment({
   attemptRun,
   latestRun,
   repository,
+  sourceAuthority,
   now = Date.now(),
 }) {
   requireEvidence(
@@ -61,10 +63,16 @@ export function validateStagingDeployment({
       binding.stagingRunAttempt,
       'deployment.attempt',
     );
-  validateRun(attemptRun, binding, repository, 'bound_run');
+  let engineSha = binding.sourceSha;
+  if (deployment.payload?.automaticSource || sourceAuthority) {
+    engineSha = validateSourceAuthority(sourceAuthority, {
+      manifest, run: attemptRun, deployment, repository,
+    });
+  }
+  validateRun(attemptRun, binding, repository, 'bound_run', engineSha);
   // A newer attempt may have changed or invalidated this deployment. Fail closed, even if green.
   // A fresh RC is required rather than combining an old attestation with newer smoke evidence.
-  validateRun(latestRun, binding, repository, 'latest_run');
+  validateRun(latestRun, binding, repository, 'latest_run', engineSha);
   const started = time(attemptRun.run_started_at, 'run_started_at');
   const finished = time(attemptRun.updated_at, 'run_finished_at');
   const verified = time(binding.verifiedAt, 'verified_at');
@@ -247,6 +255,7 @@ async function main([mode, directory, manifestPath, historyPath, repository]) {
       statusPages: await json(join(directory, 'deployment-statuses.json')),
       attemptRun: await json(join(directory, 'staging-attempt.json')),
       latestRun: await json(join(directory, 'staging-run.json')),
+      sourceAuthority: await readOptionalSourceAuthority(directory),
     });
     if (mode === 'complete') {
       const smoke = validateCoreSmokeEvidence(

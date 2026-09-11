@@ -32,7 +32,7 @@ test('Release Evidence is the first isolated stage of manual Staging RC deployme
   );
   assert.ok(workflow.indexOf('prepare-evidence:') < workflow.indexOf('build-deploy-verify:'));
   assert.match(workflow, /prepare-evidence:[\s\S]*FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true/u);
-  assert.match(workflow, /RELEASE_SHA: \$\{\{ github\.sha \}\}/u);
+  assert.match(workflow, /RELEASE_SHA: \$\{\{ needs\.guard\.outputs\.source_sha \}\}/u);
   const appCiGateStart = workflow.indexOf('- name: 等待应用 CI 成功并校验已合并的 GitHub PR');
   const appCiGateEnd = workflow.indexOf('- name: 解析同一发布 SHA 的 ACS 证据');
   assert.ok(appCiGateStart > 0 && appCiGateEnd > appCiGateStart);
@@ -82,7 +82,7 @@ test('Staging fails fast when the deployed Evidence Writer cannot accept the pro
 test('Staging conditionally upgrades a trusted outdated Writer before preparing evidence', async () => {
   const workflow = await readFile(stagingWorkflowPath, 'utf8');
   assert.match(workflow, /ensure-evidence-writer:/u);
-  assert.match(workflow, /needs: ensure-evidence-writer/u);
+  assert.match(workflow, /needs: \[ensure-evidence-writer, guard\]/u);
   assert.match(workflow, /evidence-writer-capability\.mjs/u);
   assert.match(workflow, /EVIDENCE_WRITER_IMPLEMENTATION_DIGEST/u);
   assert.match(workflow, /steps\.capability\.outputs\.needs_upgrade == 'true'/u);

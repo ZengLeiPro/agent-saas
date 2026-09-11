@@ -45,11 +45,11 @@ openssl base64 -A -in "$SHARE_PROFILE" |
 
 ## 验证
 
-1. 在已合并修复且通过 CI 的 main 提交上，手动启动“iOS 构建与发布”，先选 `operation=build`，
-   `source_sha` 留空或指定该提交。不要选择旧源码 SHA，否则仍会执行旧版原生脚本。
+1. 在已合并修复且通过 CI 的 main 提交上，手动启动“iOS 构建与发布”，先选「仅构建，不发布」，
+   原构建运行链接或编号留空。系统固定使用点击运行时的 main SHA；不要只 Re-run 旧运行。
 2. 检查原生工程生成、Pod 安装、Archive、IPA 导出和签名校验。错误会带安全的阶段标签，
    例如 `stage=decode-IOS_APP_PROFILE_BASE64 failed (exit=3)`；不要开启 `set -x` 排查签名步骤。
-3. 确认真实 IPA 构建成功后，再按正常授权流程发布内部 TestFlight。无凭据回归测试通过不等于签名构建通过。
+3. 确认真实 IPA 构建成功后，新建「重试已有构建的发布」运行并粘贴原构建链接或编号，发布内部 TestFlight。无凭据回归测试通过不等于签名构建通过。
 
 本地回归测试无需 pnpm 依赖、GitHub 访问或 Apple 凭据：
 

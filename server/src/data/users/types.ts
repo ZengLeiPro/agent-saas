@@ -45,10 +45,9 @@ export const DEFAULT_USER_PREFERENCES = {
   sidebarLayout: "single",
   authorizationModeEnabled: true,
   showSessionListAvatar: false,
-  sessionOrganizationEnabled: false,
 } as const satisfies Pick<
   UserPreferences,
-  "sidebarLayout" | "authorizationModeEnabled" | "showSessionListAvatar" | "sessionOrganizationEnabled"
+  "sidebarLayout" | "authorizationModeEnabled" | "showSessionListAvatar"
 >;
 
 export interface UserRecord {

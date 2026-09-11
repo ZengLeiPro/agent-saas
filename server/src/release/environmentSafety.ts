@@ -35,6 +35,14 @@ function allowedHosts(envValue: string | undefined): Set<string> {
   );
 }
 
+/** Startup and first authorization consume one deployment-owned OAuth policy. */
+export function readStagingOAuthPolicy(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    mode: env.AGENT_SAAS_STAGING_OAUTH_ENABLED,
+    hosts: allowedHosts(env.AGENT_SAAS_STAGING_OAUTH_HOSTS),
+  };
+}
+
 function urlAllowed(value: string | undefined, allowlist: Set<string>): boolean {
   if (!value || allowlist.size === 0) return false;
   try {
@@ -229,7 +237,8 @@ export function assertRuntimeEnvironmentSafety(
     failures.push('platform tool execution must be explicitly disabled until Staging ACS is ready');
   }
 
-  const oauthHosts = allowedHosts(env.AGENT_SAAS_STAGING_OAUTH_HOSTS);
+  const oauthPolicy = readStagingOAuthPolicy(env);
+  const oauthHosts = oauthPolicy.hosts;
   const codexEndpoint =
     config.codexSubscription?.endpoint ?? 'https://chatgpt.com/backend-api/codex/responses';
   if (config.codexSubscription?.enabled && !urlAllowed(codexEndpoint, oauthHosts))
@@ -239,7 +248,7 @@ export function assertRuntimeEnvironmentSafety(
     !oauthHosts.has('accounts.google.com')
   )
     failures.push('Google OAuth endpoint is not staging-allowlisted');
-  const oauthEnabled = env.AGENT_SAAS_STAGING_OAUTH_ENABLED;
+  const oauthEnabled = oauthPolicy.mode;
   if (config.grokSubscription?.enabled) {
     if (oauthEnabled !== '1') failures.push('Grok subscription requires explicitly enabled Staging OAuth');
     if (!urlAllowed(config.grokSubscription.endpoint ?? GROK_RESPONSES_ENDPOINT, oauthHosts)

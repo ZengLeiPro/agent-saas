@@ -1,3 +1,4 @@
+import { createModelSubscriptionRuntime } from './modelSubscriptionRuntime.js';
 import { prepareProductionConfigStartup, alignProductionConfigStartup } from './productionConfigStartup.js';
 import { initializeProductionModelPublication } from './productionModelPublication.js';
 import { createMemoryIndexRuntimeUpdatePreparer } from './memoryIndexRuntimeUpdate.js';
@@ -12,9 +13,6 @@ import {
   createRawRuntimeRunDispatch,
   wakeRuntimeSession,
 } from '../runtime/rawRuntimeRunDispatch.js';
-import { CodexCredentialManager, PgCodexCredentialLock } from '../runtime/responses/codexCredentialManager.js';
-import { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
-import { createCodexCredentialRuntimeStateStore } from '../runtime/responses/codexCredentialRuntimeState.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import { DuckDBRuntimeAuditQuery, EventStoreRuntimeAuditQuery, type RuntimeAuditQuery } from '../runtime/auditQuery.js';
 import { createAuditProjection } from '../runtime/auditProjection.js';
@@ -1620,13 +1618,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ),
     });
   };
-  const codexCredentialManager = new CodexCredentialManager({
-    vault: secretVault, getConfig: () => config.codexSubscription,
-    ...(pgEventStore ? { lock: new PgCodexCredentialLock(pgEventStore.pool) } : {}),
-    runtimeStateStore: await createCodexCredentialRuntimeStateStore(pgEventStore?.pool, config.runtimeEventStore),
-    fetchImpl: egressFetch,
-  });
-  const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch); const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch);
+  const subscriptionRuntime = await createModelSubscriptionRuntime({ config, secretVault, pool: pgEventStore?.pool, egressFetch });
+  const { codexCredentialManager, codexDeviceAuthService, grokCredentialManager, grokDeviceAuthService, grokModelCatalog } = subscriptionRuntime;
+  const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch, subscriptionRuntime.factoryDependencies);
   const memoryContextTools = createRuntimeMemoryContextTools({
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
@@ -1639,7 +1633,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     modelAdapterFactory: (connection, providerOptions) => createModelAdapterForProtocol(
       connection,
       providerOptions,
-      { codexCredentialManager, codexFetch: egressFetch, codexWebSocketPool },
+      { ...subscriptionRuntime.factoryDependencies, codexWebSocketPool },
     ),
     getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: () => refreshToolDescriptions(),
     agentRuntimeProfileResolver,
@@ -2855,6 +2849,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     identity: configIdentityAssembly, logger: serverLogger,
   });
   codexCredentialManager.setCredentialRotationCoordinator(productionModelPublication?.coordinateCredentialRotation);
+  grokCredentialManager.setCredentialRotationCoordinator(productionModelPublication?.coordinateCredentialRotation);
   return {
     config, processRole, processCwd,
     providerQuotaService: providerQuotaRuntime?.service,
@@ -2871,7 +2866,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     getMemoryConsolidationScannerStatus: memoryConsolidationStore ? () => memoryConsolidationStore!.getScannerStatus('memory-consolidation-v1') : undefined,
     memoryIndexShutdown: async () => { productionModelPublication?.stop(); await memoryIndexShutdown(); }, auditProjectionShutdown, runtimeEventStoreShutdown,
     mcpClientShutdown, mcpClientManager,
-    secretVault, codexCredentialManager, codexDeviceAuthService,
+    secretVault, codexCredentialManager, codexDeviceAuthService, grokCredentialManager, grokDeviceAuthService, grokModelCatalog,
     codexWebSocketShutdown: () => codexWebSocketPool.close(),
     codexWebSocketCredentialShutdown: refs => codexWebSocketPool.closeCredentialRefs(refs),
     userStore, authEpochAuthority,

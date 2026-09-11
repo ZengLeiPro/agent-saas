@@ -310,7 +310,7 @@ type ConfigProviderOptions = {
   tool_call_repair?: 'off' | 'detect' | 'repair';
   // ── Responses API v1（RFC P0.5）配置层字段（snake_case 与 config.json 对齐） ──
   protocol?: 'chat_completions' | 'responses';
-  responses_transport?: 'openai_compatible' | 'codex_subscription';
+  responses_transport?: 'openai_compatible' | 'codex_subscription' | 'grok_subscription';
   alias_actual?: string;
   supports_reasoning_output?: boolean;
   supports_tool_reasoning?: boolean;

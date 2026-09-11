@@ -22,7 +22,8 @@ export class GrokCredentialManager {
     vault: SecretVault; getConfig: () => GrokSubscriptionRuntimeConfig | undefined;
     lock?: SubscriptionCredentialLock; runtimeStateStore?: SubscriptionCredentialRuntimeStateStore;
     refreshJournal?: SubscriptionRefreshJournal; oauthClient?: GrokOAuthClient; fetchImpl?: typeof fetch;
-    credentialRotationCoordinator?: (ref: string) => Promise<void>; now?: () => number;
+    credentialRotationCoordinator?: (ref: string) => Promise<void>;
+    requireRotationCoordinator?: boolean; now?: () => number;
   }) {
     this.repository = new GrokCredentialRepository(options.vault);
     this.lock = options.lock ?? new LocalSubscriptionCredentialLock();
@@ -144,6 +145,7 @@ export class GrokCredentialManager {
       if (!this.expiring(latest) && (!force || latest.generation > (staleGeneration ?? observedGeneration))) return { bundle: latest };
       const state = await this.state.get(ref);
       if (state?.availability === 'auth_unavailable') throw new GrokCredentialError(state.lastFailureCode ?? 'auth_unavailable', latest.generation);
+      if (this.options.requireRotationCoordinator && !this.coordinator) throw new GrokProtocolError('credential_publication_unavailable');
       await this.journal.begin(ref, latest.generation);
       try {
         const tokens = await this.oauth.refresh(latest); this.assertConfigured(ref);

@@ -5,6 +5,8 @@ import { DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
 import { readEvidenceJson } from './evidence-file.mjs';
 import { assertDatabaseEvidence } from './migration-postconditions.mjs';
 
+const repositoryPattern = /^[\w.-]+\/[\w.-]+$/u;
+
 /** Archive age is bounded by the authenticated staging attempt AND the RC lifetime.
  * The live reader's five-minute default is deliberately not used as the archive lifetime.
  */
@@ -23,8 +25,8 @@ export function assertArchivedDatabaseEvidence({
     !/^[1-9][0-9]*$/u.test(String(runId)) ||
     !/^[1-9][0-9]*$/u.test(String(runAttempt)) ||
     String(run?.id) !== String(runId) || String(run?.run_attempt) !== String(runAttempt) ||
-    !repository || run?.repository?.full_name !== repository ||
-    run?.head_repository?.full_name !== repository ||
+    typeof repository !== 'string' || !repositoryPattern.test(repository) ||
+    run?.repository?.full_name !== repository || run?.head_repository?.full_name !== repository ||
     !SHA_PATTERN.test(manifest?.releaseSha ?? '') || run?.head_sha !== manifest.releaseSha ||
     run?.head_branch !== 'main' || run?.event !== 'workflow_dispatch' ||
     run?.path !== '.github/workflows/deploy-staging.yml' ||
@@ -52,13 +54,17 @@ export function assertArchivedDatabaseEvidence({
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
-    const [manifestPath, evidencePath, runPath, runId, runAttempt] = process.argv.slice(2);
-    if (!runAttempt) throw new Error('Expected manifest, readback, bound attempt, run ID and attempt');
+    // The authenticated caller supplies the trust boundary explicitly. Never infer it
+    // from an evidence file or an ambient environment variable.
+    const args = process.argv.slice(2);
+    const [manifestPath, evidencePath, runPath, runId, runAttempt, repository] = args;
+    if (args.length !== 6 || args.some((arg) => !arg) || !repositoryPattern.test(repository))
+      throw new Error('Expected manifest, readback, bound attempt, run ID, attempt and owner/repo');
     const result = assertArchivedDatabaseEvidence({
       manifest: await readEvidenceJson(manifestPath, 1048576),
       evidence: await readEvidenceJson(evidencePath),
       run: await readEvidenceJson(runPath),
-      runId, runAttempt, repository: process.env.GITHUB_REPOSITORY,
+      runId, runAttempt, repository,
     });
     console.log(JSON.stringify(result));
   } catch (error) {

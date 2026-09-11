@@ -60,7 +60,7 @@ node "$script_dir/staging-core-smoke-evidence.mjs" \
 preflight_check=database_readback_validation
 node "$script_dir/verify-migration-readback.mjs" "$manifest" \
   "$directory/attempt-evidence/staging-database-readback.json" \
-  "$directory/staging-attempt.json" "$staging_run_id" "$staging_run_attempt" \
+  "$directory/staging-attempt.json" "$staging_run_id" "$staging_run_attempt" "$GITHUB_REPOSITORY" \
   > "$directory/database-readback-validation.json"
 # Fail closed if a rerun/failure appeared while downloading the evidence.
 read_metadata

@@ -181,14 +181,26 @@ for (const [name, mutate] of [
   const f = await archiveFixture(); mutate(f);
   assert.throws(() => assertArchivedDatabaseEvidence(f));
 });
-test('real archive CLI accepts a bound file and rejects malformed bytes without exposing content', async (t) => {
+test('real archive CLI accepts an explicit repository and rejects malformed evidence or arguments', async (t) => {
   const root = await directory(t); const f = await archiveFixture();
   for (const name of ['manifest', 'evidence', 'run'])
     await writeFile(join(root, `${name}.json`), JSON.stringify(f[name]));
   const args = [fileURLToPath(new URL('./verify-migration-readback.mjs', import.meta.url)),
-    ...['manifest', 'evidence', 'run'].map((name) => join(root, `${name}.json`)), '123', '1'];
-  const options = { encoding: 'utf8', env: { ...process.env, GITHUB_REPOSITORY: f.repository } };
-  assert.equal(spawnSync(process.execPath, args, options).status, 0);
+    ...['manifest', 'evidence', 'run'].map((name) => join(root, `${name}.json`)), '123', '1', f.repository];
+  const options = { encoding: 'utf8', env: { ...process.env, GITHUB_REPOSITORY: 'wrong/ambient' } };
+  const accepted = spawnSync(process.execPath, args, options);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(JSON.parse(accepted.stdout).status, 'passed');
+  // The evidence and ambient environment must never supply a missing trust boundary.
+  for (const invalid of [args.slice(0, -1), [...args.slice(0, -1), 'wrong/repo'],
+    [...args.slice(0, -1), 'DO_NOT_EXPORT?token=secret'], [...args, 'unexpected']]) {
+    const rejected = spawnSync(process.execPath, invalid, {
+      ...options, env: { ...process.env, GITHUB_REPOSITORY: f.repository },
+    });
+    assert.equal(rejected.status, 1, rejected.stderr);
+    assert.equal(rejected.stdout, '');
+    assert.doesNotMatch(rejected.stderr, /DO_NOT_EXPORT/u);
+  }
   await writeFile(join(root, 'evidence.json'), '{"DO_NOT_EXPORT":undefined}');
   const rejected = spawnSync(process.execPath, args, options);
   assert.equal(rejected.status, 1);

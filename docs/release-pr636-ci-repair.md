@@ -3,7 +3,7 @@
 ## 代码依据
 
 原 PR head：`d8f012e0e9f460efe16413d705e3a5daa3b919ca`。
-主线基线：`29927a30cdefd34e7919a5a3c90f5eef4070e935`。
+原主线基线：`29927a30cdefd34e7919a5a3c90f5eef4070e935`；现已整合主线 `cc99440d43cdfcb22795260835614fe53eef8035` 的 Staging Deployment 证据修复，保留 run/attempt 绑定及 deployment-engine 身份。
 本次只向原 PR 增加修复，不合并、不执行生产或测试环境部署。
 隔离验证的临时 Workflow 与工作文件不进入本 PR 的文件或提交历史。
 
@@ -12,7 +12,7 @@
 - F03：先验证每个身份字段及 ACS/App/Web 回滚范围，再汇总；未知外部副作用不能被“已恢复旧身份”隐藏；App 回滚必须同时恢复 API 和 Runtime Worker；另一组件出现第三种身份时不建议自动续跑。保留已有严格回执、ConfigIdentity 和人工处置门禁。
 - F05：补齐独立 deploymentDrainDeadlineMs 的持久化预期，新增普通维护与部署预算互不覆盖、旧格式加载及无效值拒绝的回归测试。
 - F07：多进程验证入口在真实源码进程启动前构建 server 的传递工作区依赖（发布包模式不重建），避免干净 Runner 缺失 ky-app-contract/dist。工具执行改用有界完成屏障：候选 Worker 已启动、旧 Worker 明确记录 SIGUSR2 交棒请求后才允许工具返回，而非假设候选总能在三秒内启动。观察器覆盖先前已收到的 tool_input、失败、断连、超时和监听器清理。
-- 历史迁移门禁：对确实变化的 HTTP transport 重新审核，更新 40 条已有 no-schema-change 记录中的该文件 targetDigest；不修改其他路径、基线摘要、分类、审核证据或迁移校验器。
+- 历史迁移门禁：对确实变化的 HTTP transport 重新审核，更新 40 条已有 no-schema-change 记录中的该文件 targetDigest；随后发现 `a7da7be1` 基线原本只有身份 JSON 存储审核，另补充该基线的 HTTP 文件条目，并为全部 41 条相关记录追加此次复核证据。不修改其他文件条目、既有基线摘要、分类、原证据或迁移校验器。
 
 ## HTTP transport 重新审核
 

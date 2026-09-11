@@ -32,7 +32,8 @@ test('recent JSON-store baseline explicitly reviews the changed HTTP closure dep
     targetSnapshot: targetSnapshot(),
   });
   const entry = loaded.entries.get(transport);
-  assert.equal(entry?.classification, 'no-schema-change');
+  assert.ok(entry, 'HTTP transport requires an explicit migration review entry');
+  assert.equal(entry.classification, 'no-schema-change');
   assert.equal(entry.targetDigest, migrationSourceDigest(readFileSync(transport)));
   assert(review.evidence.some((evidence) => evidence.path === evidencePath));
 });

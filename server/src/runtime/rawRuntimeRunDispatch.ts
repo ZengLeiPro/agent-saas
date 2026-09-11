@@ -2703,9 +2703,9 @@ export async function wakeRuntimeSession(
     const dispatch = createRawApprovalResumeDispatch(config);
     const abortController = new AbortController();
     const drainHandoff: RuntimeDrainHandoffState = { requested: false };
-    runtimeRunController.register(run.runId, abortController, {
+    runtimeRunController.registerOwnedRun(run, abortController, {
+      workerId: options.lease?.workerId,
       userId: session.userId,
-      tenantId: run.tenantId,
       drainHandoff,
     });
     const renewTimer = startWakeLeaseRenewal({
@@ -2776,9 +2776,9 @@ export async function wakeRuntimeSession(
     const dispatch = createRawInteractionResumeDispatch(config);
     const abortController = new AbortController();
     const drainHandoff: RuntimeDrainHandoffState = { requested: false };
-    runtimeRunController.register(run.runId, abortController, {
+    runtimeRunController.registerOwnedRun(run, abortController, {
+      workerId: options.lease?.workerId,
       userId: session.userId,
-      tenantId: run.tenantId,
       drainHandoff,
     });
     const renewTimer = startWakeLeaseRenewal({
@@ -2848,9 +2848,9 @@ export async function wakeRuntimeSession(
   if (await cancelDeletedSessionWakeIfPresent(sessionCatalog, run, options.lease, config.runStore)) return; const dispatch = createRawRuntimeRunDispatch(config);
   const abortController = new AbortController();
   const drainHandoff: RuntimeDrainHandoffState = { requested: false };
-  runtimeRunController.register(run.runId, abortController, {
+  runtimeRunController.registerOwnedRun(run, abortController, {
+      workerId: options.lease?.workerId,
     userId: sessionOwner.id,
-    tenantId: run.tenantId,
     drainHandoff,
   });
   const renewTimer = startWakeLeaseRenewal({

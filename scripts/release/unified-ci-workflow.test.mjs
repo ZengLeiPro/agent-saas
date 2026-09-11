@@ -22,8 +22,14 @@ test('a single automatic CI preserves both required check names and consumes one
   assert.match(triggers, /push:\s+branches: \[main\]/u);
   assert.match(triggers, /pull_request:\s+branches: \[main\]/u);
   assert.doesNotMatch(triggers, /paths(?:-ignore)?:/u);
-  assert.equal(existsSync(new URL('../../.github/workflows/acs-sandbox.yml', import.meta.url)), false);
-  assert.doesNotMatch(promotion.slice(0, promotion.indexOf('\njobs:')), /\n  (push|pull_request):/u);
+  assert.equal(
+    existsSync(new URL('../../.github/workflows/acs-sandbox.yml', import.meta.url)),
+    false,
+  );
+  assert.doesNotMatch(
+    promotion.slice(0, promotion.indexOf('\njobs:')),
+    /\n  (push|pull_request):/u,
+  );
   const acs = job(ci, 'acs-impact-gate');
   assert.match(acs, /name: ACS Impact Gate/u);
   assert.match(acs, /needs: ci_plan/u);
@@ -52,7 +58,7 @@ test('manual production boundaries and stable artifact identity are preserved', 
   assert.match(promotion, /group: production-runtime\s+cancel-in-progress: false/u);
   assert.match(
     deploy,
-    /if: github.ref == 'refs\/heads\/main' && needs.dispatch.outputs.operation == 'promote'/u,
+    /if: github.ref == 'refs\/heads\/main' && \(needs.dispatch.outputs.operation == 'promote' \|\| needs.dispatch.outputs.operation == 'checkpoint-repair'\)/u,
   );
   assert.match(
     ci,
@@ -173,4 +179,21 @@ test('publish and contract changes select only one ACS gate; malformed output ne
   ]) {
     assert.throws(() => parseClassification(output));
   }
+});
+
+test('real Worker source entry builds workspace exports before allocating fixtures', () => {
+  const source = readFileSync('server/scripts/verify-runtime-multiprocess-e2e.mts', 'utf8');
+  const build = source.indexOf(
+    "await execFile('pnpm', ['--filter', 'server^...', '--if-present', 'run', 'build']",
+  );
+  const allocate = source.indexOf('const rootDir = await mkdtemp');
+  assert(
+    build >= 0 && allocate > build,
+    'source entry must build workspace exports before startup',
+  );
+  assert.match(
+    source.slice(source.lastIndexOf('if (', build), build),
+    /!options\.bundleDirectory/u,
+  );
+  assert.doesNotMatch(job(ci, 'postgres_contracts'), /continue-on-error/u);
 });

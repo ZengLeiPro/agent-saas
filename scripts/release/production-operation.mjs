@@ -31,12 +31,12 @@ export function validateProductionOperation(inputs, { eventName, ref }) {
   const digest = text(inputs.expected_plan_digest, 'expected_plan_digest');
   const confirmed = boolean(inputs.confirm_recovery_only);
   assert(
-    ['promote', 'web-recovery-audit', 'web-recovery-repair'].includes(operation),
+    ['promote', 'checkpoint-repair', 'web-recovery-audit', 'web-recovery-repair'].includes(operation),
     'Unknown production operation',
   );
   assert(text(inputs.reason, 'reason').trim(), 'An operation reason is required');
   assert(['normal', 'repair'].includes(recoveryMode), 'Invalid RC recovery_mode');
-  if (operation === 'promote') {
+  if (operation === 'promote' || operation === 'checkpoint-repair') {
     assert(/^rc-[0-9]{8}-[0-9]{2,}$/u.test(releaseId), 'promote requires a valid release_id');
     assert(!digest && !confirmed, 'Cold-standby confirmation cannot be used for RC promotion');
     return { operation, recoveryMode: '' };

@@ -191,7 +191,7 @@ test('Web rollback marker is written only by the armed restore path', async () =
   assert.equal(web.split(markerWrite).length - 1, 1);
   ordered(web, [
     'trap cleanup_web_on_exit EXIT',
-    'aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json"',
+    'web-shell-transaction.mjs snapshot',
     'restore_web_entry() {',
     markerWrite,
     'web_backup_ready=true',
@@ -215,7 +215,7 @@ test('Web promotion publishes gzip immutable assets and syncs the cold-standby i
     'trap cleanup_web_on_exit EXIT',
     'test "$lock_ready" = true',
     'run_with_web_lock bash -euo pipefail -c snapshot_recovery_web',
-    '# stat 还会读取对象 ACL',
+    'web-shell-transaction.mjs snapshot',
     'web_backup_ready=true',
     'run_with_web_lock bash scripts/release/upload-web-assets-immutable.sh',
     'run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-shell/"',
@@ -300,10 +300,10 @@ test('reconcile derives strict ACS/App/Web rollback receipts', async () => {
   assert.match(reconcile, /rollback-web\.attempted/u);
   assert.match(reconcile, /rollback-web\.succeeded/u);
   assert.match(reconcile, /remote_receipt_exists/u);
-  assert.match(reconcile, /rollback-acs\.attempted/u);
-  assert.match(reconcile, /rollback-acs\.succeeded/u);
-  assert.match(reconcile, /rollback-app\.attempted/u);
-  assert.match(reconcile, /rollback-app\.succeeded/u);
+  assert.match(reconcile, /remote_receipt_exists acs attempted/u);
+  assert.match(reconcile, /remote_receipt_exists acs succeeded/u);
+  assert.match(reconcile, /remote_receipt_exists app attempted/u);
+  assert.match(reconcile, /remote_receipt_exists app succeeded/u);
   assert.match(reconcile, /rollback_receipts=/u);
   assert.match(reconcile, /rollbackReceipts:\$rollbackReceipts/u);
 });
@@ -517,7 +517,10 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /"\$RUNNER_TEMP\/built\/artifact-index\.json"/u);
   assert.doesNotMatch(workflow, /release\/wait-for-acr-image\.sh/u);
   assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
-  assert.match(workflow, /run_with_web_lock aliyun --secure oss ls/u);
+  assert.match(
+    workflow,
+    /run_with_web_lock node scripts\/release\/web-shell-transaction\.mjs snapshot/u,
+  );
   assert.doesNotMatch(workflow, /run_with_web_lock aliyun --secure oss stat/u);
   assert.match(workflow, /PROMOTION_RETRY_MODE/u);
   assert.match(workflow, /OSS attestation mirror/u);
@@ -541,7 +544,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   );
   assert.match(
     workflow,
-    /if \[ "\$WEB_ALREADY_TARGET" = true \]; then[\s\S]*Web already equals the immutable target/u,
+    /if \[ "\$WEB_ALREADY_TARGET" = true \] && \[ "\$\(jq -r \.pending "\$RUNNER_TEMP\/web-recovery-state\.json"\)" != true \]; then[\s\S]*Web already equals the immutable target/u,
   );
   assert.match(workflow, /--state failed_before_change/u);
   assert.match(workflow, /already equals the immutable target/u);
@@ -840,15 +843,15 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(workflow, /restore_web_entry/u);
   assert.match(workflow, /rollback-web\.attempted/u);
   assert.match(workflow, /rollback-web\.succeeded/u);
-  assert.match(workflow, /rollback-acs\.attempted/u);
-  assert.match(workflow, /rollback-acs\.succeeded/u);
-  assert.match(workflow, /rollback-app\.attempted/u);
-  assert.match(workflow, /rollback-app\.succeeded/u);
+  assert.match(workflow, /remote_receipt_exists acs attempted/u);
+  assert.match(workflow, /remote_receipt_exists acs succeeded/u);
+  assert.match(workflow, /remote_receipt_exists app attempted/u);
+  assert.match(workflow, /remote_receipt_exists app succeeded/u);
   assert.doesNotMatch(workflow, /rollback-(?:acs|app)\.receipt/u);
   assert.match(workflow, /remote_receipt_exists\(\)/u);
-  assert.match(workflow, /case "\$rc" in/u);
-  assert.match(workflow, /remote rollback receipt query failed/u);
-  assert.match(workflow, /return "\$rc"/u);
+  assert.match(workflow, /sudo node.*read-rollback-receipt\.mjs/u);
+  assert.match(workflow, /'\$component' '\$state' '\$RELEASE_ID' '\$MANIFEST_DIGEST'/u);
+  assert.doesNotMatch(workflow, /ssh[^\n]*test -s[^\n]*rollback/u);
   assert.match(workflow, /rollback_receipts=/u);
   assert.match(workflow, /webAttempted.*webSucceeded/su);
   assert.match(workflow, /acsAttempted.*acsSucceeded/su);
@@ -877,7 +880,18 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(webStep, /run_control_ssh/u);
   assert.match(webStep, /web_lock_ready_confirmed/u);
   assert.match(webStep, /if ! web_lock_is_alive/u);
-  assert.match(webStep, /web_lock_is_alive\n\s+web_committed=true/u);
+  // Completion now has a durable commit point; a lost acknowledgement must not undo it.
+  ordered(
+    webStep.slice(
+      webStep.lastIndexOf('run_with_web_lock bash -euo pipefail -c verify_recovery_web'),
+    ),
+    [
+      'web_lock_is_alive',
+      'if ! finish_web_recovery committed; then web_backup_ready=false; exit 1; fi',
+      'web_committed=true',
+      'release_web_lock',
+    ],
+  );
   assert.match(webStep, /Web lock was lost; refusing an unlocked rollback/u);
   assert.match(webStep, /restore_web_entry \|\| rollback_status=\$\?/u);
   assert.match(

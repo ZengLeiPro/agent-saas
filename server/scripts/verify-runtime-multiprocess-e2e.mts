@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile as execFileCb, spawn, type ChildProcess } from 'node:child_process';
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -12,6 +12,7 @@ import type { AddressInfo } from 'node:net';
 import bcrypt from 'bcrypt';
 import WebSocket from 'ws';
 import { collectStreamingReplay, createFakeOpenAI } from './runtime-multiprocess-stream-fixture.mjs';
+import { collectWorkerHandoff } from './runtime-worker-handoff-observer.mjs';
 
 const execFile = promisify(execFileCb);
 const require = createRequire(import.meta.url);
@@ -44,6 +45,15 @@ async function main(): Promise<void> {
 }
 
 export async function runScenario(scenario: Scenario, options: { bundleDirectory?: string; sharedDirectory?: string } = {}): Promise<void> {
+  // Source-mode processes resolve workspace package exports through dist. Build them
+  // before allocating the fixture; bundle-mode validation must use its frozen bytes.
+  if (!options.bundleDirectory) {
+    await execFile('pnpm', ['--filter', 'server^...', '--if-present', 'run', 'build'], {
+      cwd: REPO_ROOT,
+      timeout: 120_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+  }
   const workerProcessRole = scenario === 'worker-handoff' || process.env.MP_WORKER_PROCESS_ROLE === 'runtime-worker'
     ? 'runtime-worker'
     : 'scheduler-only';
@@ -91,7 +101,14 @@ export async function runScenario(scenario: Scenario, options: { bundleDirectory
         env: { ...opts.env, ...configEnvironment, NODE_ENV: 'production', AGENT_SAAS_ENVIRONMENT: 'production', AGENT_SAAS_RELEASE_ID: 'rc-20260908-00', AGENT_SAAS_CONFIG_PATH: join(rootDir, 'config.json') } },
       !options.bundleDirectory,
     );
-    fakeModel = createFakeOpenAI({ gateFinalText: scenario === 'e2e' });
+    const sideEffectPath = join(rootDir, 'tool-side-effects.txt');
+    const toolReleasePath = join(rootDir, 'tool-handoff-released');
+    fakeModel = createFakeOpenAI({ gateFinalText: scenario === 'e2e',
+      ...(scenario === 'worker-handoff' ? {
+        toolCommand: `printf 'executed\\n' >> '${sideEffectPath}'; for i in $(seq 1 300); do test -f '${toolReleasePath}' && break; sleep 0.1; done; test -f '${toolReleasePath}' || exit 73; for i in 1 2 3; do echo MP_E2E_$i; done`,
+        toolTimeoutMs: 35_000,
+      } : {}),
+    });
     await fakeModel.listen(fakeModelPort);
 
     await writeFixtureConfig({
@@ -246,12 +263,9 @@ export async function runScenario(scenario: Scenario, options: { bundleDirectory
       const doneEvents = events.filter((e) => e.data?.type === 'done');
       assert.equal(doneEvents.length, 1, `expected exactly one terminal done event (no duplicate wake), got ${doneEvents.length}`);
     } else if (scenario === 'worker-handoff') {
-      // 生产同构路径：A 已持有 run lease 并进入三秒工具批次；先启动候选 B，
+      // A 已持有 run lease；工具以有界文件屏障等待 SIGUSR2 的真实处理确认，
       // 再给 A 发 SIGUSR2。A 在完整工具批次边界释放同一 run，B 以隐藏
       // continuation 接力第二个模型轮；客户端只能看到唯一正常终态。
-      const events: WsEnvelope[] = [...first];
-      let handoffTriggered = false;
-      let handoffPromise: Promise<void> | undefined;
       const triggerHandoff = async (): Promise<void> => {
         handoffScheduler = spawnServer({
           cwd: processCwd,
@@ -265,41 +279,21 @@ export async function runScenario(scenario: Scenario, options: { bundleDirectory
         });
         await waitForLog(handoffScheduler, /RuntimeScheduler started: autoWake=true/, 'runtime-worker B start');
         assert.equal(scheduler!.child.kill('SIGUSR2'), true, 'expected SIGUSR2 delivery to runtime-worker A');
-        console.log('[chaos] worker-handoff: candidate B ready; SIGUSR2 sent to A during active tool batch');
+        await waitForLog(scheduler!, /Drain: requested safe handoff for [1-9][0-9]* runtime run/, 'runtime-worker A handoff acknowledgement');
+        assert.equal((await readFile(sideEffectPath, 'utf8')).trim(), 'executed', 'tool must be in flight before releasing its completion barrier');
+        await writeFile(toolReleasePath, 'handoff acknowledged\n', { flag: 'wx' });
+        console.log('[chaos] worker-handoff: candidate B ready; A acknowledged drain; active tool released');
       };
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error(`worker-handoff timed out; saw=${JSON.stringify(events.map((e) => e.data?.type))}`)),
-          60_000,
-        );
-        const onMessage = (raw: WebSocket.RawData) => {
-          let parsed: WsEnvelope;
-          try { parsed = JSON.parse(raw.toString()) as WsEnvelope; } catch { return; }
-          events.push(parsed);
-          if (!handoffTriggered && parsed.data?.type === 'tool_input') {
-            handoffTriggered = true;
-            handoffPromise = triggerHandoff();
-            handoffPromise.catch((err) => {
-              clearTimeout(timer);
-              ws!.off('message', onMessage);
-              reject(err);
-            });
-          }
-          if (parsed.data?.type === 'done') {
-            clearTimeout(timer);
-            ws!.off('message', onMessage);
-            void (handoffPromise ?? Promise.resolve()).then(resolve, reject);
-          }
-        };
-        ws!.on('message', onMessage);
-      });
-      assert.equal(handoffTriggered, true, 'expected handoff to trigger during tool_input');
+      const events: WsEnvelope[] = await collectWorkerHandoff(ws, { first, triggerHandoff });
       assert.ok(events.some((e) => e.data?.type === 'tool_result' && String(e.data?.content ?? '').includes('MP_E2E_')), 'expected complete tool result across worker handoff');
       assert.ok(events.some((e) => e.data?.type === 'text' && String(e.data?.content ?? '').includes('DONE')), 'expected continuation final text from worker B');
       assert.equal(events.filter((e) => e.data?.type === 'done').length, 1, 'expected exactly one terminal done across worker handoff');
       assert.equal(events.some((e) => e.data?.type === 'error'), false, 'worker handoff must not emit a user-visible error');
       await waitForLog(scheduler, /Runtime drain handoff released run=/, 'runtime-worker A lease release');
       await waitForLog(handoffScheduler!, /\[run\] finished session=/, 'runtime-worker B continuation finish');
+      assert.equal((await readFile(sideEffectPath, 'utf8')).trim().split('\n').length, 1, 'side-effecting tool must execute exactly once across old/new worker generations');
+      const cursors = events.map((event) => event.eventCursor).filter((cursor): cursor is string => Boolean(cursor));
+      assert.equal(new Set(cursors).size, cursors.length, 'live handoff must not duplicate durable event cursors');
     } else if (scenario === 'scheduler-restart' || scenario === 'hand-kill') {
       // scheduler-restart：active wake 期间 SIGKILL scheduler-only A，等 lease 过期后
       // spawn 第二个 scheduler-only B；断言 lease 接管后 run 收敛到唯一 terminal done

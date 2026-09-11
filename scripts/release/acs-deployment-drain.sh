@@ -42,35 +42,31 @@ acs_runtime_config_request() {
   return "$status"
 }
 
-acs_read_drain_deadline() {
-  local value
-  value="$(acs_runtime_config_request "$(acs_runtime_config_url)" \
-    | jq -r '.runtimeConfig.drainDeadlineMs // empty')" || return 1
-  [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo 'ACS did not report a usable drainDeadlineMs' >&2; return 1; }
-  printf '%s' "$value"
-}
-
-# 抬高 ACS 自身的 drain deadline，使其覆盖本次发布窗口。默认 120s 远小于换代
-# 需要的时间，任何一条仍在执行的 Agent 工具调用都会让 drain 提前认输。
-#
-# 抬高后不再还原：这个值本就应当覆盖发布窗口，而还原动作要么落在旧进程已退出、
-# 要么落在回滚半途，反而制造出"有时 120s 有时 600s"的不确定状态。ACS 目前把同一
-# 个字段复用为 SNAT rollback 的 quiesce 上限，因此该上限会一并放宽——方向是等得
-# 更久才报超时，不会改变结果；真正的修法是在 ACS 里把两者解耦，不属于发布脚本。
+# Select the independent capability when available. During the first upgrade an old
+# protocol-1 process can still drain with its existing shorter deadline. Never stretch
+# its shared SNAT timeout: a busy old binary may safely refuse this attempt, not kill work.
 align_acs_drain_deadline() {
-  local target current applied
+  local target current applied configuration
   target=$(((ACS_DRAIN_WINDOW_SECONDS - ACS_DRAIN_DEADLINE_MARGIN_SECONDS) * 1000))
   [ "$target" -ge 1000 ] || { echo 'ACS drain window is too small to align' >&2; return 1; }
-  current="$(acs_read_drain_deadline)" || return 1
+  configuration="$(acs_runtime_config_request "$(acs_runtime_config_url)")" || return 1
+  current="$(printf '%s' "$configuration" | jq -r '.runtimeConfig.deploymentDrainDeadlineMs // empty')" || return 1
+  if [ -z "$current" ]; then
+    current="$(printf '%s' "$configuration" | jq -r '.runtimeConfig.drainDeadlineMs // empty')" || return 1
+    [[ "$current" =~ ^[1-9][0-9]*$ ]] || { echo 'ACS did not report a usable drain deadline' >&2; return 1; }
+    echo "Legacy shared deadline preserved at ${current}ms; busy work may safely reject this transition" >&2
+    return 0
+  fi
+  [[ "$current" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid deploymentDrainDeadlineMs' >&2; return 1; }
   if [ "$current" -ge "$target" ]; then
     printf 'ACS drain deadline already covers the promotion window: %sms\n' "$current" >&2
     return 0
   fi
   applied="$(acs_runtime_config_request -X PATCH -H 'content-type: application/json' \
-    -d "{\"drainDeadlineMs\":$target}" "$(acs_runtime_config_url)" \
-    | jq -r '.runtimeConfig.drainDeadlineMs // empty')" || return 1
+    -d "{\"deploymentDrainDeadlineMs\":$target}" "$(acs_runtime_config_url)" \
+    | jq -r '.runtimeConfig.deploymentDrainDeadlineMs // empty')" || return 1
   [ "$applied" = "$target" ] || {
-    echo "ACS applied drainDeadlineMs=${applied:-none}, expected $target" >&2
+    echo "ACS applied deploymentDrainDeadlineMs=${applied:-none}, expected $target" >&2
     return 1
   }
   printf 'Aligned ACS drain deadline with the promotion window: %sms -> %sms\n' "$current" "$applied" >&2
@@ -109,7 +105,7 @@ cancel_acs_deployment_drain() {
 
 drain_acs_before_cutover() {
   local health state status code result deadline proof current_pid terminal_pid next_progress
-  local drain_started legacy_deadline_ms=0 legacy_minimum_seconds=0 proof_state proof_exit_status
+  local proof_state proof_exit_status
   systemctl is-active --quiet "$ACS_SERVICE_NAME" || {
     echo 'ACS must be healthy before starting its generation handoff' >&2; return 1;
   }
@@ -131,11 +127,7 @@ drain_acs_before_cutover() {
     ACS_DRAIN_LAST_INFLIGHT="$(printf '%s' "$health" | jq -r '.inflight')"
     printf 'Legacy ACS: stopping admission and waiting for accepted work: %s\n' \
       "$(printf '%s' "$health" | jq -c '{inflight,draining,drainDeadlineMs:.lifecycle.drainDeadlineMs}')" >&2
-    legacy_deadline_ms="$(printf '%s' "$health" | jq -r '.lifecycle.drainDeadlineMs // 0')"
-    if [[ "$legacy_deadline_ms" =~ ^[1-9][0-9]*$ ]]; then
-      legacy_minimum_seconds=$(((legacy_deadline_ms + 999) / 1000))
-    fi
-    echo 'WARNING: legacy runtime may interrupt accepted work at its own drain deadline; only that exact, elapsed timeout exit may enter compatibility cutover' >&2
+    echo 'WARNING: legacy timeout exits are refused; only a clean empty-work exit permits automatic cutover' >&2
   else
     ACS_DRAIN_PID=''
     echo 'Unsupported ACS deployment drain protocol; refusing to signal the process' >&2
@@ -149,7 +141,6 @@ drain_acs_before_cutover() {
   (set -o noclobber; printf '[Service]\nRestart=no\n' > "$ACS_DRAIN_DROPIN") || return 1
   systemctl daemon-reload || return 1
   [ "$ACS_DRAIN_PROTOCOL" != 1 ] || align_acs_drain_deadline || return 1
-  drain_started=$SECONDS
   kill -USR2 "$ACS_DRAIN_PID" || return 1
   deadline=$((SECONDS + ACS_DRAIN_WINDOW_SECONDS))
   next_progress=$SECONDS
@@ -170,13 +161,6 @@ drain_acs_before_cutover() {
       proof_exit_status=0
       if [ "$state:$status:$code:$result:$terminal_pid" = "inactive:0:1:success:$ACS_DRAIN_PID" ]; then
         :
-      elif [ "$ACS_DRAIN_PROTOCOL" = 0 ] \
-        && [ "$state:$status:$code:$result:$terminal_pid" = "failed:1:1:exit-code:$ACS_DRAIN_PID" ] \
-        && [ "$legacy_minimum_seconds" -gt 0 ] \
-        && [ "$((SECONDS - drain_started))" -ge "$legacy_minimum_seconds" ]; then
-        proof_state=forced_legacy_cutover
-        proof_exit_status=1
-        echo "Legacy ACS reached its ${legacy_deadline_ms}ms drain deadline; continuing the audited one-time compatibility cutover" >&2
       else
         echo "ACS did not exit cleanly (expectedPid=$ACS_DRAIN_PID terminalPid=$terminal_pid state=$state status=$status code=$code result=$result)" >&2; return 1;
       fi

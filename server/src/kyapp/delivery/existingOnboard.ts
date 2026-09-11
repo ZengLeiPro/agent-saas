@@ -94,7 +94,7 @@ export class KyAppExistingOnboardService {
     return this.options.store.withExecutionLock(
       `existing:${input.tenantId}:${input.systemId}`,
       async () => {
-        await this.validateContact(input.tenantId, input.systemId, input.techContactUserId);
+        await this.validateContact(input.tenantId, input.techContactUserId);
         const definition = await this.options.systems.getDefinition(input.systemId);
         if (
           !definition ||
@@ -148,7 +148,7 @@ export class KyAppExistingOnboardService {
     return tenant;
   }
 
-  private async validateContact(tenantId: string, _systemId: string, userId: string) {
+  private async validateContact(tenantId: string, userId: string) {
     this.requireTenant(tenantId);
     const user = this.options.users.findById(userId);
     const membership = await this.options.memberships.getMembership(tenantId, userId);
@@ -157,7 +157,7 @@ export class KyAppExistingOnboardService {
   }
 
   private async run(request: FrozenRequest, actor: GovernanceActor): Promise<KyAppOnboardResult> {
-    await this.validateContact(request.tenantId, request.systemId, request.techContactUserId);
+    await this.validateContact(request.tenantId, request.techContactUserId);
     const definition = await this.options.systems.getDefinition(request.systemId);
     const version = await this.options.systems.getVersion(request.systemId, request.digest);
     if (definition?.status !== 'published' || version?.status !== 'published')

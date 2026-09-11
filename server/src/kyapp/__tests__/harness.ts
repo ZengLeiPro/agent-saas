@@ -1,4 +1,3 @@
-import type { PgEntitlementStore } from '../../data/entitlements/store.js';
 /**
  * WP2a 单测装配台：用内存 store 拼出与生产同构的一整套 kyapp 服务，
  * 再挂上真实的 express router，让端点 × 鉴权矩阵、发布门禁、投递与探测都能在无 PG 环境跑通。
@@ -161,7 +160,6 @@ export interface KyAppTestRig {
 }
 
 export interface KyAppTestRigOptions {
-  entitlements?: PgEntitlementStore;
   assignmentStore?: PgAssignmentStore;
   fetchImpl?: typeof fetch;
   resolveTxt?: (hostname: string) => Promise<string[][]>;

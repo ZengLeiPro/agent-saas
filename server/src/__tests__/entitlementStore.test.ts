@@ -241,7 +241,7 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     await expect(store.backfillMissingResourceScopes(input)).resolves.toEqual({
       tenantsScanned: 1,
       scopesInserted: 0,
-      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.length,
+      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.filter(type => type !== 'integrated_system').length,
       tenantsWithErrors: 0,
       issuesRecorded: 0,
     });

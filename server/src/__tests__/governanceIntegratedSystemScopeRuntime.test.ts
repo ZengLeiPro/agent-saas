@@ -120,9 +120,25 @@ describe('业务系统范围平台级全开的运行时守卫', () => {
       ).status,
     ).toBe(400);
     expect(test.replaceResourceScope).not.toHaveBeenCalled();
+    expect(test.enqueue).not.toHaveBeenCalled();
     const read = await test.request('entitlements');
     expect(read.status).toBe(200);
     expect(await read.json()).toMatchObject({ scopes: [] });
+  });
+
+  it('仅隐藏历史业务系统范围，不隐藏其他有效治理范围', async () => {
+    const test = await rig();
+    vi.mocked(test.runtime.entitlementStore!.listResourceScopes).mockResolvedValue([
+      { tenantId: 'tenant-a', resourceType: 'integrated_system', mode: 'all', resourceIds: [], version: 7 },
+      { tenantId: 'tenant-a', resourceType: 'skill', mode: 'selected', resourceIds: ['skill-a'], version: 3 },
+    ] as never);
+    const read = await test.request('entitlements');
+    expect(read.status).toBe(200);
+    const { scopes } = await read.json();
+    expect(scopes).toEqual([
+      expect.objectContaining({ resourceType: 'skill', resourceIds: ['skill-a'], version: 3,
+        allowedActions: [expect.objectContaining({ id: 'edit_scope' })] }),
+    ]);
   });
 
   it('组织管理员不能跨组织访问，权限门槛保持在前', async () => {

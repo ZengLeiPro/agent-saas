@@ -245,6 +245,7 @@ const url = process.env.TEST_DATABASE_URL;
       ),
     ).rejects.toThrow('参数已变化');
     const options = await r.service.organizationOptions(TEST_SYSTEM, r.input.tenantId);
+    expect(options).not.toHaveProperty('eligible');
     expect(options.members).toEqual([{ userId: 'contact', name: '已有管理员', isAdmin: true }]);
     expect(options.installation?.status).toBe('pending');
     expect(r.issue).toHaveBeenCalledTimes(1);
@@ -271,6 +272,17 @@ const url = process.env.TEST_DATABASE_URL;
     });
     expect(r.issue).toHaveBeenCalledTimes(1);
   });
+  it.each(['active', 'tenantDisabled', 'userDisabled'] as const)(
+    '恢复执行仍重新检查组织和联系人状态：%s', async (field) => {
+      const r = rig();
+      const initial = await r.service.start(r.input, PLATFORM_ADMIN);
+      r.state[field] = field.endsWith('Disabled');
+      await expect(r.service.resume(initial.execution.executionId, PLATFORM_ADMIN)).rejects.toThrow();
+      expect(r.issue).toHaveBeenCalledTimes(1);
+      expect(r.options.runSmoke).not.toHaveBeenCalled();
+      expect((await store.get(initial.execution.executionId))?.status).toBe('waiting_external');
+    },
+  );
   it('配置 CAS 冲突不覆盖原值，非法地址占位符拒绝', async () => {
     await expect(
       settings.save(TEST_SYSTEM, { baseUrl: '', origin: '' }, 0, 'actor'),
@@ -340,6 +352,9 @@ const url = process.env.TEST_DATABASE_URL;
         body: JSON.stringify(body),
       });
     expect((await send({ ...r.input, grantCredits: 100 })).status).toBe(400);
+    const organization = await fetch(`${base}/systems/${TEST_SYSTEM}/connection-options/${r.input.tenantId}`);
+    expect(organization.status).toBe(200);
+    expect(await organization.json()).not.toHaveProperty('eligible');
     const created = await send(r.input);
     expect(created.status).toBe(202);
     const body = await created.json();

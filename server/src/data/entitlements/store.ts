@@ -203,13 +203,11 @@ export class PgEntitlementStore {
           const defaults = new Map(completeResourceScopes(tenant.settings ?? DEFAULT_TENANT_SETTINGS)
             .map(scope => [scope.resourceType, scope]));
           // 只回填投影清单里存在的类型：integrated_system 平台级全开，不再生成组织范围行。
-          for (const resourceType of ENTITLEMENT_RESOURCE_TYPES) {
+          for (const [resourceType, scope] of defaults) {
             if (existingTypes.has(resourceType)) {
               scopesSkipped += 1;
               continue;
             }
-            const scope = defaults.get(resourceType);
-            if (!scope) continue;
             const inserted = await client.query(`
               INSERT INTO ${this.scopesTable} (
                 tenant_id, resource_type, mode, source, created_by, updated_by

@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client';
 import '@/index.css';
 import { PlatformSystemsPage } from '@/components/BusinessSystems/PlatformSystemsPage';
 import { OrganizationSystemsPage } from '@/components/BusinessSystems/OrganizationSystemsPage';
-import { BusinessSystemOperationsPage } from '@/components/BusinessSystems/BusinessSystemOperationsPage';
 import { KyAppCredentialClaimEntry } from '@/components/KyAppCredentialClaim/KyAppCredentialClaimEntry';
 import { credentialClaimInstallation } from '@/components/KyAppCredentialClaim/claimRoute';
 import {
@@ -37,24 +36,18 @@ function App() {
             <option key={value}>{value}</option>
           ))}
         </select>
-        {[
-          'platform.resource-center.business-systems',
-          'organization.agents.business-systems',
-          'platform.runtime.business-system-operations',
-        ].map((id) => (
-          <a
-            key={id}
-            href={buildGovernanceUrl(
-              governanceRoute(id, id.startsWith('organization') ? { orgId: 't_demo' } : {}),
-            )}
-          >
-            {id.includes('operations')
-              ? '运营'
-              : id.startsWith('organization')
-                ? '组织系统'
-                : '系统目录'}
-          </a>
-        ))}
+        {['platform.resource-center.business-systems', 'organization.agents.business-systems'].map(
+          (id) => (
+            <a
+              key={id}
+              href={buildGovernanceUrl(
+                governanceRoute(id, id.startsWith('organization') ? { orgId: 't_demo' } : {}),
+              )}
+            >
+              {id.startsWith('organization') ? '组织系统' : '系统目录'}
+            </a>
+          ),
+        )}
       </header>
       <div className="mx-auto max-w-6xl">
         {claimId ? (
@@ -64,8 +57,6 @@ function App() {
             tenantId={route.orgId ?? 't_demo'}
             installationId={route.entityId}
           />
-        ) : route?.routeId === 'platform.runtime.business-system-operations' ? (
-          <BusinessSystemOperationsPage installationId={route.entityId} />
         ) : (
           <PlatformSystemsPage systemId={route?.entityId} />
         )}

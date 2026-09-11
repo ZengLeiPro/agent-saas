@@ -88,11 +88,13 @@ APP_P12="$(credential_path ios.AgentSaaS.distributionCertificate.path)"
 APP_PROFILE="$(credential_path ios.AgentSaaS.provisioningProfilePath)"
 SHARE_PROFILE="$(credential_path ios.AgentSaaSShare.provisioningProfilePath)"
 
+# gh secret set reads stdin only when --body is omitted; --body - stores a literal dash.
+# Keep credential values off the command line as well as out of logs.
 configure_environment mobile-build-production
-openssl base64 -A -in "$APP_P12" | gh secret set IOS_DISTRIBUTION_P12_BASE64 --repo "$REPOSITORY" --env mobile-build-production --body -
-credential_raw ios.AgentSaaS.distributionCertificate.password | gh secret set IOS_DISTRIBUTION_P12_PASSWORD --repo "$REPOSITORY" --env mobile-build-production --body -
-openssl base64 -A -in "$APP_PROFILE" | gh secret set IOS_APP_PROFILE_BASE64 --repo "$REPOSITORY" --env mobile-build-production --body -
-openssl base64 -A -in "$SHARE_PROFILE" | gh secret set IOS_SHARE_PROFILE_BASE64 --repo "$REPOSITORY" --env mobile-build-production --body -
+openssl base64 -A -in "$APP_P12" | gh secret set IOS_DISTRIBUTION_P12_BASE64 --repo "$REPOSITORY" --env mobile-build-production
+credential_raw ios.AgentSaaS.distributionCertificate.password | gh secret set IOS_DISTRIBUTION_P12_PASSWORD --repo "$REPOSITORY" --env mobile-build-production
+openssl base64 -A -in "$APP_PROFILE" | gh secret set IOS_APP_PROFILE_BASE64 --repo "$REPOSITORY" --env mobile-build-production
+openssl base64 -A -in "$SHARE_PROFILE" | gh secret set IOS_SHARE_PROFILE_BASE64 --repo "$REPOSITORY" --env mobile-build-production
 
 if ! $BUILD_ONLY; then
   configure_environment mobile-submit-ios-testflight

@@ -16,4 +16,27 @@ describe('移动端 markdown-it CJK 解析', () => {
     expect(html).toContain('<code>**代码：**正文</code>');
     expect(html).not.toContain('<strong>普通文本：</strong>');
   });
+
+  it('升级后仍保留链接、列表、代码块和排版能力', () => {
+    const html = cjkMarkdownIt.render(
+      [
+        '"中文引号"',
+        '',
+        '[开沿](https://kaiyan.net)',
+        '',
+        '- 第一项',
+        '- 第二项',
+        '',
+        '```ts',
+        'const ok = true;',
+        '```',
+      ].join('\n'),
+    );
+
+    expect(html).toContain('“中文引号”');
+    expect(html).toContain('<a href="https://kaiyan.net">开沿</a>');
+    expect(html).toContain('<li>第一项</li>');
+    expect(html).toContain('<li>第二项</li>');
+    expect(html).toContain('<code class="language-ts">const ok = true;');
+  });
 });

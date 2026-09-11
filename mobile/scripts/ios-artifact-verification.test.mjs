@@ -170,6 +170,7 @@ for (const binary of [false, true]) {
     const item = fixture(t, { binary });
     const result = item.run();
     assert.equal(result.status, 0, `${result.error ?? ''}\n${result.stdout}\n${result.stderr}`);
+    assert.doesNotMatch(result.stderr, /artifact verification stage=.*failed/u, 'successful optional probes must not report failure');
     const original = readFileSync(item.output, 'utf8');
     const record = JSON.parse(original);
     assert.equal(record.buildNumber, buildNumber);
@@ -186,7 +187,9 @@ for (const binary of [false, true]) {
     }
     assert.equal(statSync(item.output).mode & 0o777, 0o600);
     const replay = join(item.directory, 'replay.json');
-    assert.equal(item.run(replay).status, 0);
+    const replayResult = item.run(replay);
+    assert.equal(replayResult.status, 0);
+    assert.doesNotMatch(replayResult.stderr, /artifact verification stage=.*failed/u);
     assert.equal(readFileSync(replay, 'utf8'), original, 'build and submission must produce identical verification records');
     const calls = readFileSync(join(item.directory, 'calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
     assert.ok(calls.some(({ tool, args }) => tool === 'codesign' && args.includes('--deep')));
@@ -211,6 +214,7 @@ for (const [name, config, diagnostic] of [
     const result = item.run();
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, diagnostic);
+    assert.equal((result.stderr.match(/artifact verification stage=.*failed/gu) || []).length, 1, 'report one final top-level failure');
     assert.doesNotMatch(result.stdout + result.stderr, /PRIVATE_FIXTURE_SENTINEL|jq: parse error/u);
     assert.equal(existsSync(item.output), false, 'failed verification must not publish a record');
   });
@@ -242,6 +246,7 @@ for (const [name, config, diagnostic] of [
     const result = item.run();
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, diagnostic);
+    assert.equal((result.stderr.match(/artifact verification stage=.*failed/gu) || []).length, 1, 'report one final top-level failure');
     assert.equal(existsSync(item.output), false);
   });
 }

@@ -161,9 +161,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -409,6 +409,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -470,7 +477,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -479,6 +486,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -677,9 +688,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:2f4422bc42e1eb6c29beeed6aeb3122ab91f940e5e02ba15b3087d32a5258421",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -747,9 +758,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:7b66409def5a89d2c8172594266c61e8ef168380226f55cc1190c342aefc1604",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -1567,7 +1578,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -1600,6 +1611,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -1784,9 +1799,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -1840,9 +1855,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -2455,7 +2470,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -2484,6 +2499,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -2668,9 +2687,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -2724,9 +2743,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -3302,7 +3321,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -3331,6 +3350,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -3515,9 +3538,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -3571,9 +3594,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -4149,7 +4172,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -4178,6 +4201,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -4362,9 +4389,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -4418,9 +4445,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -4974,7 +5001,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -5003,6 +5030,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -5187,9 +5218,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -5243,9 +5274,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -5799,7 +5830,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -5828,6 +5859,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -6012,9 +6047,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -6068,9 +6103,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -6624,7 +6659,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -6653,6 +6688,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -6851,9 +6890,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -6928,9 +6967,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -7657,7 +7696,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -7737,7 +7776,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -7770,6 +7809,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -7954,9 +7997,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -8010,9 +8053,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -8505,7 +8548,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",
@@ -8589,7 +8632,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -8622,6 +8665,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -8799,9 +8846,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -8862,9 +8909,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -9367,7 +9414,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -9447,7 +9494,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -9480,6 +9527,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -9657,9 +9708,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -9720,9 +9771,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -10225,7 +10276,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -10305,7 +10356,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -10338,6 +10389,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -10508,9 +10563,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -10557,9 +10612,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -11019,7 +11074,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -11091,7 +11146,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -11124,6 +11179,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -11294,9 +11353,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -11343,9 +11402,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -11805,7 +11864,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -11877,7 +11936,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -11910,6 +11969,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -12080,9 +12143,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -12129,9 +12192,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -12591,7 +12654,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -12663,7 +12726,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -12696,6 +12759,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -12866,9 +12933,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -12915,9 +12982,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -13377,7 +13444,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -13449,7 +13516,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -13482,6 +13549,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -13645,9 +13716,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -13694,9 +13765,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -14145,7 +14216,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -14217,7 +14288,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -14250,6 +14321,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -14413,9 +14488,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -14462,9 +14537,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "RC64（99b7496f）基线复审：completeResourceScopes 仅增加 integrated_system 默认 selected 空集，无 DDL、无启动回填；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+          "reason": "RC64（99b7496f）基线复审：completeResourceScopes 仅增加 integrated_system 默认 selected 空集，无 DDL、无启动回填；文件两端内容与已审核的 8cd1254e 基线完全相同。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -14913,7 +14988,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -14985,7 +15060,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -15018,6 +15093,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -15181,9 +15260,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -15576,6 +15655,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -15681,7 +15767,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -15710,6 +15796,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -15873,9 +15963,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -16261,6 +16351,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -16362,7 +16459,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -16391,6 +16488,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -16554,9 +16655,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -16942,6 +17043,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -17039,7 +17147,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -17064,6 +17172,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -17227,9 +17339,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -17615,6 +17727,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -17712,7 +17831,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -17737,6 +17856,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -17900,9 +18023,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -18288,6 +18411,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -18385,7 +18515,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -18410,6 +18540,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -18573,9 +18707,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -18933,6 +19067,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -19022,7 +19163,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -19047,6 +19188,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -19210,9 +19355,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -19556,6 +19701,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -19653,7 +19805,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -19678,6 +19830,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -19841,9 +19997,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -20159,6 +20315,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -20244,7 +20407,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -20265,6 +20428,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -20428,9 +20595,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -20746,6 +20913,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -20831,7 +21005,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -20852,6 +21026,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -21015,9 +21193,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -21291,6 +21469,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -21364,7 +21549,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -21381,6 +21566,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -21544,9 +21733,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -21820,6 +22009,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -21889,7 +22085,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -21902,6 +22098,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -22065,9 +22265,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -22327,6 +22527,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -22388,7 +22595,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -22397,6 +22604,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -22560,9 +22771,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -22822,6 +23033,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -22879,7 +23097,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -22888,6 +23106,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -23051,9 +23273,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -23313,6 +23535,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -23374,7 +23603,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -23383,6 +23612,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -23546,9 +23779,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -23801,6 +24034,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -23854,7 +24094,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -23863,6 +24103,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -24026,9 +24270,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -24281,6 +24525,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -24330,7 +24581,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/quota/providerQuotaPushedAccounts.pg.test.ts",
@@ -24343,6 +24594,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -24506,9 +24761,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -24754,6 +25009,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -24803,7 +25065,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -24812,6 +25074,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -24975,9 +25241,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -25223,6 +25489,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -25284,7 +25557,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -25293,6 +25566,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -25456,9 +25733,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -25704,6 +25981,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -25765,7 +26049,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -25774,6 +26058,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -25937,9 +26225,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -26185,6 +26473,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -26246,7 +26541,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -26255,6 +26550,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -26631,6 +26930,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -26657,6 +26963,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -26834,16 +27144,16 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:069baebe507675a57cdd22ae8391c8cab83539371f5ee6304cb37ae978d58994",
-          "targetDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
+          "targetDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
           "classification": "no-schema-change",
-          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。"
+          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/app/runtimeContracts.ts",
           "baselineDigest": "sha256:5033ecfe2bb6852ae1d3aedf0f8f058ef804832365638d92dac90c23c74be2ae",
-          "targetDigest": "sha256:c18e290507fd70d3124c22a0047810b940e435f843f8f7142105e014862f7fe7",
+          "targetDigest": "sha256:e952570cf5a7ed04bc9858cc6ebbeeef6f3ca03982e5fb92ec8563c67a8f3a27",
           "classification": "no-schema-change",
-          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged."
+          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/context/sync/dwsContextRuntime.ts",
@@ -27068,6 +27378,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -27118,6 +27435,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -27144,6 +27465,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -27170,6 +27498,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -27189,6 +27521,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -27199,6 +27538,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -27211,12 +27554,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        }
+      ]
+    },
+    {
+      "baselineSha": "eec01d4c1d043a3de0eec54f9fc1ab8d64651c4b",
+      "files": [
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     }

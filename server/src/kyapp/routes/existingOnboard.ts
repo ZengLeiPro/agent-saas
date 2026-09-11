@@ -55,7 +55,7 @@ export function createKyAppExistingOnboardRouter(
       return sendKyAppError(req, res, 'invalid_input', '组织标识格式不正确');
     next();
   });
-  // 这些路由只服务平台侧组织接入；每次继续都重新校验组织权益和成员状态。
+  // 这些路由只服务平台侧组织接入；每次继续都重新校验组织有效性、成员状态和发布版本；不再依赖安装白名单。
   router.get('/systems/:systemId/connection-options', requirePlatformAdmin, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     try {

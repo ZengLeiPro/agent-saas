@@ -23,7 +23,6 @@ export interface ConnectionOptions extends ConnectionSettingsRecord {
 }
 export interface OrganizationConnectionOptions {
   tenant: { id: string; name: string };
-  eligible: boolean;
   members: Array<{ userId: string; name: string; isAdmin: boolean }>;
   installation: { installationId: string; status: string } | null;
 }

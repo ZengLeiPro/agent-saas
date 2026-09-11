@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { canonicalize, type Manifest } from '@kaiyan/ky-app-contract';
 import type { KyAppOnboardServiceOptions, KyAppOnboardResult } from './onboard.js';
 import type { KyAppOnboardExecution, KyAppOnboardStep } from './store.js';
-import { installableScope } from '../installations/managementPolicy.js';
 import { assertBaseUrl, assertOrigin, KyAppInstallationError } from '../installations/service.js';
 import { KyAppSystemConflictError, KyAppSystemNotFoundError } from '../systems/types.js';
 import { connectionAddress, type PgKyAppConnectionSettingsStore } from './connectionSettings.js';
@@ -37,7 +36,6 @@ export type ExistingOnboardOptions = Pick<
   | 'tenants'
   | 'users'
   | 'memberships'
-  | 'entitlementStore'
   | 'getAssignmentConfigured'
   | 'runSmoke'
 > & {
@@ -61,10 +59,9 @@ export class KyAppExistingOnboardService {
     if (!(await this.options.systems.getDefinition(systemId)))
       throw new KyAppSystemNotFoundError('未知业务系统');
     const tenant = this.requireTenant(tenantId);
-    const [memberships, installations, allows] = await Promise.all([
+    const [memberships, installations] = await Promise.all([
       this.options.memberships.listMemberships(tenantId),
       this.options.systems.listInstallationsForTenant(tenantId),
-      installableScope(this.options.entitlementStore, tenantId),
     ]);
     const members = memberships
       .flatMap((membership) => {
@@ -87,7 +84,6 @@ export class KyAppExistingOnboardService {
     return {
       tenant: { id: tenant.id, name: tenant.name },
       members,
-      eligible: allows(systemId),
       installation: installation
         ? { installationId: installation.installationId, status: installation.status }
         : null,
@@ -98,7 +94,7 @@ export class KyAppExistingOnboardService {
     return this.options.store.withExecutionLock(
       `existing:${input.tenantId}:${input.systemId}`,
       async () => {
-        await this.validateContact(input.tenantId, input.systemId, input.techContactUserId);
+        await this.validateContact(input.tenantId, input.techContactUserId);
         const definition = await this.options.systems.getDefinition(input.systemId);
         if (
           !definition ||
@@ -152,11 +148,8 @@ export class KyAppExistingOnboardService {
     return tenant;
   }
 
-  private async validateContact(tenantId: string, systemId: string, userId: string) {
+  private async validateContact(tenantId: string, userId: string) {
     this.requireTenant(tenantId);
-    const allows = await installableScope(this.options.entitlementStore, tenantId);
-    if (!allows(systemId))
-      throw new KyAppInstallationError('组织权益未授权此业务系统，请先配置组织权益', 'forbidden');
     const user = this.options.users.findById(userId);
     const membership = await this.options.memberships.getMembership(tenantId, userId);
     if (!user || user.disabled || user.tenantId !== tenantId || membership?.status !== 'active')
@@ -164,7 +157,7 @@ export class KyAppExistingOnboardService {
   }
 
   private async run(request: FrozenRequest, actor: GovernanceActor): Promise<KyAppOnboardResult> {
-    await this.validateContact(request.tenantId, request.systemId, request.techContactUserId);
+    await this.validateContact(request.tenantId, request.techContactUserId);
     const definition = await this.options.systems.getDefinition(request.systemId);
     const version = await this.options.systems.getVersion(request.systemId, request.digest);
     if (definition?.status !== 'published' || version?.status !== 'published')

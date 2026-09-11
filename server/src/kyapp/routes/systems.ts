@@ -5,9 +5,8 @@
  * 语义 diff 作为发布提示保留；平台管理员可直接发布，无需独立复核。
  * 模型端工具注册 dry-run 未配置时记 `skipped`（不算通过），原样写进响应的 `gate`。
  */
-import type { PgEntitlementStore } from '../../data/entitlements/store.js';
 import type { KyAppManagementQueries } from '../installations/managementQueries.js';
-import { managementTenant, installableScope } from '../installations/managementPolicy.js';
+import { managementTenant } from '../installations/managementPolicy.js';
 import { Router } from 'express';
 import { z } from 'zod';
 
@@ -48,7 +47,6 @@ const publishSchema = z.object({ expectedVersion: z.number().int().min(1) });
 export interface KyAppSystemRoutesOptions {
   systems: PgKyAppSystemStore;
   management?: KyAppManagementQueries;
-  entitlements?: PgEntitlementStore;
   audit?: GovernanceAuditStore;
   toolRegistrationDryRun?: KyAppToolRegistrationDryRun;
 }
@@ -68,9 +66,8 @@ export function createKyAppSystemsRouter(options: KyAppSystemRoutesOptions): Rou
     try {
       const tenantId = managementTenant(req.user, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
       if (!tenantId) return sendKyAppError(req, res, 'invalid_input', '请选择组织');
-      const allows = await installableScope(options.entitlements, tenantId);
       const definitions = await options.systems.listDefinitions();
-      res.json({ systems: definitions.filter(item => item.status === 'published' && allows(item.systemId)).map(item => ({ ...item, allowedActions: ['install'] })) });
+      res.json({ systems: definitions.filter(item => item.status === 'published').map(item => ({ ...item, allowedActions: ['install'] })) });
     } catch (error) { sendKyAppFailure(req, res, error); }
   });
 

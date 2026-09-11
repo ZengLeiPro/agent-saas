@@ -1,4 +1,5 @@
 name: 生产环境发布
+run-name: ${{ inputs.automation_key || format('生产环境发布 · {0}', inputs.operation) }}
 
 # 与 CI Web-only 兼容发布共享互斥组；RC 晋级与冷备恢复是互斥操作，不共享部署逻辑。
 
@@ -6,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'promote 晋级 RC；checkpoint-repair 仅修复已完成 RC 的派生基线；web-recovery-* 处理冷备'
+        description: 'auto 自动发布最新已验收版本；其余为高级人工操作'
         type: choice
-        default: promote
+        default: auto
         required: true
-        options: [promote, checkpoint-repair, web-recovery-audit, web-recovery-repair]
+        options: [auto, promote, checkpoint-repair, web-recovery-audit, web-recovery-repair]
       release_id:
-        description: 'promote/checkpoint-repair 必填 RC ID；冷备操作必须留空'
+        description: '日常 auto 留空；仅高级 promote/checkpoint-repair 填 RC ID'
         required: false
         type: string
       recovery_mode:
@@ -36,16 +37,21 @@ on:
         default: false
         required: false
 
+      automation_id:
+        description: '内部自动调度登记；人工操作留空'
+        type: string
+        required: false
+      automation_key:
+        description: '内部关联键；人工操作留空'
+        type: string
+        required: false
+
 permissions:
   contents: write
   actions: read
   deployments: write
 
-# 生产切换、自动收尾及冷备恢复共用本次锁，并与 CI Web-only 兼容发布串行。
-concurrency:
-  group: production-runtime
-  cancel-in-progress: false
-  queue: max
+# 锁在执行 job 上获取：协调器不占用子发布的 production-runtime 锁，避免父子互等。
 
 env:
   NODE_VERSION: '22.23.1'
@@ -63,6 +69,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
+      deployments: read
     outputs:
       operation: ${{ steps.validate.outputs.operation }}
       recovery_mode: ${{ steps.validate.outputs.recovery_mode }}
@@ -73,8 +81,53 @@ jobs:
       - name: 在读取生产凭据前拒绝无效或混用的参数
         id: validate
         run: node scripts/release/production-operation.mjs
+      - name: 验证自动子任务的不可变委派
+        if: inputs.automation_id != '' || inputs.automation_key != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs promote-release.yml
+
+  automatic:
+    concurrency:
+      group: production-auto-requests
+      cancel-in-progress: false
+      queue: max
+    name: 自动恢复未完成事务并发布固定目标
+    needs: dispatch
+    if: needs.dispatch.outputs.operation == 'auto'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: write
+      deployments: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: 固定目标、恢复、重新验收并发布（不直接持有云端凭据）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release.mjs
+      - name: 保存请求、子运行及最终目标证据
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: automatic-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/automatic-release/
+          if-no-files-found: warn
+          retention-days: 90
 
   promote:
+    concurrency:
+      group: production-runtime
+      cancel-in-progress: false
+      queue: max
     name: 晋级已批准的不可变产物
     needs: dispatch
     if: github.ref == 'refs/heads/main' && (needs.dispatch.outputs.operation == 'promote' || needs.dispatch.outputs.operation == 'checkpoint-repair')
@@ -108,6 +161,11 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: 排队或审批后重新验证自动委派
+        if: inputs.automation_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs promote-release.yml
       - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
       - name: 配置 Node.js
@@ -481,6 +539,12 @@ jobs:
             -D "$RUNNER_TEMP/recovery-preflight.headers" -o /dev/null \
             "https://agent.kaiyan.net/?preflight=$GITHUB_RUN_ID"
           grep -Eqi '^x-agent-saas-recovery:[[:space:]]*true' "$RUNNER_TEMP/recovery-preflight.headers"
+
+      - name: 自动请求开始生产变更前再次验证父请求
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && inputs.automation_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs promote-release.yml
 
       - name: 生产写入前标记并持久化发布已开始状态
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
@@ -1582,6 +1646,10 @@ jobs:
             ${{ runner.temp }}/staging-promotion-preflight/
 
   web_recovery:
+    concurrency:
+      group: production-runtime
+      cancel-in-progress: false
+      queue: max
     name: 审计或修复生产 Web 冷备
     needs: dispatch
     if: github.ref == 'refs/heads/main' && (needs.dispatch.outputs.operation == 'web-recovery-audit' || needs.dispatch.outputs.operation == 'web-recovery-repair')

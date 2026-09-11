@@ -9,8 +9,10 @@ const transport = 'server/src/runtime/httpTransport.ts';
 const evidence = 'docs/release/PR636-current-base-migration-review-20260911.md';
 const quotaSchema = 'server/src/app/modelQuotaSourceSchema.ts';
 const quotaEvidence = 'docs/release/PR641-zhipu-quota-config-review-20260911.md';
-const auditedPaths = [transport, quotaSchema];
-const evidencePaths = [evidence, quotaEvidence];
+const scopeStore = 'server/src/data/entitlements/store.ts';
+const scopeEvidence = 'docs/release/PR642-integrated-system-scope-retirement-20260912.md';
+const auditedPaths = [transport, quotaSchema, scopeStore];
+const evidencePaths = [evidence, quotaEvidence, scopeEvidence];
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 const target = git('rev-parse', 'HEAD').trim();
@@ -25,14 +27,14 @@ const snapshot = (sha, overrides = {}, absent = []) => ({
 });
 const baselineSnapshot = snapshot(baseline);
 
-test('HTTP baseline retains exact byte-bound reviews alongside the separately audited Zhipu config', () => {
+test('HTTP baseline retains exact reviews alongside Zhipu config and installation-scope retirement', () => {
   const loaded = loadMigrationReviews({
     baseline,
     baselineSnapshot,
     targetSnapshot: snapshot(target),
   });
-  // This historical baseline now also precedes PR641. Permit exactly the two
-  // independently audited paths, not an arbitrary expansion of the review scope.
+  // This baseline precedes PR641 and PR642. Permit exactly these independently
+  // audited paths; target, baseline and evidence tampering must still fail closed.
   assert.deepEqual([...loaded.entries.keys()].sort(), [...auditedPaths].sort());
   for (const path of auditedPaths) {
     assert.equal(loaded.entries.get(path).classification, 'no-schema-change');
@@ -84,16 +86,35 @@ test('both reviews reject changed target bytes, baseline bytes and changed or mi
   }
 });
 
-test('PR641 current baseline reviews only the Zhipu Zod module without GitHub event metadata', () => {
+test('PR641 baseline retains exactly Zhipu config and separately reviewed scope retirement', () => {
   const quotaBaseline = '9db36e8861304c9254e545c80a17ccc720595af9';
   const loaded = loadMigrationReviews({
     baseline: quotaBaseline,
     baselineSnapshot: snapshot(quotaBaseline),
     targetSnapshot: snapshot(target),
   });
-  assert.deepEqual([...loaded.entries.keys()], [quotaSchema]);
-  assert.equal(loaded.entries.get(quotaSchema).classification, 'no-schema-change');
+  assert.deepEqual([...loaded.entries.keys()].sort(), [quotaSchema, scopeStore].sort());
+  for (const path of [quotaSchema, scopeStore])
+    assert.equal(loaded.entries.get(path).classification, 'no-schema-change');
   const result = createMigrationPlan({ baseline: quotaBaseline, target, changedPaths: [quotaSchema] });
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
   assert.notEqual(result.migrationPlan.phase, 'contract');
+});
+
+
+test('PR642 current main baseline reviews only the unchanged-schema entitlement store', () => {
+  const scopeBaseline = 'eec01d4c1d043a3de0eec54f9fc1ab8d64651c4b';
+  const loaded = loadMigrationReviews({
+    baseline: scopeBaseline, baselineSnapshot: snapshot(scopeBaseline), targetSnapshot: snapshot(target),
+  });
+  assert.deepEqual([...loaded.entries.keys()], [scopeStore]);
+  assert.equal(loaded.entries.get(scopeStore).classification, 'no-schema-change');
+  const result = createMigrationPlan({ baseline: scopeBaseline, target, changedPaths: [scopeStore] });
+  assert.equal(result.ok, true, result.blockingReasons.join('\n'));
+  for (const path of [scopeStore, scopeEvidence]) {
+    assert.throws(() => loadMigrationReviews({
+      baseline: scopeBaseline, baselineSnapshot: snapshot(scopeBaseline),
+      targetSnapshot: snapshot(target, { [path]: `${git('show', `${target}:${path}`)}\nchanged` }),
+    }), /requires re-review|evidence changed or is invalid/u);
+  }
 });

@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: grok-isolated-development
+  cancel-in-progress: false
+
 jobs:
   implementation:
     if: github.ref == 'refs/heads/feat/grok-subscription-global-pool'
@@ -31,6 +35,13 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = feat/grok-subscription-global-pool
           python3 scripts/grok-apply.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('server/src/runtime/responses/codexCredentialFailover.ts')
+          s = p.read_text()
+          s = s.replace('return executeOrderedSubscriptionFailover({', "return executeOrderedSubscriptionFailover<Awaited<ReturnType<typeof getCredentialsForCredential>>, ResponsesTransportExecuteResult, LastQuota>({")
+          p.write_text(s)
+          PY
           rm scripts/grok-apply.py
           git add -A
           git -c user.name='OpenAI' -c user.email='noreply@openai.com' commit -m 'feat(grok): apply subscription implementation work package'
@@ -39,3 +50,5 @@ jobs:
         run: pnpm -F server typecheck
       - name: Check web and shared types
         run: pnpm -F web typecheck && pnpm -F @agent/shared typecheck
+      - name: Codex subscription regression
+        run: pnpm -F server exec vitest run codex

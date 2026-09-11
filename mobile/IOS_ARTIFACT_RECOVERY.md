@@ -31,12 +31,12 @@ bash -n mobile/scripts/verify-mobile-release-artifact.sh
 ## 合并后的真实验证
 
 1. 合并本修复，确认该 main 提交的完整 push CI 及 `Build & Check` 成功。
-2. 新建一次「iOS 构建与发布」运行，选择 `main`、`operation=build-and-testflight`，
-   `source_sha` 留空使用已通过 CI 的当前 main，或指定包含本修复的完整 SHA。
+2. 新建一次「iOS 构建与发布」运行，选择 `main`，执行操作保留「构建并发布到 TestFlight」，
+   原构建运行链接或编号留空。系统固定使用点击运行时的 main SHA，并有界等待该提交的 CI。
    不要只 Re-run 旧运行；旧运行仍绑定原始源码和调度版本。
 3. 检查 Archive、Export 后的 `M60-04 artifact verified`、IPA 封存和制品上传。
 4. 再检查内部 TestFlight 的处理回执：`processingState=VALID`、`internalBuildState=IN_BETA_TESTING`。
 
-本次失败运行没有保存可复用的已验证 IPA，不能用 `operation=testflight` 绕过失败的构建门禁。
-后续若签名构建成功、只是 Apple 上传/处理失败，才按原构建的 SHA、run ID、attempt 复用已封存的 IPA。
+本次失败运行没有保存可复用的已验证 IPA，不能用「重试已有构建的发布」绕过失败的构建门禁。
+后续若签名构建成功、只是 Apple 上传/处理失败，才选择「重试已有构建的发布」并粘贴原构建运行链接或编号，自动解析 SHA/attempt 复用已封存的 IPA。
 PR 测试成功不代表生产签名和 Apple 上传已经执行或验证；本修复不修改发布授权、Secrets、版本策略或正式上架流程。

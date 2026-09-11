@@ -1,5 +1,5 @@
 name: iOS 构建与发布
-run-name: ${{ github.event_name == 'pull_request' && 'iOS Workflow 检查' || format('iOS {0} · {1}', inputs.operation, inputs.source_sha || github.sha) }}
+run-name: ${{ github.event_name == 'pull_request' && 'iOS Workflow 检查' || format('iOS {0} · {1}', inputs.operation, inputs.build_run || github.sha) }}
 
 on:
   pull_request:
@@ -15,24 +15,18 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'build-and-testflight=构建并发布到内部 TestFlight；build=仅构建；testflight=复用已有 IPA'
+        description: '执行操作'
         type: choice
         required: true
-        default: build-and-testflight
-        options: [build, build-and-testflight, testflight]
-      source_sha:
-        description: 'main 上已通过 CI 的完整提交 SHA；构建时留空使用本次 main，testflight 时必填'
+        default: '构建并发布到 TestFlight'
+        options:
+          - '构建并发布到 TestFlight'
+          - '仅构建，不发布'
+          - '重试已有构建的发布'
+      build_run:
+        description: '原构建运行链接或编号（仅重试时填写，正常发布留空）'
         type: string
         required: false
-      build_run_id:
-        description: '仅 testflight：原签名构建的 Actions run ID（不是 EAS build ID）'
-        type: string
-        required: false
-      build_run_attempt:
-        description: '仅 testflight：原构建的 attempt；必须与构建摘要一致'
-        type: string
-        required: true
-        default: '1'
 
 permissions:
   contents: read
@@ -68,6 +62,8 @@ jobs:
           package-manager-cache: false
       - name: 回归测试签名凭据初始化与安全诊断（不连接 GitHub 或 Apple）
         run: node --test mobile/scripts/ios-signing-secrets.test.mjs
+      - name: 回归测试两项发布表单、自动重试解析与 CI 等待（不连接 GitHub 或 Apple）
+        run: node --test mobile/scripts/ios-release-inputs.test.mjs
       - name: 验证实际 Xcode 与本机构建工具
         run: bash mobile/scripts/setup-ios-runner.sh
       - name: 回归测试 IPA 制品校验（真实 macOS plist 工具，无发布凭据）
@@ -94,7 +90,7 @@ jobs:
     name: iOS / 发布准入
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 25
     permissions:
       contents: read
       actions: read
@@ -106,6 +102,9 @@ jobs:
       build_run_attempt: ${{ steps.plan.outputs.build_run_attempt }}
       artifact_name: ${{ steps.plan.outputs.artifact_name }}
       build_number: ${{ steps.plan.outputs.build_number }}
+      retry_artifact_id: ${{ steps.plan.outputs.retry_artifact_id }}
+      retry_artifact_digest: ${{ steps.plan.outputs.retry_artifact_digest }}
+      retry_workflow_sha: ${{ steps.plan.outputs.retry_workflow_sha }}
     steps:
       - name: 检出调度版本
         uses: actions/checkout@v5
@@ -117,7 +116,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
-      - name: 验证 main 来源与最新完整 CI
+      - name: 自动解析发布来源并等待该提交的 main CI（最多 20 分钟）
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -215,6 +214,9 @@ jobs:
       IOS_SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
       IOS_BUILD_RUN_ID: ${{ needs.plan.outputs.build_run_id }}
       IOS_BUILD_ATTEMPT: ${{ needs.plan.outputs.build_run_attempt }}
+      IOS_EXPECTED_ARTIFACT_ID: ${{ needs.plan.outputs.retry_artifact_id }}
+      IOS_EXPECTED_ARTIFACT_DIGEST: ${{ needs.plan.outputs.retry_artifact_digest }}
+      IOS_EXPECTED_WORKFLOW_SHA: ${{ needs.plan.outputs.retry_workflow_sha }}
     steps:
       - name: 检出可信调度代码
         uses: actions/checkout@v5

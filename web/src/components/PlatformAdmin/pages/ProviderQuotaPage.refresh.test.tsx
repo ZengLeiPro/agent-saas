@@ -65,7 +65,7 @@ afterEach(() => {
 
 async function ready() {
   await screen.findByTestId('quota-account-volcengine:test');
-  await waitFor(() => expect(screen.getByRole('button', { name: '刷新', exact: true }).hasAttribute('disabled')).toBe(false));
+  await waitFor(() => expect(screen.getByRole('button', { name: /^刷新$/u }).hasAttribute('disabled')).toBe(false));
 }
 
 function returnToTab() {
@@ -85,7 +85,7 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     const card = screen.getByTestId('quota-account-volcengine:test');
     const details = within(card).getByText('其他（1 个窗口）').closest('details')!;
     fireEvent.click(details.querySelector('summary')!);
-    const refresh = screen.getByRole('button', { name: '刷新', exact: true });
+    const refresh = screen.getByRole('button', { name: /^刷新$/u });
     const collect = screen.getByRole('button', { name: '立即采集' });
     expect(refresh.nextElementSibling).toBe(collect);
     expect(refresh.querySelector('svg')).toBeNull();
@@ -137,12 +137,12 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     api.refreshProviderQuota.mockReturnValueOnce(collection.promise);
     api.providerQuota.mockResolvedValue(overview(50));
     fireEvent.click(screen.getByRole('button', { name: '立即采集' }));
-    expect(screen.getByRole('button', { name: '刷新', exact: true }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: /^刷新$/u }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByRole('button', { name: '立即采集' }).getAttribute('aria-busy')).toBe('true');
     expect(screen.getByRole('button', { name: '刷新 火山测试账号' }).hasAttribute('disabled')).toBe(true);
     returnToTab();
     returnToTab();
-    fireEvent.click(screen.getByRole('button', { name: '刷新', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: /^刷新$/u }));
     expect(api.providerQuota).toHaveBeenCalledTimes(1);
     expect(api.refreshProviderQuota).toHaveBeenCalledTimes(1);
     expect(api.refreshProviderQuota).toHaveBeenCalledWith(undefined);
@@ -158,7 +158,7 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     await ready();
     const reload = deferred<ProviderQuotaOverviewResponse>();
     api.providerQuota.mockReturnValueOnce(reload.promise);
-    const refresh = screen.getByRole('button', { name: '刷新', exact: true });
+    const refresh = screen.getByRole('button', { name: /^刷新$/u });
     fireEvent.click(refresh);
     expect(refresh.getAttribute('aria-busy')).toBe('true');
     fireEvent.click(refresh);
@@ -175,12 +175,12 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     await ready();
     const card = screen.getByTestId('quota-account-volcengine:test');
     api.providerQuota.mockRejectedValueOnce(new Error('快照读取失败'));
-    fireEvent.click(screen.getByRole('button', { name: '刷新', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: /^刷新$/u }));
     await screen.findByText(/快照读取失败/);
     expect(screen.getByTestId('quota-account-volcengine:test')).toBe(card);
     expect(screen.getByTestId('quota-window-monthly').textContent).toContain('10.0%');
     api.providerQuota.mockResolvedValue(overview(35));
-    fireEvent.click(screen.getByRole('button', { name: '刷新', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: /^刷新$/u }));
     await waitFor(() => expect(screen.getByTestId('quota-window-monthly').textContent).toContain('35.0%'));
     expect(screen.queryByText(/快照读取失败/)).toBeNull();
   });
@@ -190,7 +190,7 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     await ready();
     const reload = deferred<ProviderQuotaOverviewResponse>();
     api.providerQuota.mockReturnValueOnce(reload.promise);
-    fireEvent.click(screen.getByRole('button', { name: '刷新', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: /^刷新$/u }));
     returnToTab();
     view.unmount();
     await act(async () => { reload.resolve(overview(99)); });

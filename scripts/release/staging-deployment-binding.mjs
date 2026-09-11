@@ -88,11 +88,11 @@ export function stagingBinding(manifest, history) {
   };
 }
 
-export function validateRun(run, binding, repository, name) {
+export function validateRun(run, binding, repository, name, engineSha = binding.sourceSha) {
   equal(String(run?.id), binding.stagingRunId, `${name}.id`);
   equal(run?.repository?.full_name, repository, `${name}.repository`);
   equal(run?.head_repository?.full_name, repository, `${name}.head_repository`);
-  equal(run?.head_sha, binding.sourceSha, `${name}.sha`);
+  equal(run?.head_sha, engineSha, `${name}.sha`);
   equal(run?.head_branch, 'main', `${name}.branch`);
   equal(run?.event, 'workflow_dispatch', `${name}.event`);
   equal(run?.path, '.github/workflows/deploy-staging.yml', `${name}.workflow`);

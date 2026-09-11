@@ -82,6 +82,7 @@ describe('ACS runtime config', () => {
       maxRunningSandboxes: 4,
       warnRunningSandboxes: 3,
       drainDeadlineMs: 900_000,
+      deploymentDrainDeadlineMs: 1_140_000,
       egress: {
         proxy: { enabled: false, proxyUrl: '', noProxy: [] },
         packageMirrors: {

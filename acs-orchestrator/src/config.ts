@@ -82,6 +82,7 @@ export interface AcsOrchestratorConfig {
   executionMaintenance: boolean;
   executionMaintenanceReason?: string;
   drainDeadlineMs: number;
+  deploymentDrainDeadlineMs?: number;
   networkPolicy: NetworkPolicyConfig;
   snat: AcsSnatConfig;
   /** 出口代理与镜像源；由 server 侧配置页经 PATCH /runtime-config 下发 */
@@ -221,6 +222,7 @@ export interface AcsRuntimeConfigSnapshot {
   executionMaintenance: boolean;
   executionMaintenanceReason?: string;
   drainDeadlineMs: number;
+  deploymentDrainDeadlineMs?: number;
   egress: AcsEgressConfig;
   runtimeConfigPath?: string;
   persisted: boolean;
@@ -236,6 +238,7 @@ export interface AcsRuntimeConfigPatch {
   executionMaintenance?: boolean;
   executionMaintenanceReason?: string;
   drainDeadlineMs?: number;
+  deploymentDrainDeadlineMs?: number;
   egress?: AcsEgressConfig;
 }
 
@@ -363,6 +366,9 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
     if (reason.length > 500)
       throw new Error('executionMaintenanceReason must be at most 500 characters');
     patch.executionMaintenanceReason = reason || undefined;
+  }
+  if ('deploymentDrainDeadlineMs' in raw) {
+    patch.deploymentDrainDeadlineMs = parseRuntimeConfigDuration('deploymentDrainDeadlineMs', raw.deploymentDrainDeadlineMs);
   }
   if ('drainDeadlineMs' in raw) {
     patch.drainDeadlineMs = parseRuntimeConfigDuration('drainDeadlineMs', raw.drainDeadlineMs);
@@ -517,6 +523,7 @@ export function runtimeConfigSnapshot(config: AcsOrchestratorConfig): AcsRuntime
       ? { executionMaintenanceReason: config.executionMaintenanceReason }
       : {}),
     drainDeadlineMs: config.drainDeadlineMs,
+    deploymentDrainDeadlineMs: config.deploymentDrainDeadlineMs ?? 19 * 60_000,
     // 容错 undefined：生产上已存在的 runtime-config.json 是旧格式（只有三个配额字段），
     // 启动回灌时 config.egress 可能还没被赋值。
     egress: cloneEgressConfig(config.egress),
@@ -545,6 +552,7 @@ export function applyRuntimeConfigPatch(
       ? patch.executionMaintenanceReason
       : config.executionMaintenanceReason,
     drainDeadlineMs: patch.drainDeadlineMs ?? config.drainDeadlineMs,
+    deploymentDrainDeadlineMs: patch.deploymentDrainDeadlineMs ?? config.deploymentDrainDeadlineMs ?? 19 * 60_000,
     egress: cloneEgressConfig(patch.egress ?? config.egress),
   };
   validateRuntimeConfigValues(next);
@@ -566,6 +574,7 @@ export function applyRuntimeConfigPatch(
   config.executionMaintenance = next.executionMaintenance;
   config.executionMaintenanceReason = next.executionMaintenanceReason;
   config.drainDeadlineMs = next.drainDeadlineMs;
+  config.deploymentDrainDeadlineMs = next.deploymentDrainDeadlineMs;
   config.egress = next.egress;
   if (config.runtimeConfigPath) {
     mkdirSync(dirname(config.runtimeConfigPath), { recursive: true });

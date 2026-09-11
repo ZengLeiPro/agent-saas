@@ -517,6 +517,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     }
     const abortController = new AbortController();
     runtimeRunController.register(record.runId, abortController, {
+      workerId: record.workerId,
       abortOnDrain: false,
       userId: taskSession.userId,
       tenantId: record.tenantId,
@@ -777,6 +778,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     const sessionCatalog = resolveSessionCatalog(this.config);
     const abortController = new AbortController();
     runtimeRunController.register(record.runId, abortController, {
+      workerId: record.workerId,
       abortOnDrain: false,
       userId: taskSession.userId,
       tenantId: record.tenantId,

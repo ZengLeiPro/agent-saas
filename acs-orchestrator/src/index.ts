@@ -113,7 +113,9 @@ const server = createServer((req, res) => {
   // safely wait and resend this request; accepted streams and cancellation continue.
   if (draining && req.method !== 'GET' && !/^\/invocations\/[^/?#]+$/u.test(req.url ?? '')) {
     res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '2',
-      'x-acs-error-code': 'ACS_DEPLOYMENT_DRAINING', 'x-acs-execution-started': 'false' });
+      'x-acs-error-code': 'ACS_DEPLOYMENT_DRAINING', 'x-acs-execution-started': 'false',
+      'x-acs-drain-deadline-ms': String(deploymentDrain.snapshot().deadlineAt ?? ''),
+      'x-acs-drain-remaining-ms': String(Math.max(0, (deploymentDrain.snapshot().deadlineAt ?? Date.now()) - Date.now())) });
     res.end(JSON.stringify({ status: 'error', error: 'orchestrator draining, retry shortly', executionStarted: false }));
     return;
   }
@@ -951,7 +953,7 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 const deploymentDrain = new DeploymentDrain({
-  pid: process.pid, inflight: effectiveInflightRequests, deadlineMs: () => config.drainDeadlineMs,
+  pid: process.pid, inflight: effectiveInflightRequests, deadlineMs: () => config.deploymentDrainDeadlineMs ?? 19 * 60_000,
   setAdmission: (paused) => { draining = paused; if (paused) lifecycleController.stop(); else lifecycleController.start(); },
   publish: (snapshot) => {
     const path = process.env.ACS_ORCH_DRAIN_STATE_FILE ?? '/run/agent-saas-acs-drain.json';

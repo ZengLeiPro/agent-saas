@@ -2,12 +2,16 @@ import { z } from 'zod';
 interface SubscriptionModel {
   id: string;
   protocol?: string;
-  responses_transport?: string; mcp_loading_mode?: string; tool_search_protocol?: string;
+  responses_transport?: string;
+  mcp_loading_mode?: string;
+  tool_search_protocol?: string;
 }
 interface SubscriptionGroup {
   id: string;
   protocol?: string;
-  responses_transport?: string; mcp_loading_mode?: string; tool_search_protocol?: string;
+  responses_transport?: string;
+  mcp_loading_mode?: string;
+  tool_search_protocol?: string;
   models: SubscriptionModel[];
 }
 interface SubscriptionConfiguration {
@@ -35,11 +39,17 @@ export function validateSubscriptionModels(
           path: ['models', 'groups', groupIndex, 'models', modelIndex, 'responses_transport'],
           message: `${transport} 只能用于 protocol="responses"`,
         });
-      if (transport === 'grok_subscription' && ((model.mcp_loading_mode ?? group.mcp_loading_mode) === 'deferred'
-          || (model.tool_search_protocol ?? group.tool_search_protocol) === 'openai_responses_hosted')) ctx.addIssue({
-        code: z.ZodIssueCode.custom, path: ['models', 'groups', groupIndex, 'models', modelIndex, 'mcp_loading_mode'],
-        message: 'Grok 订阅尚未验证 hosted tool_search；请使用 eager/auto 与 tool_search_protocol=none，由平台执行完整函数列表。',
-      });
+      if (
+        transport === 'grok_subscription' &&
+        ((model.mcp_loading_mode ?? group.mcp_loading_mode) === 'deferred' ||
+          (model.tool_search_protocol ?? group.tool_search_protocol) === 'openai_responses_hosted')
+      )
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['models', 'groups', groupIndex, 'models', modelIndex, 'mcp_loading_mode'],
+          message:
+            'Grok 订阅尚未验证 hosted tool_search；请使用 eager/auto 与 tool_search_protocol=none，由平台执行完整函数列表。',
+        });
       if (!value[root])
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

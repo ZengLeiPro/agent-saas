@@ -409,6 +409,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -479,6 +521,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -656,9 +722,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:7b232ba94234534c80b90be7ca003c071ed3a75d2181f0bb550a5b050f149192",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "配置解析和字段定义调整；writerCapability 是运行前置配置，不执行数据库迁移；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/modelQuotaSourceSchema.ts",
@@ -1394,6 +1460,41 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -1600,6 +1701,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -1770,9 +1895,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -2298,6 +2423,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -2484,6 +2644,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -2654,9 +2838,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -3161,6 +3345,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -3331,6 +3550,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -3501,9 +3744,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -4008,6 +4251,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -4178,6 +4456,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -4348,9 +4650,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -4841,6 +5143,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -5003,6 +5340,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -5173,9 +5534,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -5666,6 +6027,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -5828,6 +6224,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -5998,9 +6418,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -6491,6 +6911,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -6653,6 +7108,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -6830,9 +7309,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "配置解析和字段定义调整；writerCapability 是运行前置配置，不执行数据库迁移；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/modelQuotaSourceSchema.ts",
@@ -7596,6 +8075,41 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -7770,6 +8284,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -7940,9 +8478,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Web Push配置定义抽出，新增可选APNs配置，无数据库调用。 本批仅将记忆轮询上限改为1000，无 SQL 或启动回填。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -8440,6 +8978,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -8622,6 +9195,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -8792,9 +9389,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/runtime.ts",
@@ -9306,6 +9903,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -9480,6 +10112,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -9650,9 +10306,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
-          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
         },
         {
           "path": "server/src/app/runtime.ts",
@@ -10164,6 +10820,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -10338,6 +11029,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -10966,6 +11681,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -11124,6 +11881,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -11752,6 +12533,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -11910,6 +12733,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -12538,6 +13385,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -12696,6 +13585,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -13324,6 +14237,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -13482,6 +14437,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -14096,6 +15075,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -14250,6 +15271,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -14864,6 +15909,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -15018,6 +16105,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -15576,6 +16687,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -15710,6 +16863,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -16261,6 +17438,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -16391,6 +17610,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -16942,6 +18185,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -17064,6 +18349,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -17615,6 +18924,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -17737,6 +19088,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -18288,6 +19663,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -18410,6 +19827,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -18933,6 +20374,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -19047,6 +20530,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -19556,6 +21063,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -19678,6 +21227,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -20159,6 +21732,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -20265,6 +21880,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -20746,6 +22385,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -20852,6 +22533,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -21291,6 +22996,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -21381,6 +23128,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -21820,6 +23591,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -21902,6 +23715,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -22327,6 +24164,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -22397,6 +24276,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -22822,6 +24725,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -22888,6 +24833,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -23313,6 +25282,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -23383,6 +25394,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -23801,6 +25836,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -23863,6 +25940,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -24281,6 +26382,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -24343,6 +26486,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -24754,6 +26921,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -24812,6 +27021,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -25223,6 +27456,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -25293,6 +27568,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -25704,6 +28003,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -25774,6 +28115,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -26185,6 +28550,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -26255,6 +28662,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -26631,6 +29062,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -26657,6 +29130,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -27068,6 +29565,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -27118,6 +29657,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -27144,6 +29707,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -27170,6 +29775,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -27189,6 +29818,48 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
@@ -27199,6 +29870,30 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     },
@@ -27211,12 +29906,151 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
         }
       ],
       "evidence": [
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        }
+      ]
+    },
+    {
+      "baselineSha": "eec01d4c1d043a3de0eec54f9fc1ab8d64651c4b",
+      "files": [
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:7060901049bbedab3b1efe1231336331c5fde45d67e12ca9c27eaf9555e5c342"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     }

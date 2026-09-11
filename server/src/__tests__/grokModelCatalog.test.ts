@@ -68,15 +68,13 @@ describe('Grok subscription directory qualification', () => {
   });
   it('invalidates eligibility after credential generation changes and never guesses missing numeric limits', async () => {
     const f = await grokFixture(1);
-    const fetcher = vi
-      .fn()
-      .mockImplementation(async () =>
-        jsonResponse({
-          data: [
-            { id: 'model-a', context_window: '128000', max_output_tokens: Number.MAX_SAFE_INTEGER },
-          ],
-        }),
-      );
+    const fetcher = vi.fn().mockImplementation(async () =>
+      jsonResponse({
+        data: [
+          { id: 'model-a', context_window: '128000', max_output_tokens: Number.MAX_SAFE_INTEGER },
+        ],
+      }),
+    );
     const catalog = new GrokModelCatalogService(f.manager, fetcher);
     const first = await catalog.forAccount(f.refs[0]);
     expect(first.models[0]).not.toHaveProperty('contextWindow');

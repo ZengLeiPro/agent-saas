@@ -1,3 +1,4 @@
+// release-migration: expand
 import { grokSubscriptionTableName } from './grokSubscriptionTableNames.js';
 import { grokRefreshJournalSchemaStatements } from './grokSubscriptionSchema.js';
 import pg from 'pg';
@@ -28,15 +29,15 @@ export class PgGrokRefreshJournal implements SubscriptionRefreshJournal {
     private readonly pool: PgPool,
     prefix = 'runtime',
   ) {
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(prefix))
-      throw new Error('Invalid runtime table prefix');
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(prefix)) throw new Error('Invalid runtime table prefix');
     this.table = grokSubscriptionTableName(prefix, 'refresh_journal');
   }
   async init(): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [`${this.table}:init`]);
-      for (const statement of grokRefreshJournalSchemaStatements(this.table)) await client.query(statement);
+      for (const statement of grokRefreshJournalSchemaStatements(this.table))
+        await client.query(statement);
     } finally {
       await client
         .query('SELECT pg_advisory_unlock(hashtext($1))', [`${this.table}:init`])

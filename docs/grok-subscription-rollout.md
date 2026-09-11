@@ -4,7 +4,7 @@
 
 代码 PR 不执行部署。生产全局池要求既有共享 PostgreSQL 和受管持久化 Vault；开发用内存 store 不代表多进程生产一致性。API 与 Runtime Worker 均须升级到识别 Grok config/transport/continuation 的版本，Web 升级后再允许管理员登记。
 
-运行状态新增 `<prefix>_grok_credential_runtime_state` 和 `<prefix>_grok_refresh_journal`，不重命名、不复制、不清空 Codex 表。新表通过受信前缀和 provider 名字生成，长前缀有稳定摘要以满足 PostgreSQL 标识符限制。发布必须走现有 expand 迁移计划、后置条件和观察回执，不把 `CREATE TABLE IF NOT EXISTS` 当作跳过迁移门禁的理由。用 `node scripts/release/grok-migration-evidence.mjs <实际生产基线> <候选SHA>` 生成只读计划；该命令不执行数据库操作。
+运行状态新增 `<prefix>_grok_credential_runtime_state` 和 `<prefix>_grok_credential_refresh_journal`，不重命名、不复制、不清空 Codex 表。新表通过受信前缀和 provider 名字生成，长前缀有稳定摘要以满足 PostgreSQL 标识符限制。发布必须走现有 expand 迁移计划、后置条件和观察回执，不把 `CREATE TABLE IF NOT EXISTS` 当作跳过迁移门禁的理由。用 `node scripts/release/grok-migration-evidence.mjs <实际生产基线> <候选SHA>` 生成只读计划；该命令不执行数据库操作。
 
 Grok 正常刷新采用发布 fence → 凭据锁的单一顺序。锁内状态查询复用同一 PG client，避免 `poolMax=1` 自锁。刷新 journal 只保存 ref/generation，不保存 token。上游成功但 Vault 写入回执丢失时，重新读取更高 generation 并推进签名身份；不能重发已经消费的旧 token。双端回执不完整时保持 recovery_required，不伪造健康状态。
 

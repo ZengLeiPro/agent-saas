@@ -14,7 +14,7 @@
 
 ## 协议依据与未确认边界
 
-公开文档：[xAI 企业部署](https://docs.x.ai/build/enterprise)、[OpenClaw xAI provider](https://docs.openclaw.ai/providers/xai)。代码参考锁定 `openclaw/openclaw@c94dbef6c914c3433a1c6678996ffa99674c1ea2` 的 `extensions/xai/xai-oauth.ts`、`provider-catalog.ts`、`usage.ts`。参考协议行为，不引入 OpenClaw 运行时；本项目代码为独立实现。
+公开文档：[xAI 企业部署](https://docs.x.ai/build/enterprise)、[OpenClaw xAI provider](https://docs.openclaw.ai/providers/xai)。代码参考锁定 `openclaw/openclaw@c94dbef6c914c3433a1c6678996ffa99674c1ea2` 的 `extensions/xai/xai-oauth.ts`、`provider-catalog.ts`、`usage.ts`、`stream.ts`。参考协议行为，不引入 OpenClaw 运行时；本项目代码为独立实现。
 
 | 内容              | 实现和证据边界                                                                                                        |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------- |

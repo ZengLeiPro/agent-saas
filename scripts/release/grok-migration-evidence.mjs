@@ -9,6 +9,11 @@ if (!baseRef || baseRef.startsWith('-') || targetRef.startsWith('-'))
   );
 const baseline = resolve(baseRef);
 const target = resolve(targetRef);
-const plan = createMigrationPlan({ baseline, target });
+const changedPaths = execFileSync('git', ['diff', '--name-only', '-z', `${baseline}...${target}`], {
+  encoding: 'utf8',
+})
+  .split('\0')
+  .filter(Boolean);
+const plan = createMigrationPlan({ baseline, target, changedPaths });
 console.log(JSON.stringify({ baseline, target, plan }, null, 2));
 if (!plan.ok) process.exitCode = 1;

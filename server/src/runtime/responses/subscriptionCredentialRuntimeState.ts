@@ -1,3 +1,4 @@
+// release-migration: expand
 import { grokSubscriptionTableName } from './grokSubscriptionTableNames.js';
 import { grokRuntimeStateSchemaStatements } from './grokSubscriptionSchema.js';
 import pg from 'pg';
@@ -136,7 +137,10 @@ export class PgSubscriptionCredentialRuntimeStateStore implements SubscriptionCr
   ) {
     if (provider !== 'codex' && provider !== 'grok')
       throw new Error('Unknown subscription provider');
-    this.table = provider === 'grok' ? grokSubscriptionTableName(tablePrefix, 'runtime_state') : `${sanitizeIdentifier(tablePrefix)}_codex_credential_runtime_state`;
+    this.table =
+      provider === 'grok'
+        ? grokSubscriptionTableName(tablePrefix, 'runtime_state')
+        : `${sanitizeIdentifier(tablePrefix)}_codex_credential_runtime_state`;
   }
 
   async init(): Promise<void> {
@@ -144,9 +148,10 @@ export class PgSubscriptionCredentialRuntimeStateStore implements SubscriptionCr
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [`${this.table}:init`]);
       if (this.provider === 'grok') {
-        for (const statement of grokRuntimeStateSchemaStatements(this.table)) await client.query(statement);
+        for (const statement of grokRuntimeStateSchemaStatements(this.table))
+          await client.query(statement);
       } else {
-      await client.query(`
+        await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.table} (
           credential_ref TEXT PRIMARY KEY,
           availability TEXT NOT NULL,
@@ -158,9 +163,9 @@ export class PgSubscriptionCredentialRuntimeStateStore implements SubscriptionCr
             CHECK (availability IN ('available', 'quota_cooldown', 'auth_unavailable'))
         )
       `);
-      await client.query(
-        `CREATE INDEX IF NOT EXISTS ${this.table}_cooldown_idx ON ${this.table} (cooldown_until)`,
-      );
+        await client.query(
+          `CREATE INDEX IF NOT EXISTS ${this.table}_cooldown_idx ON ${this.table} (cooldown_until)`,
+        );
       }
     } finally {
       await client

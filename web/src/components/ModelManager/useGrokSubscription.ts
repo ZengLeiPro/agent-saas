@@ -64,7 +64,10 @@ export function useGrokSubscription(readOnly: boolean) {
         throw new Error(data.error ?? `HTTP ${response.status}`);
       applyState(data);
     } catch (cause) {
-      if (mounted.current) { acceptMetadata({}); setError(cause instanceof Error ? cause.message : 'Grok 状态读取失败'); }
+      if (mounted.current) {
+        acceptMetadata({});
+        setError(cause instanceof Error ? cause.message : 'Grok 状态读取失败');
+      }
     } finally {
       if (mounted.current) setLoading(false);
     }

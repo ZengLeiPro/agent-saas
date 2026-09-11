@@ -232,7 +232,8 @@ export function GrokSubscriptionCard({
                 size="sm"
                 variant="ghost"
                 disabled={grok.working}
-                aria-label="刷新 Grok 订阅状态" onClick={() => void grok.refresh()}
+                aria-label="刷新 Grok 订阅状态"
+                onClick={() => void grok.refresh()}
               >
                 <RefreshCw className="size-3.5" />
                 刷新

@@ -12,8 +12,14 @@ export function createModelAdapterForProtocol(
   modelProviderOptions: ModelProviderOptions | undefined,
   dependencies: ModelAdapterFactoryDependencies = {},
 ): ModelAdapter {
-  if ((modelProviderOptions?.responsesTransport === 'grok_subscription' || modelProviderOptions?.responsesTransport === 'codex_subscription') && modelProviderOptions.protocol !== 'responses') {
-    throw new Error('Subscription transport requires Responses protocol; API Key fallback is forbidden');
+  if (
+    (modelProviderOptions?.responsesTransport === 'grok_subscription' ||
+      modelProviderOptions?.responsesTransport === 'codex_subscription') &&
+    modelProviderOptions.protocol !== 'responses'
+  ) {
+    throw new Error(
+      'Subscription transport requires Responses protocol; API Key fallback is forbidden',
+    );
   }
   if (modelProviderOptions?.protocol === 'responses') {
     if (modelProviderOptions.responsesTransport === 'grok_subscription') {

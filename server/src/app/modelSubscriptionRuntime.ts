@@ -43,7 +43,7 @@ export async function createModelSubscriptionRuntime(options: {
   const grokCredentialManager = new GrokCredentialManager({
     vault: secretVault,
     getConfig: getGrokConfig,
-    ...await createGrokCredentialPersistence(pool, config.runtimeEventStore),
+    ...(await createGrokCredentialPersistence(pool, config.runtimeEventStore)),
     oauthClient,
     requireRotationCoordinator: production,
   });

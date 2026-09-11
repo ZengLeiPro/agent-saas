@@ -38,14 +38,12 @@ function registration(ref: string): MutationInput {
 }
 async function setup() {
   const oauth = new GrokOAuthClient();
-  const refresh = vi
-    .spyOn(oauth, 'refresh')
-    .mockImplementation(async (old) => ({
-      ...old,
-      accessToken: 'fixture-new-access',
-      refreshToken: 'fixture-new-refresh',
-      expiresAt: new Date(Date.now() + 3600000).toISOString(),
-    }));
+  const refresh = vi.spyOn(oauth, 'refresh').mockImplementation(async (old) => ({
+    ...old,
+    accessToken: 'fixture-new-access',
+    refreshToken: 'fixture-new-refresh',
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+  }));
   const manager = new GrokCredentialManager({
     vault: rig.vault,
     getConfig: () => rig.nodes[0].config.grokSubscription,

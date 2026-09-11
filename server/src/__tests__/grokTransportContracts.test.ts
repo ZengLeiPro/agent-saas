@@ -98,14 +98,12 @@ describe('Grok ordered subscription transport T01-T07, T25, T27-T28, T33', () =>
   );
   it('keeps HTML challenges and network failures bounded and does not use another billing provider', async () => {
     const f = await grokFixture();
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue(
-        new Response('<html>private challenge</html>', {
-          status: 403,
-          headers: { 'content-type': 'text/html' },
-        }),
-      );
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response('<html>private challenge</html>', {
+        status: 403,
+        headers: { 'content-type': 'text/html' },
+      }),
+    );
     expect(
       (await new GrokSubscriptionResponsesTransport(f.manager, fetcher).execute(request)).response
         .status,

@@ -144,13 +144,15 @@ export class GrokSubscriptionCompletion {
       }
     }
     try {
-    return {
-      ...(await this.context.publicState()),
-      revision: result.revision,
-      status: 'applied',
-      ...(warning ? { warning } : {}),
-    };
-    } catch (error) { throw new ConfigMutationCommittedError(error); }
+      return {
+        ...(await this.context.publicState()),
+        revision: result.revision,
+        status: 'applied',
+        ...(warning ? { warning } : {}),
+      };
+    } catch (error) {
+      throw new ConfigMutationCommittedError(error);
+    }
   }
   private key(sessionId: string, owner: string): string {
     return `${owner}\0${sessionId}`;

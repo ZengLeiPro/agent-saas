@@ -9,8 +9,11 @@ const transport = 'server/src/runtime/httpTransport.ts';
 const evidence = 'docs/release/PR636-current-base-migration-review-20260911.md';
 const quotaSchema = 'server/src/app/modelQuotaSourceSchema.ts';
 const quotaEvidence = 'docs/release/PR641-zhipu-quota-config-review-20260911.md';
-const auditedPaths = [transport, quotaSchema];
-const evidencePaths = [evidence, quotaEvidence];
+const grokNeutralPaths = ["server/src/app/config.ts", "server/src/app/grokSubscriptionConfigSchema.ts", "server/src/runtime/responses/codexCredentialRuntimeState.ts"];
+const grokExpandPaths = ["server/src/runtime/responses/subscriptionCredentialRuntimeState.ts", "server/src/runtime/responses/subscriptionRefreshJournal.ts", "server/src/runtime/responses/grokSubscriptionSchema.ts"];
+const grokEvidencePaths = ["docs/reviews/grok-subscription-migration.md", "server/src/__tests__/grokSchemaPreservation.test.ts", "server/src/__tests__/fixtures/grok-codex-schema-baseline.json", "server/src/__tests__/grokSchemaPostconditions.pg.test.ts", "scripts/release/grok-subscription-postcondition.sql", "server/src/runtime/responses/grokSubscriptionTableNames.ts"];
+const auditedPaths = [transport, quotaSchema, ...grokNeutralPaths, ...grokExpandPaths];
+const evidencePaths = [evidence, quotaEvidence, ...grokEvidencePaths];
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 const target = git('rev-parse', 'HEAD').trim();
@@ -32,10 +35,10 @@ test('HTTP baseline retains exact byte-bound reviews alongside the separately au
     targetSnapshot: snapshot(target),
   });
   // This historical baseline now also precedes PR641. Permit exactly the two
-  // independently audited paths, not an arbitrary expansion of the review scope.
+  // original paths plus the exact separately audited Grok scope, never a wildcard.
   assert.deepEqual([...loaded.entries.keys()].sort(), [...auditedPaths].sort());
   for (const path of auditedPaths) {
-    assert.equal(loaded.entries.get(path).classification, 'no-schema-change');
+    assert.equal(loaded.entries.get(path).classification, grokExpandPaths.includes(path) ? 'expand' : 'no-schema-change');
   }
   const result = createMigrationPlan({ baseline, target, changedPaths: auditedPaths });
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
@@ -84,14 +87,14 @@ test('both reviews reject changed target bytes, baseline bytes and changed or mi
   }
 });
 
-test('PR641 current baseline reviews only the Zhipu Zod module without GitHub event metadata', () => {
+test('PR641 current baseline preserves Zhipu and the independently byte-bound Grok additive review', () => {
   const quotaBaseline = '9db36e8861304c9254e545c80a17ccc720595af9';
   const loaded = loadMigrationReviews({
     baseline: quotaBaseline,
     baselineSnapshot: snapshot(quotaBaseline),
     targetSnapshot: snapshot(target),
   });
-  assert.deepEqual([...loaded.entries.keys()], [quotaSchema]);
+  assert.deepEqual([...loaded.entries.keys()].sort(), [quotaSchema, ...grokNeutralPaths, ...grokExpandPaths].sort());
   assert.equal(loaded.entries.get(quotaSchema).classification, 'no-schema-change');
   const result = createMigrationPlan({ baseline: quotaBaseline, target, changedPaths: [quotaSchema] });
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));

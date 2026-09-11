@@ -39,33 +39,31 @@ describe('Grok native Responses adapter T25-T29', () => {
       name: 'Read',
       arguments: '{"path":"你好.txt"}',
     };
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue(
-        stream(
-          sse('response.output_item.added', { output_index: 0, item: { ...tool, arguments: '' } }) +
-            sse('response.function_call_arguments.delta', {
-              item_id: 'item-f',
-              output_index: 0,
-              delta: '{"path":',
-            }) +
-            sse('response.function_call_arguments.delta', {
-              item_id: 'item-f',
-              output_index: 0,
-              delta: '"你好.txt"}',
-            }) +
-            sse('response.output_item.done', { output_index: 0, item: tool }) +
-            sse('response.completed', {
-              response: {
-                id: 'response-fixture',
-                model: 'fixture-model',
-                status: 'completed',
-                output: [tool],
-                usage: { input_tokens: 21, output_tokens: 9 },
-              },
-            }),
-        ),
-      );
+    const fetcher = vi.fn().mockResolvedValue(
+      stream(
+        sse('response.output_item.added', { output_index: 0, item: { ...tool, arguments: '' } }) +
+          sse('response.function_call_arguments.delta', {
+            item_id: 'item-f',
+            output_index: 0,
+            delta: '{"path":',
+          }) +
+          sse('response.function_call_arguments.delta', {
+            item_id: 'item-f',
+            output_index: 0,
+            delta: '"你好.txt"}',
+          }) +
+          sse('response.output_item.done', { output_index: 0, item: tool }) +
+          sse('response.completed', {
+            response: {
+              id: 'response-fixture',
+              model: 'fixture-model',
+              status: 'completed',
+              output: [tool],
+              usage: { input_tokens: 21, output_tokens: 9 },
+            },
+          }),
+      ),
+    );
     const adapter = createModelAdapterForProtocol(
       { apiKey: 'do-not-use', baseUrl: 'https://api.x.ai/v1' },
       { protocol: 'responses', responsesTransport: 'grok_subscription' },

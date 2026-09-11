@@ -167,13 +167,11 @@ export function sendGrokAdminError(res: Response, error: unknown, warning?: stri
     return;
   }
   if (error instanceof ZodError) {
-    res
-      .status(400)
-      .json({
-        code: 'GROK_INVALID_CONFIG',
-        error: 'Grok 配置无效，请检查启停、冷却分钟数和账号列表',
-        ...(warning ? { warning } : {}),
-      });
+    res.status(400).json({
+      code: 'GROK_INVALID_CONFIG',
+      error: 'Grok 配置无效，请检查启停、冷却分钟数和账号列表',
+      ...(warning ? { warning } : {}),
+    });
     return;
   }
   if (error instanceof GrokProtocolError || error instanceof GrokCredentialError) {
@@ -182,24 +180,20 @@ export function sendGrokAdminError(res: Response, error: unknown, warning?: stri
       [400, 403, 404, 409, 410, 429].includes(error.status ?? 0)
         ? error.status!
         : 502;
-    res
-      .status(status)
-      .json({
-        code: error.code,
-        error: `Grok 操作未完成：${error.code}`,
-        ...(warning ? { warning } : {}),
-      });
+    res.status(status).json({
+      code: error.code,
+      error: `Grok 操作未完成：${error.code}`,
+      ...(warning ? { warning } : {}),
+    });
     return;
   }
   if (error instanceof ConfigMutationCommittedError || error instanceof RuntimeRestoreFailedError) {
-    res
-      .status(500)
-      .json({
-        code: error.code,
-        error:
-          'Grok 配置可能已提交或仍需运行态恢复，请刷新状态并使用原操作重试；未清理可能生效的凭据。',
-        ...(warning ? { warning } : {}),
-      });
+    res.status(500).json({
+      code: error.code,
+      error:
+        'Grok 配置可能已提交或仍需运行态恢复，请刷新状态并使用原操作重试；未清理可能生效的凭据。',
+      ...(warning ? { warning } : {}),
+    });
     return;
   }
   if (
@@ -212,11 +206,9 @@ export function sendGrokAdminError(res: Response, error: unknown, warning?: stri
     sendConfigMutationError(res, error, warning ? { warning } : {});
     return;
   }
-  res
-    .status(500)
-    .json({
-      code: 'GROK_ADMIN_OPERATION_FAILED',
-      error: 'Grok 操作失败，请检查配置发布和凭据存储状态',
-      ...(warning ? { warning } : {}),
-    });
+  res.status(500).json({
+    code: 'GROK_ADMIN_OPERATION_FAILED',
+    error: 'Grok 操作失败，请检查配置发布和凭据存储状态',
+    ...(warning ? { warning } : {}),
+  });
 }

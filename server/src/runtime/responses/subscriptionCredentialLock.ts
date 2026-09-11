@@ -16,7 +16,10 @@ export interface PgSubscriptionLockScope {
 }
 
 export class PgSubscriptionCredentialLock implements SubscriptionCredentialLock {
-  constructor(private readonly pool: PgLockPool, private readonly scope?: PgSubscriptionLockScope) {}
+  constructor(
+    private readonly pool: PgLockPool,
+    private readonly scope?: PgSubscriptionLockScope,
+  ) {}
 
   async runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const client = await this.pool.connect();

@@ -123,6 +123,7 @@ case "$task" in
     pnpm -F server exec vitest run \
       src/__tests__/codexCredentialRuntimeState.pg.test.ts \
       src/__tests__/grokCredentialPostgres.test.ts \
+      src/__tests__/grokSchemaPostconditions.pg.test.ts \
       src/__tests__/memoryConsolidationStore.pg.test.ts \
       src/__tests__/pgEventStoreGlobalPage.pg.test.ts \
       src/__tests__/sessionShareStore.pg.test.ts \

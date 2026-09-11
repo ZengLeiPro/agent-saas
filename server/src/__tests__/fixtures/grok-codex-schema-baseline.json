@@ -1,0 +1,9 @@
+{
+  "sourceSha": "d59eca1e1cef7e83a1e59634569f80497ca37834",
+  "sourcePath": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+  "sourceDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+  "statements": [
+    "\n        CREATE TABLE IF NOT EXISTS ${this.table} (\n          credential_ref TEXT PRIMARY KEY,\n          availability TEXT NOT NULL,\n          credential_generation BIGINT NOT NULL DEFAULT 0,\n          cooldown_until TIMESTAMPTZ,\n          last_failure_code TEXT,\n          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n          CONSTRAINT ${this.table}_availability_check\n            CHECK (availability IN ('available', 'quota_cooldown', 'auth_unavailable'))\n        )\n      ",
+    "CREATE INDEX IF NOT EXISTS ${this.table}_cooldown_idx ON ${this.table} (cooldown_until)"
+  ]
+}

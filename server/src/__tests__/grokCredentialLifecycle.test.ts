@@ -6,13 +6,11 @@ afterEach(() => vi.restoreAllMocks());
 describe('Grok credential lifecycle (T08, T10-T12, T23, T36)', () => {
   it('coalesces same-process refresh, masks metadata, and never refreshes a status GET', async () => {
     const f = await grokFixture(1);
-    const refresh = vi
-      .spyOn(f.oauth, 'refresh')
-      .mockImplementation(async (old) => ({
-        ...old,
-        accessToken: 'fixture-new',
-        refreshToken: 'fixture-rotated',
-      }));
+    const refresh = vi.spyOn(f.oauth, 'refresh').mockImplementation(async (old) => ({
+      ...old,
+      accessToken: 'fixture-new',
+      refreshToken: 'fixture-rotated',
+    }));
     await f.manager.getStatuses();
     expect(refresh).not.toHaveBeenCalled();
     const tokens = await Promise.all(

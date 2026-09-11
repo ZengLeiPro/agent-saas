@@ -2,9 +2,8 @@ import type { ModelGroup, ModelsConfig } from '../app/config.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 
 /**
- * 模型分组 `quotaSource` 的凭据处理，与分组 apiKey 同一套语义：
- * GET 不回显 Secret（只给 hasQuotaSecret）；PUT 留空/缺失 = 保留现有；
- * 新提交的明文进 SecretVault、config 只落 `secretAccessKeyRef`。
+ * 火山 quotaSource 使用独立 Secret；智谱复用分组 apiKey，不新增凭据。
+ * GET 不回显 Secret；PUT 留空保留同供应商现有值，切换供应商不得继承旧 Secret。
  */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -13,6 +12,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function redactGroupQuotaSource(group: ModelGroup): Record<string, unknown> {
   const { quotaSource, ...rest } = group;
   if (!quotaSource) return rest;
+  if (quotaSource.provider !== 'volcengine_ark_plan') {
+    return { ...rest, quotaSource: { provider: quotaSource.provider } };
+  }
   const { secretAccessKey, secretAccessKeyRef, ...safe } = quotaSource;
   return {
     ...rest,
@@ -20,7 +22,7 @@ export function redactGroupQuotaSource(group: ModelGroup): Record<string, unknow
   };
 }
 
-/** PUT 请求体里的分组：Secret 留空时按现有配置补回 ref / inline。 */
+/** PUT 请求体里的分组：Secret 留空时按现有同供应商配置补回 ref / inline。 */
 export function restoreGroupQuotaSourceSecret(
   groupRaw: Record<string, unknown>,
   current: ModelGroup | undefined,
@@ -31,17 +33,20 @@ export function restoreGroupQuotaSourceSecret(
     secretAccessKeyRef: _clientRef,
     ...source
   } = groupRaw.quotaSource;
+  if (source.provider !== 'volcengine_ark_plan') {
+    return { ...groupRaw, quotaSource: { provider: source.provider } };
+  }
   const inline = typeof source.secretAccessKey === 'string' ? source.secretAccessKey : undefined;
   if (inline && inline.length > 0) return { ...groupRaw, quotaSource: source };
   const { secretAccessKey: _empty, ...withoutSecret } = source;
   const persisted = current?.quotaSource;
-  if (persisted?.secretAccessKeyRef) {
+  if (persisted?.provider === 'volcengine_ark_plan' && persisted.secretAccessKeyRef) {
     return {
       ...groupRaw,
       quotaSource: { ...withoutSecret, secretAccessKeyRef: persisted.secretAccessKeyRef },
     };
   }
-  if (persisted?.secretAccessKey) {
+  if (persisted?.provider === 'volcengine_ark_plan' && persisted.secretAccessKey) {
     return {
       ...groupRaw,
       quotaSource: { ...withoutSecret, secretAccessKey: persisted.secretAccessKey },
@@ -50,7 +55,7 @@ export function restoreGroupQuotaSourceSecret(
   return { ...groupRaw, quotaSource: withoutSecret };
 }
 
-/** 请求体里带了新 Secret 明文（且与现有 inline 不同）的分组 id。 */
+/** 请求体里带了新火山 Secret 明文（且与现有 inline 不同）的分组 id。 */
 export function submittedQuotaSecretGroups(
   body: unknown,
   current: ModelsConfig | undefined,
@@ -59,8 +64,8 @@ export function submittedQuotaSecretGroups(
     return new Set();
   return new Set(
     body.models.groups.flatMap((value) => {
-      if (!isRecord(value) || typeof value.id !== 'string' || !isRecord(value.quotaSource))
-        return [];
+      if (!isRecord(value) || typeof value.id !== 'string' || !isRecord(value.quotaSource)
+        || value.quotaSource.provider !== 'volcengine_ark_plan') return [];
       const secret = value.quotaSource.secretAccessKey;
       if (typeof secret !== 'string' || !secret.trim()) return [];
       const existing = current?.groups.find((group) => group.id === value.id)?.quotaSource;
@@ -69,12 +74,15 @@ export function submittedQuotaSecretGroups(
   );
 }
 
-/** 解析后的分组若声明了 quotaSource，必须已经拿到 Secret（明文或 ref）。 */
+/** 按来源校验凭据；none 是显式关闭，避免官方地址又被自动启用。 */
 export function assertQuotaSourcesComplete(models: ModelsConfig): void {
   for (const group of models.groups) {
     const source = group.quotaSource;
-    if (source && !source.secretAccessKey && !source.secretAccessKeyRef) {
+    if (source?.provider === 'volcengine_ark_plan' && !source.secretAccessKey && !source.secretAccessKeyRef) {
       throw new Error(`models.${group.id}.quotaSource 配置缺少 Secret Access Key`);
+    }
+    if (source?.provider === 'zhipu_coding_plan' && !group.apiKey && !group.apiKeyRef) {
+      throw new Error(`models.${group.id} 配置缺少智谱 API Key`);
     }
   }
 }
@@ -95,7 +103,8 @@ export async function persistSubmittedQuotaSecrets(input: {
   const groups = await Promise.all(
     input.models.groups.map(async (group) => {
       const source = group.quotaSource;
-      if (!source || !input.submittedGroups.has(group.id) || !source.secretAccessKey) return group;
+      if (!source || source.provider !== 'volcengine_ark_plan'
+        || !input.submittedGroups.has(group.id) || !source.secretAccessKey) return group;
       if (!input.secretVault) throw new Error('SecretVault 未配置，不能保存套餐用量查询 Secret');
       const ref = await input.secretVault.putSecret(
         GLOBAL_OWNER_ID,

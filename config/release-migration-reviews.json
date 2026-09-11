@@ -402,6 +402,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -468,6 +475,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -652,9 +663,9 @@
         {
           "path": "server/src/app/modelQuotaSourceSchema.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
-          "reason": "套餐额度来源的 Zod 配置定义，无数据库执行。"
+          "reason": "套餐额度来源的 Zod 配置定义，无数据库执行。 PR641 增加智谱与禁用来源的纯 Zod 配置校验；无 SQL、DDL 或启动迁移，见专门审核说明。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -1585,6 +1596,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -2276,6 +2291,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -2458,6 +2480,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -3128,6 +3154,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -3294,6 +3327,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -3964,6 +4001,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -4130,6 +4174,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -4786,6 +4834,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -4944,6 +4999,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -5600,6 +5659,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -5758,6 +5824,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -6414,6 +6484,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -6572,6 +6649,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -6756,9 +6837,9 @@
         {
           "path": "server/src/app/modelQuotaSourceSchema.ts",
           "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
-          "targetDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
-          "reason": "套餐额度来源的 Zod 配置定义，无数据库执行。"
+          "reason": "套餐额度来源的 Zod 配置定义，无数据库执行。 PR641 增加智谱与禁用来源的纯 Zod 配置校验；无 SQL、DDL 或启动迁移，见专门审核说明。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -7685,6 +7766,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -8348,6 +8433,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -8526,6 +8618,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -9203,6 +9299,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -9373,6 +9476,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -10050,6 +10157,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -10220,6 +10334,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -10841,6 +10959,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -10995,6 +11120,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -11616,6 +11745,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -11770,6 +11906,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -12391,6 +12531,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -12545,6 +12692,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -13166,6 +13317,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -13320,6 +13478,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -13927,6 +14089,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -14077,6 +14246,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -14684,6 +14857,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -14834,6 +15014,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -15385,6 +15569,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -15515,6 +15706,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -16059,6 +16254,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -16185,6 +16387,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -16729,6 +16935,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -16847,6 +17060,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -17391,6 +17608,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -17509,6 +17733,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -18053,6 +18281,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -18171,6 +18406,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -18687,6 +18926,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -18797,6 +19043,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -19299,6 +19549,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -19417,6 +19674,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -19891,6 +20152,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -19993,6 +20261,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -20467,6 +20739,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -20569,6 +20848,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -21001,6 +21284,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -21087,6 +21377,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -21519,6 +21813,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -21597,6 +21898,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -22015,6 +22320,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -22081,6 +22393,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -22499,6 +22815,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -22561,6 +22884,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -22979,6 +23306,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -23045,6 +23379,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -23456,6 +23794,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -23514,6 +23859,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -23925,6 +24274,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -23983,6 +24339,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -24387,6 +24747,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -24441,6 +24808,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -24845,6 +25216,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -24911,6 +25289,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -25315,6 +25697,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -25381,6 +25770,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -25785,6 +26178,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -25851,6 +26251,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -26220,6 +26624,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -26242,6 +26653,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -26646,6 +27061,13 @@
           "targetDigest": "sha256:5ed4e8764c73e6635997a46cdbf37a10d5cab1a41d3e7580f2e9111f0cbcbd59",
           "classification": "no-schema-change",
           "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged."
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -26692,6 +27114,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -26711,6 +27137,13 @@
           "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "仅调整 ACS 部署排空等待上限和剩余预算裁剪；无 SQL、DDL、迁移入口、数据回填、启动建表或新增依赖。详见 PR636 HTTP 部署排空复核证据。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
@@ -26733,6 +27166,10 @@
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     },
@@ -26745,12 +27182,41 @@
           "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
           "classification": "no-schema-change",
           "reason": "仅调整部署排空等待上限并按上游剩余预算收紧 deadline；没有 SQL、DDL、回填、schema 初始化或依赖变化。精确复核见绑定证据。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
         }
       ],
       "evidence": [
         {
           "path": "docs/release/PR636-current-base-migration-review-20260911.md",
           "digest": "sha256:0ae8ead73435e98d9f91c76df60c7d9fd8922201ecc54b7f551de2cd1d21d652"
+        },
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        }
+      ]
+    },
+    {
+      "baselineSha": "9db36e8861304c9254e545c80a17ccc720595af9",
+      "files": [
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
+          "classification": "no-schema-change",
+          "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
+          "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
         }
       ]
     }

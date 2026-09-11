@@ -6,6 +6,7 @@ const SOURCE_ORDER: Record<ProviderQuotaSnapshot['sourceKind'], number> = {
   codex_subscription: 0,
   claude_subscription: 1,
   volcengine_ark_plan: 2,
+  zhipu_coding_plan: 3,
 };
 
 /** 浏览器偏好损坏或存储被禁用时，仍可正常查看和调整卡片。 */
@@ -42,7 +43,7 @@ export function orderQuotaAccounts(
     if (aPosition !== undefined && bPosition !== undefined) return aPosition - bPosition;
     if (aPosition !== undefined) return -1;
     if (bPosition !== undefined) return 1;
-    return (SOURCE_ORDER[a.sourceKind] ?? 3) - (SOURCE_ORDER[b.sourceKind] ?? 3);
+    return (SOURCE_ORDER[a.sourceKind] ?? 4) - (SOURCE_ORDER[b.sourceKind] ?? 4);
   });
 }
 

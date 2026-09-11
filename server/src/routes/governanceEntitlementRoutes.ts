@@ -42,6 +42,11 @@ const scopeCommitSchema = z.object({
 }).strict();
 type Persona = 'platform_admin' | 'org_admin' | 'member';
 
+// integrated_system 权益对所有组织开放（平台级策略），不随组织配置，也不出现在治理范围页。
+const CONFIGURABLE_SCOPE_TYPES: readonly string[] = ENTITLEMENT_RESOURCE_TYPES.filter(
+  type => type !== 'integrated_system',
+);
+
 function sign(secret: string, input: Record<string, unknown>): string {
   return createHmac('sha256', secret).update(governanceDigest(input)).digest('hex');
 }
@@ -149,7 +154,9 @@ export function registerGovernanceEntitlementRoutes(options: {
         ? { id: 'suspend', label: '暂停权益', change: { status: 'suspended' }, requiresReason: true }
         : null;
     const allowedActions = persona === 'platform_admin' && entitlementAction ? [entitlementAction] : [];
-    const scopedActions = scopes.map(scope => ({
+    const scopedActions = scopes
+      .filter(scope => scope.resourceType !== 'integrated_system')
+      .map(scope => ({
       ...scope,
       allowedActions: ['platform_admin', 'org_admin'].includes(persona ?? '')
         ? [{ id: 'edit_scope', label: '从目录编辑', resourceType: scope.resourceType }]
@@ -267,7 +274,7 @@ export function registerGovernanceEntitlementRoutes(options: {
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     const resourceType = req.params.resourceType as EntitlementResourceType;
-    if (!(ENTITLEMENT_RESOURCE_TYPES as readonly string[]).includes(resourceType)) {
+    if (!CONFIGURABLE_SCOPE_TYPES.includes(resourceType)) {
       return res.status(400).json({ error: 'Unsupported resourceType' });
     }
     const current = (await options.entitlements.listResourceScopes(tenantId))
@@ -318,7 +325,7 @@ export function registerGovernanceEntitlementRoutes(options: {
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     if (!options.dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
     const resourceType = req.params.resourceType as EntitlementResourceType;
-    if (!(ENTITLEMENT_RESOURCE_TYPES as readonly string[]).includes(resourceType)) {
+    if (!CONFIGURABLE_SCOPE_TYPES.includes(resourceType)) {
       return res.status(400).json({ error: 'Unsupported resourceType' });
     }
     const { previewId, baselineDigest, expiresAt, ...mutation } = parsed.data;

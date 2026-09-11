@@ -409,6 +409,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -470,7 +477,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -479,6 +486,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -747,9 +758,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:7b66409def5a89d2c8172594266c61e8ef168380226f55cc1190c342aefc1604",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -1567,7 +1578,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -1600,6 +1611,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -1840,9 +1855,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -2455,7 +2470,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -2484,6 +2499,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -2724,9 +2743,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -3302,7 +3321,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -3331,6 +3350,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -3571,9 +3594,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -4149,7 +4172,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -4178,6 +4201,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -4418,9 +4445,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -4974,7 +5001,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -5003,6 +5030,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -5243,9 +5274,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -5799,7 +5830,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -5828,6 +5859,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -6068,9 +6103,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -6624,7 +6659,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -6653,6 +6688,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -6928,9 +6967,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -7657,7 +7696,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -7737,7 +7776,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -7770,6 +7809,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -8010,9 +8053,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -8505,7 +8548,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",
@@ -8589,7 +8632,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -8622,6 +8665,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -8862,9 +8909,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -9367,7 +9414,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -9447,7 +9494,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -9480,6 +9527,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -9720,9 +9771,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -10225,7 +10276,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -10305,7 +10356,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -10338,6 +10389,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -10557,9 +10612,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -11019,7 +11074,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -11091,7 +11146,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -11124,6 +11179,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -11343,9 +11402,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -11805,7 +11864,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -11877,7 +11936,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -11910,6 +11969,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -12129,9 +12192,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -12591,7 +12654,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -12663,7 +12726,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -12696,6 +12759,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -12915,9 +12982,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -13377,7 +13444,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -13449,7 +13516,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -13482,6 +13549,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -13694,9 +13765,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -14145,7 +14216,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -14217,7 +14288,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -14250,6 +14321,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -14462,9 +14537,9 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
-          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
-          "reason": "RC64（99b7496f）基线复审：completeResourceScopes 仅增加 integrated_system 默认 selected 空集，无 DDL、无启动回填；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+          "reason": "RC64（99b7496f）基线复审：completeResourceScopes 仅增加 integrated_system 默认 selected 空集，无 DDL、无启动回填；文件两端内容与已审核的 8cd1254e 基线完全相同。 PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
@@ -14913,7 +14988,7 @@
         },
         {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
-          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+          "digest": "sha256:256bbc63240bd82319442845594884f1cd1e34c09c7d28f29e13071438e19a3b"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
@@ -14985,7 +15060,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -15018,6 +15093,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -15576,6 +15655,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -15681,7 +15767,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -15710,6 +15796,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -16261,6 +16351,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -16362,7 +16459,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -16391,6 +16488,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -16942,6 +17043,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -17039,7 +17147,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -17064,6 +17172,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -17615,6 +17727,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -17712,7 +17831,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -17737,6 +17856,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -18288,6 +18411,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -18385,7 +18515,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -18410,6 +18540,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -18933,6 +19067,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -19022,7 +19163,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -19047,6 +19188,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -19556,6 +19701,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -19653,7 +19805,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -19678,6 +19830,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -20159,6 +20315,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -20244,7 +20407,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -20265,6 +20428,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -20746,6 +20913,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -20831,7 +21005,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -20852,6 +21026,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -21291,6 +21469,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -21364,7 +21549,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -21381,6 +21566,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -21820,6 +22009,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -21889,7 +22085,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
@@ -21902,6 +22098,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -22327,6 +22527,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -22388,7 +22595,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -22397,6 +22604,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -22822,6 +23033,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -22879,7 +23097,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -22888,6 +23106,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -23313,6 +23535,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -23374,7 +23603,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -23383,6 +23612,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -23801,6 +24034,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -23854,7 +24094,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -23863,6 +24103,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -24281,6 +24525,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -24330,7 +24581,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "server/src/quota/providerQuotaPushedAccounts.pg.test.ts",
@@ -24343,6 +24594,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -24754,6 +25009,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -24803,7 +25065,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -24812,6 +25074,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -25223,6 +25489,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -25284,7 +25557,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -25293,6 +25566,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -25704,6 +25981,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -25765,7 +26049,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -25774,6 +26058,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -26185,6 +26473,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -26246,7 +26541,7 @@
         },
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
+          "digest": "sha256:c9c2a1691f893034e0a771196f4edd6fb73cbf003f995d882ee43f34331efe01"
         },
         {
           "path": "docs/release/PR636-HTTP部署排空无结构变更复核-20260911.md",
@@ -26255,6 +26550,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -26631,6 +26930,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -26657,6 +26963,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -27068,6 +27378,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -27118,6 +27435,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -27144,6 +27465,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -27170,6 +27498,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -27189,6 +27521,13 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
@@ -27199,6 +27538,10 @@
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     },
@@ -27211,12 +27554,41 @@
           "targetDigest": "sha256:68dc1c9a83e7d7618cbb70896f045aaf2c4aeba08365c13bc4516bd733024638",
           "classification": "no-schema-change",
           "reason": "PR641：该模块只导入 Zod 并定义套餐来源校验和类型；已审核原文件或不存在的前态，无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         }
       ],
       "evidence": [
         {
           "path": "docs/release/PR641-zhipu-quota-config-review-20260911.md",
           "digest": "sha256:7df8f301941f4ade5a5c5cde8ec11ef068e73d25742bbefcb8ca38e7679effe8"
+        },
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        }
+      ]
+    },
+    {
+      "baselineSha": "eec01d4c1d043a3de0eec54f9fc1ab8d64651c4b",
+      "files": [
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
+          "classification": "no-schema-change",
+          "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
+          "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
         }
       ]
     }

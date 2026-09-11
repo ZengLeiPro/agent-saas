@@ -12,7 +12,7 @@ jobs:
   implementation:
     if: github.ref == 'refs/heads/feat/grok-subscription-global-pool'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16
@@ -69,7 +69,9 @@ jobs:
           def git(*args, **kwargs):
               return subprocess.check_output(['git', *args], text=True, **kwargs).strip()
           status=git('status','--porcelain')
-          report={'sha':git('rev-parse','HEAD'),'main':git('rev-parse','origin/main'),'run':os.environ['GITHUB_RUN_ID'],'worktreeClean':not status,'worktreeStatus':status.splitlines(),'checks':[]}
+          sha=git('rev-parse','HEAD')
+          remote=git('ls-remote','origin','refs/heads/feat/grok-subscription-global-pool').split()[0]
+          report={'sha':sha,'remoteFeatureSha':remote,'pushed':sha==remote,'main':git('rev-parse','origin/main'),'run':os.environ['GITHUB_RUN_ID'],'worktreeClean':not status,'worktreeStatus':status.splitlines(),'checks':[]}
           if Path('/tmp/grok-apply.log').exists():
               report['applyTail']=Path('/tmp/grok-apply.log').read_text().splitlines()[-70:]
           report['changedFiles']=git('diff','--name-status','origin/main...HEAD').splitlines()
@@ -87,6 +89,7 @@ jobs:
               subprocess.run(['git','update-ref','refs/remotes/origin/workbench/grok-validation',commit],check=True)
           publish()
           commands=[
+              ('grok-migration','node scripts/release/grok-migration-evidence.mjs origin/main HEAD'),
               ('server-types','pnpm -F server typecheck'),
               ('web-types','pnpm -F web typecheck'),
               ('shared-types','pnpm -F @agent/shared typecheck'),
@@ -99,12 +102,15 @@ jobs:
               ('release-contracts','pnpm test:release-contracts'),
               ('server-build','pnpm -F server build'),
               ('web-build','pnpm -F web build'),
+              ('full-shared','pnpm -F @agent/shared exec vitest run'),
+              ('full-server','pnpm -F server exec vitest run --maxWorkers=2'),
+              ('full-web','NODE_ENV=test pnpm -F web exec vitest run --testTimeout=15000 --maxWorkers=2'),
           ]
           failed=False
           for name,command in commands:
               started=time.monotonic()
               try:
-                  result=subprocess.run(command,shell=True,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=600)
+                  result=subprocess.run(command,shell=True,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=1200)
                   code,output=result.returncode,result.stdout
               except subprocess.TimeoutExpired as error:
                   code,output=124,str(error.stdout)
@@ -112,16 +118,17 @@ jobs:
               Path(f'/tmp/grok-{name}.log').write_text(output)
               lines=output.splitlines()
               selected=set(range(max(0,len(lines)-24),len(lines)))
-              if code:
+              if name=='grok-migration': selected=set(range(len(lines)))
+              elif code:
                   for i,line in enumerate(lines):
                       if re.search(r'not ok|FAIL|Error|error TS|GROWN|LOWERED|Assertion|conflict',line):
-                          selected.update(range(max(0,i-1),min(len(lines),i+12)))
+                          selected.update(range(max(0,i-1),min(len(lines),i+16)))
               summary=[lines[i] for i in sorted(selected)]
-              report['checks'].append({'name':name,'command':command,'exitCode':code,'seconds':round(time.monotonic()-started,2),'outputLines':summary[:240]})
+              report['checks'].append({'name':name,'command':command,'exitCode':code,'seconds':round(time.monotonic()-started,2),'outputLines':summary[:1000]})
               failed|=code!=0
               print(name,code,flush=True)
               publish()
-          raise SystemExit(1 if failed or not report['worktreeClean'] else 0)
+          raise SystemExit(1 if failed or not report['worktreeClean'] or not report['pushed'] else 0)
           PY
       - uses: actions/upload-artifact@v4
         if: always()

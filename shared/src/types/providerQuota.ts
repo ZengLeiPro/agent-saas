@@ -1,17 +1,17 @@
 /**
  * 套餐额度看板：跨供应商归一化的用量快照。
  *
- * 服务端按周期向各家「管控面」取数（Codex = wham/usage，火山 = Ark OpenAPI GetAFPUsage），
- * 落 PG 后由平台管理端展示。推理 API Key 本身查不到套餐额度，这里的数据源是账号级凭据。
+ * 服务端按周期向各家管控面取数，落 PG 后由平台管理端展示。
+ * 火山需要独立 AccessKey；智谱个人 Coding Plan 复用模型分组 API Key，返回账号共享额度。
  *
- * `claude_subscription` 是**推送型**来源：Anthropic 不提供订阅额度查询 API，额度只能由官方
- * 客户端（Claude Code / Agent SDK）在真实会话中带出，因此由 KY Agent 侧采集后直接写快照表，
- * 平台不主动取数（详见 providerQuotaService 的 pushOnly 分支）。
+ * claude_subscription 是推送型来源：额度由官方客户端真实会话带出，
+ * KY Agent 侧采集后直接写快照表，平台不主动取数。
  */
 export type ProviderQuotaSourceKind =
   | 'codex_subscription'
   | 'volcengine_ark_plan'
-  | 'claude_subscription';
+  | 'claude_subscription'
+  | 'zhipu_coding_plan';
 
 export interface ProviderQuotaWindow {
   /** 同一账号内唯一，例如 five_hour / weekly / codex_bengalfox:primary。 */
@@ -37,7 +37,7 @@ export interface ProviderQuotaPlanInfo {
   autoRenew?: boolean;
 }
 
-/** 凭据/调度侧状态（Codex 订阅账号）：看板据此区分「真撞限」与「token 过期 / 正在被调度器绕开」。 */
+/** 凭据/调度侧状态（Codex 订阅账号）：区分撞限与凭据不可用。 */
 export interface ProviderQuotaCredentialState {
   expiresAt?: string;
   accessTokenExpired?: boolean;
@@ -48,11 +48,11 @@ export interface ProviderQuotaCredentialState {
 
 export interface ProviderQuotaSnapshot {
   sourceKind: ProviderQuotaSourceKind;
-  /** 稳定账号键：codex:<credentialRef> / volcengine:<groupId> / claude:<email>。 */
+  /** 稳定键：codex:<credentialRef> / volcengine:<groupId> / claude:<email> / zhipu:<groupId>。 */
   accountKey: string;
   /** 账号邮箱、分组名等人读标识。 */
   accountLabel: string;
-  /** 所属模型分组 id（火山按分组配置；Codex 订阅无分组）。 */
+  /** 所属模型分组 id（火山和智谱按分组配置）。 */
   groupId?: string;
   plan?: ProviderQuotaPlanInfo;
   /** 仅概览附加的手动设置；采集快照与供应商 plan 保持原样。 */
@@ -67,11 +67,11 @@ export interface ProviderQuotaSnapshot {
   /** Codex：可用的额度重置券张数（rate_limit_reset_credits.available_count）。 */
   resetCredits?: number;
   credential?: ProviderQuotaCredentialState;
-  /** false 时 windows 为空，error 记录采集失败原因。 */
+  /** false 时采集失败；概览可附加上次成功的窗口，并标记 lastSuccessAt。 */
   ok: boolean;
   error?: string;
   collectedAt: string;
-  /** 供应商特有补充信息（如 Codex credits），只做展示。 */
+  /** 供应商特有补充信息；禁止放入凭据或完整上游响应。 */
   extra?: Record<string, unknown>;
 }
 
@@ -101,17 +101,41 @@ export interface ProviderQuotaHistoryResponse {
   generatedAt: string;
 }
 
-export interface ProviderQuotaTestRequest {
-  provider: 'volcengine_ark_plan';
-  accessKeyId: string;
-  /** 留空时按 groupId 使用已保存的 Secret。 */
-  secretAccessKey?: string;
-  groupId?: string;
-  region?: string;
-}
+export type ProviderQuotaTestRequest =
+  | {
+      provider: 'volcengine_ark_plan';
+      accessKeyId: string;
+      /** 留空时按 groupId 使用已保存的 Secret。 */
+      secretAccessKey?: string;
+      groupId?: string;
+      region?: string;
+    }
+  | {
+      provider: 'zhipu_coding_plan';
+      /** 仅测试未保存的 Key；留空时按 groupId 读取分组已保存的 Key。 */
+      apiKey?: string;
+      groupId?: string;
+    };
 
 export interface ProviderQuotaTestResponse {
   plan?: ProviderQuotaPlanInfo;
   windows: ProviderQuotaWindow[];
   limitReached: boolean;
+}
+
+/**
+ * 模型配置与采集器共用的来源判定。历史官方地址自动接入；显式来源（包括 none）优先。
+ * 精确校验 HTTPS origin，避免用子串匹配将相似域名当作智谱官方。
+ */
+export function isZhipuCodingPlanGroup(group: {
+  baseUrl?: string | null;
+  quotaSource?: { provider: string };
+}): boolean {
+  if (group.quotaSource) return group.quotaSource.provider === 'zhipu_coding_plan';
+  try {
+    const url = new URL(group.baseUrl ?? '');
+    return url.origin === 'https://open.bigmodel.cn' && !url.username && !url.password;
+  } catch {
+    return false;
+  }
 }

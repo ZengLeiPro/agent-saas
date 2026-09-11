@@ -329,7 +329,6 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
   app.use(
     '/api/app-contract/v1',
     createKyAppSystemsRouter({
-      ...(options.entitlements ? { entitlements: options.entitlements } : {}),
       systems: systems as unknown as PgKyAppSystemStore,
       audit,
       ...(options.toolRegistrationDryRun
@@ -341,7 +340,6 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
     '/api/app-contract/v1',
     createKyAppInstallationsRouter({
       audit,
-      ...(options.entitlements ? { entitlements: options.entitlements } : {}),
       systems: systems as unknown as PgKyAppSystemStore,
       installations,
       credentials,

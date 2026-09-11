@@ -202,12 +202,14 @@ export class PgEntitlementStore {
           const existingTypes = new Set(existing.rows.map(row => row.resource_type));
           const defaults = new Map(completeResourceScopes(tenant.settings ?? DEFAULT_TENANT_SETTINGS)
             .map(scope => [scope.resourceType, scope]));
+          // 只回填投影清单里存在的类型：integrated_system 平台级全开，不再生成组织范围行。
           for (const resourceType of ENTITLEMENT_RESOURCE_TYPES) {
             if (existingTypes.has(resourceType)) {
               scopesSkipped += 1;
               continue;
             }
-            const scope = defaults.get(resourceType)!;
+            const scope = defaults.get(resourceType);
+            if (!scope) continue;
             const inserted = await client.query(`
               INSERT INTO ${this.scopesTable} (
                 tenant_id, resource_type, mode, source, created_by, updated_by
@@ -577,12 +579,12 @@ function legacyScopes(settings: TenantSettings): Array<{
 }
 
 function completeResourceScopes(settings: TenantSettings): ReturnType<typeof legacyScopes> {
+  // integrated_system 不再投影权益范围：业务系统接入对所有组织开放，不按组织配置。
   return [
     ...legacyScopes(settings),
     { resourceType: 'agent_template', mode: 'selected', resourceIds: [] },
     { resourceType: 'skill', mode: 'selected', resourceIds: [] },
     { resourceType: 'environment_template', mode: 'selected', resourceIds: [] },
-    { resourceType: 'integrated_system', mode: 'selected', resourceIds: [] },
   ];
 }
 

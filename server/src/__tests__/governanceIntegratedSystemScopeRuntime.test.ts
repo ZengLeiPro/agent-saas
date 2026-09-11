@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { registerGovernanceRoutes } from '../app/governanceRoutes.js';
 import type { AppRuntime } from '../app/runtime.js';
-import { installableScope } from '../kyapp/installations/managementPolicy.js';
 import { commitBody } from './governanceAccessTestSupport.js';
 
 const servers: Server[] = [];
@@ -17,7 +16,7 @@ afterEach(async () => {
 });
 
 async function rig(persona = 'platform_admin') {
-  let scope = {
+  const scope = {
     tenantId: 'tenant-a',
     resourceType: 'integrated_system',
     mode: 'selected',
@@ -29,22 +28,7 @@ async function rig(persona = 'platform_admin') {
     { tenantId: 'tenant-a', userId: 'disabled-a', status: 'disabled', version: 3 },
     { tenantId: 'tenant-b', userId: 'member-b', status: 'active', version: 4 },
   ]);
-  const listByKind = vi.fn().mockImplementation(async (kind: string) => [
-    { tenantId: 'tenant-a', agentId: `${kind}-a`, kind, status: 'enabled', revision: 5 },
-    { tenantId: 'tenant-a', agentId: `${kind}-draft`, kind, status: 'draft', revision: 1 },
-    { tenantId: 'tenant-b', agentId: `${kind}-b`, kind, status: 'enabled', revision: 2 },
-  ]);
-  const replaceResourceScope = vi
-    .fn()
-    .mockImplementation(async (_tenantId, _resourceType, patch) => {
-      scope = {
-        ...scope,
-        mode: patch.mode,
-        resourceIds: patch.resourceIds,
-        version: scope.version + 1,
-      };
-      return scope;
-    });
+  const replaceResourceScope = vi.fn();
   const enqueue = vi.fn().mockResolvedValue({ projectionId: 'projection-1' });
   const runtime = {
     config: {
@@ -67,7 +51,7 @@ async function rig(persona = 'platform_admin') {
       }),
       listMemberships,
     },
-    agentResourceStore: { listByKind },
+    agentResourceStore: { listByKind: vi.fn().mockResolvedValue([]) },
     kyAppSystemStore: {
       listDefinitions: vi
         .fn()
@@ -75,18 +59,13 @@ async function rig(persona = 'platform_admin') {
       getDefinition: vi.fn(async (id: string) =>
         id === 'demo-system' ? { systemId: id, status: 'published', version: 1 } : null,
       ),
-      listInstallationsForTenant: vi.fn().mockResolvedValue([
-        { tenantId: 'tenant-a', installationId: 'install-a', status: 'enabled', stateVersion: 2 },
-        { tenantId: 'tenant-a', installationId: 'pending-a', status: 'pending', stateVersion: 3 },
-        { tenantId: 'tenant-a', installationId: 'deleted-a', status: 'deleted', stateVersion: 4 },
-        { tenantId: 'tenant-b', installationId: 'install-b', status: 'enabled', stateVersion: 5 },
-      ]),
+      listInstallationsForTenant: vi.fn().mockResolvedValue([]),
     },
     entitlementStore: {
       getEntitlementSet: vi
         .fn()
         .mockResolvedValue({ tenantId: 'tenant-a', status: 'active', version: 1 }),
-      listResourceScopes: vi.fn().mockImplementation(async () => [scope]),
+      listResourceScopes: vi.fn().mockResolvedValue([scope]),
       getPolicies: vi.fn().mockResolvedValue([]),
       replaceResourceScope,
     },
@@ -121,80 +100,32 @@ async function rig(persona = 'platform_admin') {
         ...(body ? { body: JSON.stringify(body) } : {}),
       },
     );
-  return { request, runtime, listMemberships, listByKind, replaceResourceScope, enqueue };
+  return { request, runtime, listMemberships, replaceResourceScope, enqueue };
 }
 
 const change = { expectedVersion: 1, mode: 'selected', resourceIds: ['demo-system'] };
 const previewPath = 'entitlement-scopes/integrated_system/preview';
 
-describe('业务系统范围的真实运行时路由接线', () => {
-  it('平台管理员可预览、保存并回读业务系统范围，影响清单隔离组织且排除已删除实例', async () => {
+describe('业务系统范围平台级全开的运行时守卫', () => {
+  it('integrated_system 范围不可预览、不可提交，权威读取也不返回', async () => {
     const test = await rig();
-    expect((await installableScope(test.runtime.entitlementStore, 'tenant-a'))('demo-system')).toBe(
-      false,
-    );
-    const response = await test.request(previewPath, 'POST', change);
-    expect(response.status).toBe(200);
-    const preview = await response.json();
-    expect(preview.impact.affectedResources).toEqual([
-      { type: 'app_installation', id: 'install-a', version: 2 },
-      { type: 'app_installation', id: 'pending-a', version: 3 },
-    ]);
-    expect(test.runtime.kyAppSystemStore!.listInstallationsForTenant).toHaveBeenCalledWith(
-      'tenant-a',
-    );
+    expect((await test.request(previewPath, 'POST', change)).status).toBe(400);
+    expect(
+      (
+        await test.request(
+          'entitlement-scopes/integrated_system',
+          'PUT',
+          commitBody(change, { previewId: 'gpv1.' + '0'.repeat(64), baselineDigest: '0'.repeat(64), expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+        )
+      ).status,
+    ).toBe(400);
     expect(test.replaceResourceScope).not.toHaveBeenCalled();
-    const saved = await test.request(
-      'entitlement-scopes/integrated_system',
-      'PUT',
-      commitBody(change, preview),
-    );
-    expect(saved.status).toBe(200);
-    expect((await installableScope(test.runtime.entitlementStore, 'tenant-a'))('demo-system')).toBe(
-      true,
-    );
-    expect(test.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantId: 'tenant-a', projector: 'tenant_settings' }),
-    );
     const read = await test.request('entitlements');
     expect(read.status).toBe(200);
-    expect(await read.json()).toMatchObject({
-      scopes: [
-        expect.objectContaining({ mode: 'selected', resourceIds: ['demo-system'], version: 2 }),
-      ],
-    });
-    const all = { expectedVersion: 2, mode: 'all', resourceIds: [] };
-    const allPreview = await test.request(previewPath, 'POST', all);
-    expect(allPreview.status).toBe(200);
-    const allSaved = await test.request(
-      'entitlement-scopes/integrated_system',
-      'PUT',
-      commitBody(all, await allPreview.json()),
-    );
-    expect(allSaved.status).toBe(200);
-    expect(await allSaved.json()).toMatchObject({ mode: 'all', resourceIds: [], version: 3 });
+    expect(await read.json()).toMatchObject({ scopes: [] });
   });
 
-  it('依赖查询失败仍关闭预览，不能伪造空影响结果', async () => {
-    const test = await rig();
-    vi.mocked(test.runtime.kyAppSystemStore!.listInstallationsForTenant!).mockRejectedValue(
-      new Error('database unavailable'),
-    );
-    const response = await test.request(previewPath, 'POST', change);
-    expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({
-      code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE',
-    });
-    expect(test.replaceResourceScope).not.toHaveBeenCalled();
-  });
-
-  it('缺少安装权威目录仍拒绝预览', async () => {
-    const test = await rig();
-    test.runtime.kyAppSystemStore = undefined;
-    expect((await test.request(previewPath, 'POST', change)).status).toBe(503);
-  });
-
-  it('组织管理员不能跨组织预览', async () => {
+  it('组织管理员不能跨组织访问，权限门槛保持在前', async () => {
     const test = await rig('org_admin');
     expect((await test.request(`${previewPath}?tenantId=tenant-b`, 'POST', change)).status).toBe(
       403,
@@ -202,52 +133,9 @@ describe('业务系统范围的真实运行时路由接线', () => {
     expect(test.listMemberships).not.toHaveBeenCalled();
   });
 
-  it('普通成员不能修改业务系统范围', async () => {
+  it('普通成员不能访问业务系统范围端点', async () => {
     const test = await rig('member');
     expect((await test.request(previewPath, 'POST', change)).status).toBe(403);
     expect(test.listMemberships).not.toHaveBeenCalled();
-  });
-
-  it('业务系统目录变更后拒绝旧预览提交', async () => {
-    const test = await rig();
-    const preview = await (await test.request(previewPath, 'POST', change)).json();
-    vi.mocked(test.runtime.kyAppSystemStore!.listDefinitions!).mockResolvedValue([]);
-    const response = await test.request(
-      'entitlement-scopes/integrated_system',
-      'PUT',
-      commitBody(change, preview),
-    );
-    expect(response.status).toBe(409);
-    expect(test.replaceResourceScope).not.toHaveBeenCalled();
-  });
-
-  it('没有安装的组织可以首次授权，撤回范围后不再允许安装', async () => {
-    const test = await rig('org_admin');
-    vi.mocked(test.runtime.kyAppSystemStore!.listInstallationsForTenant!).mockResolvedValue([]);
-    const preview = await (await test.request(previewPath, 'POST', change)).json();
-    expect(preview.impact.affectedResources).toEqual([]);
-    expect(
-      (
-        await test.request(
-          'entitlement-scopes/integrated_system',
-          'PUT',
-          commitBody(change, preview),
-        )
-      ).status,
-    ).toBe(200);
-    const revoke = { ...change, expectedVersion: 2, resourceIds: [] };
-    const revokePreview = await (await test.request(previewPath, 'POST', revoke)).json();
-    expect(
-      (
-        await test.request(
-          'entitlement-scopes/integrated_system',
-          'PUT',
-          commitBody(revoke, revokePreview),
-        )
-      ).status,
-    ).toBe(200);
-    expect((await installableScope(test.runtime.entitlementStore, 'tenant-a'))('demo-system')).toBe(
-      false,
-    );
   });
 });

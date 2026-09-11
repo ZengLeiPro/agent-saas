@@ -45,21 +45,18 @@ describePg('Entitlement 资源范围基线 PostgreSQL 合约', () => {
     await pool.end();
   }, 30_000);
 
-  it('新组织初始化七类 v1 基线，新增四类为空 selected，回滚同步删除', async () => {
+  it('新组织初始化六类 v1 基线，新增三类为空 selected，业务系统不投影组织范围', async () => {
     await store.provisionTenantGovernance({
       tenantId: 'tenant-new',
       settings: DEFAULT_TENANT_SETTINGS,
       createdBy: 'platform-1',
     });
     const scopes = await store.listResourceScopes('tenant-new');
-    expect(scopes.map((item) => item.resourceType)).toEqual([...ENTITLEMENT_RESOURCE_TYPES].sort());
+    expect(scopes.map((item) => item.resourceType)).toEqual(
+      [...ENTITLEMENT_RESOURCE_TYPES].filter((type) => type !== 'integrated_system').sort(),
+    );
     expect(scopes.every((item) => item.version === 1)).toBe(true);
-    for (const resourceType of [
-      'agent_template',
-      'skill',
-      'environment_template',
-      'integrated_system',
-    ]) {
+    for (const resourceType of ['agent_template', 'skill', 'environment_template']) {
       expect(scopes.find((item) => item.resourceType === resourceType)).toMatchObject({
         mode: 'selected',
         resourceIds: [],
@@ -88,12 +85,12 @@ describePg('Entitlement 资源范围基线 PostgreSQL 合约', () => {
     };
     await expect(store.backfillMissingResourceScopes(input)).resolves.toMatchObject({
       scopesInserted: 2,
-      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.length - 2,
+      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.filter((type) => type !== 'integrated_system').length - 2,
       tenantsWithErrors: 0,
     });
     await expect(store.backfillMissingResourceScopes(input)).resolves.toMatchObject({
       scopesInserted: 0,
-      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.length,
+      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.filter((type) => type !== 'integrated_system').length,
       tenantsWithErrors: 0,
     });
     expect(

@@ -87,7 +87,6 @@ const url = process.env.TEST_DATABASE_URL;
   function rig() {
     const tenantId = `org-${++sequence}`;
     const state = {
-      eligible: true,
       active: true,
       tenantDisabled: false,
       userDisabled: false,
@@ -159,16 +158,6 @@ const url = process.env.TEST_DATABASE_URL;
             : undefined,
       },
       memberships,
-      entitlementStore: {
-        getEntitlementSet: async () => ({ status: 'active' }),
-        listResourceScopes: async () => [
-          {
-            resourceType: 'integrated_system',
-            mode: 'selected',
-            resourceIds: state.eligible ? [TEST_SYSTEM] : [],
-          },
-        ],
-      },
       credentials: {
         listMetadata: async () =>
           issued ? [{ credentialId: 'cred', status: state.acked ? 'active' : 'pending_ack' }] : [],
@@ -214,8 +203,8 @@ const url = process.env.TEST_DATABASE_URL;
       expect(first.execution.request).not.toHaveProperty(field);
     expect(await systems.listInstallationsForTenant(r.input.tenantId)).toHaveLength(1);
   });
-  it.each(['eligible', 'active', 'tenantDisabled', 'userDisabled', 'userTenant'] as const)(
-    '在任何业务写入前拒绝非法身份或权益：%s',
+  it.each(['active', 'tenantDisabled', 'userDisabled', 'userTenant'] as const)(
+    '在任何业务写入前拒绝非法身份：%s',
     async (field) => {
       const r = rig();
       if (field === 'userTenant') r.state.userTenant = 'another-tenant';
@@ -260,7 +249,7 @@ const url = process.env.TEST_DATABASE_URL;
     expect(options.installation?.status).toBe('pending');
     expect(r.issue).toHaveBeenCalledTimes(1);
   });
-  it('凭据、DNS、ready、成员授权依次检查；恢复时重新校验权益，完成后保留审计和交付状态', async () => {
+  it('凭据、DNS、ready、成员授权依次检查；完成后保留审计和交付状态', async () => {
     const r = rig();
     const initial = await r.service.start(r.input, PLATFORM_ADMIN);
     const resume = () => r.service.resume(initial.execution.executionId, PLATFORM_ADMIN);
@@ -272,9 +261,6 @@ const url = process.env.TEST_DATABASE_URL;
     r.state.ready = true;
     expect((await resume()).execution.lastErrorCode).toBe('assignment_required');
     expect(r.options.runSmoke).not.toHaveBeenCalled();
-    r.state.eligible = false;
-    await expect(resume()).rejects.toMatchObject({ code: 'forbidden' });
-    r.state.eligible = true;
     r.state.assigned = true;
     const done = await resume();
     expect(done.execution.status).toBe('completed');

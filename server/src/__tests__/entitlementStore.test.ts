@@ -177,7 +177,7 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     )).toBe(true);
   });
 
-  it('新组织一次事务初始化六类范围，新增三类使用 selected 空集合', async () => {
+  it('新组织一次事务初始化六类范围，新增三类使用 selected 空集合，不投影 integrated_system', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const query = async (sql: string, params?: unknown[]) => {
       queries.push({ sql, ...(params ? { params } : {}) });
@@ -193,13 +193,14 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     });
 
     const scopeInserts = queries.filter(item => item.sql.includes('INSERT INTO test_entitlement_resource_scopes'));
-    expect(scopeInserts.map(item => item.params?.[1])).toEqual(ENTITLEMENT_RESOURCE_TYPES);
-    expect(scopeInserts.filter(item => ['agent_template', 'skill', 'environment_template', 'integrated_system'].includes(String(item.params?.[1]))))
+    expect(scopeInserts.map(item => item.params?.[1])).toEqual(
+      ENTITLEMENT_RESOURCE_TYPES.filter(type => type !== 'integrated_system'),
+    );
+    expect(scopeInserts.filter(item => ['agent_template', 'skill', 'environment_template'].includes(String(item.params?.[1]))))
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ params: ['acme', 'agent_template', 'selected', 'platform-1'] }),
         expect.objectContaining({ params: ['acme', 'skill', 'selected', 'platform-1'] }),
         expect.objectContaining({ params: ['acme', 'environment_template', 'selected', 'platform-1'] }),
-        expect.objectContaining({ params: ['acme', 'integrated_system', 'selected', 'platform-1'] }),
       ]));
     expect(queries.some(item => item.sql.includes("'tenant_provisioning'"))).toBe(true);
     expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(1);
@@ -231,7 +232,8 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
 
     await expect(store.backfillMissingResourceScopes(input)).resolves.toEqual({
       tenantsScanned: 1,
-      scopesInserted: ENTITLEMENT_RESOURCE_TYPES.length - 3,
+      // 库里已有 model/tool/connector 三类，只会补齐 agent_template/skill/environment_template。
+      scopesInserted: ENTITLEMENT_RESOURCE_TYPES.filter(type => type !== 'integrated_system').length - 3,
       scopesSkipped: 3,
       tenantsWithErrors: 0,
       issuesRecorded: 0,
@@ -244,7 +246,9 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
       issuesRecorded: 0,
     });
     const inserts = queries.filter(item => item.sql.includes('INSERT INTO test_entitlement_resource_scopes'));
-    expect(inserts).toHaveLength(ENTITLEMENT_RESOURCE_TYPES.length - 3);
+    expect(inserts).toHaveLength(
+      ENTITLEMENT_RESOURCE_TYPES.filter(type => type !== 'integrated_system').length - 3,
+    );
     expect(inserts.every(item => !item.sql.includes('DO UPDATE'))).toBe(true);
   });
 

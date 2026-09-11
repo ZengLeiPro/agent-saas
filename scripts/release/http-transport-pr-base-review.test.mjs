@@ -46,6 +46,12 @@ const snapshot = (sha, overrides = {}, absent = []) => ({
 });
 const baselineSnapshot = snapshot(baseline);
 
+// A dual-purpose file is rejected by source identity before the evidence pass.
+const missingOrChangedError = (path) =>
+  auditedPaths.includes(path)
+    ? /source changed and requires re-review/u
+    : /evidence changed or is invalid/u;
+
 test('HTTP baseline retains exact byte-bound reviews alongside the separately audited Zhipu config', () => {
   const loaded = loadMigrationReviews({
     baseline,
@@ -78,7 +84,7 @@ test('both reviews reject changed target bytes, baseline bytes and changed or mi
             [path]: `${git('show', `${target}:${path}`)}\nchanged`,
           }),
         }),
-      /requires re-review|evidence changed or is invalid/u,
+      missingOrChangedError(path),
     );
   }
   for (const path of auditedPaths) {
@@ -103,7 +109,7 @@ test('both reviews reject changed target bytes, baseline bytes and changed or mi
           baselineSnapshot,
           targetSnapshot: snapshot(target, {}, [path]),
         }),
-      /evidence changed or is invalid/u,
+      missingOrChangedError(path),
     );
   }
 });

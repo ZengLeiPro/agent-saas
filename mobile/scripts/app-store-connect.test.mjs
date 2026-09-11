@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, verify } from 'node:crypto';
 import test from 'node:test';
+import './app-store-upload-result.test.mjs';
 import {
   classifyInternalBuildState,
   createAppStoreToken,
@@ -84,7 +85,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { AppStoreClient, submitToTestFlight } from './app-store-connect.mjs';
 import { SubmissionProgress, SUBMIT_LIMITS, runUploadProcess, uploadIpa } from './app-store-progress.mjs';
 
-const limits = { ...SUBMIT_LIMITS, totalMs: 10_000, preflightMs: 1000, uploadMs: 3000, processingMs: 1000, internalMs: 1000, heartbeatMs: 10, pollMs: 10 };
+const limits = { ...SUBMIT_LIMITS, totalMs: 10_000, preflightMs: 1000, uploadMs: 3000, visibilityMs: 1000, processingMs: 1000, internalMs: 1000, heartbeatMs: 10, pollMs: 10 };
 const identity = { appId: '1234567890', version: '1.0.0', buildNumber: '6.101.1', betaGroupId: 'a21bd778-a7de-43ee-97ca-3f6f5877d237', betaGroupName: 'fixture' };
 const group = { id: identity.betaGroupId, attributes: { name: identity.betaGroupName, isInternalGroup: true, hasAccessToAllBuilds: true } };
 const credentials = {
@@ -121,7 +122,7 @@ for (const alreadyPresent of [false, true]) {
     const item = observer(t);
     let uploads = 0;
     const client = fakeClient(alreadyPresent ? ['PROCESSING', 'VALID'] : [null, null, 'PROCESSING', 'VALID']);
-    const result = await submitToTestFlight({ client, identity, progress: item.progress, upload: async (phase) => { uploads++; phase.state('RUNNING'); await phase.sleep(50); } });
+    const result = await submitToTestFlight({ client, identity, progress: item.progress, upload: async (phase) => { uploads++; phase.state('RUNNING'); await phase.sleep(50); return { accepted: true, evidence: ['altool-banner'] }; } });
     assert.equal(uploads, alreadyPresent ? 0 : 1);
     assert.equal(result.uploadStatus, alreadyPresent ? 'already-present' : 'uploaded');
     assert.equal(result.betaDetail.attributes.internalBuildState, 'IN_BETA_TESTING');
@@ -152,17 +153,17 @@ test('unknown Apple state is bounded and cannot leak server text', async (t) => 
   assert.doesNotMatch(item.logs.join('') + readFileSync(item.summaryPath, 'utf8'), /PRIVATE_SENTINEL/u);
 });
 
-test('silent upload has heartbeats before process exit; arbitrary output stays private', async (t) => {
+test('oversized output is drained with heartbeats but never accepted as a complete receipt', async (t) => {
   const item = observer(t);
-  await item.progress.run('upload', 3000, (phase) => runUploadProcess(process.execPath, ['-e', `
+  await assert.rejects(item.progress.run('upload', 3000, (phase) => runUploadProcess(process.execPath, ['-e', `
     process.stdout.write('PRIVATE_' + 'SENTINEL');
     process.stderr.write('-----BEGIN PRIVATE KEY-----\\nSECRET_LINE\\n-----END PRIVATE KEY-----');
     process.stdout.write('x'.repeat(2 * 1024 * 1024));
     setTimeout(() => process.exit(0), 150);
-  `], { phase }));
+  `], { phase })), /OUTPUT_LIMIT_EXCEEDED/u);
   const records = item.records();
   assert.ok(records.some((r) => r.event === 'heartbeat' && r.toolOutputBytes > 1024 * 1024));
-  assert.equal(records.at(-1).event, 'completed');
+  assert.equal(records.at(-1).event, 'failed');
   assert.doesNotMatch(item.logs.join('') + readFileSync(item.summaryPath, 'utf8'), /PRIVATE_SENTINEL|SECRET_LINE|BEGIN PRIVATE KEY/u);
 });
 
@@ -253,8 +254,8 @@ test('cancellation does not reconcile, reupload or produce a readiness event', a
   assert.equal(item.records().at(-1).event, 'cancelled');
 });
 
-for (const mode of ['success', 'missing-file', 'spawn-error', 'cancelled']) {
-  test(`temporary P8 is cleaned on ${mode}, including real fd handoff`, async (t) => {
+for (const mode of ['success', 'missing-file', 'spawn-error', 'cancelled', 'zero-exit-error', 'mutated-copy']) {
+  test(`temporary P8 is cleaned on ${mode}, including a real named read-only IPA`, async (t) => {
     const item = observer(t);
     const bin = join(item.directory, 'bin');
     mkdirSync(bin);
@@ -262,12 +263,16 @@ for (const mode of ['success', 'missing-file', 'spawn-error', 'cancelled']) {
     writeFileSync(ipa, 'EXACT_IPA_BYTES');
     writeFileSync(join(bin, 'xcrun'), `#!${process.execPath}\n
       const fs=require('node:fs'), path=require('node:path');
-      if (fs.readFileSync(3,'utf8') !== 'EXACT_IPA_BYTES') process.exit(2);
+      const args=process.argv.slice(2), ipa=args[args.indexOf('--file')+1];
+      if (!ipa.endsWith('/upload.ipa') || fs.readFileSync(ipa,'utf8') !== 'EXACT_IPA_BYTES') process.exit(2);
+      if ((fs.statSync(ipa).mode & 511)!==256) process.exit(5);
+      // A helper with no inherited IPA descriptor can reopen the real path.
+      require('node:child_process').execFileSync(process.execPath,['-e', 'require("node:fs").readFileSync(process.argv[1])', ipa]);
       const dir=process.env.API_PRIVATE_KEYS_DIR;
       const key=path.join(dir,fs.readdirSync(dir)[0]);
       if ((fs.statSync(key).mode & 511)!==384 || (fs.statSync(dir).mode & 511)!==448) process.exit(3);
       if (process.env.APP_STORE_CONNECT_API_KEY_P8) process.exit(4);
-      ${mode === 'cancelled' ? 'setInterval(()=>{},1000);' : ''}
+      ${mode === 'cancelled' ? 'setInterval(()=>{},1000);' : mode === 'zero-exit-error' ? 'console.error("ERROR: Failed to upload package. PRIVATE_SENTINEL");' : mode === 'mutated-copy' ? 'fs.chmodSync(ipa,384); fs.writeFileSync(ipa,"CHANGED_IPA_BYTES"); console.log("UPLOAD SUCCEEDED");' : 'console.log("UPLOAD SUCCEEDED");'}
     `, { mode: 0o700 });
     const oldPath = process.env.PATH;
     const oldKey = process.env.APP_STORE_CONNECT_API_KEY_P8;
@@ -282,14 +287,14 @@ for (const mode of ['success', 'missing-file', 'spawn-error', 'cancelled']) {
   });
 }
 
-for (const outcome of ['success', 'cancelled', 'apple-failed']) {
+for (const outcome of ['success', 'cancelled', 'apple-failed', 'zero-exit-error', 'empty-output']) {
   test(`real CLI ${outcome}: cleanup and truthful receipt`, async (t) => {
   const item = observer(t);
   const bin = join(item.directory, 'bin');
   mkdirSync(bin);
-  writeFileSync(join(bin, 'xcrun'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(join(item.directory, 'started'))},'yes'); ${outcome === 'cancelled' ? 'setInterval(()=>{},1000);' : ''}`, { mode: 0o700 });
+  writeFileSync(join(bin, 'xcrun'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(join(item.directory, 'started'))},'yes'); ${outcome === 'cancelled' ? 'setInterval(()=>{},1000);' : outcome === 'zero-exit-error' ? 'console.error("ERROR: Failed to upload package. PRIVATE_SENTINEL");' : outcome === 'empty-output' ? '' : 'console.log("UPLOAD SUCCEEDED");'}`, { mode: 0o700 });
   const stub = join(item.directory, 'network.mjs');
-  writeFileSync(stub, `let reads=0; globalThis.fetch=async (url)=>new Response(JSON.stringify({data:url.includes('/betaGroups?')?[${JSON.stringify(group)}]:url.endsWith('/buildBetaDetail')?{attributes:{internalBuildState:'IN_BETA_TESTING'}}:reads++===0?[]:[{id:'fixture-build',attributes:{processingState:'${outcome === 'apple-failed' ? 'INVALID' : 'VALID'}'}}]}));`);
+  writeFileSync(stub, `let reads=0; globalThis.fetch=async (url)=>new Response(JSON.stringify({data:url.includes('/betaGroups?')?[${JSON.stringify(group)}]:url.endsWith('/buildBetaDetail')?{attributes:{internalBuildState:'IN_BETA_TESTING'}}:${['zero-exit-error', 'empty-output'].includes(outcome) ? 'true' : 'reads++===0'}?[]:[{id:'fixture-build',attributes:{processingState:'${outcome === 'apple-failed' ? 'INVALID' : 'VALID'}'}}]}));`);
   const ipa = join(item.directory, 'fixture.ipa');
   writeFileSync(ipa, 'fixture');
   writeFileSync(`${ipa}.source.json`, JSON.stringify(identity));
@@ -304,8 +309,9 @@ for (const outcome of ['success', 'cancelled', 'apple-failed']) {
   let logs = '';
   child.stdout.on('data', (chunk) => { logs += chunk; });
   child.stderr.on('data', (chunk) => { logs += chunk; });
-  const closed = new Promise((resolve) => child.once('close', (code) => resolve(code)));
-  t.after(() => child.kill('SIGKILL'));
+  const watchdog = setTimeout(() => child.kill('SIGTERM'), 5000);
+  const closed = new Promise((resolve) => child.once('close', (code) => { clearTimeout(watchdog); resolve(code); }));
+  t.after(() => { clearTimeout(watchdog); child.kill('SIGKILL'); });
   for (let n = 0; n < 200 && !existsSync(join(item.directory, 'started')); n++) await delay(10);
   assert.ok(existsSync(join(item.directory, 'started')), logs);
   if (outcome === 'cancelled') child.kill('SIGTERM');
@@ -318,7 +324,11 @@ for (const outcome of ['success', 'cancelled', 'apple-failed']) {
     assert.equal(receipt.buildNumber, identity.buildNumber);
   } else {
     assert.notEqual(code, 0);
-    assert.match(logs, outcome === 'cancelled' ? /cancelled/u : /INVALID/u);
+    assert.match(logs, outcome === 'cancelled' ? /cancelled/u : outcome === 'apple-failed' ? /INVALID/u : outcome === 'zero-exit-error' ? /TOOL_REPORTED_ERROR/u : /NO_SUCCESS_EVIDENCE/u);
+    if (['zero-exit-error', 'empty-output'].includes(outcome)) {
+      assert.doesNotMatch(logs, /apple-processing|build-visibility|internal-testflight/u);
+      assert.doesNotMatch(logs, /PRIVATE_SENTINEL|Submission cancelled/u);
+    }
     assert.doesNotMatch(logs, /IN_BETA_TESTING/u);
     assert.equal(existsSync(result), false);
   }

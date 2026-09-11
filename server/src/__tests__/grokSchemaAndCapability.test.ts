@@ -7,7 +7,7 @@ import {
   grokRuntimeStateSchemaStatements,
   grokRefreshJournalSchemaStatements,
 } from '../runtime/responses/grokSubscriptionSchema.js';
-const base = { agent: { cwd: '/tmp/grok-fixture' } };
+const base = { agent: { cwd: '/tmp/grok-fixture' }, server: { port: 3200 } };
 describe('Grok capability and additive SQL (T18, T24)', () => {
   it('keeps old configurations free of a manufactured Grok object', () => {
     const config = parseAppConfig(base);

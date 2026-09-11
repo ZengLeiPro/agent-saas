@@ -166,6 +166,7 @@ describe('ProviderQuotaPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
     expect(screen.getByText(/每 5 分钟自动采集/u)).toBeTruthy();
     expect(screen.getByText(/1 个异常/u)).toBeTruthy();
+    expect(screen.getByTitle('采集失败 1 · 额度耗尽 0 · 凭据不可用 0')).toBeTruthy();
     expect(screen.getByText(/1 个需关注/u)).toBeTruthy();
     expect(api.providerQuotaHistory).toHaveBeenCalledWith(24);
   });
@@ -194,14 +195,14 @@ describe('ProviderQuotaPage', () => {
     expect(within(badge.parentElement!).getByText(`Credits ${balance}`)).toBeTruthy();
   });
 
-  it('Claude 只把 7 天额度作为主进度条，其他默认折叠且无外框，展开卡片与主额度同宽', async () => {
+  it('Claude 左侧 7 天、右侧 5 小时，附加模型默认折叠且无外框', async () => {
     const claude = {
       sourceKind: 'claude_subscription' as const,
       accountKey: 'claude:kaiyankeji.5@gmail.com',
       accountLabel: 'kaiyankeji.5@gmail.com',
       windows: [
-        { id: 'five_hour', label: '5 小时', windowSeconds: 18_000, usedPercent: 22, resetAt: '2026-09-05T11:20:00.000Z' },
-        { id: 'seven_day', label: '7 天', windowSeconds: 604_800, usedPercent: 37, resetAt: '2026-09-11T00:00:00.000Z' },
+        { id: 'five_hour', label: '5 小时', usedPercent: 22, resetAt: '2026-09-05T11:20:00.000Z' },
+        { id: 'seven_day', label: '7 天', usedPercent: 37, resetAt: '2026-09-11T00:00:00.000Z' },
         { id: 'fable:seven_day', label: 'Fable · 7 天', windowSeconds: 604_800, usedPercent: 48, resetAt: '2026-09-11T00:00:00.000Z' },
       ],
       limitReached: false,
@@ -212,19 +213,23 @@ describe('ProviderQuotaPage', () => {
     render(<ProviderQuotaPage />);
     const card = await screen.findByTestId('quota-account-claude:kaiyankeji.5@gmail.com');
     expect(within(card).getByText('Claude 订阅')).toBeTruthy();
-    expect(within(card).getByTestId('quota-window-seven_day')).toBeTruthy();
-    const summary = within(card).getByText(/其他（2 个窗口）/u);
+    const main = within(card).getByTestId('quota-window-seven_day').parentElement!;
+    expect(main.className).toContain('sm:grid-cols-2');
+    expect(within(main).getAllByRole('progressbar').map((bar) => bar.getAttribute('aria-label')))
+      .toEqual(['7 天 已用', '5 小时 已用']);
+    const summary = within(card).getByText(/其他（1 个窗口）/u);
     const details = summary.closest('details')!;
     expect(details.open).toBe(false);
     expect(details.classList.contains('border')).toBe(false);
     expect(details.classList.contains('p-3')).toBe(false);
-    const additionalTile = within(details).getByTestId('quota-window-five_hour');
+    expect(within(details).queryByTestId('quota-window-five_hour')).toBeNull();
+    const additionalTile = within(details).getByTestId('quota-window-fable:seven_day');
     expect(additionalTile.parentElement?.className).not.toContain('sm:grid-cols-2');
-    expect(within(details).getByTestId('quota-window-fable:seven_day')).toBeTruthy();
     fireEvent.click(details.querySelector('summary')!);
     expect(details.open).toBe(true);
     expect(screen.queryByRole('button', { name: '刷新 kaiyankeji.5@gmail.com' })).toBeNull();
     expect(screen.getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' })).toBeTruthy();
+    expect(claude.windows.map((window) => window.id)).toEqual(['five_hour', 'seven_day', 'fable:seven_day']);
   });
 
   it('Codex 周额度优先，附加模型默认折叠且不把账号标记为耗尽', async () => {
@@ -247,7 +252,8 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getByText('1 个窗口已耗尽')).toBeTruthy();
     expect(screen.queryByText('已撞限')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
-    expect(screen.getByText(/页面不自动刷新/u)).toBeTruthy();
+    expect(screen.getByText(/切回前台自动刷新/u)).toBeTruthy();
+    expect(screen.queryByText(/页面不自动刷新/u)).toBeNull();
     expect(screen.queryByText('可用')).toBeNull();
     expect(screen.queryByText('已耗尽')).toBeNull();
   });
@@ -266,6 +272,7 @@ describe('ProviderQuotaPage', () => {
     const timestamp = [...card.querySelectorAll('span')].find(el => el.textContent?.startsWith('采集 '));
     expect(timestamp?.className).toContain('tabular-nums');
     expect(timestamp?.textContent).not.toContain('采集于');
+    expect(timestamp?.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(timestamp?.parentElement?.querySelector('button')?.getAttribute('aria-label')).toContain('刷新');
   });
 
@@ -316,11 +323,40 @@ describe('ProviderQuotaPage', () => {
     await waitFor(() => expect(screen.getByText(/套餐额度采集未启用/u)).toBeTruthy());
   });
 
-  it('火山先显示近一月，再显示 5 小时，不修改接口窗口顺序', async () => {
+  it('火山左侧近一月、右侧近一周，其他窗口默认折叠，不修改接口窗口顺序', async () => {
+    const volcano = {
+      ...overview.items[0]!,
+      windows: [
+        ...overview.items[0]!.windows,
+        { id: 'daily', label: '近一天', usedPercent: 10 },
+        { id: 'weekly', label: '近一周', usedPercent: 40 },
+      ],
+    };
+    api.providerQuota.mockResolvedValue({ ...overview, items: [volcano] });
     render(<ProviderQuotaPage />);
     const card = await screen.findByTestId('quota-account-volcengine:ark');
-    expect(within(card).getAllByRole('progressbar').map((bar) => bar.getAttribute('aria-label')))
-      .toEqual(['近一月 已用', '5 小时 已用']);
+    const main = within(card).getByTestId('quota-window-monthly').parentElement!;
+    expect(main.className).toContain('sm:grid-cols-2');
+    expect(within(main).getAllByRole('progressbar').map((bar) => bar.getAttribute('aria-label')))
+      .toEqual(['近一月 已用', '近一周 已用']);
+    const details = within(card).getByText('其他（2 个窗口）').closest('details')!;
+    expect(details.open).toBe(false);
+    expect(within(details).getByTestId('quota-window-five_hour')).toBeTruthy();
+    expect(within(details).getByTestId('quota-window-daily')).toBeTruthy();
+    fireEvent.click(details.querySelector('summary')!);
+    expect(details.open).toBe(true);
+    expect(within(details).getAllByRole('progressbar')).toHaveLength(2);
+    expect(volcano.windows.map((window) => window.id)).toEqual(['five_hour', 'monthly', 'daily', 'weekly']);
+  });
+
+  it('火山未返回周额度时不补造窗口，5 小时仍在折叠区', async () => {
+    render(<ProviderQuotaPage />);
+    const card = await screen.findByTestId('quota-account-volcengine:ark');
+    const main = within(card).getByTestId('quota-window-monthly').parentElement!;
+    expect(within(main).getAllByRole('progressbar')).toHaveLength(1);
+    expect(main.className).not.toContain('sm:grid-cols-2');
+    expect(within(card).queryByTestId('quota-window-weekly')).toBeNull();
+    expect(within(card).getByTestId('quota-window-five_hour').closest('details')?.open).toBe(false);
     expect(overview.items[0]!.windows.map((window) => window.id)).toEqual(['five_hour', 'monthly']);
   });
 
@@ -452,8 +488,11 @@ describe('helpers', () => {
     expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow] })).toEqual({ tone: 'ok', label: '正常' });
   });
 
-  it('重置时间在月日与时间之间显示星期', () => {
-    expect(formatResetTime('2026-09-10T12:00:00')).toMatch(/09\/10 周四 12:00/);
+  it('重置时间显示星期且只精确到分钟，不对非零秒数进位', () => {
+    expect(formatResetTime('2026-09-10T12:34:56')).toMatch(/09\/10 周四 12:34$/);
+    expect(formatResetTime('2026-09-10T23:59:59')).toMatch(/09\/10 周四 23:59$/);
+    expect(formatResetTime(undefined)).toBe('—');
+    expect(formatResetTime('not-a-date')).toBe('—');
   });
 
   it('formatWan：万/亿量级与小数位', () => {

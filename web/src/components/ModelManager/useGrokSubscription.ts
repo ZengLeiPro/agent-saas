@@ -53,6 +53,7 @@ export function useGrokSubscription(readOnly: boolean) {
     try {
       const response = await authFetch(GROK_ADMIN_API);
       if ([404, 501].includes(response.status)) {
+        acceptMetadata({});
         setUnsupported(true);
         setState(null);
         setError('当前服务端尚未支持 Grok 订阅，请完成服务端升级后刷新。');
@@ -63,11 +64,11 @@ export function useGrokSubscription(readOnly: boolean) {
         throw new Error(data.error ?? `HTTP ${response.status}`);
       applyState(data);
     } catch (cause) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : 'Grok 状态读取失败');
+      if (mounted.current) { acceptMetadata({}); setError(cause instanceof Error ? cause.message : 'Grok 状态读取失败'); }
     } finally {
       if (mounted.current) setLoading(false);
     }
-  }, [applyState]);
+  }, [acceptMetadata, applyState]);
   useEffect(() => {
     void refresh();
   }, [refresh]);

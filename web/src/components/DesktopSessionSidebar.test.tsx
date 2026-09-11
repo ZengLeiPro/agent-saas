@@ -4,6 +4,8 @@ import type { ComponentProps } from "react";
 import { governanceRoute } from "@/lib/governanceNavigation";
 import type { AppTab, ChatSessionIndexItem } from "@/types/sidebar";
 
+const authState = vi.hoisted(() => ({ sessionOrganizationEnabled: false }));
+
 vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({
     user: {
@@ -11,7 +13,10 @@ vi.mock("@/contexts/AuthContext", () => ({
       username: "tester",
       tenantId: "tenant-1",
       tenantName: "开沿科技",
-      preferences: { showSessionListAvatar: false },
+      preferences: {
+        showSessionListAvatar: false,
+        sessionOrganizationEnabled: authState.sessionOrganizationEnabled,
+      },
     },
     accounts: [],
     switchAccount: vi.fn(),
@@ -114,9 +119,19 @@ function getSessionRow() {
 
 describe("桌面侧边栏会话交互与视觉状态", () => {
   beforeEach(() => {
+    authState.sessionOrganizationEnabled = false;
     groupsState.current = [];
     billingState.current = { summary: null, allowance: null };
     billingMiniBadgeProps.current = null;
+  });
+
+  it("会话智能整理默认关闭，用户开启后才显示入口", () => {
+    const { rerenderSidebar } = renderSidebar("chat");
+    expect(screen.queryByRole("button", { name: "智能分组" })).toBeNull();
+
+    authState.sessionOrganizationEnabled = true;
+    rerenderSidebar({});
+    expect(screen.getByRole("button", { name: "智能分组" })).toBeTruthy();
   });
 
   it("会话页继续高亮当前会话", () => {
@@ -336,6 +351,8 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
       onCloseAnalysis,
     });
 
+    const shell = screen.getByTestId("deferred-analysis-sidebar-shell");
+    expect(Number.parseFloat(shell.style.width)).toBeGreaterThan(0);
     expect(await screen.findByTestId("unified-analysis-sidebar")).toBeTruthy();
     expect(screen.queryByText("新建会话")).toBeNull();
     expect(screen.queryByText("会话 A")).toBeNull();
@@ -365,6 +382,8 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
       onSettingsNavigate,
     });
 
+    const shell = screen.getByTestId("deferred-settings-sidebar-shell");
+    expect(Number.parseFloat(shell.style.width)).toBeGreaterThan(0);
     const settingsSidebar = await screen.findByTestId("unified-settings-sidebar");
     expect(settingsSidebar.classList.contains("border-r")).toBe(false);
     expect(screen.queryByText("新建会话")).toBeNull();

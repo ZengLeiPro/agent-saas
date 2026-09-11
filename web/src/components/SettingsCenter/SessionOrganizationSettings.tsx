@@ -6,6 +6,7 @@ import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegist
 import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { saveUserPreferences } from '@agent/shared';
 
@@ -54,14 +55,17 @@ export function SessionOrganizationSettings() {
   const { user, updatePreferences } = useAuth();
   const savedTitlePrompt = user?.preferences?.titlePromptAddition ?? '';
   const savedGroupingPrompt = user?.preferences?.sessionGroupingPromptAddition ?? '';
+  const savedEnabled = user?.preferences?.sessionOrganizationEnabled === true;
   const [titlePrompt, setTitlePrompt] = useState(savedTitlePrompt);
   const [groupingPrompt, setGroupingPrompt] = useState(savedGroupingPrompt);
+  const [enabled, setEnabled] = useState(savedEnabled);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const dirty = titlePrompt !== savedTitlePrompt || groupingPrompt !== savedGroupingPrompt;
+  const dirty = enabled !== savedEnabled || titlePrompt !== savedTitlePrompt || groupingPrompt !== savedGroupingPrompt;
 
   const save = useCallback(async () => {
     const next = {
+      sessionOrganizationEnabled: enabled,
       titlePromptAddition: titlePrompt.trim(),
       sessionGroupingPromptAddition: groupingPrompt.trim(),
     };
@@ -71,6 +75,7 @@ export function SessionOrganizationSettings() {
       const preferences = await saveUserPreferences(next);
       if (!preferences) throw new Error('保存失败');
       updatePreferences(preferences);
+      setEnabled(preferences.sessionOrganizationEnabled === true);
       setTitlePrompt(preferences.titlePromptAddition ?? '');
       setGroupingPrompt(preferences.sessionGroupingPromptAddition ?? '');
       setSaved(true);
@@ -81,13 +86,14 @@ export function SessionOrganizationSettings() {
     } finally {
       setSaving(false);
     }
-  }, [groupingPrompt, titlePrompt, updatePreferences]);
+  }, [enabled, groupingPrompt, titlePrompt, updatePreferences]);
 
   const discard = useCallback(() => {
+    setEnabled(savedEnabled);
     setTitlePrompt(savedTitlePrompt);
     setGroupingPrompt(savedGroupingPrompt);
     setSaved(false);
-  }, [savedGroupingPrompt, savedTitlePrompt]);
+  }, [savedEnabled, savedGroupingPrompt, savedTitlePrompt]);
 
   useSettingsDirtyEntry({
     id: 'session-organization',
@@ -95,7 +101,7 @@ export function SessionOrganizationSettings() {
     dirty,
     save,
     discard,
-    draft: { titlePrompt, groupingPrompt },
+    draft: { enabled, titlePrompt, groupingPrompt },
   });
 
   return (
@@ -103,6 +109,7 @@ export function SessionOrganizationSettings() {
       <SettingsPanelHeader
         title="会话智能整理"
         description="设置个人标题风格和智能分组习惯。个人要求会追加在平台规则之后。"
+        className="md:pr-0"
         actions={
           <>
             {saved && <span className="text-sm text-success">已保存</span>}
@@ -119,31 +126,52 @@ export function SessionOrganizationSettings() {
         }
       />
       <div className="min-h-0 flex-1 space-y-4 overflow-auto">
-        <PromptEditor
-          id="title-prompt-addition"
-          label="我的标题生成要求"
-          description="例如：标题优先使用客户名称，并体现本次要处理的事项。留空则完全使用平台默认规则。"
-          value={titlePrompt}
-          disabled={saving}
-          onChange={(value) => {
-            setTitlePrompt(value);
-            setSaved(false);
-          }}
-        />
-        <PromptEditor
-          id="grouping-prompt-addition"
-          label="我的智能分组要求"
-          description="例如：优先按客户名称分组；没有明确客户时再按销售、采购、财务、研发分类。"
-          value={groupingPrompt}
-          disabled={saving}
-          onChange={(value) => {
-            setGroupingPrompt(value);
-            setSaved(false);
-          }}
-        />
-        <p className="px-1 text-xs text-muted-foreground">
-          请勿在提示语中填写密码、密钥或其他敏感信息。
-        </p>
+        <div className="flex items-center justify-between gap-4 rounded-xl border bg-card p-4">
+          <div className="min-w-0">
+            <Label htmlFor="session-organization-enabled">启用会话智能整理</Label>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              开启后，会话列表显示智能分组入口。默认关闭，整理方案仍需你确认后才会应用。
+            </p>
+          </div>
+          <Switch
+            id="session-organization-enabled"
+            checked={enabled}
+            disabled={saving}
+            onCheckedChange={(checked) => {
+              setEnabled(checked);
+              setSaved(false);
+            }}
+          />
+        </div>
+        {enabled ? (
+          <>
+            <PromptEditor
+              id="title-prompt-addition"
+              label="我的标题生成要求"
+              description="例如：标题优先使用客户名称，并体现本次要处理的事项。留空则完全使用平台默认规则。"
+              value={titlePrompt}
+              disabled={saving}
+              onChange={(value) => {
+                setTitlePrompt(value);
+                setSaved(false);
+              }}
+            />
+            <PromptEditor
+              id="grouping-prompt-addition"
+              label="我的智能分组要求"
+              description="例如：优先按客户名称分组；没有明确客户时再按销售、采购、财务、研发分类。"
+              value={groupingPrompt}
+              disabled={saving}
+              onChange={(value) => {
+                setGroupingPrompt(value);
+                setSaved(false);
+              }}
+            />
+            <p className="px-1 text-xs text-muted-foreground">
+              请勿在提示语中填写密码、密钥或其他敏感信息。
+            </p>
+          </>
+        ) : null}
       </div>
     </div>
   );

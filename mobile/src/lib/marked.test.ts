@@ -15,4 +15,24 @@ describe('移动端文字选择 Markdown CJK 解析', () => {
     expect(html).toContain('<del>废弃：</del>正文');
     expect(html).toContain('<code>**代码：**正文</code>');
   });
+
+  it('升级后仍保留链接、列表和代码块输出', () => {
+    const html = parseMarkdownToHtml(
+      [
+        '[开沿](https://kaiyan.net)',
+        '',
+        '- 第一项',
+        '- 第二项',
+        '',
+        '```ts',
+        'const ok = true;',
+        '```',
+      ].join('\n'),
+    );
+
+    expect(html).toContain('<a href="https://kaiyan.net">开沿</a>');
+    expect(html).toContain('<li>第一项</li>');
+    expect(html).toContain('<li>第二项</li>');
+    expect(html).toContain('<code class="language-ts">const ok = true;');
+  });
 });

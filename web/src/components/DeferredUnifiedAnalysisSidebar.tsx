@@ -13,14 +13,14 @@ export function preloadUnifiedAnalysisSidebar(): void {
 
 export function DeferredUnifiedAnalysisSidebar(props: UnifiedAnalysisSidebarProps) {
   return (
-    <Suspense fallback={(
-      <aside
-        className={cn("h-full shrink-0 bg-background", props.hidden && "hidden", props.className)}
-        style={{ width: props.width }}
-        aria-label="正在加载分析导航"
-      />
-    )}>
-      <LazyUnifiedAnalysisSidebar {...props} />
-    </Suspense>
+    <div
+      className={cn("h-full shrink-0", props.hidden && "hidden", props.className)}
+      style={{ width: props.width }}
+      data-testid="deferred-analysis-sidebar-shell"
+    >
+      <Suspense fallback={<div className="h-full bg-background" aria-label="正在加载分析导航" />}>
+        <LazyUnifiedAnalysisSidebar {...props} className={undefined} />
+      </Suspense>
+    </div>
   );
 }

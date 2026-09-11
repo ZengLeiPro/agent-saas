@@ -559,14 +559,16 @@ describe('PATCH /me/preferences', () => {
       .toBe('openai-agents/kimi');
   });
 
-  it('保存并允许清空会话标题与智能分组个人提示语', async () => {
+  it('保存会话智能整理开关并允许清空个人提示语', async () => {
     h.setCaller(h.users.wainUser);
     const saved = await h.request('/api/auth/me/preferences', jsonInit('PATCH', {
+      sessionOrganizationEnabled: true,
       titlePromptAddition: '优先使用客户名称',
       sessionGroupingPromptAddition: '按客户和项目分类',
     }));
     expect(saved.status).toBe(200);
     await expect(saved.json()).resolves.toMatchObject({ preferences: {
+      sessionOrganizationEnabled: true,
       titlePromptAddition: '优先使用客户名称',
       sessionGroupingPromptAddition: '按客户和项目分类',
     } });

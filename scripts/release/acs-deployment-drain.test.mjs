@@ -103,12 +103,16 @@ curl() {
       case "$args" in
         *'-X PATCH'*)
           test "$CASE" != patchfails || return 22
-          requested="$(printf '%s' "$args" | sed -n 's/.*drainDeadlineMs":\\([0-9]*\\).*/\\1/p')"
+          requested="$(printf '%s' "$args" | sed -n 's/.*deploymentDrainDeadlineMs":\\([0-9]*\\).*/\\1/p')"
           test "$CASE" = patchrefused || printf '%s' "$requested" > "$TEST_ROOT/deadline"
           ;;
       esac
       current="$(cat "$TEST_ROOT/deadline")"
-      printf '{"status":"ok","runtimeConfig":{"drainDeadlineMs":%s}}' "$current"
+      if [ "$CASE" = legacyconfig ]; then
+        printf '{"status":"ok","runtimeConfig":{"drainDeadlineMs":%s}}' "$current"
+      else
+        printf '{"status":"ok","runtimeConfig":{"deploymentDrainDeadlineMs":%s,"drainDeadlineMs":120000}}' "$current"
+      fi
       return 0 ;;
   esac
   local protocol=1 inflight=0 state=idle draining=false
@@ -143,6 +147,7 @@ for (const scenario of [
   'timeout',
   'pidchange',
   'deadlinealreadyaligned',
+  'legacyconfig',
   'patchrefused',
   'patchfails',
   'missingtoken',
@@ -179,7 +184,7 @@ for (const scenario of [
         'clean',
         'legacyquiet',
         'legacybusy',
-        'legacyforced',
+        'legacyconfig',
         'exitbetweenreads',
         'deactivating',
         'deadlinealreadyaligned',
@@ -189,11 +194,8 @@ for (const scenario of [
       if (success) {
         const proof = JSON.parse(await readFile(proofPath, 'utf8'));
         assert.equal(proof.pid, 42);
-        assert.equal(proof.exitStatus, scenario === 'legacyforced' ? 1 : 0);
-        assert.equal(
-          proof.state,
-          scenario === 'legacyforced' ? 'forced_legacy_cutover' : 'completed',
-        );
+        assert.equal(proof.exitStatus, 0);
+        assert.equal(proof.state, 'completed');
         const events = await readFile(join(root, 'events'), 'utf8');
         assert.ok(events.indexOf('daemon-reload') < events.indexOf('kill -USR2'));
       } else await assert.rejects(readFile(proofPath), { code: 'ENOENT' });
@@ -208,12 +210,17 @@ for (const scenario of [
         assert.doesNotMatch(await readFile(join(root, 'events'), 'utf8'), /kill|daemon-reload/u);
       }
       if (scenario === 'legacyforced') {
-        assert.match(result.stderr, /audited one-time compatibility cutover/u);
+        assert.match(result.stderr, /ACS did not exit cleanly/u);
       }
       const events = await readFile(join(root, 'events'), 'utf8');
       if (['patchrefused', 'patchfails', 'missingtoken'].includes(scenario)) {
         // 对齐不确定就不能开始换代：绝不能已经停了准入却拿不到足够的 drain 窗口。
         assert.doesNotMatch(events, /kill -USR2/u);
+      }
+      if (scenario === 'legacyconfig') {
+        assert.doesNotMatch(events, /-X PATCH/u);
+        assert.equal(await readFile(join(root, 'deadline'), 'utf8'), initialDeadlineMs);
+        assert.match(result.stderr, /Legacy shared deadline preserved/u);
       }
       if (scenario === 'clean') {
         // deadline 必须在发 USR2 之前抬到覆盖 660s 窗口的值，否则 ACS 会自己先认输。
@@ -277,7 +284,7 @@ test -e "$TEST_ROOT/cancelled"`,
     const events = await readFile(join(root, 'events'), 'utf8');
     assert.match(events, /kill -USR1 42/u);
     assert.doesNotMatch(events, /restart|kill -KILL|kill -TERM|start acs/u);
-    // 对齐后的 deadline 有意不还原：它本就该覆盖发布窗口，还原只会制造不确定状态。
+    // Only the dedicated deployment budget changes. The shared SNAT setting stays untouched.
     assert.equal(await readFile(join(root, 'deadline'), 'utf8'), '1140000');
   } finally {
     await rm(root, { recursive: true, force: true });

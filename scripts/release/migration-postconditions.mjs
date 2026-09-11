@@ -1,4 +1,4 @@
-import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
+import { canonicalJson, digestBuffer, DIGEST_PATTERN } from './artifact-lib.mjs';
 import { readFileSync } from 'node:fs';
 
 export const POSTCONDITIONS_PATH = 'config/release-migration-postconditions.json';
@@ -59,10 +59,37 @@ export function attachPostconditions(plan, snapshot, inventory, blockingReasons)
   }
 }
 
-export function assertDatabaseEvidence(manifest, evidence, environment, now = Date.now()) {
+export function assertDatabaseEvidence(
+  manifest, evidence, environment, now = Date.now(), maxAgeMs = 300000,
+) {
+  if (!Number.isFinite(now) || !Number.isFinite(maxAgeMs) || maxAgeMs < 0)
+    throw new Error('Invalid database evidence validation clock');
   const plan = manifest.migrationPlan;
+  if (!['none', 'expand'].includes(plan?.phase))
+    throw new Error('Unsupported migration readback phase');
   const checks = plan.postconditions;
-  if (plan.phase !== 'expand') return;
+  if (plan.phase === 'none') {
+    const observed = Date.parse(evidence?.observedAt);
+    if (
+      typeof manifest.releaseId !== 'string' || !manifest.releaseId ||
+      !DIGEST_PATTERN.test(manifest.digest ?? '') ||
+      !DIGEST_PATTERN.test(plan.planDigest ?? '') ||
+      !['staging', 'production'].includes(environment) ||
+      plan.postconditionsDigest !== undefined || (checks !== undefined &&
+        (!Array.isArray(checks) || checks.length !== 0)) ||
+      evidence?.schemaVersion !== 1 ||
+      evidence.releaseId !== manifest.releaseId ||
+      evidence.manifestDigest !== manifest.digest ||
+      evidence.planDigest !== plan.planDigest ||
+      Object.hasOwn(evidence, 'postconditionsDigest') ||
+      evidence.environment !== environment ||
+      evidence.status !== 'not_required' ||
+      !Number.isFinite(observed) || now - observed > maxAgeMs || observed > now + 60000 ||
+      !Array.isArray(evidence.checks) || evidence.checks.length !== 0
+    )
+      throw new Error('No-migration readback is missing, stale or bound to a different release');
+    return;
+  }
   if (!checks?.length || digestBuffer(canonicalJson(checks)) !== plan.postconditionsDigest)
     throw new Error('Expand plan lacks bound database postconditions');
   if (
@@ -73,7 +100,7 @@ export function assertDatabaseEvidence(manifest, evidence, environment, now = Da
     evidence.environment !== environment ||
     evidence.status !== 'passed' ||
     !Number.isFinite(Date.parse(evidence.observedAt)) ||
-    now - Date.parse(evidence.observedAt) > 300000 ||
+    now - Date.parse(evidence.observedAt) > maxAgeMs ||
     Date.parse(evidence.observedAt) > now + 60000 ||
     !Array.isArray(evidence.checks) ||
     evidence.checks.length !== checks.length

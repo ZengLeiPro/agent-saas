@@ -9,16 +9,27 @@ export interface CreateProviderQuotaAdminRouterOptions {
   service?: Pick<ProviderQuotaService, 'overview' | 'history' | 'refresh' | 'test' | 'setPlanExpiry'>;
 }
 
-const testRequestSchema = z.object({
-  provider: z.literal('volcengine_ark_plan'),
-  accessKeyId: z.string().trim().min(1, '缺少 Access Key ID'),
-  secretAccessKey: z.string().optional(),
-  groupId: z.string().optional(),
-  region: z
-    .string()
-    .trim()
-    .regex(/^[a-z0-9-]+$/u, 'Region 格式不正确')
-    .optional(),
+const testRequestSchema = z.discriminatedUnion('provider', [
+  z.object({
+    provider: z.literal('volcengine_ark_plan'),
+    accessKeyId: z.string().trim().min(1, '缺少 Access Key ID'),
+    secretAccessKey: z.string().optional(),
+    groupId: z.string().optional(),
+    region: z
+      .string()
+      .trim()
+      .regex(/^[a-z0-9-]+$/u, 'Region 格式不正确')
+      .optional(),
+  }),
+  z.object({
+    provider: z.literal('zhipu_coding_plan'),
+    apiKey: z.string().trim().max(8192).regex(/^[^\r\n]*$/u, 'API Key 格式不正确').optional(),
+    groupId: z.string().trim().min(1).optional(),
+  }).strict(),
+]).superRefine((input, ctx) => {
+  if (input.provider === 'zhipu_coding_plan' && !input.apiKey && !input.groupId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: '请填写智谱 API Key 或选择已保存的模型分组' });
+  }
 });
 
 function message(error: unknown): string {

@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { canonicalJson } from './artifact-lib.mjs';
 
-export function summarizeStagingState({ manifest, before, observed, publicWebPassed }) {
+export function summarizeStagingState({ manifest, before, observed, publicWebPassed, attemptResult = 'unknown', runId = '', runAttempt = '' }) {
   const components = {
     api: observed.host?.api ?? null,
     runtimeWorker: observed.host?.runtimeWorker ?? null,
@@ -49,6 +49,14 @@ export function summarizeStagingState({ manifest, before, observed, publicWebPas
   return {
     schemaVersion: 1,
     releaseId: manifest.releaseId,
+    manifestDigest: manifest.digest,
+    runId, runAttempt,
+    transactionState: target && publicWebPassed && attemptResult === 'success' ? 'pending_acceptance' : 'incomplete',
+    repairStrategy: 'forward_only',
+    componentStates: Object.fromEntries(Object.entries(components).map(([name, value]) => [name,
+      !value ? 'unknown' : value.sourceSha === manifest.components[name].sourceSha &&
+        value.artifactDigest === (manifest.components[name].artifactDigest ?? manifest.components[name].orchestratorArtifactDigest) &&
+        (name !== 'acs' || value.sandboxImageDigest === manifest.components.acs.sandboxImageDigest) ? 'target' : 'previous_or_other'])),
     observedAt: new Date().toISOString(),
     components,
     state: !known
@@ -67,7 +75,7 @@ export function summarizeStagingState({ manifest, before, observed, publicWebPas
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const [, , dir, mode] = process.argv;
+  const [, , dir, mode, attemptResult = 'unknown'] = process.argv;
   async function json(name) {
     try {
       return JSON.parse(await readFile(`${dir}/${name}.json`, 'utf8'));
@@ -78,6 +86,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const manifest = await json('manifest');
   const report = summarizeStagingState({
     manifest,
+    attemptResult,
+    runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT,
     before: await json('staging-before'),
     observed: {
       api: await json('staging-api-probe'),

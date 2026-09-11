@@ -6,6 +6,7 @@ import type {
   ProviderQuotaTestRequest,
   ProviderQuotaTestResponse,
 } from '@agent/shared';
+import { isZhipuCodingPlanGroup } from '@agent/shared';
 
 import type { AppConfig } from '../app/config.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
@@ -13,6 +14,7 @@ import type { SecretVault, VaultCaller } from '../security/secretVault.js';
 import { fetchCodexUsage, normalizeCodexUsage } from './codexSubscriptionQuota.js';
 import type { PgProviderQuotaSnapshotStore } from './providerQuotaSnapshotStore.js';
 import { fetchVolcengineArkPlanQuota } from './volcengineArkPlanQuota.js';
+import { fetchZhipuCodingPlanQuota } from './zhipuCodingPlanQuota.js';
 
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_RETENTION_DAYS = 30;
@@ -80,6 +82,7 @@ function credentialStateOf(status: {
 /**
  * 套餐额度采集与读取。数据源随模型配置走：
  * - 模型分组 `quotaSource.provider = volcengine_ark_plan` → 火山管控面 GetAFPUsage/GetPersonalPlan
+ * - 智谱官方地址自动识别，或显式 zhipu_coding_plan → 复用分组 Key 查询账号共享额度
  * - `codexSubscription.credentialRefs` → 每个已授权 Codex 账号的 wham/usage
  */
 export class ProviderQuotaService {
@@ -218,8 +221,13 @@ export class ProviderQuotaService {
     return { hours: safeHours, points, generatedAt: this.now().toISOString() };
   }
 
-  /** 模型配置页「测试连接」：不落库，Secret 留空时用该分组已保存的 ref。 */
+  /** 模型配置页「测试连接」：不落库，凭据留空时使用该分组已保存的值。 */
   async test(input: ProviderQuotaTestRequest): Promise<ProviderQuotaTestResponse> {
+    if (input.provider === 'zhipu_coding_plan') {
+      const apiKey = input.apiKey?.trim() || (await this.storedZhipuApiKey(input.groupId));
+      if (!apiKey) throw new Error('缺少智谱 API Key：请填写，或先保存该模型分组');
+      return fetchZhipuCodingPlanQuota(this.fetchImpl, apiKey, this.now());
+    }
     const secretAccessKey =
       input.secretAccessKey?.trim() || (await this.storedVolcengineSecret(input.groupId));
     if (!secretAccessKey)
@@ -276,9 +284,24 @@ export class ProviderQuotaService {
     return this.options.secretVault.getSecret(source.secretAccessKeyRef, vaultReader());
   }
 
+  private async storedZhipuApiKey(groupId: string | undefined): Promise<string | undefined> {
+    if (!groupId) return undefined;
+    const group = this.options.getModelsConfig()?.groups.find((item) => item.id === groupId);
+    if (!group) throw new Error('智谱模型分组不存在或已移除');
+    if (group.apiKey?.trim()) return group.apiKey.trim();
+    if (!group.apiKeyRef) return undefined;
+    if (!this.options.secretVault) throw new Error('SecretVault 未配置，无法读取智谱 API Key');
+    try {
+      return await this.options.secretVault.getSecret(group.apiKeyRef, vaultReader());
+    } catch {
+      // Vault 错误可能包含 ref 或底层敏感信息，不写进用量快照/日志。
+      throw new Error('无法读取该分组已保存的智谱 API Key，请检查密钥配置');
+    }
+  }
+
   private async sources(): Promise<QuotaSource[]> {
     const [codex, claude] = await Promise.all([this.codexSources(), this.claudeSources()]);
-    return [...this.volcengineSources(), ...codex, ...claude];
+    return [...this.volcengineSources(), ...this.zhipuSources(), ...codex, ...claude];
   }
 
   /**
@@ -313,6 +336,43 @@ export class ProviderQuotaService {
         .filter((status) => typeof status.id === 'string')
         .map((status) => [`codex:${status.id}`, credentialStateOf(status)]),
     );
+  }
+
+  private zhipuSources(): QuotaSource[] {
+    const groups = this.options.getModelsConfig()?.groups ?? [];
+    return groups.filter(isZhipuCodingPlanGroup).map((group) => {
+      const accountKey = `zhipu:${group.id}`;
+      const base = {
+        sourceKind: 'zhipu_coding_plan' as const,
+        accountKey,
+        accountLabel: group.name,
+        groupId: group.id,
+        // 接口返回账号共享额度；不同 Key/分组可能属于同一账号，不能累加。
+        extra: { quotaScope: 'account', attribution: 'shared_across_keys' },
+      };
+      return {
+        accountKey,
+        expiryIdentity: accountKey,
+        collect: async (): Promise<ProviderQuotaSnapshot> => {
+          const collectedAt = this.now().toISOString();
+          try {
+            const apiKey = await this.storedZhipuApiKey(group.id);
+            if (!apiKey) throw new Error('该智谱模型分组尚未配置 API Key');
+            const result = await fetchZhipuCodingPlanQuota(this.fetchImpl, apiKey, this.now());
+            return { ...base, ...result, ok: true, collectedAt };
+          } catch (error) {
+            return {
+              ...base,
+              windows: [],
+              limitReached: false,
+              ok: false,
+              error: errorMessage(error),
+              collectedAt,
+            };
+          }
+        },
+      };
+    });
   }
 
   private volcengineSources(): QuotaSource[] {

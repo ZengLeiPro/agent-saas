@@ -22,7 +22,8 @@ const MAX_SSE_BUFFER_BYTES = 1024 * 1024;
  * RestartSec=5 拉起 + 启动耗时），累计 10s 退避基本覆盖。
  */
 const DEFAULT_CONNECT_RETRY_BACKOFF_MS = [1_000, 3_000, 6_000];
-const DEFAULT_DEPLOYMENT_DRAIN_WAIT_MS = 10 * 60_000;
+// Upper bound includes the 20-minute host window and one minute for the replacement listener.
+const DEFAULT_DEPLOYMENT_DRAIN_WAIT_MS = 21 * 60_000;
 const DEFAULT_STREAM_CLEANUP_GRACE_MS = 30_000;
 const DEFAULT_INVOCATION_RESULT_POLL_TIMEOUT_MS = 5_000;
 const DEFAULT_INVOCATION_RESULT_POLL_INTERVAL_MS = 100;
@@ -173,6 +174,12 @@ export class HttpTransport implements ExecutionTransport {
       if (response.status === 503 && response.headers.get('x-acs-error-code') === 'ACS_DEPLOYMENT_DRAINING'
         && response.headers.get('x-acs-execution-started') === 'false' && !signal?.aborted) {
         drainDeadline ??= Date.now() + this.deploymentDrainWaitMs;
+        const advertised = response.headers.get('x-acs-drain-remaining-ms');
+        const remoteRemaining = advertised === null ? NaN : Number(advertised);
+        // Never extend a deadline on repeated 503s. Relative server budget avoids clock-skew errors.
+        if (Number.isFinite(remoteRemaining) && remoteRemaining >= 0) {
+          drainDeadline = Math.min(drainDeadline, Date.now() + remoteRemaining + 60_000);
+        }
         const remaining = drainDeadline - Date.now();
         if (remaining <= 0) return response;
         await response.body?.cancel().catch(() => undefined);

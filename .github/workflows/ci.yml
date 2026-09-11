@@ -30,6 +30,7 @@ concurrency:
   # run_attempt 不参与分组；PR 按编号，main 按 run_id 保留每个精确提交的门禁。
   group: ${{ github.event_name == 'workflow_dispatch' && 'production-runtime' || format('agent-saas-{0}-{1}', github.workflow, github.event.pull_request.number || github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  queue: ${{ github.event_name == 'pull_request' && 'single' || 'max' }}
 
 env:
   NODE_VERSION: '22.23.1'
@@ -415,6 +416,11 @@ jobs:
           TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
           MEMORY_CONSOLIDATION_TEST_PG_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
         run: bash scripts/pr-preflight-task.sh postgres
+
+      - name: 验证真实双代 Worker 排空与工具副作用唯一性
+        env:
+          MP_TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
+        run: pnpm exec tsx server/scripts/verify-runtime-multiprocess-e2e.mts --scenario worker-handoff
 
   web_production:
     name: 预检 / Web 生产构建

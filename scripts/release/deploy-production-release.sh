@@ -50,14 +50,22 @@ commit_app_active_colors() {
     && [ "$(tr -d '[:space:]' <"$worker_marker")" = "$worker_color" ]
 }
 
+write_rollback_receipt() {
+  local path="$1" state="$2"
+  jq -n --arg component "$PHASE" --arg state "$state" --arg releaseId "$release_id" \
+    --arg manifestDigest "$manifest_digest" --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+    '{schemaVersion:1,component:$component,state:$state,releaseId:$releaseId,manifestDigest:$manifestDigest,runId:$runId,runAttempt:$runAttempt}' > "$path.candidate" && \
+    chmod 0444 "$path.candidate" && mv -f "$path.candidate" "$path"
+}
+
 record_rollback_attempt() {
   local path="${ROLLBACK_ATTEMPTED_RECEIPT_PATH:-${ROLLBACK_RECEIPT_PATH:-}}"
-  [ -z "$path" ] || printf '%s\n' "${PHASE:-unknown}:${release_id:-unknown}" >"$path"
+  [ -z "$path" ] || write_rollback_receipt "$path" attempted
 }
 
 record_rollback_success() {
   local path="${ROLLBACK_SUCCEEDED_RECEIPT_PATH:-}"
-  [ -z "$path" ] || printf '%s\n' "${PHASE:-unknown}:${release_id:-unknown}" >"$path"
+  [ -z "$path" ] || write_rollback_receipt "$path" succeeded
 }
 
 
@@ -430,6 +438,8 @@ lock=/run/lock/agent-saas/promotion.lock
 mkdir -p "$(dirname "$lock")"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another production promotion is active' >&2; exit 1; }
+# An unfinished Web transaction must not be overwritten by a later RC, even before ACS/App changes.
+node "$(dirname "$MANIFEST_PATH")/web-recovery-journal.mjs" check "$release_id" "$manifest_digest" >/dev/null
 
 # Promotion preflight uploads this contract module. Local/manual harnesses may keep it
 # next to this script; the production workflow uses a run-attempt-isolated preflight directory.
@@ -801,33 +811,72 @@ NODE
 validate_api_routing_boundary() {
   local color="$1" expected_release_id="$2"
   local upstream="${AGENT_SAAS_NGINX_UPSTREAM_FILE:-/etc/nginx/conf.d/agent-saas-upstream.conf}"
-  local ready_path
-  if ! systemctl is-active --quiet nginx \
-    || ! nginx -t \
-    || ! grep -Fx "# active=$color release=$expected_release_id" "$upstream" >/dev/null; then
-    return 1
-  fi
+  local ready_path deadline remaining request_timeout curl_status http_status verdict validation_status attempt=0
+  local wait_seconds="${API_ROUTED_READY_WAIT_SECONDS:-30}"
+  [[ "$wait_seconds" =~ ^[1-9][0-9]*$ ]] && [ "$wait_seconds" -le 30 ] || return 1
+  if ! systemctl is-active --quiet nginx || ! nginx -t; then return 1; fi
   ready_path="$(mktemp)" || return 1
-  if ! curl -kfsS -H 'Host: api.agent.kaiyan.net' \
-      https://127.0.0.1/api/healthz/ready >"$ready_path" \
-    || ! node --input-type=module - "$ready_path" "$expected_release_id" <<'NODE'
+  deadline=$((SECONDS + wait_seconds))
+  # nginx reload acknowledges the signal, not the new workers' readiness. Poll only
+  # this read-only route, bounded by one deadline; an old healthy backup is not success.
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if ! systemctl is-active --quiet nginx \
+      || ! grep -Fx "# active=$color release=$expected_release_id" "$upstream" >/dev/null; then
+      rm -f "$ready_path" "$ready_path.headers"
+      return 1
+    fi
+    remaining=$((deadline - SECONDS))
+    request_timeout=5
+    [ "$remaining" -ge "$request_timeout" ] || request_timeout=$remaining
+    [ "$request_timeout" -gt 0 ] || break
+    attempt=$((attempt + 1))
+    curl_status=0
+    : > "$ready_path.headers"
+    curl -ksS --fail-with-body --connect-timeout 1 --max-time "$request_timeout" \
+      --max-filesize 65536 --dump-header "$ready_path.headers" -H 'Host: api.agent.kaiyan.net' \
+      https://127.0.0.1/api/healthz/ready >"$ready_path" 2>/dev/null || curl_status=$?
+    http_status="$(awk '/^HTTP\// { code=$2 } END { print code+0 }' "$ready_path.headers")"
+    verdict=transport_failure
+    if [ "$curl_status" -eq 0 ]; then
+      validation_status=0
+      node --input-type=module - "$ready_path" "$expected_release_id" <<'NODE' || validation_status=$?
 import fs from 'node:fs';
 const [readyPath, expectedReleaseId] = process.argv.slice(2);
-const readiness = JSON.parse(fs.readFileSync(readyPath, 'utf8'));
-if (
-  readiness?.status !== 'ok'
-  || readiness?.release?.environment !== 'production'
-  || readiness?.release?.releaseId !== expectedReleaseId
-  || readiness?.release?.safetyAttested !== true
-) {
-  throw new Error('Routed API readiness disagrees with the selected release');
-}
+let readiness;
+try { readiness = JSON.parse(fs.readFileSync(readyPath, 'utf8')); }
+catch { process.exit(11); }
+const release = readiness?.release;
+if (readiness?.status !== 'ok' || release?.environment !== 'production'
+  || release?.safetyAttested !== true) process.exit(11);
+if (release.releaseId !== expectedReleaseId) process.exit(10);
 NODE
-  then
-    rm -f "$ready_path"
-    return 1
-  fi
-  rm -f "$ready_path"
+      case "$validation_status" in
+        0) verdict=ready ;;
+        10) verdict=wrong_release ;;
+        *) verdict=invalid_readiness ;;
+      esac
+      if [ "$verdict" = ready ]; then
+        # Do not admit authority if the route/config changed during the request.
+        if ! systemctl is-active --quiet nginx \
+          || ! grep -Fx "# active=$color release=$expected_release_id" "$upstream" >/dev/null; then
+          rm -f "$ready_path" "$ready_path.headers"
+          return 1
+        fi
+        rm -f "$ready_path" "$ready_path.headers"
+        return 0
+      fi
+    fi
+    # Never print readiness bodies, which may contain private dependency details.
+    echo "Routed API probe: attempt=$attempt curlExit=$curl_status httpStatus=$http_status verdict=$verdict remainingSeconds=$((deadline - SECONDS))" >&2
+    case "$curl_status:$http_status:$verdict" in
+      0:*:wrong_release|7:*|22:502:*|22:503:*|22:504:*|28:*) ;;
+      *) rm -f "$ready_path" "$ready_path.headers"; return 1 ;;
+    esac
+    [ "$SECONDS" -ge "$deadline" ] || sleep 1
+  done
+  rm -f "$ready_path" "$ready_path.headers"
+  echo 'Routed API readiness did not converge within its bounded deadline' >&2
+  return 1
 }
 
 read_release_id_from_env() {
@@ -1034,8 +1083,7 @@ restore_candidate_api_authority() {
     || ! grep -F "# active=$candidate_color " "$upstream" >/dev/null \
     || ! nginx -t >/dev/null 2>&1 \
     || ! systemctl reload nginx >/dev/null 2>&1 \
-    || ! curl -kfsS -H 'Host: api.agent.kaiyan.net' \
-      https://127.0.0.1/api/healthz/ready >/dev/null 2>&1 \
+    || ! validate_api_routing_boundary "$candidate_color" "$release_id" \
     || ! validate_api_release_boundary "$candidate_color" "$expected_json" \
       'Rollback candidate API final ConfigIdentity'; then
     restore_old_api_authority "$active_color" "$candidate_color" \
@@ -1562,7 +1610,7 @@ wait_for_idle_app_slots() {
         return 1
       fi
       if [ $((waited % 30)) -eq 0 ]; then
-        echo "idle slot still draining from the previous handoff (waited=${waited}s): $unit marker=$(tr -d '\n' <"$marker" 2>/dev/null || echo unreadable)"
+        echo "idle slot still draining from the previous handoff (waited=${waited}s): $unit marker=$marker"
       fi
     done
     if [ "$waited" -ge "$IDLE_SLOT_DRAIN_WAIT_SECONDS" ]; then
@@ -1617,6 +1665,9 @@ retire_failed_app_generation() {
 
 hand_off_retired_authority() {
   local unit="$1" marker="$2" pidfile="$3" pid main_pid deadline state
+  if [ -s "$marker" ] && jq -e 'type=="object" and (.drainState=="failed" or .drainState=="timed_out")' "$marker" >/dev/null 2>&1; then
+    echo "ERROR: retired generation reported failed/timed-out drain: $unit" >&2; return 1
+  fi
   if ! systemctl is-active --quiet "$unit"; then
     state="$(systemctl show "$unit" --property=ActiveState --value)" || return 1
     if [ "$state" = failed ] && retire_failed_app_generation "$unit" "$marker"; then return 0; fi
@@ -1637,6 +1688,9 @@ hand_off_retired_authority() {
   deadline=$((SECONDS + 15))
   while [ "$SECONDS" -lt "$deadline" ]; do
     state="$(systemctl show "$unit" --property=ActiveState --value)" || return 1
+    if [ -s "$marker" ] && jq -e 'type=="object" and (.drainState=="failed" or .drainState=="timed_out")' "$marker" >/dev/null 2>&1; then
+      echo "ERROR: retired generation did not quiesce: $unit" >&2; return 1
+    fi
     # A clean exit also proves it cannot accept work. Failed/unknown states require investigation.
     [ "$state" != inactive ] || return 0
     main_pid="$(systemctl show "$unit" --property=MainPID --value)" || return 1
@@ -1662,6 +1716,14 @@ hand_off_retired_authority() {
 
 # A successful target readback alone cannot establish that the retired generation
 # stopped accepting work. Repeat this operation on already-target retries as well.
+capture_app_retirement() {
+  node "$(dirname "$MANIFEST_PATH")/app-retirement-evidence.mjs" capture "$(dirname "$MANIFEST_PATH")" \
+    "$1" "$2" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+}
+start_app_retirement_observer() {
+  bash "$(dirname "$MANIFEST_PATH")/register-app-retirement-observer.sh" "$(dirname "$MANIFEST_PATH")"
+}
+
 complete_app_handoff() {
   local current_api current_worker retired_api retired_worker evidence
   current_api="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
@@ -1669,9 +1731,13 @@ complete_app_handoff() {
   case "$current_api:$current_worker" in blue:blue|blue:green|green:blue|green:green) ;; *) return 1 ;; esac
   retired_api="$(other_color "$current_api")"
   retired_worker="$(other_color "$current_worker")"
+  capture_app_retirement "$current_api" "$current_worker" || return 1
+  start_app_retirement_observer || return 1
+  node "$(dirname "$MANIFEST_PATH")/app-retirement-evidence.mjs" check-handoff "$(dirname "$MANIFEST_PATH")" runtimeWorker || return 1
   hand_off_retired_authority "agent-saas-runtime-worker@$retired_worker" \
     "/run/agent-saas-runtime-worker-$retired_worker.draining" \
     "/run/agent-saas-runtime-worker-$retired_worker.pid" || return 1
+  node "$(dirname "$MANIFEST_PATH")/app-retirement-evidence.mjs" check-handoff "$(dirname "$MANIFEST_PATH")" api || return 1
   hand_off_retired_authority "agent-saas-server@$retired_api" \
     "/run/agent-saas-server-$retired_api.draining" \
     "/run/agent-saas-server-$retired_api.pid" || return 1
@@ -2108,7 +2174,7 @@ EOF
     exit 1
   fi
   systemctl reload nginx
-  curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready >/dev/null
+  validate_api_routing_boundary "$api_idle" "$release_id"
   validate_api_release_boundary "$api_idle" "$config_identity" \
     'Candidate API final ConfigIdentity'
 

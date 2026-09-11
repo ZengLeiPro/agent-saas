@@ -15,7 +15,7 @@ export function createAppStoreToken({ keyId, issuerId, privateKey, now = Date.no
   assert.match(keyId, /^[A-Z0-9]{10}$/u, 'Invalid App Store Connect key ID');
   assert.match(
     issuerId,
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu,
     'Invalid App Store Connect issuer ID',
   );
   const issuedAt = Math.floor(now / 1000);
@@ -248,7 +248,7 @@ async function main() {
   assert.match(appId ?? '', /^[1-9][0-9]+$/u, 'APP_STORE_CONNECT_APP_ID is required');
   assert.match(
     betaGroupId ?? '',
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu,
     'TESTFLIGHT_INTERNAL_GROUP_ID is required',
   );
   assert.ok(betaGroupName, 'TESTFLIGHT_INTERNAL_GROUP_NAME is required');

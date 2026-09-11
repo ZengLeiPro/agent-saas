@@ -5,9 +5,10 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
   IOS_ENVIRONMENTS, allocateBuildNumber, artifactName, requireId, requireSha,
-  validateBuildRun, validateCiRun, validateDispatch, validateEnvironment,
+  validateBuildRun, validateEnvironment,
 } from './ios-actions-policy.mjs';
 import { readJson, sealBundle, verifyBundle } from './ios-actions-artifacts.mjs';
+import { assertPinnedArtifact, resolveReleaseInputs, waitForCi } from './ios-release-inputs.mjs';
 
 const env = process.env;
 const repository = env.GITHUB_REPOSITORY;
@@ -84,14 +85,27 @@ function assertMainSource(sourceSha, checkCheckout = true) {
   git(['merge-base', '--is-ancestor', sourceSha, 'origin/main']);
 }
 
-async function authorizeCi(sourceSha) {
+async function loadCi(sourceSha) {
   const runs = await pages(`/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=${requireSha(sourceSha)}`, 'workflow_runs');
-  assert.ok(runs.length > 0, 'No push-main CI run exists for the selected source');
+  if (!runs.length) return null;
   // Only the latest run/attempt counts. An older green run must not hide a
   // newer failure or an in-progress rerun of the same commit.
   const run = runs.sort((a, b) => b.id - a.id)[0];
-  const jobs = await pages(`/actions/runs/${requireId(run.id, 'CI run ID')}/attempts/${requireId(run.run_attempt, 'CI attempt')}/jobs`, 'jobs');
-  return validateCiRun(run, jobs, sourceSha, repository);
+  const jobs = run.status === 'completed' && run.conclusion === 'success'
+    ? await pages(`/actions/runs/${requireId(run.id, 'CI run ID')}/attempts/${requireId(run.run_attempt, 'CI attempt')}/jobs`, 'jobs') : [];
+  // Detect an attempt restart during job lookup; never validate stale green jobs.
+  const refreshed = await api(`/actions/runs/${requireId(run.id, 'CI run ID')}`);
+  if (refreshed.run_attempt !== run.run_attempt || refreshed.status !== run.status || refreshed.conclusion !== run.conclusion) {
+    return { run: { ...refreshed, status: refreshed.status === 'completed' && refreshed.conclusion === 'success' ? 'in_progress' : refreshed.status }, jobs: [] };
+  }
+  return { run: refreshed, jobs };
+}
+
+async function authorizeCi(sourceSha, wait = false) {
+  return waitForCi(sourceSha, repository, loadCi, {
+    ...(wait ? {} : { timeoutMs: 0 }),
+    progress: (sha, run) => console.log(`[iOS Actions] 等待固定源码 ${sha} 的 CI：${run ? `${run.id}/${run.run_attempt} ${run.status}` : '尚未创建'}`),
+  });
 }
 
 function verifyManifest(sourceSha) {
@@ -107,12 +121,13 @@ function verifyManifest(sourceSha) {
 
 async function plan() {
   const event = readJson(env.GITHUB_EVENT_PATH);
-  const selected = validateDispatch({
+  const selected = await resolveReleaseInputs({
     event: env.GITHUB_EVENT_NAME, ref: env.GITHUB_REF, repository,
     sha: env.GITHUB_SHA, runId: env.GITHUB_RUN_ID, attempt: env.GITHUB_RUN_ATTEMPT,
-  }, event.inputs || {});
+  }, event.inputs || {}, { api, pages });
   assertMainSource(selected.sourceSha, false);
-  const ci = await authorizeCi(selected.sourceSha);
+  if (selected.workflowSha) assertMainSource(selected.workflowSha, false);
+  const ci = await authorizeCi(selected.sourceSha, true);
   const manifest = readJson(join(root, 'mobile/release-manifest.json'));
   const buildNumber = selected.operation === 'testflight'
     ? ''
@@ -125,6 +140,9 @@ async function plan() {
     build_run_attempt: selected.buildAttempt,
     artifact_name: artifactName(selected.sourceSha, selected.buildRunId, selected.buildAttempt),
     build_number: buildNumber,
+    retry_artifact_id: selected.artifactId || '',
+    retry_artifact_digest: selected.artifactDigest || '',
+    retry_workflow_sha: selected.workflowSha || '',
   });
   summary(`### iOS TestFlight plan\n\nSource: \`${selected.sourceSha}\`\n\nOperation: \`${selected.operation}\` · main CI: ${ci.runId}/${ci.attempt}\n\nBuild run: ${selected.buildRunId}, attempt: ${selected.buildAttempt}${buildNumber ? ` · build number: ${buildNumber}` : ''}\n\nThe manual dispatch is the normal release authorization. No second environment approval is required.`);
 }
@@ -161,6 +179,11 @@ async function resolveArtifact() {
   const jobs = await pages(`/actions/runs/${current.buildRunId}/attempts/${current.buildAttempt}/jobs`, 'jobs');
   const artifacts = await pages(`/actions/runs/${current.buildRunId}/artifacts`, 'artifacts');
   const authorized = validateBuildRun(run, jobs, artifacts, current);
+  assertPinnedArtifact(authorized, {
+    artifactId: env.IOS_EXPECTED_ARTIFACT_ID,
+    artifactDigest: env.IOS_EXPECTED_ARTIFACT_DIGEST,
+    workflowSha: env.IOS_EXPECTED_WORKFLOW_SHA,
+  });
   // Also require the workflow implementation that built the IPA to remain on
   // main. The source SHA is checked separately; they need not be identical.
   assertMainSource(authorized.workflowSha, false);
@@ -176,7 +199,7 @@ function seal() {
   const toolchain = readJson(join(temporary, 'ios-toolchain.json'));
   assert.equal(authorization.authorization, 'workflow_dispatch');
   const record = sealBundle(root, current, authorization, toolchain, authorization.ci);
-  summary(`### Verified IPA saved\n\nSource: \`${record.sourceGitSha}\`\n\nVersion: ${record.version} (${record.buildNumber})\n\nIPA SHA256: \`${record.files[0].sha256}\`\n\nTo publish to TestFlight without rebuilding, select testflight with source_sha=${record.sourceGitSha}, build_run_id=${record.buildRunId}, build_run_attempt=${record.buildRunAttempt}.`);
+  summary(`### Verified IPA saved\n\nSource: \`${record.sourceGitSha}\`\n\nVersion: ${record.version} (${record.buildNumber})\n\nIPA SHA256: \`${record.files[0].sha256}\`\n\n无需重新构建：选择「重试已有构建的发布」，在「原构建运行链接或编号」粘贴 https://github.com/${repository}/actions/runs/${record.buildRunId} 。源码与 attempt 由系统自动解析。`);
 }
 
 function verify() {

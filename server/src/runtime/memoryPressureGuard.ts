@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+const MIB = 1024 ** 2;
 const GIB = 1024 ** 3;
 
 export interface MemoryPressureSample {
@@ -33,6 +34,8 @@ export interface RuntimeAdmissionGuard {
 }
 
 export interface MemoryPressureGuardOptions {
+  /** Defaults to the existing runtime environment; only explicit Staging uses smaller reserves. */
+  environment?: string;
   sampleIntervalMs?: number;
   enterSustainMs?: number;
   resumeSustainMs?: number;
@@ -50,6 +53,7 @@ export interface MemoryPressureGuardOptions {
  * 进入/恢复使用不同阈值与持续时间，防止在临界点抖动。
  */
 export class MemoryPressureGuard implements RuntimeAdmissionGuard {
+  private readonly staging: boolean;
   private readonly sampleIntervalMs: number;
   private readonly enterSustainMs: number;
   private readonly resumeSustainMs: number;
@@ -62,9 +66,10 @@ export class MemoryPressureGuard implements RuntimeAdmissionGuard {
   private snapshot: RuntimeAdmissionSnapshot = { state: 'unknown', admitting: true };
 
   constructor(private readonly options: MemoryPressureGuardOptions = {}) {
+    this.staging = (options.environment ?? process.env.AGENT_SAAS_ENVIRONMENT)?.trim() === 'staging';
     this.sampleIntervalMs = Math.max(250, options.sampleIntervalMs ?? 1_000);
     this.enterSustainMs = Math.max(0, options.enterSustainMs ?? 3_000);
-    this.resumeSustainMs = Math.max(0, options.resumeSustainMs ?? 30_000);
+    this.resumeSustainMs = Math.max(0, options.resumeSustainMs ?? (this.staging ? 10_000 : 30_000));
     this.sample = options.sample ?? readLinuxMemoryPressureSample;
     this.now = options.now ?? Date.now;
   }
@@ -74,6 +79,7 @@ export class MemoryPressureGuard implements RuntimeAdmissionGuard {
     const initial = await this.sampleOnce();
     this.options.logger?.info(
       `Runtime memory admission guard started: state=${initial.state}`
+      + ` policy=${this.staging ? 'staging-size-aware' : 'standard'}`
       + `${initial.availableBytes !== undefined ? ` available=${formatMib(initial.availableBytes)}MiB` : ''}`
       + `${initial.enterAvailableBytes !== undefined ? ` pauseBelow=${formatMib(initial.enterAvailableBytes)}MiB` : ''}`
       + `${initial.resumeAvailableBytes !== undefined ? ` resumeAbove=${formatMib(initial.resumeAvailableBytes)}MiB` : ''}`,
@@ -117,9 +123,18 @@ export class MemoryPressureGuard implements RuntimeAdmissionGuard {
 
   private applySample(sample: MemoryPressureSample): RuntimeAdmissionSnapshot {
     const now = this.now();
-    const enterAvailableBytes = Math.max(1.5 * GIB, sample.totalBytes * 0.20);
-    const resumeAvailableBytes = Math.max(2.5 * GIB, sample.totalBytes * 0.30);
-    const pressureReason = detectPressureReason(sample, enterAvailableBytes);
+    // MemAvailable already accounts for reclaimable caches: never add slab/page cache again.
+    // Staging keeps 15%/25% headroom, with 512/768 MiB floors; production is unchanged.
+    const enterAvailableBytes = this.staging
+      ? Math.max(512 * MIB, sample.totalBytes * 0.15)
+      : Math.max(1.5 * GIB, sample.totalBytes * 0.20);
+    const resumeAvailableBytes = this.staging
+      ? Math.max(768 * MIB, sample.totalBytes * 0.25)
+      : Math.max(2.5 * GIB, sample.totalBytes * 0.30);
+    const critical = this.staging && sample.availableBytes < 256 * MIB;
+    const pressureReason = critical
+      ? 'host_mem_available_critical'
+      : detectPressureReason(sample, enterAvailableBytes);
     const recoverySafe = isRecoverySafe(sample, resumeAvailableBytes);
 
     if (this.snapshot.state === 'paused') {
@@ -136,7 +151,10 @@ export class MemoryPressureGuard implements RuntimeAdmissionGuard {
       this.recoverySinceMs = undefined;
       if (pressureReason) {
         this.pressureSinceMs ??= now;
-        if (now - this.pressureSinceMs >= this.enterSustainMs) {
+        // A known-bad first Staging sample must not publish a transient readyfile.
+        // Healthy workers still debounce brief dips; critical headroom never waits.
+        if (critical || (this.staging && this.snapshot.state === 'unknown')
+          || now - this.pressureSinceMs >= this.enterSustainMs) {
           this.transition('paused', now, sample, pressureReason);
         }
       } else {
@@ -180,7 +198,8 @@ export class MemoryPressureGuard implements RuntimeAdmissionGuard {
       );
     } else if (previous === 'paused') {
       this.options.logger?.info(
-        `Runtime admission resumed after memory recovery: available=${formatMib(sample.availableBytes)}MiB`,
+        `Runtime admission resumed after memory recovery: available=${formatMib(sample.availableBytes)}MiB`
+        + ` sustainedMs=${this.resumeSustainMs}`,
       );
     }
   }

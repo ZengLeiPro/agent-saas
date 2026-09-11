@@ -26735,6 +26735,24 @@
           "digest": "sha256:b69051b07fe18e0e42d5bc7505be19aff95a2a6ec42c3d93ad157aab175441c0"
         }
       ]
+    },
+    {
+      "baselineSha": "cc99440d43cdfcb22795260835614fe53eef8035",
+      "files": [
+        {
+          "path": "server/src/runtime/httpTransport.ts",
+          "baselineDigest": "sha256:36e39fcaf36b1b57201150eed1fbda8e5bfc342a82c1c0c281df52b5f842ff85",
+          "targetDigest": "sha256:92fa15d8ec3674f1a09feded49b5008b5218bb641bb8dd40e2b939dc5506a4a6",
+          "classification": "no-schema-change",
+          "reason": "仅调整部署排空等待上限并按上游剩余预算收紧 deadline；没有 SQL、DDL、回填、schema 初始化或依赖变化。精确复核见绑定证据。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/PR636-current-base-migration-review-20260911.md",
+          "digest": "sha256:0ae8ead73435e98d9f91c76df60c7d9fd8922201ecc54b7f551de2cd1d21d652"
+        }
+      ]
     }
   ]
 }

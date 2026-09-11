@@ -1,3 +1,4 @@
+import type { SubscriptionCredentialRotationTransaction } from './subscriptionCredentialRotation.js';
 import type { SecretVault } from '../../security/secretVault.js';
 import { hashAccountBinding, orderedCredentialRefs } from './subscriptionAccountBinding.js';
 import { LocalSubscriptionCredentialLock, type SubscriptionCredentialLock } from './subscriptionCredentialLock.js';
@@ -18,6 +19,7 @@ export class GrokCredentialManager {
   private readonly telemetry = new SubscriptionTelemetry();
   private readonly inFlight = new Map<string, Promise<GrokTokenBundle>>();
   private coordinator?: (ref: string) => Promise<void>;
+  private rotationTransaction?: SubscriptionCredentialRotationTransaction;
   constructor(private readonly options: {
     vault: SecretVault; getConfig: () => GrokSubscriptionRuntimeConfig | undefined;
     lock?: SubscriptionCredentialLock; runtimeStateStore?: SubscriptionCredentialRuntimeStateStore;
@@ -33,6 +35,24 @@ export class GrokCredentialManager {
     this.coordinator = options.credentialRotationCoordinator;
   }
   setCredentialRotationCoordinator(coordinator: ((ref: string) => Promise<void>) | undefined): void { this.coordinator = coordinator; }
+  setCredentialRotationTransaction(transaction: SubscriptionCredentialRotationTransaction | undefined): void { this.rotationTransaction = transaction; }
+  async getPendingPublicationRefs(): Promise<string[]> {
+    const pending: string[] = [];
+    for (const ref of this.getCredentialRefs()) {
+      const generation = await this.journal.get(ref); if (generation === undefined) continue;
+      try { if ((await this.repository.read(ref, generation)).generation > generation) pending.push(ref); }
+      catch (error) { if (!(error instanceof GrokCredentialError)) throw error; }
+    }
+    return pending;
+  }
+  async acknowledgeCredentialRotation(ref: string): Promise<void> {
+    await this.lock.runExclusive(this.lockKey(ref), async () => {
+      const pending = await this.journal.get(ref); if (pending === undefined) return;
+      const bundle = await this.repository.read(ref, pending);
+      if (bundle.generation <= pending) throw new GrokProtocolError('refresh_outcome_unknown');
+      await this.state.clear(ref, bundle.generation); await this.journal.clear(ref, pending);
+    });
+  }
   getCredentialRefs(): string[] { return orderedCredentialRefs(this.options.getConfig()); }
   getConfiguration() {
     const config = this.options.getConfig() ?? {}; const credentialRefs = this.getCredentialRefs();
@@ -135,7 +155,7 @@ export class GrokCredentialManager {
   recordModelFailure(model: string, error: unknown): void { this.telemetry.recordFailure(model, safeError(error)); }
   recordWireRequest(input: SubscriptionWireRequestSample): void { this.telemetry.recordWireRequest({ ...input, fallbackReason: undefined }); }
   private async refresh(ref: string, observedGeneration: number, force: boolean, staleGeneration?: number): Promise<GrokTokenBundle> {
-    const result = await this.lock.runExclusive(this.lockKey(ref), async () => {
+    const rotate = () => this.lock.runExclusive(this.lockKey(ref), async () => {
       this.assertConfigured(ref); const latest = await this.readBundle(ref); const pending = await this.journal.get(ref);
       if (pending !== undefined) {
         if (latest.generation > pending) { await this.state.clear(ref, latest.generation); return { bundle: latest, pending }; }
@@ -145,7 +165,7 @@ export class GrokCredentialManager {
       if (!this.expiring(latest) && (!force || latest.generation > (staleGeneration ?? observedGeneration))) return { bundle: latest };
       const state = await this.state.get(ref);
       if (state?.availability === 'auth_unavailable') throw new GrokCredentialError(state.lastFailureCode ?? 'auth_unavailable', latest.generation);
-      if (this.options.requireRotationCoordinator && !this.coordinator) throw new GrokProtocolError('credential_publication_unavailable');
+      if (this.options.requireRotationCoordinator && !this.rotationTransaction) throw new GrokProtocolError('credential_publication_unavailable');
       await this.journal.begin(ref, latest.generation);
       try {
         const tokens = await this.oauth.refresh(latest); this.assertConfigured(ref);
@@ -166,10 +186,11 @@ export class GrokCredentialManager {
         throw new GrokProtocolError('refresh_outcome_unknown', undefined, true);
       }
     });
-    // Global publication locks are acquired only AFTER releasing the credential lock.
-    // The durable generation fence survives failure/restart and prevents refresh replay.
+    const result = this.rotationTransaction ? await this.rotationTransaction(ref, rotate) : await rotate();
+    // Production holds the publication fence around the credential lock and final receipts.
+    // Non-production compatibility callbacks still run after releasing the credential lock.
     if (result.pending !== undefined) {
-      try { if (this.getCredentialRefs().includes(ref)) await this.coordinator?.(ref); }
+      try { if (!this.rotationTransaction && this.getCredentialRefs().includes(ref)) await this.coordinator?.(ref); }
       catch { throw new GrokProtocolError('credential_publication_pending'); }
       await this.journal.clear(ref, result.pending);
     }

@@ -1,3 +1,4 @@
+import type { SubscriptionCredentialRotationTransaction } from './subscriptionCredentialRotation.js';
 import { LocalSubscriptionCredentialLock as LocalCodexCredentialLock, type SubscriptionCredentialLock as CodexCredentialLock } from './subscriptionCredentialLock.js';
 export { LocalSubscriptionCredentialLock as LocalCodexCredentialLock, PgSubscriptionCredentialLock as PgCodexCredentialLock, type SubscriptionCredentialLock as CodexCredentialLock, type PgLockPool } from './subscriptionCredentialLock.js';
 import { hashAccountBinding, orderedCredentialRefs } from './subscriptionAccountBinding.js';
@@ -104,6 +105,7 @@ export interface CodexCredentialStatus {
 
 export class CodexCredentialManager {
   private credentialRotationCoordinator?: (credentialRef: string) => Promise<void>;
+  private credentialRotationTransaction?: SubscriptionCredentialRotationTransaction;
   private readonly refreshInFlight = new Map<string, Promise<CodexTokenBundle>>();
   private readonly telemetry = new CodexSubscriptionTelemetry();
   private readonly runtimeStateStore: CodexCredentialRuntimeStateStore;
@@ -125,6 +127,8 @@ export class CodexCredentialManager {
   setCredentialRotationCoordinator(coordinator: ((credentialRef: string) => Promise<void>) | undefined): void {
     this.credentialRotationCoordinator = coordinator;
   }
+
+  setCredentialRotationTransaction(transaction: SubscriptionCredentialRotationTransaction | undefined): void { this.credentialRotationTransaction = transaction; }
 
   getCredentialRefs(): string[] {
     return orderedCredentialRefs(this.options.getConfig());
@@ -413,7 +417,7 @@ export class CodexCredentialManager {
     staleGeneration?: number,
   ): Promise<CodexTokenBundle> {
     const observedRuntimeGeneration = await this.runtimeStateStore.getGeneration(credentialRef);
-    const result = await this.lock.runExclusive(this.lockKey(credentialRef), async () => {
+    const rotate = () => this.lock.runExclusive(this.lockKey(credentialRef), async () => {
       const latest = await this.readBundleFromVault(
         credentialRef,
         observedRuntimeGeneration ?? 0,
@@ -453,13 +457,14 @@ export class CodexCredentialManager {
           JSON.stringify(next),
           systemVaultCaller('rotate'),
         );
-        await this.credentialRotationCoordinator?.(credentialRef);
+        if (!this.credentialRotationTransaction) await this.credentialRotationCoordinator?.(credentialRef);
         return { bundle: next, refreshed: true };
       } catch (error) {
         this.telemetry.recordRefreshFailure(error);
         throw new CodexCredentialRefreshError(latest.generation, error);
       }
     });
+    const result = this.credentialRotationTransaction ? await this.credentialRotationTransaction(credentialRef, rotate) : await rotate();
     await this.runtimeStateStore.clear(credentialRef, result.bundle.generation);
     if (result.refreshed) this.telemetry.recordRefreshSuccess(result.bundle.generation);
     return result.bundle;

@@ -2845,12 +2845,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ...(runtimeAdmissionGuard ? { admission: runtimeAdmissionGuard.getSnapshot() } : {}),
       })
     : undefined;
-  const productionModelPublication = initializeProductionModelPublication({
+  const productionModelPublication = initializeProductionModelPublication({ grokCredentialManager,
     config, processCwd, processRole, secretVault, refresher: sharedConfigRefresher,
     identity: configIdentityAssembly, logger: serverLogger,
   });
   codexCredentialManager.setCredentialRotationCoordinator(productionModelPublication?.coordinateCredentialRotation);
   grokCredentialManager.setCredentialRotationCoordinator(productionModelPublication?.coordinateCredentialRotation);
+  grokCredentialManager.setCredentialRotationTransaction(productionModelPublication?.withCredentialRotation);
+  codexCredentialManager.setCredentialRotationTransaction(productionModelPublication?.withCredentialRotation);
   return {
     config, processRole, processCwd,
     providerQuotaService: providerQuotaRuntime?.service,

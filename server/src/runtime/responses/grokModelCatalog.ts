@@ -1,4 +1,4 @@
-import { singleAttemptEgressFetch } from '../egressRequestPolicy.js';
+import { proxyRequiredSingleAttemptEgressFetch } from '../egressRequestPolicy.js';
 import { GrokCredentialError, type GrokCredentialManager } from './grokCredentialManager.js';
 import {
   GROK_MODELS_ENDPOINT,
@@ -37,7 +37,7 @@ export class GrokModelCatalogService {
     fetchImpl: typeof fetch = fetch,
     private readonly now: () => number = Date.now,
   ) {
-    this.fetchImpl = singleAttemptEgressFetch(fetchImpl);
+    this.fetchImpl = proxyRequiredSingleAttemptEgressFetch(fetchImpl);
   }
   invalidate(): void {
     this.cache.clear();

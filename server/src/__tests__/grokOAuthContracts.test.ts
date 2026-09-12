@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GrokOAuthClient } from '../runtime/responses/grokOAuthClient.js';
 import { GrokDeviceAuthService } from '../runtime/responses/grokOAuth.js';
+import { isProxyRequiredEgressRequest } from '../runtime/egressRequestPolicy.js';
 import {
   GROK_DISCOVERY_ENDPOINT,
   GROK_OAUTH_ISSUER,
@@ -66,6 +67,7 @@ describe('Grok trusted OAuth contracts T13-T17', () => {
       fetcher.mock.calls.filter(([url]) => String(url) === GROK_DISCOVERY_ENDPOINT),
     ).toHaveLength(1);
     expect(fetcher.mock.calls.every(([, init]) => init?.redirect === 'error')).toBe(true);
+    expect(fetcher.mock.calls.every(([, init]) => isProxyRequiredEgressRequest(init))).toBe(true);
   });
   it.each([
     'http://auth.x.ai/token',

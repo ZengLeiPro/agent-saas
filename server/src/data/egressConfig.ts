@@ -12,7 +12,7 @@
  *   - 代理凭据（user:pass）不进本文件明文：存 secretVault refId（proxyCredentialRef）。
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -59,6 +59,8 @@ function defaultConfig(): EgressConfig {
 export class EgressConfigStore {
   private data: EgressConfigFileData;
   private mutationChain: Promise<unknown> = Promise.resolve();
+  private observedDigest?: string;
+  private lastRefreshCheckAt = 0;
   loadFailed = false;
 
   constructor(
@@ -100,6 +102,29 @@ export class EgressConfigStore {
       updatedAt: this.data.updatedAt,
       updatedBy: this.data.updatedBy,
     };
+  }
+
+  /**
+   * 多进程共享目录下，按需吸收其他进程原子写入的新版本。
+   * 默认每秒最多检查一次；force 用于测试和显式安全入口。
+   */
+  refreshIfChanged(force = false): boolean {
+    const now = Date.now();
+    if (!force && now - this.lastRefreshCheckAt < 1_000) return false;
+    this.lastRefreshCheckAt = now;
+    if (!existsSync(this.filePath)) return false;
+    const text = readFileSync(this.filePath, 'utf-8');
+    const digest = createHash('sha256').update(text).digest('hex');
+    if (digest === this.observedDigest) return false;
+    const next = this.parse(text);
+    this.assertEnvironmentPolicy(next.config);
+    const runtimeChanged =
+      next.configVersion !== this.data.configVersion ||
+      next.proxyCredentialRef !== this.data.proxyCredentialRef;
+    this.data = next;
+    this.observedDigest = digest;
+    this.loadFailed = false;
+    return runtimeChanged;
   }
 
   /**
@@ -155,28 +180,27 @@ export class EgressConfigStore {
   private load(): void {
     if (!existsSync(this.filePath)) return;
     try {
-      const parsed = JSON.parse(
-        readFileSync(this.filePath, 'utf-8'),
-      ) as Partial<EgressConfigFileData>;
-      const config = egressConfigSchema.safeParse(parsed.config ?? {});
-      if (!config.success) {
-        // 文件在但 config 段非法：fail-closed（保持默认全关），拒绝后续覆盖写，
-        // 留给人工修——静默重置会让代理悄悄失效，比报错更难排查。
-        this.loadFailed = true;
-        return;
-      }
-      this.data = {
-        version: 1,
-        configVersion: parsed.configVersion ?? 0,
-        config: config.data as EgressConfig,
-        proxyCredentialRef: parsed.proxyCredentialRef,
-        updatedAt: parsed.updatedAt,
-        updatedBy: parsed.updatedBy,
-        sandboxSync: parsed.sandboxSync,
-      };
+      const text = readFileSync(this.filePath, 'utf-8');
+      this.data = this.parse(text);
+      this.observedDigest = createHash('sha256').update(text).digest('hex');
     } catch {
       this.loadFailed = true;
     }
+  }
+
+  private parse(text: string): EgressConfigFileData {
+    const parsed = JSON.parse(text) as Partial<EgressConfigFileData>;
+    const config = egressConfigSchema.safeParse(parsed.config ?? {});
+    if (!config.success) throw new Error('egress-config 文件中的 config 段非法');
+    return {
+      version: 1,
+      configVersion: parsed.configVersion ?? 0,
+      config: config.data as EgressConfig,
+      proxyCredentialRef: parsed.proxyCredentialRef,
+      updatedAt: parsed.updatedAt,
+      updatedBy: parsed.updatedBy,
+      sandboxSync: parsed.sandboxSync,
+    };
   }
 
   private async persist(): Promise<void> {
@@ -188,11 +212,13 @@ export class EgressConfigStore {
       dirname(this.filePath),
       `.egress-config.${randomBytes(6).toString('hex')}.tmp`,
     );
-    await writeFile(tmpPath, JSON.stringify(this.data, null, 2), {
+    const text = JSON.stringify(this.data, null, 2);
+    await writeFile(tmpPath, text, {
       mode: 0o600,
     });
     try {
       await rename(tmpPath, this.filePath);
+      this.observedDigest = createHash('sha256').update(text).digest('hex');
     } catch (err) {
       await unlink(tmpPath).catch(() => undefined);
       throw err;

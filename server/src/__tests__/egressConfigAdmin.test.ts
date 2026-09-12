@@ -161,6 +161,35 @@ describe('staging egress config store', () => {
   });
 });
 
+describe('egress config cross-process refresh', () => {
+  it('reader process observes another process atomic update without restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'egress-cross-process-'));
+    roots.push(root);
+    const storePath = join(root, 'egress-config.json');
+    const writer = new EgressConfigStore(storePath);
+    const reader = new EgressConfigStore(storePath);
+
+    await writer.update(
+      fullConfig({
+        server: {
+          enabled: true,
+          proxyUrl: 'http://127.0.0.1:7890',
+          matchDomains: ['x.ai', 'grok.com'],
+          bypassDomains: [],
+          timeoutMs: 20_000,
+          failOpen: true,
+        },
+      }),
+      { actor: 'writer' },
+    );
+
+    expect(reader.refreshIfChanged(true)).toBe(true);
+    expect(reader.getConfigVersion()).toBe(1);
+    expect(reader.getConfig().server.matchDomains).toEqual(['x.ai', 'grok.com']);
+    expect(reader.refreshIfChanged(true)).toBe(false);
+  });
+});
+
 describe('egress config admin router', () => {
   it('默认返回全关配置，不暴露凭据明文', async () => {
     await withApp(async ({ baseUrl }) => {

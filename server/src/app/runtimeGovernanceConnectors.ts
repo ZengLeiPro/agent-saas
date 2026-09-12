@@ -65,16 +65,6 @@ import {
   type NotionConnectionView,
 } from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
-import { EgressConfigStore } from '../data/egressConfig.js';
-import {
-  EgressDispatcherRegistry,
-  createEgressFetch,
-  createEgressWebSocketConnector,
-  createWebToolEgressFetch,
-  installStagingGlobalEgressFetch,
-} from '../runtime/egressDispatcher.js';
-import type { EgressConfig } from '../runtime/egressPolicy.js';
-import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import {
   resolveDwsConnectorRunEnv,
   resolveFeishuConnectorRunEnv,
@@ -91,6 +81,7 @@ import { resolveUserCwd } from '../workspace/resolver.js';
 import { shutdownRuntimeEgress } from './runtimeStagingEgressBootstrap.js';
 import { resolveRunScopedConnectorIdentity } from './orgAgentServiceConnectorIdentity.js';
 import { createRuntimeOAuthSubjectAuthorizer } from './runtimeOAuthSubjectAuthorizer.js';
+import { initializeRuntimeEgress } from './runtimeEgressAssembly.js';
 
 export interface RuntimeGovernanceConnectorDeps {
   processCwd: string;
@@ -786,45 +777,15 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     join(processCwd, 'data', 'signup-config.json'),
     config.auth?.selfSignup,
   );
-  const runtimeEnvironment = readRuntimeIdentity().environment;
-  const egressConfigStore = new EgressConfigStore(
-    join(processCwd, 'data', 'egress-config.json'),
-    config.egress as EgressConfig | undefined,
-    runtimeEnvironment,
-  );
-  const egressLogger = serverLogger.child('Egress');
-  let egressProxyCredential: string | undefined;
-  const refreshEgressProxyCredential = async (): Promise<void> => {
-    const ref = egressConfigStore.getProxyCredentialRef();
-    if (!ref || !secretVault) {
-      egressProxyCredential = undefined;
-      return;
-    }
-    try {
-      egressProxyCredential = await secretVault.getSecret(ref, {
-        actor: 'system',
-        userId: '__system__',
-        scopes: ['secret:egress-proxy:read'],
-      });
-    } catch (err) {
-      egressProxyCredential = undefined;
-      egressLogger.warn(
-        `代理凭据解析失败，按无凭据处理: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  };
-  void refreshEgressProxyCredential();
-  const egressDispatchers = new EgressDispatcherRegistry(
-    {
-      getConfig: () => egressConfigStore.getConfig(),
-      getConfigVersion: () => egressConfigStore.getConfigVersion(),
-      getProxyCredential: () => egressProxyCredential,
-    },
-    egressLogger,
-  );
-  const egressFetch = createEgressFetch(egressDispatchers, egressLogger);
-  const restoreGlobalEgressFetch = installStagingGlobalEgressFetch(runtimeEnvironment, egressFetch);
-  const webToolEgressFetch = createWebToolEgressFetch(egressDispatchers, egressLogger);
+  const {
+    egressConfigStore,
+    refreshEgressProxyCredential,
+    egressDispatchers,
+    egressFetch,
+    webToolEgressFetch,
+    egressWebSocketConnector,
+    restoreGlobalEgressFetch,
+  } = initializeRuntimeEgress({ processCwd, config, secretVault });
   const getNotionConnection =
     connectorConnectionStore && secretVault
       ? (identity: { userId: string; username: string; tenantId: string }) =>
@@ -861,10 +822,9 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       fetchImpl: egressFetch,
     });
   }
-  const codexWebSocketPool = new CodexResponsesWebSocketPool(
-    createEgressWebSocketConnector(egressDispatchers, egressLogger),
-    { logger: egressLogger },
-  );
+  const codexWebSocketPool = new CodexResponsesWebSocketPool(egressWebSocketConnector, {
+    logger: serverLogger.child('Egress'),
+  });
   const mcpCapabilityTokens = new CapabilityTokenService();
   const mcpClientManager = new McpClientManager({
     agentCwd,

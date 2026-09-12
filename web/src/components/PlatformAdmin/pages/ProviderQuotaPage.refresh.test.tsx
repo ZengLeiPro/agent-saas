@@ -77,17 +77,19 @@ function returnToTab() {
 }
 
 describe('ProviderQuotaPage snapshot refresh', () => {
-  it('刷新在立即采集左侧且两者无图标；只读取快照，保留卡片、排序和展开状态', async () => {
+  it('刷新在采集左侧且两者无图标；只读取快照，保留卡片、排序和展开状态', async () => {
     const order = ['volcengine:test', 'claude:test'];
     window.localStorage.setItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY, JSON.stringify(order));
     render(<ProviderQuotaPage />);
     await ready();
     const card = screen.getByTestId('quota-account-volcengine:test');
-    const details = within(card).getByText('其他（1 个窗口）').closest('details')!;
+    const details = within(card).getByText('其他（1）').closest('details')!;
     fireEvent.click(details.querySelector('summary')!);
     const refresh = screen.getByRole('button', { name: /^刷新$/u });
-    const collect = screen.getByRole('button', { name: '立即采集' });
+    const collect = screen.getByRole('button', { name: '采集' });
     expect(refresh.nextElementSibling).toBe(collect);
+    expect(refresh.className).toContain('min-w-16');
+    expect(collect.className).toContain('min-w-16');
     expect(refresh.querySelector('svg')).toBeNull();
     expect(collect.querySelector('svg')).toBeNull();
     api.providerQuota.mockResolvedValue(overview(45));
@@ -136,9 +138,9 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     const collection = deferred<ProviderQuotaOverviewResponse>();
     api.refreshProviderQuota.mockReturnValueOnce(collection.promise);
     api.providerQuota.mockResolvedValue(overview(50));
-    fireEvent.click(screen.getByRole('button', { name: '立即采集' }));
+    fireEvent.click(screen.getByRole('button', { name: '采集' }));
     expect(screen.getByRole('button', { name: /^刷新$/u }).hasAttribute('disabled')).toBe(true);
-    expect(screen.getByRole('button', { name: '立即采集' }).getAttribute('aria-busy')).toBe('true');
+    expect(screen.getByRole('button', { name: '采集' }).getAttribute('aria-busy')).toBe('true');
     expect(screen.getByRole('button', { name: '刷新 火山测试账号' }).hasAttribute('disabled')).toBe(true);
     returnToTab();
     returnToTab();
@@ -150,7 +152,7 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     await ready();
     expect(api.providerQuota).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId('quota-window-monthly').textContent).toContain('50.0%');
-    expect(screen.getByRole('button', { name: '立即采集' }).getAttribute('aria-busy')).toBe('false');
+    expect(screen.getByRole('button', { name: '采集' }).getAttribute('aria-busy')).toBe('false');
   });
 
   it('读取期间禁用重复操作并显示忙碌状态，完成后恢复按钮', async () => {
@@ -162,7 +164,7 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     fireEvent.click(refresh);
     expect(refresh.getAttribute('aria-busy')).toBe('true');
     fireEvent.click(refresh);
-    fireEvent.click(screen.getByRole('button', { name: '立即采集' }));
+    fireEvent.click(screen.getByRole('button', { name: '采集' }));
     expect(api.providerQuota).toHaveBeenCalledTimes(2);
     expect(api.refreshProviderQuota).not.toHaveBeenCalled();
     await act(async () => { reload.resolve(overview(30)); });
@@ -234,6 +236,6 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     const tile = within(card).getByTestId(`quota-window-${id}`);
     expect(tile.textContent).toContain('09/10 周四 12:34');
     expect(tile.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
-    expect(within(card).getByText(/^采集 /).textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
+    expect(within(card).getByText(/采集 /).textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
   });
 });

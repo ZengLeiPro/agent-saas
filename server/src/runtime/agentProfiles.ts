@@ -29,6 +29,23 @@ export { applyOrgAgentExecutionMode, appendDispatcherInstructionSection, resolve
 
 export type AgentProfileScene = AgentProfileBindingKey;
 
+export function profileSessionBinding(
+  session: RuntimeSessionRecord,
+): AgentProfileSessionBinding | undefined {
+  if (!session.profileId || !session.profileKey || !session.profileVersionId
+    || !session.profileVersionNumber || !session.profileConfigDigest
+    || !session.profileBindingKey || !session.profileResolution) return undefined;
+  return {
+    profileId: session.profileId,
+    profileKey: session.profileKey,
+    profileVersionId: session.profileVersionId,
+    profileVersionNumber: session.profileVersionNumber,
+    profileConfigDigest: session.profileConfigDigest,
+    profileBindingKey: session.profileBindingKey,
+    profileResolution: session.profileResolution,
+  };
+}
+
 function shortDigest(value: string | undefined): string {
   return value?.slice(0, 12) || 'missing';
 }
@@ -233,6 +250,8 @@ const GENERAL_HARD_DENY = new Set([
 
 const EXPLORE_HARD_ALLOW = new Set([
   'Read',
+  'Write',
+  'Edit',
   'Shell',
   'WebSearch',
   'WebFetch',

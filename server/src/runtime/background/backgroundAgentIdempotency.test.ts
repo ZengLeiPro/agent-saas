@@ -54,4 +54,17 @@ describe('background Agent idempotency identity', () => {
       }),
     ).toBe(false);
   });
+
+  it('stable agent_id 只接受同一续接协议版本的精确重放', () => {
+    const stableInput = { ...input, agentId: 'agent-stable' };
+    expect(isBackgroundAgentIdempotentReplay(task, stableInput)).toBe(false);
+    expect(isBackgroundAgentIdempotentReplay({
+      ...task,
+      metadata: {
+        ...task.metadata,
+        subagentAgentId: 'agent-stable',
+        subagentContinuationProtocolVersion: 1,
+      },
+    }, stableInput)).toBe(true);
+  });
 });

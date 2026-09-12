@@ -27,7 +27,10 @@ export type OrgAgentExecutionTarget = 'server-local' | 'server-container' | 'ser
 export interface OrgAgentRuntimePolicy {
   schemaVersion: 1;
   executionMode: 'direct' | 'dispatcher';
-  workerModel: { strategy: 'inherit' } | { strategy: 'fixed'; modelRef: string };
+  workerModel:
+    | { strategy: 'inherit' }
+    | { strategy: 'default'; modelRef: string }
+    | { strategy: 'fixed'; modelRef: string };
   context: { modules: OrgAgentRuntimeContextModule[] | null };
   model: { strategy: 'inherit' } | { strategy: 'fixed'; modelRef: string };
   memory: { scope: 'inherit' | 'full' | 'search_only' | 'none' };

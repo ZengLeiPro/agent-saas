@@ -688,8 +688,8 @@ describe('processWsEvent - subagent', () => {
   it('subagent_start：无既有骨架时新增 running subagent', () => {
     const ctrl = makeController();
     const { ctx } = makeCtx(ctrl);
-    dispatch({ type: 'subagent_start', toolId: 't1', agentType: 'coder', model: 'gpt' }, ctx);
-    expect(ctrl.messages[0]).toMatchObject({ type: 'subagent', toolId: 't1', agentType: 'coder', status: 'running', model: 'gpt' });
+    dispatch({ type: 'subagent_start', toolId: 't1', agentType: 'coder', model: 'gpt', agentId: 'agent-1', effort: 'high' }, ctx);
+    expect(ctrl.messages[0]).toMatchObject({ type: 'subagent', toolId: 't1', agentType: 'coder', status: 'running', model: 'gpt', agentId: 'agent-1', effort: 'high' });
   });
 
   it('subagent_start：把同 toolId 的 tool_use 骨架原地升级为 subagent', () => {

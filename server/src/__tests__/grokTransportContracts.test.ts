@@ -199,6 +199,30 @@ describe('Grok ordered subscription transport T01-T07, T25, T27-T28, T33', () =>
     );
     expect(await f.manager.getRuntimeState(f.refs[0])).toBeUndefined();
   });
+  it('仅在订阅目录明确支持时把 effort 保留到 Grok 最终请求体', async () => {
+    const f = await grokFixture(1);
+    const catalog = new GrokModelCatalogService(f.manager, vi.fn());
+    vi.spyOn(catalog, 'forAccount').mockImplementation(async (ref) => ({
+      credentialRef: ref,
+      status: 'fresh',
+      models: [{ id: 'fixture-model', supportsReasoningEffort: true }],
+      collectedAt: new Date().toISOString(),
+    }) as Awaited<ReturnType<GrokModelCatalogService['forAccount']>>);
+    const fetcher = vi.fn().mockResolvedValue(new Response('ok'));
+
+    await new GrokSubscriptionResponsesTransport(f.manager, fetcher, catalog).execute({
+      ...request,
+      serializedBody: JSON.stringify({
+        model: 'fixture-model',
+        input: [{ role: 'user', content: 'hello' }],
+        reasoning: { effort: 'high', summary: 'auto' },
+      }),
+    });
+
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
+      reasoning: { effort: 'high' },
+    });
+  });
   it('isolates tenant/session/account bindings and drops only opaque state on mismatch', async () => {
     const f = await grokFixture();
     const fetcher = vi.fn().mockImplementation(async () => new Response('ok'));

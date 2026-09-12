@@ -146,7 +146,7 @@ describe('Codex subscription Responses transport', () => {
     ]));
     const adapter = new ResponsesApiAdapter(
       { apiKey: '', baseUrl: 'https://chatgpt.com/backend-api/codex' },
-      { protocol: 'responses', responsesTransport: 'codex_subscription' },
+      { protocol: 'responses', responsesTransport: 'codex_subscription', reasoningEffort: 'high' },
       new CodexSubscriptionResponsesTransport(manager),
     );
 
@@ -191,6 +191,7 @@ describe('Codex subscription Responses transport', () => {
       parallel_tool_calls: true,
       tool_choice: 'auto',
       text: { verbosity: 'low' },
+      reasoning: { effort: 'high', summary: 'auto' },
     });
     expect(body.previous_response_id).toBeUndefined();
     expect(body.max_output_tokens).toBeUndefined();

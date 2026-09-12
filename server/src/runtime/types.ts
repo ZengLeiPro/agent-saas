@@ -21,6 +21,7 @@ import type { HandStatus } from './handStore.js';
 import type { SessionReadStateChangedEvent } from './sessionReadStateChangedEvent.js';
 import type { ToolAuditPlatformEvent } from './toolAuditEvent.js';
 import type { OrgAgentWorkerRunContext } from './orgAgentWorkerCapability.js';
+import type { SubagentLifecyclePlatformEvent } from './subagent/subagentLifecycleEvent.js';
 export type { SessionReadStateChangedEvent } from './sessionReadStateChangedEvent.js';
 export type {
   ModelRequestDiagnostic,
@@ -1001,48 +1002,7 @@ export type PlatformEvent =
    * contextProjection / legacyTranscriptProjection 对这两类事件走 default 忽略分支，
    * 不进模型 messages 投影（子 agent 的贡献只经 Agent 工具的 tool_result 回父上下文）。
    */
-  | {
-    id: string;
-    timestamp: string;
-    type: 'subagent_started';
-    runId: string;
-    sessionId: string;
-    /** 父 run 中触发本次委派的 Agent 工具调用 id（前端用它锚定 SubagentBlock）。 */
-    toolCallId: string;
-    agentType: string;
-    /** 模型提供的 3-5 词任务概述，UI 显示友好文案。 */
-    description: string;
-    childSessionId: string;
-    childRunId: string;
-    model: string;
-  }
-  | {
-    id: string;
-    timestamp: string;
-    type: 'subagent_finished';
-    runId: string;
-    sessionId: string;
-    toolCallId: string;
-    agentType: string;
-    description: string;
-    childSessionId: string;
-    childRunId: string;
-    model?: string;
-    /**
-     * 终态来自 runtime outcome 枚举（D5 红线）：绝不从模型文本推断；
-     * API 错误 / 超时 / 取消不会伪装成 completed。
-     */
-    status: 'completed' | 'failed' | 'cancelled' | 'timeout';
-    totalTokens: number;
-    toolUseCount: number;
-    /** 存量事件可能缺失；新事件始终写入。 */
-    turnCount?: number;
-    durationMs: number;
-    /** 面向调用方的脱敏错误摘要；成功时缺省。 */
-    errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
-    /** 子任务最终文本的短预览；完整过程仍读取 childSessionId。 */
-    resultPreview?: string;
-  }
+  | SubagentLifecyclePlatformEvent
   /** durable 后台 Agent/命令生命周期；只作审计/观测，不进入模型上下文投影。 */
   | {
     id: string;

@@ -192,6 +192,8 @@ export interface MemoryRecallData {
 export interface ModelProviderOptions {
   thinking?: unknown;
   reasoningEffort?: string;
+  /** reasoning effort 的可信能力目录；未配置不代表模型支持任意值。 */
+  reasoningEffortCapability?: EffortCapability;
   extraBody?: Record<string, unknown>;
   /** 显式输入模态能力；undefined 表示 unknown，SaaS 侧不得按模型名称自动推断。 */
   inputModalities?: Array<'text' | 'image'>;
@@ -251,6 +253,13 @@ export interface ModelProviderOptions {
    * 在 SSE 累积完成后会对每个 toolCall.arguments 做一次反向 unescape。仅对 deepseek 路径开启。
    */
   applyDeepseekArgumentUnescape?: boolean;
+}
+
+export interface EffortCapability {
+  support: 'supported' | 'unsupported' | 'unknown';
+  values?: readonly string[];
+  defaultValue?: string;
+  source?: 'configured' | 'verified_provider';
 }
 
 /** 原始上下文用量结构（透传给前端以便未来字段扩展） */

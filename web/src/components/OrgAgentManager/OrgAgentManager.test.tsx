@@ -116,6 +116,7 @@ beforeEach(() => {
     json: async () => url === '/api/models'
       ? {
           showGroupNames: true,
+          default: 'group/worker-model',
           groups: [{ id: 'group', name: '组织模型', models: [{ id: 'worker-model', name: 'Worker 专用模型' }] }],
         }
       : API_TEMPLATES,
@@ -377,6 +378,32 @@ describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
           executionMode: 'dispatcher',
           workerModel: { strategy: 'inherit' },
           capabilities: expect.objectContaining({ subagents: 'inherit', backgroundTasks: 'inherit' }),
+        }),
+      }),
+    }));
+  });
+
+  it('前台调度器可保存 Worker 可覆盖默认模型策略', async () => {
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByPlaceholderText('如：产品选型助手'), {
+      target: { value: '可选模型前台' },
+    });
+    fireEvent.click(within(dialog).getByRole('radio', { name: /前台调度器/ }));
+    const strategy = await within(dialog).findByRole('combobox', { name: 'Worker 模型策略' });
+    await waitFor(() => expect(
+      (within(strategy).getByRole('option', { name: '可覆盖默认模型' }) as HTMLOptionElement).disabled,
+    ).toBe(false));
+    fireEvent.change(strategy, { target: { value: 'default' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建' }));
+
+    await waitFor(() => expect(mockSaveConfiguration).toHaveBeenCalledOnce());
+    expect(mockSaveConfiguration).toHaveBeenCalledWith(expect.objectContaining({
+      definition: expect.objectContaining({
+        runtime: expect.objectContaining({
+          executionMode: 'dispatcher',
+          workerModel: { strategy: 'default', modelRef: 'group/worker-model' },
         }),
       }),
     }));

@@ -46,10 +46,9 @@ export function createOrgAgentDispatcherRuntimeValidator(deps: DispatcherValidat
         bindingKey,
       });
       const effective = mergeOrgAgentWorkerRuntimePolicy(profile.version.config, policy);
-      const modelRef =
-        effective.model.strategy === 'fixed'
-          ? effective.model.modelRef
-          : deps.defaultModelResolver?.(tenantId)?.ref;
+      const modelRef = effective.model.strategy === 'inherit'
+        ? deps.defaultModelResolver?.(tenantId)?.ref
+        : effective.model.modelRef;
       const resolved = modelRef ? deps.modelResolver?.(modelRef, tenantId) : null;
       const hasConnection = Boolean(
         resolved &&

@@ -144,7 +144,7 @@ class CaptureInstructionsAdapter implements ModelAdapter {
   }
 }
 
-const descriptors: ToolDescriptor[] = ['Read', 'Write', 'Shell', 'Agent', 'AskUserQuestion', 'CronManage', 'WaitForWorkspaceReady'].map((name) => toolDescriptor(name));
+const descriptors: ToolDescriptor[] = ['Read', 'Write', 'Edit', 'Shell', 'Agent', 'AskUserQuestion', 'CronManage', 'WaitForWorkspaceReady'].map((name) => toolDescriptor(name));
 
 function toolDescriptor(name: string): ToolDescriptor {
   return {
@@ -164,17 +164,25 @@ describe('Agent Runtime Profile schema and runtime intersection', () => {
     const records = createBuiltinAgentProfileRecords('2026-07-22T00:00:00.000Z');
     for (const key of ['memory_poll', 'subagent_explore'] as const) {
       const current = getBuiltinProfileByBinding(key);
-      expect(current.version.versionNumber).toBe(key === 'memory_poll' ? 3 : 2);
-      expect(current.version.publishedAt).toBe(key === 'memory_poll' ? '2026-09-05T15:34:00.000Z' : '2026-07-24T17:04:00.000Z');
+      expect(current.version.versionNumber).toBe(3);
+      expect(current.version.publishedAt).toBe(
+        key === 'memory_poll' ? '2026-09-05T15:34:00.000Z' : '2026-09-12T07:50:00.000Z',
+      );
       expect(current.version.config.tools.allowlist).toContain('Shell');
       const versions = records.versions
         .filter((version) => version.profileId === current.profile.profileId)
         .sort((a, b) => b.versionNumber - a.versionNumber);
-      expect(versions.map((version) => version.versionNumber)).toEqual(key === 'memory_poll' ? [3, 2, 1] : [2, 1]);
+      expect(versions.map((version) => version.versionNumber)).toEqual([3, 2, 1]);
       expect(versions[0]!.config.tools.allowlist).not.toEqual(expect.arrayContaining(['List', 'Glob', 'Grep']));
       expect(versions.at(-1)!.config.tools.allowlist).toEqual(expect.arrayContaining(
         key === 'memory_poll' ? ['List', 'Glob', 'Grep'] : ['Glob', 'Grep'],
       ));
+      if (key === 'subagent_explore') {
+        expect(versions.find(version => version.versionNumber === 1)?.configDigest)
+          .toBe('95d52f415f4245ecc8eab29402d2082e45787c373d158892556582e106f95a24');
+        expect(versions.find(version => version.versionNumber === 2)?.configDigest)
+          .toBe('73429867896fdadd52f33be39ef4de10c7f687c208bf120475d3277c08aaf0e5');
+      }
     }
   });
 
@@ -310,7 +318,8 @@ describe('Agent Runtime Profile schema and runtime intersection', () => {
       expect(visible).not.toContain('CronManage');
       if (key === 'subagent_explore') {
         expect(visible).toContain('Shell');
-        expect(visible).not.toContain('Write');
+        expect(visible).toContain('Write');
+        expect(visible).toContain('Edit');
       }
     }
   });
@@ -341,18 +350,33 @@ describe('real RawAgentLoop Profile scenarios', () => {
     expect(started).toMatchObject({ profileVersionId: main.version.profileVersionId, profileConfigDigest: main.version.configDigest });
   });
 
-  it('explore Profile exposes Shell for rg search while still hiding write tools', async () => {
+  it('Explore v3 exposes Write/Edit while a pinned v2 remains read-only', async () => {
     const bound = boundFromBuiltin('subagent_explore');
     const inner = new StaticToolRuntime(descriptors);
     const runtime = applyAgentRuntimeProfile(inner, bound);
-    const adapter = new ToolThenTextAdapter('Shell');
+    const adapter = new ToolThenTextAdapter('Write');
     const { loop } = await loopHarness(adapter, runtime);
     const events = await collect(loop.run(input('explore instructions'), runContext(bound)));
     expect(adapter.requests[0]!.tools.map((tool) => tool.name)).toContain('Shell');
-    expect(adapter.requests[0]!.tools.map((tool) => tool.name)).not.toContain('Write');
-    expect(inner.calls).toEqual(['Shell']);
+    expect(adapter.requests[0]!.tools.map((tool) => tool.name)).toContain('Write');
+    expect(inner.calls).toEqual(['Write']);
     expect(events.at(-1)).toEqual({ type: 'done' });
-    await expect(runtime.invoke(call('Write'), context())).rejects.toThrow(/有效工具集/);
+
+    const records = createBuiltinAgentProfileRecords('2026-07-22T00:00:00.000Z');
+    const v2 = records.versions.find(version => version.profileVersionId === 'arpv_builtin_subagent_explore_v2')!;
+    const pinnedV2 = {
+      ...bound,
+      version: v2,
+      binding: {
+        ...bound.binding,
+        profileVersionId: v2.profileVersionId,
+        profileVersionNumber: v2.versionNumber,
+        profileConfigDigest: v2.configDigest,
+      },
+    };
+    const oldRuntime = applyAgentRuntimeProfile(inner, pinnedV2);
+    expect(oldRuntime.list().map(tool => tool.name)).not.toContain('Write');
+    await expect(oldRuntime.invoke(call('Write'), context())).rejects.toThrow(/有效工具集/);
   });
 
   it('publishing v2 keeps an old session on v1 while a new session uses v2', async () => {

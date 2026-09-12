@@ -1,3 +1,4 @@
+// release-migration: expand
 import type pg from 'pg';
 import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import type { PgPool, PgRunStoreWriterCapability } from './runStoreTypes.js';
@@ -485,6 +486,7 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_background_top_session_idx ON ${store.runsTable} ((metadata->>'topLevelSessionId'), requested_at DESC) WHERE metadata->>'backgroundTask' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_background_parent_run_idx ON ${store.runsTable} ((metadata->>'parentRunId'), status) WHERE metadata->>'backgroundTask' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_background_tenant_status_idx ON ${store.runsTable} (tenant_id, status, updated_at) WHERE metadata->>'backgroundTask' = 'true'`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_subagent_identity_idx ON ${store.runsTable} (tenant_id, (metadata->>'parentSessionId'), (metadata->>'subagentAgentId'), requested_at DESC) WHERE metadata->>'subagent' = 'true' AND metadata ? 'subagentAgentId'`);
       // RFC v1 P0.4：按 sessionId 找最近完成 run 的 last_response_id（跨 run 接力查询路径）
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_session_last_response_idx`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_tenant_session_last_response_idx ON ${store.runsTable} (tenant_id, session_id, updated_at DESC) WHERE last_response_id IS NOT NULL`);

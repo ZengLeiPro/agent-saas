@@ -33,7 +33,6 @@ import {
   type ToolResult,
   type ToolRuntime,
 } from '../../agent/toolRuntime.js';
-import { readTenantCompanyInfoSync } from '../../data/tenants/companyInfo.js';
 import { mergeOrgAgentWorkerRuntimePolicy } from '../../data/orgAgents/runtimePolicy.js';
 import type { ExecutionTransportRegistry } from '../executionTransport.js';
 import { LegacyTranscriptProjection } from '../legacyTranscriptProjection.js';
@@ -70,7 +69,6 @@ import type { SubagentTypeDefinition } from './agentTypes.js';
 import {
   executionContextInstructions,
   executionContextSessionSnapshot,
-  type OrgAgentEffectiveExecutionContext,
 } from '../background/orgAgentExecutionContext.js';
 import {
   applyAgentRuntimeProfile,
@@ -82,9 +80,19 @@ import {
 } from '../agentProfiles.js';
 import {
   sharedSubagentLimiter,
-  SubagentLimiter,
   SUBAGENT_HARD_TIMEOUT_MS,
 } from './subagentLimits.js';
+import {
+  deriveSubagentAgentId,
+  resolveSubagentExecutionOptions,
+  type SubagentExecutionOptions,
+} from './subagentExecutionOptions.js';
+import { buildSubagentInterjectionLoader } from './subagentInterjectionLoader.js';
+import { buildSubagentInstructions, loadCompanyInfoForSubagent } from './subagentInstructions.js';
+import { SUBAGENT_CONTINUATION_PROTOCOL_VERSION } from './subagentContinuationProtocol.js';
+import { resolveSubagentContinuationHistory } from './subagentContinuationHistory.js';
+import type { RunSubagentParams, SubagentOutcome, SubagentStatus } from './subagentRunnerTypes.js';
+export type { RunSubagentParams, SubagentOutcome, SubagentStatus } from './subagentRunnerTypes.js';
 
 const logger = createLogger('SubagentRunner');
 
@@ -122,26 +130,6 @@ export const SUBAGENT_DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([
   'KillBash',
 ]);
 
-export type SubagentStatus = 'completed' | 'failed' | 'cancelled' | 'timeout';
-
-export interface SubagentOutcome {
-  status: SubagentStatus;
-  /** 子 run 最后一条 assistant 文本（失败/超时/取消时为已产出的部分文本，可能为空）。 */
-  text: string;
-  /** status !== 'completed' 时的错误说明（错误名 + message，与结论文本严格分离）。 */
-  errorMessage?: string;
-  failureKind?: RuntimeFailureKind;
-  recoveryAction?: RuntimeRecoveryAction;
-  totalTokens: number;
-  toolUseCount: number;
-  turnCount: number;
-  durationMs: number;
-  childSessionId: string;
-  childRunId: string;
-  model: string;
-  modelUsage?: Record<string, SdkResultModelUsage>;
-}
-
 export function deriveChildAutomationFence(
   parentFence: ToolCallContext['automationFence'],
   childRunId: string,
@@ -157,53 +145,6 @@ export function deriveChildAutomationFence(
     rootRunId: parentFence.rootRunId ?? parent.runId,
     runId: childRunId,
   };
-}
-
-export interface RunSubagentParams {
-  config: RawRuntimeRunDispatchConfig;
-  executionTransportRegistry: ExecutionTransportRegistry;
-  tenantHandResolver: TenantRemoteHandAuthTokenResolver;
-  /**
-   * 父 run 的 provider 集快照（**不含** AgentToolProvider 自身——collectRuntimeTooling
-   * 在 push Agent 之前截取）。子工具集从这里派生，保证「子不可能拿到父没有的工具」。
-   */
-  parentProviders: ToolProvider[];
-  /** 父 run 的 ToolCallContext（workspace/channelContext/signal/sessionId/runId/toolCallId 来源）。 */
-  parentContext: ToolCallContext;
-  agentType: SubagentTypeDefinition;
-  /** Background queue pins its Profile on the reservation session before execution. */
-  profileSourceSession?: RuntimeSessionRecord;
-  /** WorkOrder 固化的员工执行上下文；存在时优先于长期父 session 快照。 */
-  orgAgentExecutionContext?: OrgAgentEffectiveExecutionContext;
-  request: {
-    description: string;
-    prompt: string;
-    model?: string;
-    includeCompanyInfo: boolean;
-  };
-  /** 测试注入口；生产用进程级共享的单父限额器。 */
-  limiter?: SubagentLimiter;
-  /** 测试注入口；生产用 SUBAGENT_HARD_TIMEOUT_MS。 */
-  hardTimeoutMs?: number;
-  /** 测试注入口：替换真实 model adapter（默认 createModelAdapterForProtocol，会发真实 HTTP）。 */
-  modelAdapterFactory?: (
-    connection: { apiKey?: string; baseUrl?: string },
-    providerOptions?: import('../../types/index.js').ModelProviderOptions,
-  ) => import('../types.js').ModelAdapter;
-  /** Durable caller-reserved identity. Recovery must pass the same pair instead of creating another child. */
-  preparedChildIdentity?: { childSessionId: string; childRunId: string };
-  /** Atomically consumes the caller's prepared resource before the first child side effect. */
-  acquireChildLaunchAuthority?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
-  /** Called before and after child session/run/lease/hand/provider side effects to recheck live authority. */
-  beforeChildSideEffects?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
-  /** Invoked after stale/error cleanup has terminalized the child and destroyed registered Hands. */
-  onChildLaunchError?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
-  /** Durable fence immediately before a tenant remote provision request leaves the process. */
-  beforeTenantRemoteProvision?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
-  /** Crash/recovery contract checkpoints; production callers normally leave this unset. */
-  lifecycleCheckpoint?: (checkpoint: 'prepared' | 'session' | 'run' | 'lease' | 'hand' | 'before_active') => Promise<void> | void;
-  /** 子 session/run 已建好、即将起跑时回调（AgentToolProvider 用它发 durable subagent_started）。 */
-  onChildRunCreated?: (info: { childSessionId: string; childRunId: string; model: string }) => Promise<void> | void;
 }
 
 /**
@@ -226,14 +167,6 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
 
   const sessionCatalog = resolveSessionCatalog(config);
   const parentSession = await sessionCatalog.get(parentSessionId).catch(() => null);
-  const workerChild = parentContext.executionRole === 'worker'
-    || Boolean(params.orgAgentExecutionContext)
-    || Boolean(params.profileSourceSession?.executionRole === 'worker'
-      && params.profileSourceSession.orgAgentId
-      && params.profileSourceSession.orgAgentSnapshot)
-    || Boolean(parentSession?.executionRole === 'dispatcher'
-      && parentSession.orgAgentId
-      && parentSession.orgAgentSnapshot?.runtime.executionMode === 'dispatcher');
   const identity = parentContext.channelContext.sessionOwner ?? parentContext.channelContext.user;
   const tenantCandidates = [
     parentSession?.tenantId,
@@ -247,14 +180,48 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   }
   const username = parentSession?.username || identity?.username || parentContext.workspace.username;
   const userId = parentSession?.userId || identity?.id || parentContext.workspace.userId;
+  const agentId = request.agentId?.trim() || deriveSubagentAgentId({
+    parentSessionId,
+    parentRunId,
+    toolCallId: parentContext.toolCallId ?? `agent-${parentRunId}`,
+  });
+  const continuationSession = params.continuationChildSessionId
+    ? await sessionCatalog.get(params.continuationChildSessionId).catch(() => null)
+    : null;
+  if (params.continuationChildSessionId) {
+    if (!continuationSession || continuationSession.deletedAt || continuationSession.kind !== 'subagent') {
+      throw new Error(`子 Agent 历史会话不可恢复：${params.continuationChildSessionId}`);
+    }
+    if (continuationSession.tenantId !== tenantId || continuationSession.userId !== userId) {
+      throw new Error('子 Agent 续接身份与当前租户或会话所有者不一致。');
+    }
+  }
+  await resolveSubagentContinuationHistory({
+    continuation: request.continuation,
+    sessionCatalog,
+    runStore: config.runStore,
+    agentId,
+    tenantId,
+    userId,
+    parentSessionId,
+  });
+  const profileSourceSession = continuationSession ?? params.profileSourceSession;
+  const workerChild = parentContext.executionRole === 'worker'
+    || Boolean(params.orgAgentExecutionContext)
+    || Boolean(profileSourceSession?.executionRole === 'worker'
+      && profileSourceSession.orgAgentId
+      && profileSourceSession.orgAgentSnapshot)
+    || Boolean(parentSession?.executionRole === 'dispatcher'
+      && parentSession.orgAgentId
+      && parentSession.orgAgentSnapshot?.runtime.executionMode === 'dispatcher');
   const executionTarget = parentContext.workspace.executionTarget;
   const approvalPolicy = resolveEffectiveApprovalPolicy(config, undefined, { userId, username });
   let boundProfile: BoundAgentRuntimeProfile | undefined;
   if (config.agentRuntimeProfileResolver) {
-    const bindingKey = params.profileSourceSession?.profileBindingKey
+    const bindingKey = profileSourceSession?.profileBindingKey
       ?? (agentType.id === 'explore' ? 'subagent_explore' : 'subagent_general');
     boundProfile = await config.agentRuntimeProfileResolver.resolveForSession({
-      existingSession: params.profileSourceSession ?? null,
+      existingSession: profileSourceSession ?? null,
       bindingKey,
     });
     if (params.orgAgentExecutionContext?.model.profileConfig) {
@@ -277,40 +244,26 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
   }
 
-  // ── 闸门 1：模型白名单（关键不变量 3：显式传父 tenantId，不能沿用 dispatch 的单参调用） ──
+  // ── 闸门 1：模型/effort 白名单（关键不变量 3：显式传父 tenantId） ──
   // Billing 在 childRunId 落库后按实际用量执行门禁；旧余额快照
   // 无法识别父 run 自身预占，会误拒绝合法子 Agent，因此不在派生前重复检查。
   const configuredWorkerModel = (effectiveOrgAgentSnapshot ?? parentSession?.orgAgentSnapshot)?.runtime.workerModel;
-  const requestedRef = params.orgAgentExecutionContext?.model.modelRef
-    ?? (boundProfile?.version.config.model.strategy === 'fixed'
-    ? boundProfile.version.config.model.modelRef
-    : configuredWorkerModel?.strategy === 'fixed'
-      ? configuredWorkerModel.modelRef
-      : request.model?.trim() || undefined);
-  const inheritedRef = parentSession?.modelRef;
-  const refToResolve = requestedRef ?? inheritedRef;
-  let model: string | undefined;
-  let connection: { apiKey?: string; baseUrl?: string } | undefined;
-  let providerOptions: import('../../types/index.js').ModelProviderOptions | undefined;
-  if (refToResolve && config.modelResolver) {
-    const resolved = config.modelResolver(refToResolve, tenantId);
-    if (!resolved && requestedRef) {
-      throw new Error(`子 agent 模型 "${requestedRef}" 不在当前组织可用模型白名单内。省略 model 参数可继承主 agent 模型。`);
-    }
-    if (resolved) {
-      model = resolved.model;
-      connection = resolved.connection;
-      providerOptions = resolved.providerOptions;
-    }
-  }
   const parentRun = await config.runStore?.get(parentRunId).catch(() => null);
-  if (!model) {
-    // 无 modelResolver（file backend / 测试）或父 session 无 modelRef：退回父 run 的实际模型
-    model = refToResolve ?? parentRun?.model ?? undefined;
-  }
-  if (!model) {
-    throw new Error('无法确定子 agent 模型：父会话无模型记录且未提供 model 参数。');
-  }
+  const executionOptions: SubagentExecutionOptions = resolveSubagentExecutionOptions({
+    requestedModelRef: request.model,
+    requestedEffort: request.effort,
+    inheritedModelRef: parentSession?.modelRef,
+    parentRunModel: parentRun?.model,
+    tenantId,
+    modelResolver: config.modelResolver,
+    profileModel: boundProfile?.version.config.model,
+    workerModel: configuredWorkerModel,
+    executionContextModelRef: params.orgAgentExecutionContext?.model.modelRef,
+  });
+  const model = executionOptions.model;
+  const connection = executionOptions.connection;
+  const providerOptions = executionOptions.providerOptions;
+  const refToResolve = executionOptions.resolvedModelRef;
   const apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
   const baseUrl = connection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
   if (!apiKey && modelRequiresApiKey(providerOptions)) {
@@ -323,7 +276,13 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const slot = await limiter.acquire(parentRunId, parentContext.signal);
 
   const startedAt = Date.now();
-  const childSessionId = params.preparedChildIdentity?.childSessionId ?? `sub-${randomUUID()}`;
+  if (params.preparedChildIdentity && params.continuationChildSessionId
+    && params.preparedChildIdentity.childSessionId !== params.continuationChildSessionId) {
+    throw new Error('prepared child identity 与 continuation child session 冲突。');
+  }
+  const childSessionId = params.continuationChildSessionId
+    ?? params.preparedChildIdentity?.childSessionId
+    ?? `sub-${randomUUID()}`;
   const childRunId = params.preparedChildIdentity?.childRunId ?? `${Date.now()}-${randomUUID()}`;
   if (!childSessionId || !childRunId) throw new Error('prepared child identity is incomplete');
   const childAutomationFence = deriveChildAutomationFence(parentContext.automationFence, childRunId, {
@@ -360,7 +319,12 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     launchClaimed = true;
     await params.beforeChildSideEffects?.(childIdentity);
     // ── 子 session/run 落库（D2：hidden session；runStore metadata 挂亲子链） ──
-    let childRecord: RuntimeSessionRecord = createRuntimeSessionRecord({
+    let childRecord: RuntimeSessionRecord = continuationSession ? {
+      ...continuationSession,
+      modelRef: refToResolve ?? model,
+      status: 'running',
+      updatedAt: new Date().toISOString(),
+    } : createRuntimeSessionRecord({
       sessionId: childSessionId,
       userId,
       username,
@@ -405,12 +369,28 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       sandboxScopeId: parentWorkspace.sandboxScopeId,
       metadata: {
         subagent: true,
+        subagentAgentId: agentId,
+        subagentContinuationProtocolVersion: SUBAGENT_CONTINUATION_PROTOCOL_VERSION,
+        modelRef: refToResolve ?? model,
         outputTransactionMode: 'terminal_buffered',
         parentRunId,
         parentSessionId,
         parentToolCallId: parentContext.toolCallId,
         agentType: agentType.id,
+        subagentMode: request.mode ?? 'foreground',
         description: request.description,
+        includeCompanyInfo: request.includeCompanyInfo,
+        ...(request.continuation ? {
+          subagentContinuation: request.continuation,
+          subagentContinuationExecution: true,
+        } : {}),
+        ...(executionOptions.requestedModelRef ? { requestedModelRef: executionOptions.requestedModelRef } : {}),
+        ...(executionOptions.modelSource ? { modelSource: executionOptions.modelSource } : {}),
+        ...(executionOptions.modelLocked ? { modelLocked: true } : {}),
+        ...(executionOptions.requestedEffort ? { requestedEffort: executionOptions.requestedEffort } : {}),
+        ...(executionOptions.resolvedEffort ? { effort: executionOptions.resolvedEffort } : {}),
+        effortSource: executionOptions.effortSource,
+        ...(executionOptions.effortCapability ? { effortCapability: executionOptions.effortCapability } : {}),
         ...(childAutomationFence ? { automationFence: childAutomationFence } : {}),
         ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
         ...(workerChild ? { executionRole: 'worker' } : {}),
@@ -526,6 +506,11 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       agentType,
       cwd: visibleWorkspaceCwd(parentWorkspace.root, executionTarget),
       executionTarget,
+      modelRef: refToResolve ?? model,
+      effort: executionOptions.resolvedEffort,
+      agentId,
+      continuation: Boolean(request.continuation),
+      enterpriseAttempt: Boolean(params.orgAgentExecutionContext),
       systemPrompt: config.getSystemPrompt?.(`subagent.${agentType.id}`),
       profileSystemInstructions: boundProfile?.version.config.context.systemInstructions,
       memoryReadOnly: childRecord.memoryPolicyVersion === 'v2',
@@ -647,11 +632,30 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         profileVersionId: boundProfile.binding.profileVersionId,
         profileConfigDigest: boundProfile.binding.profileConfigDigest,
       } : {}),
+      ...(request.continuation?.previousSessionId
+        && request.continuation.previousSessionId !== childSessionId ? {
+          replaySourceSessionId: request.continuation.previousSessionId,
+          disableResponseRelay: true,
+        } : {}),
+      ...buildSubagentInterjectionLoader(config.runStore, childRunId, childSessionId),
     };
 
     await params.lifecycleCheckpoint?.('before_active');
     await params.beforeChildSideEffects?.(childIdentity);
-    await params.onChildRunCreated?.({ childSessionId, childRunId, model });
+    await params.onChildRunCreated?.({
+        childSessionId,
+        childRunId,
+        model,
+        ...(refToResolve ? { modelRef: refToResolve } : {}),
+        ...(executionOptions.resolvedEffort ? { effort: executionOptions.resolvedEffort } : {}),
+        agentId,
+      });
+    const deferredMessages = await params.loadDeferredMessages?.({
+      childSessionId,
+      childRunId,
+      agentId,
+      tenantId,
+    }) ?? [];
     await params.beforeChildSideEffects?.(childIdentity);
     logger.info(
       `[subagent] start type=${agentType.id} child=${childSessionId} run=${childRunId} `
@@ -663,17 +667,29 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     let streamError: string | undefined;
     // 子 Agent 绕过主 dispatch/buildPrompt，因此在它自己的入站边界固化一次时间戳。
     // modelContent 会持久化这个值；后续 full replay 只能重放，adapter 不再按当前时钟改写。
-    const prompt = addTimestampPrefix(request.prompt, parentContext.channelContext.timezone);
+    const combinedPrompt = deferredMessages.length === 0
+      ? request.prompt
+      : [
+          request.prompt,
+          ...deferredMessages.map(message => `\n[续接补充消息 ${message.messageId}]\n${message.prompt}`),
+        ].join('\n');
+    const prompt = addTimestampPrefix(combinedPrompt, parentContext.channelContext.timezone);
     await params.beforeChildSideEffects?.(childIdentity);
     for await (const event of loop.run(
       {
         message: {
           channel: parentContext.channelContext.channel as import('../../types/index.js').ChannelType,
           chatId: childSessionId,
-          content: request.prompt,
+          content: combinedPrompt,
           senderId: userId,
           senderName: username,
-          metadata: { subagent: true, parentRunId, parentSessionId },
+          metadata: {
+            subagent: true,
+            parentRunId,
+            parentSessionId,
+            ...(deferredMessages.length > 0
+              ? { deferredSubagentMessageIds: deferredMessages.map(message => message.messageId) } : {}),
+          },
         },
         prompt,
         instructions,
@@ -764,6 +780,13 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       childSessionId,
       childRunId,
       model,
+      ...(refToResolve ? { modelRef: refToResolve } : {}),
+      ...(executionOptions.resolvedEffort ? { effort: executionOptions.resolvedEffort } : {}),
+      ...(executionOptions.requestedModelRef ? { requestedModelRef: executionOptions.requestedModelRef } : {}),
+      ...(executionOptions.requestedEffort ? { requestedEffort: executionOptions.requestedEffort } : {}),
+      modelSource: executionOptions.modelSource,
+      effortSource: executionOptions.effortSource,
+      agentId,
       ...(modelUsage ? { modelUsage } : {}),
     };
   } catch (error) {
@@ -938,61 +961,5 @@ class FilteredToolRuntime implements ToolRuntime {
       throw new Error(`工具 ${call.toolId} 不在子 agent 可用工具集内`);
     }
     return this.inner.invoke(call, context);
-  }
-}
-
-/**
- * 子 instructions（D3 冷启动）：agentType 角色 prompt + 环境段 + 可选 company-info。
- * 刻意**不**注入 MEMORY / PERSONA / 父对话历史 / workspace-shared prompts——
- * prompt 参数是父→子唯一信息通道，上下文卫生是子 agent 的核心价值。
- */
-function buildSubagentInstructions(args: {
-  agentType: SubagentTypeDefinition;
-  cwd: string;
-  executionTarget: string;
-  companyInfo?: string;
-  systemPrompt?: string;
-  profileSystemInstructions?: string;
-  orgAgentName?: string;
-  orgAgentInstructions?: string;
-  memoryReadOnly?: boolean;
-}): string {
-  const sections: string[] = [args.systemPrompt ?? args.agentType.systemPrompt];
-  if (args.profileSystemInstructions?.trim()) {
-    sections.push(`<agent-profile-instructions>\n${args.profileSystemInstructions.trim()}\n</agent-profile-instructions>`);
-  }
-  if (args.orgAgentInstructions?.trim()) {
-    sections.push([
-      '<org-agent-worker-policy>',
-      `你是组织 Agent「${args.orgAgentName ?? '未命名'}」派生的执行 Worker，不承担前台接待或再次派单。`,
-      '以下组织规则继续约束你的执行；其中若包含“只负责调度”等前台职责，以本段 Worker 角色为准。',
-      args.orgAgentInstructions.trim(),
-      '</org-agent-worker-policy>',
-    ].join('\n'));
-  }
-  sections.push([
-    '<env>',
-    `工作目录: ${args.cwd}（与主 agent 共享同一 workspace，文件读写彼此可见）`,
-    `执行环境: ${args.executionTarget}`,
-    'Shell 在子 agent 中仅允许 foreground；不要使用 mode="background"。',
-    ...(args.memoryReadOnly
-      ? ['记忆空间只读：只能用 MemorySearch/Read 查询，不得通过 Write/Edit/Shell 修改 MEMORY.md 或 memory/**。']
-      : []),
-    `当前时间: ${new Date().toISOString()}`,
-    '</env>',
-  ].join('\n'));
-  if (args.companyInfo) {
-    sections.push(`<company-info>\n${args.companyInfo}\n</company-info>`);
-  }
-  return sections.join('\n\n');
-}
-
-function loadCompanyInfoForSubagent(sharedDir: string, tenantId: string | undefined): string | undefined {
-  if (!tenantId) return undefined;
-  try {
-    const content = readTenantCompanyInfoSync(sharedDir, tenantId)?.trim();
-    return content || undefined;
-  } catch {
-    return undefined;
   }
 }

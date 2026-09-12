@@ -21,6 +21,10 @@ const executionModeSchema = z.enum(['direct', 'dispatcher']);
 const workerModelSchema = z.discriminatedUnion('strategy', [
   z.object({ strategy: z.literal('inherit') }).strict(),
   z.object({
+    strategy: z.literal('default'),
+    modelRef: z.string().trim().min(1).max(200),
+  }).strict(),
+  z.object({
     strategy: z.literal('fixed'),
     modelRef: z.string().trim().min(1).max(200),
   }).strict(),
@@ -268,9 +272,9 @@ export function mergeOrgAgentRuntimePolicy(
       ...shared.context,
       modules: contextModules,
     },
-    model: policy.model.strategy === 'fixed'
-      ? { strategy: 'fixed', modelRef: policy.model.modelRef }
-      : { ...shared.model },
+    model: policy.model.strategy === 'inherit'
+      ? { ...shared.model }
+      : { ...policy.model },
     memory: { scope: memoryScope },
     limits: { maxTurns },
     capabilities: {
@@ -325,12 +329,10 @@ export function mergeOrgAgentWorkerRuntimePolicy(
   input: OrgAgentRuntimePolicy | undefined,
 ): AgentRuntimeProfileConfig {
   const policy = normalizeOrgAgentRuntimePolicy(input);
-  return mergeOrgAgentRuntimePolicy(shared, {
-    ...policy,
-    model: policy.workerModel.strategy === 'fixed'
-      ? { strategy: 'fixed', modelRef: policy.workerModel.modelRef }
-      : policy.model,
-  });
+  const merged = mergeOrgAgentRuntimePolicy(shared, policy);
+  return policy.workerModel.strategy === 'inherit'
+    ? merged
+    : parseAgentRuntimeProfileConfig({ ...merged, model: { ...policy.workerModel } });
 }
 
 /** MVP convention: knowledge ids are tenant-owned skill ids at runtime. */

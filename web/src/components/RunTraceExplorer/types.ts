@@ -153,6 +153,8 @@ export interface TraceEvent {
   description?: string;
   childSessionId?: string;
   childRunId?: string;
+  agentId?: string;
+  effort?: string;
   totalTokens?: number;
   toolUseCount?: number;
   turnCount?: number;

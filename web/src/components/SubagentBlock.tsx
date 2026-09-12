@@ -11,6 +11,8 @@ export interface SubagentBlockProps {
   childSessionId?: string;
   childRunId?: string;
   model?: string;
+  agentId?: string;
+  effort?: string;
   durationMs?: number;
   totalTokens?: number;
   toolUseCount?: number;
@@ -38,6 +40,7 @@ export function SubagentBlock(props: SubagentBlockProps) {
   };
   const meta = [
     props.model,
+    props.effort ? `effort ${props.effort}` : undefined,
     typeof props.durationMs === 'number' ? formatActivityDuration(props.durationMs) : undefined,
     typeof props.turnCount === 'number' ? `${props.turnCount} 轮` : undefined,
     typeof props.totalTokens === 'number' ? `${formatTokenCount(props.totalTokens)} tokens` : undefined,
@@ -64,6 +67,8 @@ export function SubagentBlock(props: SubagentBlockProps) {
       <div className="space-y-2 text-xs">
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
           {props.model && <span>模型 {props.model}</span>}
+          {props.effort && <span>推理强度 {props.effort}</span>}
+          {props.agentId && <span title={props.agentId}>Agent {props.agentId.slice(0, 10)}</span>}
           {typeof props.durationMs === 'number' && <span>耗时 {formatActivityDuration(props.durationMs)}</span>}
           {typeof props.turnCount === 'number' && <span>{props.turnCount} 轮</span>}
           {typeof props.toolUseCount === 'number' && <span>{props.toolUseCount} 次工具</span>}

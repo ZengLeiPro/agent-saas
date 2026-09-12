@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { ToolRuntime } from '../agent/toolRuntime.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
@@ -198,5 +199,77 @@ describe('memory consolidation context replay', () => {
       inline: true,
       coveredEventCount: expect.any(Number),
     }));
+  });
+
+  it('完整恢复旧工具调用与结果作为上下文，但不再次执行旧工具', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'subagent-context-replay-'));
+    cleanup.add(cwd);
+    const sourceSessionId = 'previous-subagent-session';
+    const targetSessionId = 'continued-subagent-session';
+    const store = new SessionMapEventStore();
+    await store.append({
+      type: 'user_message', runId: 'previous-run', sessionId: sourceSessionId,
+      content: '读取事实文件',
+    }, { tenantId: TENANT_ID });
+    await store.append({
+      type: 'assistant_tool_calls', runId: 'previous-run', sessionId: sourceSessionId,
+      content: '',
+      toolCalls: [{ id: 'historical-call', name: 'Read', arguments: '{"path":"事实.md"}' }],
+    }, { tenantId: TENANT_ID });
+    await store.append({
+      type: 'tool_result', runId: 'previous-run', sessionId: sourceSessionId,
+      toolCallId: 'historical-call', toolName: 'Read', content: '历史工具结果，只能作为上下文证据',
+    }, { tenantId: TENANT_ID });
+    await store.append({
+      type: 'assistant_message', runId: 'previous-run', sessionId: sourceSessionId,
+      content: '已完成首次读取', model: 'gpt-5.4',
+    }, { tenantId: TENANT_ID });
+    await store.append({
+      type: 'run_finished', runId: 'previous-run', sessionId: sourceSessionId,
+      subtype: 'success', numTurns: 1,
+    }, { tenantId: TENANT_ID });
+    const sourceBefore = await store.list(TENANT_ID, sourceSessionId);
+    const invokeHistoricalTool = vi.fn();
+    const toolRuntime: ToolRuntime = { list: () => [], invoke: invokeHistoricalTool };
+    const adapter = new CapturingStoredAdapter();
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore: store,
+      approvalStore: new EventBackedApprovalStore(store, targetSessionId, TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'continued.jsonl')),
+      toolRuntime,
+    });
+
+    const outbound = await collect(loop.run({
+      message: { channel: 'web', chatId: targetSessionId, content: '基于旧结果继续分析' },
+      prompt: '基于旧结果继续分析',
+      instructions: '继续原任务。',
+      maxTurns: 1,
+      connection: { apiKey: 'test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'continued-run',
+      sessionId: targetSessionId,
+      tenantId: TENANT_ID,
+      replaySourceSessionId: sourceSessionId,
+      disableResponseRelay: true,
+      model: 'gpt-5.4',
+      cwd,
+      channelContext: { channel: 'web' },
+      approvalPolicy: { autoApproveTools: true },
+    }));
+
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    expect(adapter.requests[0]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'assistant',
+        tool_calls: [expect.objectContaining({ id: 'historical-call', function: expect.objectContaining({ name: 'Read' }) })],
+      }),
+      { role: 'tool', tool_call_id: 'historical-call', content: '历史工具结果，只能作为上下文证据' },
+      { role: 'assistant', content: '已完成首次读取' },
+      { role: 'user', content: '基于旧结果继续分析' },
+    ]));
+    expect(invokeHistoricalTool).not.toHaveBeenCalled();
+    expect(await store.list(TENANT_ID, sourceSessionId)).toEqual(sourceBefore);
+    expect((await store.list(TENANT_ID, targetSessionId)).some(event => event.type === 'tool_result')).toBe(false);
   });
 });

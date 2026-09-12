@@ -6,7 +6,7 @@ import { isSubscriptionTransport } from '../runtime/subscriptionModelAuthenticat
  * 以及生成脱敏的公开模型列表供 API 返回。
  */
 
-import type { ModelProviderOptions, ModelsConfig } from '../types/index.js';
+import type { EffortCapability, ModelProviderOptions, ModelsConfig } from '../types/index.js';
 import type { AgentRunOptions } from '../agent/types.js';
 import type { TenantSettings } from '../data/tenants/types.js';
 
@@ -303,6 +303,12 @@ type ConfigProviderOptions = {
   thinking?: unknown;
   reasoning_effort?: string;
   reasoningEffort?: string;
+  reasoning_effort_capability?: {
+    support: EffortCapability['support'];
+    values?: string[];
+    default_value?: string;
+    source?: EffortCapability['source'];
+  };
   extraBody?: Record<string, unknown>;
   input_modalities?: Array<'text' | 'image'>;
   /** 单轮最大输出 token 正式配置通道（替代 extraBody.max_output_tokens 覆盖）。 */
@@ -336,6 +342,8 @@ function resolveProviderOptions(
     ?? model.reasoningEffort
     ?? group.reasoning_effort
     ?? group.reasoningEffort;
+  const reasoningEffortCapability = model.reasoning_effort_capability
+    ?? group.reasoning_effort_capability;
   const thinking = model.thinking !== undefined ? model.thinking : group.thinking;
   const inputModalities = model.input_modalities ?? group.input_modalities;
   const maxOutputTokens = model.max_output_tokens ?? group.max_output_tokens;
@@ -357,6 +365,15 @@ function resolveProviderOptions(
   const options: ModelProviderOptions = {};
   if (Object.keys(extraBody).length > 0) options.extraBody = extraBody;
   if (reasoningEffort !== undefined) options.reasoningEffort = reasoningEffort;
+  if (reasoningEffortCapability !== undefined) {
+    options.reasoningEffortCapability = {
+      support: reasoningEffortCapability.support,
+      ...(reasoningEffortCapability.values ? { values: [...reasoningEffortCapability.values] } : {}),
+      ...(reasoningEffortCapability.default_value
+        ? { defaultValue: reasoningEffortCapability.default_value } : {}),
+      ...(reasoningEffortCapability.source ? { source: reasoningEffortCapability.source } : {}),
+    };
+  }
   if (thinking !== undefined) options.thinking = thinking;
   if (inputModalities !== undefined) options.inputModalities = inputModalities;
   if (maxOutputTokens !== undefined) options.maxOutputTokens = maxOutputTokens;

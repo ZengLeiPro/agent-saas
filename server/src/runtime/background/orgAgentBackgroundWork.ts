@@ -25,13 +25,14 @@ import {
 import { runtimeRunController } from '../runController.js';
 import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtimeIsolationEvidence.js';
 import type { OrgAgentWorkerTaskAuthority } from '../orgAgentWorkerCapability.js';
-import type { RunRecord, RunStatus } from '../runStore.js';
+import type { RunRecord } from '../runStore.js';
 import {
   createEventStoreForSession,
   resolveSessionCatalog,
   type RawRuntimeRunDispatchConfig,
 } from '../rawRuntimeRunDispatch.js';
 import { createRuntimeSessionRecord } from '../sessionCatalog.js';
+import { profileSessionBinding } from '../agentProfiles.js';
 import type { BackgroundAgentRequest } from './backgroundTaskRuntime.js';
 import {
   failedBackgroundResult as failedResult,
@@ -54,22 +55,15 @@ import {
   type OrgAgentEffectiveExecutionContext,
 } from './orgAgentExecutionContext.js';
 import { stopPreparedOrgAgentAttempt } from './orgAgentPreparedAttempt.js';
+import {
+  isRunTerminal,
+  isWorkTerminal,
+  sameStrings,
+  snapshotNumber,
+  snapshotStrings,
+} from './orgAgentBackgroundWorkState.js';
 import type { OrgAgentRecord } from '../../data/orgAgents/types.js';
 import type { BoundAgentRuntimeProfile } from '../agentProfiles.js';
-
-function snapshotNumber(value: Record<string, unknown>, key: string): number | undefined {
-  const raw = value[key];
-  return typeof raw === 'number' && Number.isSafeInteger(raw) ? raw : undefined;
-}
-function snapshotStrings(value: Record<string, unknown>, key: string): string[] {
-  const candidate = value[key];
-  if (!Array.isArray(candidate) || candidate.some(item => typeof item !== 'string' || !item.trim())) return [];
-  const result = candidate.map(item => (item as string).trim());
-  return new Set(result).size === result.length ? result : [];
-}
-function sameStrings(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every(value => b.includes(value));
-}
 
 export async function prepareOrgAgentBackgroundWork(input: {
   config: RawRuntimeRunDispatchConfig;
@@ -721,6 +715,8 @@ export class OrgAgentBackgroundWorkCoordinator {
           kind: 'subagent',
           executionRole: 'worker',
           sandboxWorkloadDescriptor: previousSession.sandboxWorkloadDescriptor,
+          ...(profileSessionBinding(previousSession)
+            ? { profileBinding: profileSessionBinding(previousSession) } : {}),
           ...(previousSession.orgAgentId ? { orgAgentId: previousSession.orgAgentId } : {}),
           ...(previousSession.orgAgentSnapshot
             ? { orgAgentSnapshot: previousSession.orgAgentSnapshot }
@@ -767,6 +763,13 @@ export class OrgAgentBackgroundWorkCoordinator {
           ...previous.metadata,
           backgroundTaskReady: false,
           backgroundTaskVersion: 2,
+          subagentContinuation: metadata.executionChildRunId && metadata.executionChildSessionId
+            ? {
+                previousRunId: metadata.executionChildRunId,
+                previousSessionId: metadata.executionChildSessionId,
+                sequence: nextAttemptNo - 1,
+              }
+            : undefined,
           description: queuedWork.title,
           basePrompt,
           prompt: withWorkOrderContinuationPrompt(basePrompt, queuedWork, continuation.prompt),
@@ -987,14 +990,4 @@ export function isOrgTaskVisible(task: RunRecord, context: ToolCallContext): boo
     caller.externalActor.corpId === creator.corpId &&
     caller.externalActor.openId === creator.openId
   );
-}
-
-function isRunTerminal(status: RunStatus): boolean {
-  return (
-    status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'orphaned'
-  );
-}
-
-function isWorkTerminal(status: string): boolean {
-  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }

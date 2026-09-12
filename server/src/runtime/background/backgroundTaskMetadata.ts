@@ -7,6 +7,8 @@ import type { RunRecord } from '../runStore.js';
 import type { RunContext } from '../types.js';
 import { deriveRuntimeIsolationRequirement, type RuntimeIsolationRequirement } from '../runtimeIsolationEvidence.js';
 import { parseSandboxResources, type SandboxResources } from '../sandboxProfile.js';
+import type { EffortCapability } from '../../types/index.js';
+import { SUBAGENT_CONTINUATION_PROTOCOL_VERSION } from '../subagent/subagentContinuationProtocol.js';
 
 export interface BackgroundTaskDwsCompletionRoute {
   accountId: string;
@@ -52,6 +54,17 @@ interface CommonBackgroundTaskMetadata {
   legacyDwsCompletionRoute?: LegacyBackgroundTaskDwsCompletionRoute;
   dwsCompletionRouteVersion?: ParsedBackgroundTaskDwsCompletionRoute['version'];
   modelRef: string;
+  requestedModelRef?: string;
+  modelSource?: string;
+  modelLocked?: boolean;
+  requestedEffort?: string;
+  effort?: string;
+  effortSource?: string;
+  effortCapability?: EffortCapability;
+  /** 稳定的逻辑 Agent 身份；旧存量后台任务没有该字段。 */
+  subagentAgentId?: string;
+  subagentContinuationProtocolVersion?: typeof SUBAGENT_CONTINUATION_PROTOCOL_VERSION;
+  subagentContinuation?: { previousRunId?: string; previousSessionId?: string; sequence?: number };
   cwd: string;
   workspaceId: string;
   mountSubPath?: string;
@@ -156,6 +169,18 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     ...(dwsCompletionRoute?.version === 'legacy' ? { legacyDwsCompletionRoute: dwsCompletionRoute.route } : {}),
     ...(dwsCompletionRouteVersion ? { dwsCompletionRouteVersion } : {}),
     modelRef,
+    ...(metadataString(value, 'requestedModelRef') ? { requestedModelRef: metadataString(value, 'requestedModelRef') } : {}),
+    ...(metadataString(value, 'modelSource') ? { modelSource: metadataString(value, 'modelSource') } : {}),
+    ...(value.modelLocked === true ? { modelLocked: true } : {}),
+    ...(metadataString(value, 'requestedEffort') ? { requestedEffort: metadataString(value, 'requestedEffort') } : {}),
+    ...(metadataString(value, 'effort') ? { effort: metadataString(value, 'effort') } : {}),
+    ...(metadataString(value, 'effortSource') ? { effortSource: metadataString(value, 'effortSource') } : {}),
+    ...(parseEffortCapability(value.effortCapability) ? { effortCapability: parseEffortCapability(value.effortCapability) } : {}),
+    ...(metadataString(value, 'subagentAgentId') ? { subagentAgentId: metadataString(value, 'subagentAgentId') } : {}),
+    ...(value.subagentContinuationProtocolVersion === SUBAGENT_CONTINUATION_PROTOCOL_VERSION
+      ? { subagentContinuationProtocolVersion: SUBAGENT_CONTINUATION_PROTOCOL_VERSION } : {}),
+    ...(parseSubagentContinuation(value.subagentContinuation)
+      ? { subagentContinuation: parseSubagentContinuation(value.subagentContinuation) } : {}),
     cwd,
     workspaceId,
     parentChannel,
@@ -293,6 +318,46 @@ function isSandboxPolicy(value: unknown): value is { denyRead: string[] } {
   return !!value && typeof value === 'object'
     && Array.isArray((value as { denyRead?: unknown }).denyRead)
     && (value as { denyRead: unknown[] }).denyRead.every((item) => typeof item === 'string');
+}
+
+function parseEffortCapability(value: unknown): EffortCapability | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const support = raw.support === 'supported' || raw.support === 'unsupported' || raw.support === 'unknown'
+    ? raw.support : undefined;
+  if (!support) return undefined;
+  const values = Array.isArray(raw.values) && raw.values.every(item => typeof item === 'string' && item.length > 0)
+    ? raw.values as string[] : undefined;
+  const defaultValue = typeof raw.defaultValue === 'string' && raw.defaultValue.length > 0
+    ? raw.defaultValue : undefined;
+  const source = raw.source === 'configured' || raw.source === 'verified_provider' ? raw.source : undefined;
+  if (defaultValue && values && !values.includes(defaultValue)) return undefined;
+  if (support === 'unsupported' && (values || defaultValue)) return undefined;
+  return {
+    support,
+    ...(values ? { values } : {}),
+    ...(defaultValue ? { defaultValue } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
+function parseSubagentContinuation(
+  value: unknown,
+): { previousRunId?: string; previousSessionId?: string; sequence?: number } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const previousRunId = typeof raw.previousRunId === 'string' && raw.previousRunId.length > 0
+    ? raw.previousRunId : undefined;
+  const previousSessionId = typeof raw.previousSessionId === 'string' && raw.previousSessionId.length > 0
+    ? raw.previousSessionId : undefined;
+  const sequence = typeof raw.sequence === 'number' && Number.isSafeInteger(raw.sequence) && raw.sequence > 0
+    ? raw.sequence : undefined;
+  if (!previousRunId && !previousSessionId && sequence === undefined) return undefined;
+  return {
+    ...(previousRunId ? { previousRunId } : {}),
+    ...(previousSessionId ? { previousSessionId } : {}),
+    ...(sequence !== undefined ? { sequence } : {}),
+  };
 }
 
 export function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext['orgAgentChannel']> | undefined {

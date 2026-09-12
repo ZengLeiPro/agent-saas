@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { z } from 'zod';
+import { reasoningEffortProviderOptionShape } from './reasoningEffortCapabilitySchema.js';
 import { buildWebToolsSchemas } from './webToolsSchema.js';
 import { runtimeEventRetentionConfigSchema } from './runtimeEventRetentionConfig.js'; import { sessionAutomationConfigSchema } from './sessionAutomationConfig.js';
 import {
@@ -381,8 +382,7 @@ const memoryConfigSchema = z.object({
 
 const modelProviderOptionsSchema = z.object({
   thinking: z.unknown().optional(),
-  reasoning_effort: z.string().optional(),
-  reasoningEffort: z.string().optional(),
+  ...reasoningEffortProviderOptionShape,
   extraBody: z.record(z.string(), z.unknown()).optional(),
   /** 模型可接收的输入模态；未配置按 unknown/text-only 处理，不按模型名猜。 */
   input_modalities: z.array(z.enum(['text', 'image'])).min(1).optional(),

@@ -53,6 +53,18 @@ describe('canonical activity/message projection', () => {
     ]);
   });
 
+  it('保留稳定 agentId，但不同物理 run 仍投影为独立终态卡片', () => {
+    const stableAgentId = 'agent-stable-1';
+    const messages = selectProjectedMessages(reduce([
+      { eventId: 'first', domain: 'subagent', kind: 'subagent_activity', ...base, blockId: 'sub-1', toolCallId: 'call-1', subagentId: 'physical-1', agentType: 'explore', status: 'completed', agentId: stableAgentId, effort: 'high' },
+      { eventId: 'second', domain: 'subagent', kind: 'subagent_activity', runId: 'run-2', messageId: 'assistant-run-2', blockId: 'sub-2', toolCallId: 'call-2', subagentId: 'physical-2', agentType: 'explore', status: 'running', agentId: stableAgentId, effort: 'medium' },
+    ]));
+    expect(messages).toEqual([
+      expect.objectContaining({ id: 'sub-1', status: 'completed', agentId: stableAgentId, effort: 'high' }),
+      expect.objectContaining({ id: 'sub-2', status: 'running', agentId: stableAgentId, effort: 'medium' }),
+    ]);
+  });
+
   it('is replay/snapshot idempotent and full snapshots only replace an explicitly scoped message', () => {
     const old: ActivityMessageProjectionEvent = { eventId: 'old', domain: 'message', kind: 'user_message', runId: 'run-old', messageId: 'other', content: 'keep' };
     const full: ActivityMessageProjectionEvent = {

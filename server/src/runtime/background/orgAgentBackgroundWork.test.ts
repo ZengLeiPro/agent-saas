@@ -35,41 +35,10 @@ import {
   orgAgentChannelFixture as orgChannel,
   orgAgentExecutionContextFixture,
 } from './orgAgentExecutionContext.testFixtures.js';
+import { orgAgentBackgroundRunFixture as previousRun } from './orgAgentBackgroundWork.testFixtures.js';
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
-function previousRun(sharedReadOnlySubPath: string): RunRecord {
-  return {
-    runId: 'run-1',
-    sessionId: 'session-1',
-    userId: 'service-user',
-    tenantId: 'tenant-1',
-    model: 'model-1',
-    channel: 'background_task',
-    status: 'failed',
-    executionTarget: 'server-container',
-    requestedAt: now(),
-    updatedAt: now(),
-    metadata: {
-      backgroundTask: true,
-      backgroundTaskType: 'agent',
-      parentRunId: 'parent-run',
-      parentSessionId: 'parent-session',
-      parentToolCallId: 'tool-1',
-      description: '整理异常',
-      prompt: '执行',
-      agentType: 'general',
-      modelRef: 'models/model-1',
-      cwd: '/old-task',
-      workspaceId: 'old-workspace',
-      workOrderId: 'work-1',
-      attemptId: 'attempt-1',
-      attemptNo: 1,
-      sharedReadOnlySubPath,
-      orgAgentChannel: orgChannel,
-    },
-  } as RunRecord;
-}
 describe('OrgAgentBackgroundWorkCoordinator', () => {
   it('validates persisted lineage before transition and live authority rejects a replaced attempt', async () => {
     const root = await mkdtemp(join(tmpdir(), 'org-agent-lineage-')); roots.push(root);
@@ -267,6 +236,13 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
         orgAgentId: 'agent-1',
         orgAgentSnapshot: {} as never,
         principal: orgChannel.agentPrincipal,
+        profileId: 'profile-background-general',
+        profileKey: 'background-general',
+        profileVersionId: 'profile-background-general-v2',
+        profileVersionNumber: 2,
+        profileConfigDigest: 'profile-digest-v2',
+        profileBindingKey: 'background_general',
+        profileResolution: 'builtin',
       }),
       upsert: upsertSession,
     } as unknown as SessionCatalog;
@@ -449,6 +425,13 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
         orgAgentId: 'agent-1',
         orgAgentSnapshot: {} as never,
         principal: orgChannel.agentPrincipal,
+        profileId: 'profile-background-general',
+        profileKey: 'background-general',
+        profileVersionId: 'profile-background-general-v2',
+        profileVersionNumber: 2,
+        profileConfigDigest: 'profile-digest-v2',
+        profileBindingKey: 'background_general',
+        profileResolution: 'builtin',
       }),
       upsert: vi.fn(),
     } as unknown as SessionCatalog;
@@ -471,7 +454,17 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
       control: { revision: 4, workerType: 'general', supplements: [supplement('B')] },
     });
 
-    expect(second.metadata).toMatchObject({ basePrompt: 'P', attemptNo: 2 });
+    expect(second.metadata).toMatchObject({
+      basePrompt: 'P',
+      attemptNo: 2,
+      subagentAgentId: 'subagent-stable-1',
+      subagentContinuationProtocolVersion: 1,
+      subagentContinuation: {
+        previousRunId: 'physical-run-1',
+        previousSessionId: 'physical-session-1',
+        sequence: 1,
+      },
+    });
     expect(second.metadata.prompt).toContain('P\n\n<work-order-prior-attempt');
     expect(second.metadata.prompt).toContain('上一轮已定位异常行');
     expect(second.metadata.prompt).toContain(
@@ -487,6 +480,12 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
       '<work-order-continuation revision="4">\n1. [补充要求] B\n</work-order-continuation>',
     );
     expect(fourth.metadata.prompt).not.toContain('revision=\"3\"');
+    expect(sessionCatalog.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      profileId: 'profile-background-general',
+      profileVersionId: 'profile-background-general-v2',
+      profileConfigDigest: 'profile-digest-v2',
+      profileBindingKey: 'background_general',
+    }));
   });
 
   it('injects the previous result and published artifacts as an explicit read-only continuation', async () => {

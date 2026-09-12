@@ -45,6 +45,7 @@ export type ActivityMessageProjectionEvent =
       domain: 'subagent'; kind: 'subagent_activity'; messageId: string; blockId: string;
       toolCallId: string; subagentId: string; agentType: string; status: ProjectionActivityStatus;
       childSessionId?: string; childRunId?: string; model?: string; durationMs?: number;
+      agentId?: string; effort?: string;
       totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string;
       resultPreview?: string;
     })
@@ -215,7 +216,7 @@ export function selectProjectedMessages(state: ActivityMessageProjectionState): 
     }
     const subagent = state.subagents[key];
     if (subagent) {
-      result.push({ id: subagent.blockId, type: 'subagent', toolId: subagent.toolCallId, agentType: subagent.agentType, status: subagent.status as SubagentStatus, ...(subagent.childSessionId ? { childSessionId: subagent.childSessionId } : {}), ...(subagent.childRunId ? { childRunId: subagent.childRunId } : {}), ...(subagent.model ? { model: subagent.model } : {}), ...(subagent.durationMs !== undefined ? { durationMs: subagent.durationMs } : {}), ...(subagent.totalTokens !== undefined ? { totalTokens: subagent.totalTokens } : {}), ...(subagent.toolUseCount !== undefined ? { toolUseCount: subagent.toolUseCount } : {}), ...(subagent.turnCount !== undefined ? { turnCount: subagent.turnCount } : {}), ...(subagent.errorMessage ? { errorMessage: subagent.errorMessage } : {}), ...(subagent.resultPreview ? { resultPreview: subagent.resultPreview } : {}) });
+      result.push({ id: subagent.blockId, type: 'subagent', toolId: subagent.toolCallId, agentType: subagent.agentType, status: subagent.status as SubagentStatus, ...(subagent.childSessionId ? { childSessionId: subagent.childSessionId } : {}), ...(subagent.childRunId ? { childRunId: subagent.childRunId } : {}), ...(subagent.model ? { model: subagent.model } : {}), ...(subagent.agentId ? { agentId: subagent.agentId } : {}), ...(subagent.effort ? { effort: subagent.effort } : {}), ...(subagent.durationMs !== undefined ? { durationMs: subagent.durationMs } : {}), ...(subagent.totalTokens !== undefined ? { totalTokens: subagent.totalTokens } : {}), ...(subagent.toolUseCount !== undefined ? { toolUseCount: subagent.toolUseCount } : {}), ...(subagent.turnCount !== undefined ? { turnCount: subagent.turnCount } : {}), ...(subagent.errorMessage ? { errorMessage: subagent.errorMessage } : {}), ...(subagent.resultPreview ? { resultPreview: subagent.resultPreview } : {}) });
     }
   }
   return result;

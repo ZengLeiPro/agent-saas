@@ -94,7 +94,15 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
     onChange({ ...value, [key]: next });
   };
   const fixedModel = value.model.strategy === 'fixed' ? value.model.modelRef : null;
-  const fixedWorkerModel = value.workerModel.strategy === 'fixed' ? value.workerModel.modelRef : null;
+  const selectedWorkerModel = value.workerModel.strategy === 'inherit' ? null : value.workerModel.modelRef;
+  const setWorkerModelStrategy = (strategy: OrgAgentRuntimePolicy['workerModel']['strategy']) => {
+    if (strategy === 'inherit') {
+      patch('workerModel', { strategy: 'inherit' });
+      return;
+    }
+    const modelRef = selectedWorkerModel ?? modelList?.default;
+    if (modelRef) patch('workerModel', { strategy, modelRef });
+  };
   const setExecutionMode = (executionMode: OrgAgentRuntimePolicy['executionMode']) => {
     if (executionMode === 'direct') {
       onChange({ ...value, executionMode });
@@ -183,14 +191,31 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
       {value.executionMode === 'dispatcher' ? (
         <div className="space-y-1.5 rounded-md border border-dashed p-3">
           <Label>Worker 模型</Label>
-          <p className="text-xs text-muted-foreground">默认继承前台模型，也可选择当前组织允许的独立模型；保存时会校验后台 Agent、Runtime Profile 和模型连接。</p>
-          <ModelSelect
-            modelList={modelList}
-            value={fixedWorkerModel}
-            onChange={modelRef => patch('workerModel', modelRef ? { strategy: 'fixed', modelRef } : { strategy: 'inherit' })}
-            inheritLabel="继承组织 Agent 模型"
-            ariaLabel="企业专家 Worker 模型"
-          />
+          <p className="text-xs text-muted-foreground">“默认”允许调用 Agent 时覆盖；“锁定”与显式 model 冲突时会拒绝，不会静默替换。</p>
+          <div className="grid gap-2 md:grid-cols-[180px_minmax(0,1fr)]">
+            <select
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+              value={value.workerModel.strategy}
+              onChange={event => setWorkerModelStrategy(event.target.value as OrgAgentRuntimePolicy['workerModel']['strategy'])}
+              aria-label="Worker 模型策略"
+            >
+              <option value="inherit">继承前台模型</option>
+              <option value="default" disabled={!modelList?.default}>可覆盖默认模型</option>
+              <option value="fixed" disabled={!modelList?.default}>锁定模型</option>
+            </select>
+            {value.workerModel.strategy === 'inherit' ? null : (
+              <ModelSelect
+                modelList={modelList}
+                value={selectedWorkerModel}
+                onChange={modelRef => modelRef && patch('workerModel', {
+                  strategy: value.workerModel.strategy,
+                  modelRef,
+                })}
+                inheritLabel="请选择模型"
+                ariaLabel="企业专家 Worker 模型"
+              />
+            )}
+          </div>
         </div>
       ) : null}
 

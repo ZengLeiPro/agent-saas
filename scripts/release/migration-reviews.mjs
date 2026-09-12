@@ -97,7 +97,12 @@ function assertMatchesSnapshots(review, entries, baselineSnapshot, targetSnapsho
 // 审核记录不替代依赖闭包检查，也不提供通配放行。精确 SHA 记录优先；生产 SHA 因
 // 无关提交变化时，仅在全部审核文件的两端内容与证据逐字节相同时复用既有结论。
 // 未登记路径仍由 migration-plan 的保守分类器检查，任何内容变化都不会继承审核。
-export function loadMigrationReviews({ baseline, baselineSnapshot, targetSnapshot }) {
+export function loadMigrationReviews({
+  baseline,
+  baselineSnapshot,
+  targetSnapshot,
+  relevantPaths,
+}) {
   const empty = { entries: new Map(), digest: null };
   if (!targetSnapshot.repositoryPaths.has(MIGRATION_REVIEWS_PATH)) return empty;
   const document = JSON.parse(targetSnapshot.read(MIGRATION_REVIEWS_PATH));
@@ -116,8 +121,12 @@ export function loadMigrationReviews({ baseline, baselineSnapshot, targetSnapsho
   const exact = reviews.find(({ review }) => review.baselineSha === baseline);
   if (exact) {
     assertMatchesSnapshots(exact.review, exact.entries, baselineSnapshot, targetSnapshot);
+    const entries =
+      relevantPaths === undefined
+        ? exact.entries
+        : new Map([...exact.entries].filter(([path]) => relevantPaths.has(path)));
     return {
-      entries: exact.entries,
+      entries,
       digest: migrationSourceDigest(JSON.stringify(exact.review)),
     };
   }
@@ -138,16 +147,30 @@ export function loadMigrationReviews({ baseline, baselineSnapshot, targetSnapsho
     }
   }
 
-  // 选择覆盖文件最少的记录，避免把无关审核权限带入本次计划；同等范围取清单中
-  // 最后登记的一条。有效摘要同时绑定实际生产基线，保持发布证据可重放。
-  compatible.sort(
-    (left, right) => left.entries.size - right.entries.size || right.index - left.index,
-  );
-  const selected = compatible[0];
+  // 多个已审核 PR 可以同时累积在生产基线之后。只合成本次迁移闭包真实需要的路径，
+  // 但每一项仍须在同一实际生产基线和目标快照上逐字节兼容；不能让范围较小的后续
+  // 审核覆盖或丢弃先前独立审核。冲突已在上方 fail-closed。
+  const entries = new Map();
+  const selected = [];
+  for (const candidate of compatible) {
+    let contributes = false;
+    for (const [path, entry] of candidate.entries) {
+      if (relevantPaths !== undefined && !relevantPaths.has(path)) continue;
+      entries.set(path, entry);
+      contributes = true;
+    }
+    if (contributes) selected.push(candidate.review);
+  }
+  if (entries.size === 0) return empty;
   return {
-    entries: selected.entries,
+    entries,
     digest: migrationSourceDigest(
-      JSON.stringify({ ...selected.review, effectiveBaselineSha: baseline }),
+      JSON.stringify({
+        schemaVersion: 1,
+        effectiveBaselineSha: baseline,
+        reviews: selected,
+        files: [...entries.values()],
+      }),
     ),
   };
 }

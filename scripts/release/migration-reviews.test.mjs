@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { withPostconditionFixtures } from './test-migration-postcondition-fixtures.mjs';
 import { createMigrationPlan } from './migration-plan.mjs';
@@ -46,11 +47,12 @@ function withDocument(f) {
 function snapshot(tree) {
   return { repositoryPaths: new Set(Object.keys(tree)), read: (path) => tree[path] };
 }
-function load(f, baseline = BASELINE) {
+function load(f, baseline = BASELINE, relevantPaths) {
   return loadMigrationReviews({
     baseline,
     baselineSnapshot: snapshot(f.baselines),
     targetSnapshot: snapshot(withDocument(f)),
+    relevantPaths,
   });
 }
 function plan(f, extra = {}) {
@@ -117,7 +119,7 @@ test('精确记录失效时禁止绕到内容兼容的旧记录', () => {
   assert.throws(() => load(f), /source changed/u);
 });
 
-test('内容兼容记录结论冲突时阻断，且选择覆盖范围最小的记录', () => {
+test('内容兼容记录按本次迁移路径合成，且结论冲突时阻断', () => {
   const f = fixture();
   const extraPath = 'server/src/data/extra/migrations.ts';
   f.baselines[extraPath] = f.targets[extraPath] = 'export const unchanged = true;';
@@ -133,11 +135,57 @@ test('内容兼容记录结论冲突时阻断，且选择覆盖范围最小的�
   const narrow = structuredClone(f.review);
   narrow.baselineSha = 'd'.repeat(40);
   f.reviews = [narrow, broad];
-  const loaded = load(f, 'e'.repeat(40));
-  assert.deepEqual([...loaded.entries], [[PATH, narrow.files[0]]]);
+  const loaded = load(f, 'e'.repeat(40), new Set([PATH, extraPath]));
+  assert.deepEqual([...loaded.entries.keys()].sort(), [PATH, extraPath].sort());
+
+  const narrowed = load(f, 'e'.repeat(40), new Set([PATH]));
+  assert.deepEqual([...narrowed.entries.keys()], [PATH]);
 
   broad.files[0].classification = 'contract';
-  assert.throws(() => load(f, 'e'.repeat(40)), /reviews conflict/u);
+  assert.throws(() => load(f, 'e'.repeat(40), new Set([PATH, extraPath])), /reviews conflict/u);
+});
+
+test('两个独立兼容审核都能进入同一生产基线后的迁移计划', () => {
+  const f = fixture();
+  const extraPath = 'server/src/data/extra/migrations.ts';
+  const extraBefore = 'export const sql = "CREATE TABLE existing(id text)";';
+  const extraAfter = 'export const sql = "CREATE TABLE IF NOT EXISTS added(id text)";';
+  f.baselines[extraPath] = extraBefore;
+  f.targets[extraPath] = extraAfter;
+  f.changedPaths = [PATH, extraPath];
+
+  const first = structuredClone(f.review);
+  first.baselineSha = 'c'.repeat(40);
+  const second = structuredClone(f.review);
+  second.baselineSha = 'd'.repeat(40);
+  second.files = [
+    {
+      path: extraPath,
+      baselineDigest: digest(extraBefore),
+      targetDigest: digest(extraAfter),
+      classification: 'expand',
+      reason: '独立审核的追加式表结构变更。',
+    },
+  ];
+  f.reviews = [first, second];
+
+  const result = plan(f, { [extraPath]: extraAfter });
+  assert.equal(result.ok, true);
+  assert.equal(result.migrationPlan.phase, 'expand');
+  assert.deepEqual(
+    result.migrationPlan.postconditions.map((entry) => entry.sourcePath).sort(),
+    [PATH, extraPath].sort(),
+  );
+});
+
+test('把迁移规划器作为证据的历史审核都绑定当前实现', () => {
+  const document = JSON.parse(readFileSync(MIGRATION_REVIEWS_PATH, 'utf8'));
+  const evidence = document.reviews.flatMap((review) =>
+    review.evidence.filter((entry) => entry.path === 'scripts/release/migration-plan.mjs'),
+  );
+  assert.ok(evidence.length > 0);
+  const currentDigest = digest(readFileSync('scripts/release/migration-plan.mjs', 'utf8'));
+  assert.ok(evidence.every((entry) => entry.digest === currentDigest));
 });
 
 test('证据修改、重复路径、非法分类和缺失摘要均阻断', () => {

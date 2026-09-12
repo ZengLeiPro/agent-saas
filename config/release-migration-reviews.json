@@ -35766,7 +35766,7 @@
         },
         {
           "path": "scripts/release/migration-plan.mjs",
-          "digest": "sha256:e9af03df61510f49dcf3329294783185530ca367c6603e9ff70d30c43da3d438"
+          "digest": "sha256:e9b88bdaa1ac4b4ae6343cd7b5f689b8263673232d027c1e098d21edabe12669"
         },
         {
           "path": "scripts/release/migration-plan.test.mjs",

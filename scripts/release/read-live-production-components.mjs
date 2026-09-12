@@ -119,12 +119,12 @@ function activeUnit(role, markerPath, readFileSync, execFileSync) {
   const prefix = role === 'api' ? 'agent-saas-server' : 'agent-saas-runtime-worker';
   const unit = `${prefix}@${color}.service`;
   const mainPid = execFileSync('systemctl', ['show', unit, '--property', 'MainPID', '--value'], {
-    encoding: 'utf8',
+    encoding: 'utf8', timeout: 2000, maxBuffer: 16384,
   }).trim();
   const systemdEnvironment = execFileSync(
     'systemctl',
     ['show', unit, '--property', 'Environment', '--value'],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', timeout: 2000, maxBuffer: 16384 },
   ).trim();
   const pidfile = `/run/${prefix}-${color}.pid`;
   if (!/^[1-9][0-9]*$/u.test(mainPid) || readFileSync(pidfile, 'utf8').trim() !== mainPid)
@@ -132,8 +132,11 @@ function activeUnit(role, markerPath, readFileSync, execFileSync) {
   if (role === 'runtimeWorker') {
     const readyfile = `/run/${prefix}-${color}.ready`;
     let readyPid;
-    try { readyPid = readFileSync(readyfile, 'utf8').trim(); } catch {}
-    if (readyPid !== mainPid) throw new Error(describeWorkerNotReady(color, readFileSync));
+    let errno;
+    try { readyPid = readFileSync(readyfile, 'utf8').trim(); } catch (error) {
+      errno = ['ENOENT', 'EACCES', 'EPERM', 'EIO'].includes(error?.code) ? error.code : 'UNKNOWN';
+    }
+    if (readyPid !== mainPid) throw new Error(`${describeWorkerNotReady(color, readFileSync)}${errno ? ` [${errno}]` : ''}`);
   }
   return { color, unit, systemdEnvironment };
 }

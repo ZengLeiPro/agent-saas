@@ -601,23 +601,33 @@ jobs:
           }
           trap cleanup EXIT
           ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/production_evidence_key scripts/release/read-production-state.mjs \
+          scp -i ~/.ssh/production_evidence_key scripts/release/production-preflight.mjs \
+            scripts/release/production-preflight-report.mjs scripts/release/production-runtime-observation.mjs \
+            scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/artifact-lib.mjs \
             scripts/release/production-checkpoint.mjs "$ECS_USER@$ECS_HOST:$remote/"
-          if ! ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/read-production-state.mjs' --config-identity-stage '$PRODUCTION_CONFIG_IDENTITY_STAGE' --output '$remote/production.json' >/dev/null" \
+          baseline_source=live
+          if ! bash scripts/release/run-production-preflight.sh "$remote" ~/.ssh/production_evidence_key \
+            read-production-state.mjs "$PRODUCTION_CONFIG_IDENTITY_STAGE" production.json fresh \
             2> "$RUNNER_TEMP/production-live-observation-error.log"; then
             if [ "$AUTOMATIC_RELEASE" = true ]; then
               echo 'Automatic refresh requires a live production baseline; checkpoint fallback is not allowed' >&2
               exit 1
             fi
-            echo 'Live Production baseline is unavailable; trying the last committed release checkpoint'
+            baseline_source=last_committed
+            echo '::warning title=Production preflight failed::Using last_committed as a historical build baseline only; current production readiness has NOT passed.'
             ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" \
               "sudo node '$remote/production-checkpoint.mjs' baseline --checkpoint /etc/agent-saas/last-committed-production.json --output '$remote/production.json'"
           fi
           ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" \
             "sudo cat '$remote/production.json'" > "$RUNNER_TEMP/production.json"
           test "$(jq -r .environment "$RUNNER_TEMP/production.json")" = production
+          node scripts/release/production-preflight-report.mjs baseline \
+            "$RUNNER_TEMP/production-baseline-provenance.json" "$baseline_source" "$RUNNER_TEMP/production.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$baseline_source" = last_committed ]; then
+            echo '**Production preflight failed. Staging may validate a candidate built against historical evidence; production promotion remains blocked until a fresh strict preflight passes.**' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: 安装用于生产证据的阿里云 CLI
         if: env.REUSE_RELEASE_EVIDENCE != 'true'
@@ -716,7 +726,10 @@ jobs:
           name: production-baseline-observation-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
           retention-days: 14
-          path: ${{ runner.temp }}/production-live-observation-error.log
+          path: |
+            ${{ runner.temp }}/production-live-observation-error.log
+            ${{ runner.temp }}/production-preflight*.json
+            ${{ runner.temp }}/production-baseline-provenance.json
 
   prepare-acs:
     name: 准备精确 ACS 镜像（含自动恢复）

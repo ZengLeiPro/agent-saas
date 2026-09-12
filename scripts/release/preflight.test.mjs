@@ -340,7 +340,13 @@ test('runtime identity fails closed for stale or unverifiable topology observati
   assert.match(missing.blockingReasons.join('\n'), /Unable to observe systemd process identity/u);
   assert.match(missing.blockingReasons.join('\n'), /Unable to resolve production release symlink/u);
   assert.match(missing.blockingReasons.join('\n'), /Unable to read production pidfile/u);
-  assert.match(missing.blockingReasons.join('\n'), /Unable to read production readyfile/u);
+  assert.doesNotMatch(missing.blockingReasons.join('\n'), /readyfile/u);
+  const readyCheck = missing.diagnostics.checks.find(
+    (check) => check.component === 'runtimeWorker' && check.check === 'readyfile',
+  );
+  assert.equal(readyCheck.dimension, 'admission');
+  assert.equal(readyCheck.reasonCode, 'readyfile_unreadable');
+  assert.equal(readyCheck.errno, 'UNKNOWN');
 });
 
 test('runtime identity requires pidfile PID to equal systemd MainPID', () => {

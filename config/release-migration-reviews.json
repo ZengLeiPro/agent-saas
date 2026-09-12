@@ -161,9 +161,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -776,7 +776,7 @@
           "baselineDigest": "sha256:7b232ba94234534c80b90be7ca003c071ed3a75d2181f0bb550a5b050f149192",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture 配置解析和字段定义调整；writerCapability 是运行前置配置，不执行数据库迁移；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/modelQuotaSourceSchema.ts",
@@ -795,9 +795,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:2f4422bc42e1eb6c29beeed6aeb3122ab91f940e5e02ba15b3087d32a5258421",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -1994,7 +1994,7 @@
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -2006,9 +2006,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -2982,7 +2982,7 @@
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -2994,9 +2994,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -3933,7 +3933,7 @@
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -3945,9 +3945,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -4884,7 +4884,7 @@
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -4896,9 +4896,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -5813,7 +5813,7 @@
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -5825,9 +5825,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -6742,7 +6742,7 @@
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -6754,9 +6754,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -7678,7 +7678,7 @@
           "baselineDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture 配置解析和字段定义调整；writerCapability 是运行前置配置，不执行数据库迁移；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
         },
         {
           "path": "server/src/app/modelQuotaSourceSchema.ts",
@@ -7697,9 +7697,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -8892,7 +8892,7 @@
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture Web Push配置定义抽出，新增可选APNs配置，无数据库调用。 本批仅将记忆轮询上限改为1000，无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -8904,9 +8904,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -9848,14 +9848,14 @@
           "baselineDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture 记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -10810,14 +10810,14 @@
           "baselineDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
           "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
           "classification": "no-schema-change",
-          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture 记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -11770,9 +11770,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -12667,9 +12667,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -13564,9 +13564,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -14461,9 +14461,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -15351,9 +15351,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -16230,9 +16230,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -17109,9 +17109,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -17919,9 +17919,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -18718,9 +18718,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -19509,9 +19509,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -20300,9 +20300,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -21091,9 +21091,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -21846,9 +21846,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -22595,9 +22595,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -23300,9 +23300,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -24005,9 +24005,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -24652,9 +24652,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -25291,9 +25291,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -25904,9 +25904,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -26513,9 +26513,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -27126,9 +27126,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -27724,9 +27724,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -28322,9 +28322,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -28909,9 +28909,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -29508,9 +29508,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -30107,9 +30107,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "expand",
-          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/data/agentDwsAccounts/deliveryProtocol.ts",
@@ -31220,16 +31220,16 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:069baebe507675a57cdd22ae8391c8cab83539371f5ee6304cb37ae978d58994",
-          "targetDigest": "sha256:b61cb4bc6d9bf7fc0ea9fab23f958a791501b6a36fc46471ab25038e0eb636d3",
+          "targetDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
           "classification": "no-schema-change",
-          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/app/runtimeContracts.ts",
           "baselineDigest": "sha256:5033ecfe2bb6852ae1d3aedf0f8f058ef804832365638d92dac90c23c74be2ae",
-          "targetDigest": "sha256:ea5ad8f3791c29327a0ea6eb5073a33416dd489ad0e6b7727c71dcc540d2ac54",
+          "targetDigest": "sha256:5c712438a8f9d2fb175cba320dcd2d5d0295fa64f8f88bdeba3ab74e0e82a974",
           "classification": "no-schema-change",
-          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。"
+          "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 Runtime or conservative-closure dependency; audited startup DDL is unchanged. PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change."
         },
         {
           "path": "server/src/context/sync/dwsContextRuntime.ts",
@@ -32124,6 +32124,100 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        }
+      ]
+    },
+    {
+      "baselineSha": "c2c54534e9a6425149ec2c12fd1a86b687b8dbf6",
+      "files": [
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "targetDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/app/grokSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:31d13df97d0a085ba567a635a7918ddc3456b08a5d6149c0d46b1a4b64423c3e",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/codexCredentialRuntimeState.ts",
+          "baselineDigest": "sha256:1d615446c4eef244dae02dd8e32490e28149fabf7df042e65119a0a00a508239",
+          "targetDigest": "sha256:3a3dd7b293588496b77ea8532fe2602df2fe634157400fc7830cf1506699c399",
+          "classification": "no-schema-change",
+          "reason": "Grok-specific review: configuration-only / Codex compatibility export; preserved DDL proven by baseline fixture"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionCredentialRuntimeState.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:778486929b24fa27784895f5cdfbd879d14e9f49b6d07a456c2c8b87940dc929",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/subscriptionRefreshJournal.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:67e7713c9957aa5c94f55bff235898e4ddf641848f708b7edda61735c52730f0",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:d2b73d41c0e0a6ad6299bc47b9f02d21f4dc105f3add73ac2b34564fac957455",
+          "classification": "expand",
+          "reason": "Grok-specific review: preserved Codex DDL plus isolated additive Grok state/journal; initialization contains no destructive migration"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
+          "classification": "no-schema-change",
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/reviews/grok-subscription-migration.md",
+          "digest": "sha256:3387e2538b2b149108e57a2c4574ed8f7a8ba42eb4dc78182ed453def8bf7295"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPreservation.test.ts",
+          "digest": "sha256:70e8dd72839bd312c5c2e096ffcb23c76079ea68b30fb9803b8bb573ba90aa84"
+        },
+        {
+          "path": "server/src/__tests__/fixtures/grok-codex-schema-baseline.json",
+          "digest": "sha256:3dd2b69094c30790a7d061b27e2dba623be5bf3970670bac61616e3dbea9fa45"
+        },
+        {
+          "path": "server/src/__tests__/grokSchemaPostconditions.pg.test.ts",
+          "digest": "sha256:224e563734d06c5a79a1ce8a74c153d94fff26fbe4ab7d9d341870a958408716"
+        },
+        {
+          "path": "scripts/release/grok-subscription-postcondition.sql",
+          "digest": "sha256:f552fc71158d6e92dac10c8d332ac9b0fae299f5e1b2049442bc36d1d5204451"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
+          "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
         }
       ]
     }

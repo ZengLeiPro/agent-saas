@@ -23,9 +23,9 @@ import {
 } from './runtime/runtimePerformanceSampler.js';
 import { isTransientNetworkError } from './utils/transientNetworkError.js';
 import {
-  projectRuntimeWorkerReadyFile,
   removeRuntimeWorkerReadyFiles,
 } from './runtime/runtimeWorkerReadiness.js';
+import { createRuntimeWorkerReadinessMonitor } from './runtime/runtimeWorkerReadinessMonitor.js';
 
 type ProcessRole = 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker';
 
@@ -35,7 +35,7 @@ let httpServer: Server | undefined;
 let kbPreviewScheduler: KbPreviewScheduler | undefined;
 let runtimePerformanceSampler: RuntimePerformanceSampler | undefined;
 let runtimeReadyFileTimer: NodeJS.Timeout | undefined;
-let runtimeReadyFileSyncPending = false;
+let runtimeReadinessMonitor: ReturnType<typeof createRuntimeWorkerReadinessMonitor> | undefined;
 let runtimeDrainState: RuntimeDrainState | undefined;
 
 const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
@@ -82,6 +82,7 @@ function removeReadyFile(): void {
   if (!readyFile) return;
   try {
     if (resolveProcessRole() === 'runtime-worker') {
+      runtimeReadinessMonitor?.stop();
       removeRuntimeWorkerReadyFiles(readyFile);
     } else {
       fs.unlinkSync(readyFile);
@@ -109,38 +110,18 @@ function writeAuthorityAckFile(): void {
 
 async function syncRuntimeWorkerReadyFile(): Promise<void> {
   const readyFile = process.env.AGENT_SAAS_READYFILE;
-  if (!readyFile || runtimeReadyFileSyncPending) return;
-  runtimeReadyFileSyncPending = true;
-  let identityRefreshWatchdog: NodeJS.Timeout | undefined;
-  try {
-    if (runtime?.refreshConfigIdentitySummary) {
-      // 快速的无变化轮询不抖 readyfile；Vault 慢或挂起超过 1 秒则有界 fail-closed。
-      identityRefreshWatchdog = setTimeout(() => {
-        try { fs.rmSync(readyFile, { force: true }); } catch {}
-      }, 1_000);
-      identityRefreshWatchdog.unref?.();
-    }
-    const configIdentitySummary = runtime?.refreshConfigIdentitySummary
-      ? await runtime.refreshConfigIdentitySummary()
-      : runtime?.getConfigIdentitySummary?.();
-    projectRuntimeWorkerReadyFile(
-      readyFile,
-      runtime?.getRuntimeAdmissionSnapshot?.(),
-      configIdentitySummary,
-      runtime?.isPrivateConfigIdentitySummaryCurrent() ?? false,
-    );
-  } catch (err) {
-    // 内存身份、私有快照或准入证据任一读取失败时撤销旧 ready，避免 stale readiness 继续切流。
-    try { fs.rmSync(readyFile, { force: true }); } catch {}
-    serverLogger.warn(
-      `Failed to project runtime worker readiness ${readyFile}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  } finally {
-    if (identityRefreshWatchdog) clearTimeout(identityRefreshWatchdog);
-    runtimeReadyFileSyncPending = false;
-  }
+  if (!readyFile || isDraining || shuttingDown) return;
+  runtimeReadinessMonitor ??= createRuntimeWorkerReadinessMonitor({
+    readyFile,
+    refreshConfigIdentity: async () => runtime?.refreshConfigIdentitySummary
+      ? runtime.refreshConfigIdentitySummary() : runtime?.getConfigIdentitySummary?.(),
+    getConfigIdentity: () => runtime?.getConfigIdentitySummary?.(),
+    getRefreshFailure: () => runtime?.getConfigIdentityRefreshFailure?.(),
+    getAdmission: () => runtime?.getRuntimeAdmissionSnapshot?.(),
+    privateSnapshotCurrent: () => runtime?.isPrivateConfigIdentitySummaryCurrent() ?? false,
+    logger: serverLogger,
+  });
+  await runtimeReadinessMonitor.sync();
 }
 
 // PID alone can be reused after restart. These Linux identities are fixed for this process.
@@ -396,6 +377,7 @@ async function shutdownCleanup(): Promise<void> {
     runtimePerformanceSampler?.stop();
     if (runtimeReadyFileTimer) clearInterval(runtimeReadyFileTimer);
     runtimeReadyFileTimer = undefined;
+    runtimeReadinessMonitor?.stop();
     httpServer?.close();
     cronService?.stop();
     await runtime?.contextPlaneShutdown?.();
@@ -482,6 +464,7 @@ process.on('SIGHUP', () => refreshRuntimeEventRetentionAuthority('SIGHUP', true)
 process.on('SIGUSR2', () => {
   if (isDraining || shuttingDown) return;
   isDraining = true;
+  runtimeReadinessMonitor?.stop();
   runtimeDrainState = new RuntimeDrainState();
   runtimeRunController.beginRetirementTracking();
   // 进程进入 drain 后可能仍在等待长 run 的安全交棒。先写 /run marker，配合

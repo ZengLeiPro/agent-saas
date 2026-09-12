@@ -2862,7 +2862,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     uploadsDir, uploadManager, voiceTranscriptionService,
     sessionCatalog, channelManager, dispatchMetricsStore, dingtalkDeps,
     productionModelMutationService: productionModelPublication?.mutationService,
-    cronRuntime, getConfigIdentitySummary: configIdentityAssembly.getSummary,
+    cronRuntime, getConfigIdentitySummary: configIdentityAssembly.getSummary, getConfigIdentityRefreshFailure: configIdentityAssembly.getRefreshFailure,
     refreshConfigIdentitySummary: configIdentityAssembly.refreshSummary, isPrivateConfigIdentitySummaryCurrent: configIdentityAssembly.isPrivateSummaryCurrent,
     configRuntimeRecoveryGate: configIdentityAssembly.recoveryGate,
     getMemoryIndexService: () => memoryIndexServiceRef.current,

@@ -22,6 +22,10 @@ if (command === 'ssh') {
   } else if (remote.includes(' -- release ')) {
     writeFileSync(join(root, 'released'), 'released');
     quit();
+  } else if (remote.includes('app-retirement-targets.json')) {
+    if (!remote.includes('/retirements/456-2/app-retirement-targets.json')) quit(1);
+    log('retirement-target');
+    quit();
   } else if (remote.includes('verify-app-retirement.sh')) {
     const final = remote.includes('app-retirement-final.json');
     log(final ? 'retirement-final' : 'retirement-initial');

@@ -1,3 +1,5 @@
+import type { SubscriptionCredentialRotationTransaction } from '../runtime/responses/subscriptionCredentialRotation.js';
+import { ConfigPublicationLockUnavailableError, configuredSubscriptionProvider, isCredentialRotationPublication } from './subscriptionRotationSupport.js';
 import { readFileSync, lstatSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -73,6 +75,7 @@ export interface ProductionPublisher {
   recover(): Promise<void>;
   /** 仅供受信运行时在既有受管 Codex ref 正常 rotate 后推进签名身份。 */
   coordinateCredentialRotation?(credentialRef: string): Promise<void>;
+  withCredentialRotation?: SubscriptionCredentialRotationTransaction;
   getOperationStatus?(operationId: string, actor: string): {
     operationId: string;
     operation: string;
@@ -114,6 +117,8 @@ export class ProductionModelPublisher implements ProductionPublisher {
       secretVault: SecretVault;
       targets: () => PublicationTarget[];
       observeLocal: () => Promise<void>;
+      pendingCredentialRotations?: () => Promise<string[]>;
+      acknowledgeCredentialRotation?: (ref: string) => Promise<void>;
       promotionLockPath?: string;
       timeoutMs?: number;
       pollMs?: number;
@@ -291,7 +296,7 @@ export class ProductionModelPublisher implements ProductionPublisher {
     try {
       release = await acquireFileGuard(path);
     } catch (error) {
-      throw new Error('生产发布互斥锁暂不可用，请稍后重试', { cause: error });
+      throw new ConfigPublicationLockUnavailableError(error);
     }
     try {
       return await action();
@@ -301,63 +306,98 @@ export class ProductionModelPublisher implements ProductionPublisher {
   }
 
   async recover(): Promise<void> {
-    return this.fenced(() => this.recoverLocked());
-  }
-
-  async coordinateCredentialRotation(credentialRef: string): Promise<void> {
     return this.fenced(async () => {
       await this.recoverLocked();
-      const state = assertPublishedDisk(this.options.configPath, this.state())!;
-      if (state.phase !== 'committed' || state.releaseId !== this.options.releaseId) {
-        throw new Error('凭据轮换时生产配置权威不可用');
-      }
-      const currentText = readFileSync(this.options.configPath, 'utf8');
-      const currentRaw = parseJsonc(currentText) as Record<string, unknown>;
-      const config = parseAppConfig(currentRaw);
-      const refs = config.codexSubscription?.credentialRefs?.length
-        ? config.codexSubscription.credentialRefs
-        : config.codexSubscription?.credentialRef ? [config.codexSubscription.credentialRef] : [];
-      if (!refs.includes(credentialRef)) throw new Error('拒绝为未登记的 Codex 凭据推进签名身份');
-      const identity = await this.identity(config);
-      if (canonical(identity) === canonical(this.expected(state))) return;
-      const targets = this.options.targets();
-      this.assertTargets(targets);
-      const intent: ConfigPublication = {
-        ...state,
-        phase: 'applying',
-        sequence: state.sequence + 1,
-        revision: randomUUID(),
-        rawRevision: rawRevision(currentText),
-        identity,
-        previous: {
-          revision: state.revision,
-          rawRevision: state.rawRevision,
-          identity: this.expected(state),
-        },
-        owner: processIdentity(),
-        actor: 'system:codex-token-refresh',
-        changedPaths: ['runtime-credential-rotation:codexSubscription'],
-        updatedAt: new Date(this.now()).toISOString(),
-      };
-      try {
-        writePublication(this.options.configPath, intent);
-        await this.wait(intent, targets);
-        const committed = this.transition(intent, 'committed');
-        await this.wait(committed, targets);
-      } catch (error) {
-        try {
-          const latest = this.state();
-          if (latest.revision === intent.revision && latest.phase !== 'committed') {
-            this.transition(latest, 'recovery_required');
-          }
-        } catch {
-          /* 已签名的 applying head 本身会保持 fail-closed。 */
-        }
-        throw new ConfigMutationCommittedError(
-          new Error('Codex token 已刷新，但签名身份确认未完成；配置写入已阻断等待恢复', { cause: error }),
-        );
+      // Only provider-owned durable generation evidence can authorize recovery before a signed intent.
+      for (const ref of await this.options.pendingCredentialRotations?.() ?? []) {
+        await this.coordinateCredentialRotationLocked(ref);
+        await this.options.acknowledgeCredentialRotation?.(ref);
       }
     });
+  }
+
+
+  async coordinateCredentialRotation(credentialRef: string): Promise<void> {
+    return this.fenced(async () => { await this.recoverLocked(); await this.coordinateCredentialRotationLocked(credentialRef); });
+  }
+
+  async withCredentialRotation<T>(credentialRef: string, rotate: () => Promise<T>): Promise<T> {
+    const deadline = performance.now() + 90_000;
+    while (true) {
+      try {
+        return await this.fenced(async () => {
+          await this.recoverLocked();
+          const current = parseAppConfig(parseJsonc(readFileSync(this.options.configPath, 'utf8')));
+          configuredSubscriptionProvider(current, credentialRef);
+          let result: T;
+          try { result = await rotate(); }
+          catch (error) {
+            // A Vault write may have committed even if its acknowledgement was lost. Never replay
+            // the grant: reconcile the observed generation while still holding the outer fence.
+            await this.coordinateCredentialRotationLocked(credentialRef);
+            throw error;
+          }
+          await this.coordinateCredentialRotationLocked(credentialRef);
+          return result;
+        });
+      } catch (error) {
+        if (!(error instanceof ConfigPublicationLockUnavailableError) || performance.now() >= deadline) throw error;
+        await sleep(100);
+      }
+    }
+  }
+
+  private async coordinateCredentialRotationLocked(credentialRef: string): Promise<void> {
+    const state = assertPublishedDisk(this.options.configPath, this.state())!;
+    if (state.phase !== 'committed' || state.releaseId !== this.options.releaseId) {
+      throw new Error('凭据轮换时生产配置权威不可用');
+    }
+    const currentText = readFileSync(this.options.configPath, 'utf8');
+    const currentRaw = parseJsonc(currentText) as Record<string, unknown>;
+    const config = parseAppConfig(currentRaw);
+    const provider = configuredSubscriptionProvider(config, credentialRef);
+    const identity = await this.identity(config);
+    if (canonical(identity) === canonical(this.expected(state))) {
+      const targets = this.options.targets(); this.assertTargets(targets);
+      await this.wait(state, targets); return;
+    }
+    const targets = this.options.targets();
+    this.assertTargets(targets);
+    const intent: ConfigPublication = {
+      ...state,
+      phase: 'applying',
+      sequence: state.sequence + 1,
+      revision: randomUUID(),
+      rawRevision: rawRevision(currentText),
+      identity,
+      previous: {
+        revision: state.revision,
+        rawRevision: state.rawRevision,
+        identity: this.expected(state),
+      },
+      owner: processIdentity(),
+      actor: `system:${provider.id}-token-refresh`,
+      changedPaths: [`runtime-credential-rotation:${provider.root}`],
+      updatedAt: new Date(this.now()).toISOString(),
+    };
+    try {
+      writePublication(this.options.configPath, intent);
+      await this.wait(intent, targets);
+      const committed = this.transition(intent, 'committed');
+      await this.wait(committed, targets);
+    } catch (error) {
+      try {
+        const latest = this.state();
+        if (latest.revision === intent.revision && latest.phase !== 'committed') {
+          this.transition(latest, 'recovery_required');
+        }
+      } catch {
+        /* 已签名的 applying head 本身会保持 fail-closed。 */
+      }
+      throw new ConfigMutationCommittedError(
+        new Error(`${provider.id} token 已刷新，但签名身份确认未完成；配置写入已阻断等待恢复`, { cause: error }),
+      );
+    }
   }
 
   private async recoverLocked(): Promise<void> {
@@ -368,7 +408,33 @@ export class ProductionModelPublisher implements ProductionPublisher {
     if (state.phase !== 'recovery_required' && state.owner && isOwnerAlive(state.owner)) {
       throw new Error('配置发布事务仍由存活进程持有');
     }
+    if (isCredentialRotationPublication(state.changedPaths)) { await this.recoverCredentialRotationLocked(state); return; }
     await this.rollback(state, new Error('恢复中断的生产配置事务'));
+  }
+
+  private async recoverCredentialRotationLocked(state: ConfigPublication): Promise<void> {
+    // Refresh is irreversible. Only a signed rotation intent with unchanged config bytes may
+    // move forward to the observed Vault versions; ordinary configuration rollback is unchanged.
+    if (!state.previous || state.rawRevision !== state.previous.rawRevision
+        || rawRevision(readFileSync(this.options.configPath, 'utf8')) !== state.rawRevision) {
+      throw new Error('凭据轮换恢复缺少未变更配置的签名证据');
+    }
+    const config = parseAppConfig(parseJsonc(readFileSync(this.options.configPath, 'utf8')));
+    const identity = await this.identity(config);
+    if (identity.digest !== state.previous.identity.digest) throw new Error('凭据轮换恢复不能接受配置内容漂移');
+    const targets = this.options.targets(); this.assertTargets(targets);
+    const intent: ConfigPublication = { ...state, phase: 'applying', sequence: state.sequence + 1,
+      identity, owner: processIdentity(), updatedAt: new Date(this.now()).toISOString() };
+    try {
+      writePublication(this.options.configPath, intent); await this.wait(intent, targets);
+      const committed = this.transition(intent, 'committed'); await this.wait(committed, targets);
+    } catch (error) {
+      try {
+        const latest = this.state();
+        if (latest.revision === intent.revision && latest.phase !== 'committed') this.transition(latest, 'recovery_required');
+      } catch { /* Retain the signed pending head; do not forge an old credential version. */ }
+      throw new ConfigMutationCommittedError(new Error('订阅凭据已旋转，等待 API / Worker 前向确认', { cause: error }));
+    }
   }
 
   private async rollback(state: ConfigPublication, original: unknown): Promise<void> {

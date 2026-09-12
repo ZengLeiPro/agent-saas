@@ -119,8 +119,11 @@ case "$task" in
     # 显式清单是快速动态合约门禁，新增关键 PG 合约必须在此登记。
     require_test_database
     node --test scripts/release/migration-postconditions.pg.test.mjs
+    pnpm exec tsx server/scripts/verify-app-retirement-pg.mts
     pnpm -F server exec vitest run \
       src/__tests__/codexCredentialRuntimeState.pg.test.ts \
+      src/__tests__/grokCredentialPostgres.test.ts \
+      src/__tests__/grokSchemaPostconditions.pg.test.ts \
       src/__tests__/memoryConsolidationStore.pg.test.ts \
       src/__tests__/pgEventStoreGlobalPage.pg.test.ts \
       src/__tests__/sessionShareStore.pg.test.ts \
@@ -139,7 +142,10 @@ case "$task" in
       src/kyapp/gateway/snapshotStore.pg.test.ts \
       src/kyapp/__tests__/kyAppStores.pg.test.ts \
       src/kyapp/directory/store.pg.test.ts \
-      src/kyapp/delivery/store.pg.test.ts
+      src/kyapp/delivery/store.pg.test.ts \
+      src/kyapp/installations/scopeRetirement.pg.test.ts \
+      src/kyapp/installations/managementFlow.pg.test.ts \
+      src/kyapp/delivery/existingOnboard.pg.test.ts
     pnpm -F @kaiyan/ky-app-server exec vitest run src/sat/pgJtiStore.pg.test.ts src/pg/stores.pg.test.ts
     ;;
 

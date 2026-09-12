@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProviderQuotaHistoryResponse, ProviderQuotaOverviewResponse } from '@agent/shared';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProviderQuotaHistoryResponse, ProviderQuotaOverviewResponse, ProviderQuotaSnapshot } from '@agent/shared';
 
 const api = vi.hoisted(() => ({
   providerQuota: vi.fn(),
@@ -19,6 +19,14 @@ import {
   formatWan,
   windowTone,
 } from './ProviderQuotaPage';
+import { ProviderQuotaPlanBadge } from './ProviderQuotaPlanBadge';
+import {
+  PROVIDER_QUOTA_ORDER_STORAGE_KEY,
+  moveQuotaAccount,
+  orderQuotaAccounts,
+  readQuotaAccountOrder,
+  writeQuotaAccountOrder,
+} from './providerQuotaOrder';
 
 const overview: ProviderQuotaOverviewResponse = {
   items: [
@@ -103,8 +111,38 @@ const history: ProviderQuotaHistoryResponse = {
   generatedAt: '2026-09-05T06:31:00.000Z',
 };
 
+const claudeAccount: ProviderQuotaSnapshot = {
+  sourceKind: 'claude_subscription',
+  accountKey: 'claude:c1',
+  accountLabel: 'Claude 测试账号',
+  windows: [{ id: 'seven_day', label: '每周', windowSeconds: 604_800, usedPercent: 20 }],
+  limitReached: false,
+  ok: true,
+  collectedAt: '2026-09-05T06:30:00.000Z',
+};
+const sortableOverview: ProviderQuotaOverviewResponse = {
+  ...overview,
+  items: [...overview.items, claudeAccount],
+};
+const defaultOrder = ['codex:c1', 'claude:c1', 'volcengine:ark'];
+
+function renderedAccountKeys(): string[] {
+  return screen.getAllByTestId(/^quota-account-/u)
+    .map((card) => card.getAttribute('data-testid')!.replace('quota-account-', ''));
+}
+
+function dragData() {
+  return { effectAllowed: 'none', dropEffect: 'none', setData: vi.fn(), setDragImage: vi.fn() };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.localStorage.removeItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY);
+});
+
 describe('ProviderQuotaPage', () => {
   beforeEach(() => {
+    window.localStorage.removeItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY);
     api.providerQuota.mockReset().mockResolvedValue(overview);
     api.providerQuotaHistory.mockReset().mockResolvedValue(history);
     api.refreshProviderQuota.mockReset().mockResolvedValue(overview);
@@ -120,7 +158,7 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getByText('100.0%')).toBeTruthy();
     expect(screen.getByText('Codex 订阅 · Pro · 重置券 2')).toBeTruthy();
     expect(screen.getByTitle(/^凭据到期 /u)).toBeTruthy();
-    expect(screen.getByText('冷却中')).toBeTruthy();
+    expect(screen.queryByText('冷却中')).toBeNull();
     expect(screen.getByText(/Codex usage HTTP 401。下方为/u)).toBeTruthy();
     expect(screen.queryByText(/24h [+-]/u)).toBeNull();
     expect(screen.queryByText('已撞限')).toBeNull();
@@ -128,6 +166,7 @@ describe('ProviderQuotaPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
     expect(screen.getByText(/每 5 分钟自动采集/u)).toBeTruthy();
     expect(screen.getByText(/1 个异常/u)).toBeTruthy();
+    expect(screen.getByTitle('采集失败 1 · 额度耗尽 0 · 凭据不可用 0')).toBeTruthy();
     expect(screen.getByText(/1 个需关注/u)).toBeTruthy();
     expect(api.providerQuotaHistory).toHaveBeenCalledWith(24);
   });
@@ -156,14 +195,14 @@ describe('ProviderQuotaPage', () => {
     expect(within(badge.parentElement!).getByText(`Credits ${balance}`)).toBeTruthy();
   });
 
-  it('Claude 只把 7 天额度作为主进度条，5 小时与 Fable 默认折叠，并保持推送型来源无单卡刷新', async () => {
+  it('Claude 左侧 7 天、右侧 5 小时，附加模型默认折叠且无外框', async () => {
     const claude = {
       sourceKind: 'claude_subscription' as const,
       accountKey: 'claude:kaiyankeji.5@gmail.com',
       accountLabel: 'kaiyankeji.5@gmail.com',
       windows: [
-        { id: 'five_hour', label: '5 小时', windowSeconds: 18_000, usedPercent: 22, resetAt: '2026-09-05T11:20:00.000Z' },
-        { id: 'seven_day', label: '7 天', windowSeconds: 604_800, usedPercent: 37, resetAt: '2026-09-11T00:00:00.000Z' },
+        { id: 'five_hour', label: '5 小时', usedPercent: 22, resetAt: '2026-09-05T11:20:00.000Z' },
+        { id: 'seven_day', label: '7 天', usedPercent: 37, resetAt: '2026-09-11T00:00:00.000Z' },
         { id: 'fable:seven_day', label: 'Fable · 7 天', windowSeconds: 604_800, usedPercent: 48, resetAt: '2026-09-11T00:00:00.000Z' },
       ],
       limitReached: false,
@@ -174,13 +213,23 @@ describe('ProviderQuotaPage', () => {
     render(<ProviderQuotaPage />);
     const card = await screen.findByTestId('quota-account-claude:kaiyankeji.5@gmail.com');
     expect(within(card).getByText('Claude 订阅')).toBeTruthy();
-    expect(within(card).getByTestId('quota-window-seven_day')).toBeTruthy();
-    const summary = within(card).getByText(/其他额度（2 个窗口）/u);
-    expect(summary.closest('details')?.open).toBe(false);
-    expect(within(summary.closest('details')!).getByTestId('quota-window-five_hour')).toBeTruthy();
-    expect(within(summary.closest('details')!).getByTestId('quota-window-fable:seven_day')).toBeTruthy();
+    const main = within(card).getByTestId('quota-window-seven_day').parentElement!;
+    expect(main.className).toContain('sm:grid-cols-2');
+    expect(within(main).getAllByRole('progressbar').map((bar) => bar.getAttribute('aria-label')))
+      .toEqual(['7 天 已用', '5 小时 已用']);
+    const summary = within(card).getByText(/其他（1 个窗口）/u);
+    const details = summary.closest('details')!;
+    expect(details.open).toBe(false);
+    expect(details.classList.contains('border')).toBe(false);
+    expect(details.classList.contains('p-3')).toBe(false);
+    expect(within(details).queryByTestId('quota-window-five_hour')).toBeNull();
+    const additionalTile = within(details).getByTestId('quota-window-fable:seven_day');
+    expect(additionalTile.parentElement?.className).not.toContain('sm:grid-cols-2');
+    fireEvent.click(details.querySelector('summary')!);
+    expect(details.open).toBe(true);
     expect(screen.queryByRole('button', { name: '刷新 kaiyankeji.5@gmail.com' })).toBeNull();
     expect(screen.getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' })).toBeTruthy();
+    expect(claude.windows.map((window) => window.id)).toEqual(['five_hour', 'seven_day', 'fable:seven_day']);
   });
 
   it('Codex 周额度优先，附加模型默认折叠且不把账号标记为耗尽', async () => {
@@ -198,12 +247,13 @@ describe('ProviderQuotaPage', () => {
     await waitFor(() => expect(screen.getByText('正常')).toBeTruthy());
     const windows = screen.getAllByRole('progressbar');
     expect(windows[0]?.getAttribute('aria-label')).toBe('周用量 已用');
-    const summary = screen.getByText(/其他模型额度/u);
+    const summary = screen.getByText(/其他（1 个窗口）/u);
     expect(summary.closest('details')?.open).toBe(false);
     expect(screen.getByText('1 个窗口已耗尽')).toBeTruthy();
     expect(screen.queryByText('已撞限')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
-    expect(screen.getByText(/页面不自动刷新/u)).toBeTruthy();
+    expect(screen.getByText(/切回前台自动刷新/u)).toBeTruthy();
+    expect(screen.queryByText(/页面不自动刷新/u)).toBeNull();
     expect(screen.queryByText('可用')).toBeNull();
     expect(screen.queryByText('已耗尽')).toBeNull();
   });
@@ -222,6 +272,7 @@ describe('ProviderQuotaPage', () => {
     const timestamp = [...card.querySelectorAll('span')].find(el => el.textContent?.startsWith('采集 '));
     expect(timestamp?.className).toContain('tabular-nums');
     expect(timestamp?.textContent).not.toContain('采集于');
+    expect(timestamp?.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(timestamp?.parentElement?.querySelector('button')?.getAttribute('aria-label')).toContain('刷新');
   });
 
@@ -271,28 +322,177 @@ describe('ProviderQuotaPage', () => {
     render(<ProviderQuotaPage />);
     await waitFor(() => expect(screen.getByText(/套餐额度采集未启用/u)).toBeTruthy());
   });
+
+  it('火山左侧近一月、右侧近一周，其他窗口默认折叠，不修改接口窗口顺序', async () => {
+    const volcano = {
+      ...overview.items[0]!,
+      windows: [
+        ...overview.items[0]!.windows,
+        { id: 'daily', label: '近一天', usedPercent: 10 },
+        { id: 'weekly', label: '近一周', usedPercent: 40 },
+      ],
+    };
+    api.providerQuota.mockResolvedValue({ ...overview, items: [volcano] });
+    render(<ProviderQuotaPage />);
+    const card = await screen.findByTestId('quota-account-volcengine:ark');
+    const main = within(card).getByTestId('quota-window-monthly').parentElement!;
+    expect(main.className).toContain('sm:grid-cols-2');
+    expect(within(main).getAllByRole('progressbar').map((bar) => bar.getAttribute('aria-label')))
+      .toEqual(['近一月 已用', '近一周 已用']);
+    const details = within(card).getByText('其他（2 个窗口）').closest('details')!;
+    expect(details.open).toBe(false);
+    expect(within(details).getByTestId('quota-window-five_hour')).toBeTruthy();
+    expect(within(details).getByTestId('quota-window-daily')).toBeTruthy();
+    fireEvent.click(details.querySelector('summary')!);
+    expect(details.open).toBe(true);
+    expect(within(details).getAllByRole('progressbar')).toHaveLength(2);
+    expect(volcano.windows.map((window) => window.id)).toEqual(['five_hour', 'monthly', 'daily', 'weekly']);
+  });
+
+  it('火山未返回周额度时不补造窗口，5 小时仍在折叠区', async () => {
+    render(<ProviderQuotaPage />);
+    const card = await screen.findByTestId('quota-account-volcengine:ark');
+    const main = within(card).getByTestId('quota-window-monthly').parentElement!;
+    expect(within(main).getAllByRole('progressbar')).toHaveLength(1);
+    expect(main.className).not.toContain('sm:grid-cols-2');
+    expect(within(card).queryByTestId('quota-window-weekly')).toBeNull();
+    expect(within(card).getByTestId('quota-window-five_hour').closest('details')?.open).toBe(false);
+    expect(overview.items[0]!.windows.map((window) => window.id)).toEqual(['five_hour', 'monthly']);
+  });
+
+  it('用量恰好 70% 即使用提醒色，调度冷却不再单独展示或影响统计', async () => {
+    const item = {
+      ...overview.items[1]!, ok: true, error: undefined, limitReached: false,
+      windows: [{ id: 'primary', label: '每周', usedPercent: 70 }],
+    };
+    api.providerQuota.mockResolvedValue({ ...overview, items: [item] });
+    render(<ProviderQuotaPage />);
+    await screen.findByText('接近上限');
+    expect(screen.getByRole('progressbar').firstElementChild?.className).toContain('bg-warning');
+    expect(screen.queryByText('冷却中')).toBeNull();
+    expect(screen.getByText('1 个需关注')).toBeTruthy();
+  });
+
+  it('没有本地偏好时，默认按 Codex、Claude、火山排列', async () => {
+    api.providerQuota.mockResolvedValue(sortableOverview);
+    render(<ProviderQuotaPage />);
+    await screen.findByTestId('quota-account-claude:c1');
+    expect(renderedAccountKeys()).toEqual(defaultOrder);
+    expect(window.localStorage.getItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY)).toBeNull();
+    expect(sortableOverview.items[0]!.accountKey).toBe('volcengine:ark');
+  });
+
+  it('优先恢复浏览器保存的顺序，忽略已删除账号', async () => {
+    window.localStorage.setItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY, JSON.stringify(['removed', 'volcengine:ark', 'claude:c1', 'codex:c1']));
+    api.providerQuota.mockResolvedValue(sortableOverview);
+    render(<ProviderQuotaPage />);
+    await screen.findByTestId('quota-account-claude:c1');
+    expect(renderedAccountKeys()).toEqual(['volcengine:ark', 'claude:c1', 'codex:c1']);
+  });
+
+  it('只通过六点手柄拖动，落下后保存顺序，刷新数据和重新进入页面均保持', async () => {
+    api.providerQuota.mockResolvedValue(sortableOverview);
+    api.refreshProviderQuota.mockResolvedValue(sortableOverview);
+    const view = render(<ProviderQuotaPage />);
+    const target = await screen.findByTestId('quota-account-volcengine:ark');
+    const source = screen.getByRole('button', { name: '拖动排序 kaiyankeji.3@gmail.com' });
+    const dataTransfer = dragData();
+    expect(source.getAttribute('draggable')).toBe('true');
+    expect(screen.getByTestId('quota-account-codex:c1').getAttribute('draggable')).toBeNull();
+    expect(screen.getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' }).getAttribute('draggable')).toBeNull();
+    fireEvent.dragStart(source, { dataTransfer, clientX: 12, clientY: 12 });
+    expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'codex:c1');
+    expect(dataTransfer.setDragImage).toHaveBeenCalled();
+    fireEvent.dragOver(target, { dataTransfer });
+    expect(target.parentElement?.className).toContain('ring-2');
+    fireEvent.drop(target, { dataTransfer });
+    fireEvent.dragEnd(source, { dataTransfer });
+    const expected = ['claude:c1', 'volcengine:ark', 'codex:c1'];
+    expect(renderedAccountKeys()).toEqual(expected);
+    expect(window.localStorage.getItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY)).toBe(JSON.stringify(expected));
+    expect(api.refreshProviderQuota).not.toHaveBeenCalled();
+    expect(api.providerQuota).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: '立即采集' }));
+    await waitFor(() => expect(api.refreshProviderQuota).toHaveBeenCalledWith(undefined));
+    await waitFor(() => expect(screen.getByRole('button', { name: '立即采集' }).hasAttribute('disabled')).toBe(false));
+    expect(renderedAccountKeys()).toEqual(expected);
+    view.unmount();
+    render(<ProviderQuotaPage />);
+    await screen.findByTestId('quota-account-claude:c1');
+    expect(renderedAccountKeys()).toEqual(expected);
+  });
+
+  it('外部拖入、取消拖拽和原位放下均不改变或保存顺序', async () => {
+    api.providerQuota.mockResolvedValue(sortableOverview);
+    render(<ProviderQuotaPage />);
+    const target = await screen.findByTestId('quota-account-volcengine:ark');
+    const source = screen.getByRole('button', { name: '拖动排序 kaiyankeji.3@gmail.com' });
+    const dataTransfer = dragData();
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.dragEnd(source, { dataTransfer });
+    expect(target.parentElement?.className).not.toContain('ring-2');
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.drop(screen.getByTestId('quota-account-codex:c1'), { dataTransfer });
+    fireEvent.dragEnd(source, { dataTransfer });
+    expect(renderedAccountKeys()).toEqual(defaultOrder);
+    expect(window.localStorage.getItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY)).toBeNull();
+  });
+
+  it('手柄支持上下方向键排序，到达边界不产生写入', async () => {
+    api.providerQuota.mockResolvedValue(sortableOverview);
+    render(<ProviderQuotaPage />);
+    await screen.findByTestId('quota-account-claude:c1');
+    const handle = screen.getByRole('button', { name: '拖动排序 kaiyankeji.3@gmail.com' });
+    fireEvent.keyDown(handle, { key: 'ArrowUp' });
+    expect(window.localStorage.getItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY)).toBeNull();
+    fireEvent.keyDown(handle, { key: 'ArrowDown' });
+    expect(renderedAccountKeys()).toEqual(['claude:c1', 'codex:c1', 'volcengine:ark']);
+    expect(screen.getByRole('status').textContent).toContain('移至第 2 位');
+    expect(JSON.parse(window.localStorage.getItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY)!)).toEqual(renderedAccountKeys());
+  });
+
+  it('浏览器禁止写入时，当前页面仍可调整顺序且不会触发后端请求', async () => {
+    api.providerQuota.mockResolvedValue(sortableOverview);
+    render(<ProviderQuotaPage />);
+    await screen.findByTestId('quota-account-claude:c1');
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage disabled'); });
+    fireEvent.keyDown(screen.getByRole('button', { name: '拖动排序 kaiyankeji.3@gmail.com' }), { key: 'ArrowDown' });
+    expect(renderedAccountKeys()).toEqual(['claude:c1', 'codex:c1', 'volcengine:ark']);
+    expect(screen.getByRole('status').textContent).toContain('浏览器存储不可用');
+    expect(api.refreshProviderQuota).not.toHaveBeenCalled();
+  });
 });
 
 describe('helpers', () => {
-  it('windowTone：≥85 提醒，撞限或 ≥100 告警', () => {
+  it('windowTone：≥70 提醒，撞限或 ≥100 告警', () => {
     expect(windowTone({ usedPercent: 10 })).toBe('ok');
+    expect(windowTone({ usedPercent: 69.99 })).toBe('ok');
+    expect(windowTone({ usedPercent: 70 })).toBe('warning');
     expect(windowTone({ usedPercent: 85 })).toBe('warning');
+    expect(windowTone({ usedPercent: 99.99 })).toBe('warning');
     expect(windowTone({ usedPercent: 99, limitReached: true })).toBe('critical');
     expect(windowTone({ usedPercent: 100 })).toBe('critical');
   });
 
-  it('accountStatus：采集失败 > 凭据不可用 > 已耗尽 > 冷却中 > 接近上限 > 正常', () => {
+  it('accountStatus：采集失败 > 凭据不可用 > 已耗尽 > 接近上限 > 正常，忽略调度冷却', () => {
     const okWindow = { id: 'w', label: 'w', usedPercent: 10 };
     expect(accountStatus({ ok: false, limitReached: false, windows: [] })).toEqual({ tone: 'critical', label: '采集失败' });
     expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'auth_unavailable' } }).label).toBe('凭据不可用');
     expect(accountStatus({ ok: true, limitReached: true, windows: [okWindow], credential: { availability: 'quota_cooldown' } }).label).toBe('已耗尽');
-    expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'quota_cooldown' } })).toEqual({ tone: 'warning', label: '冷却中' });
+    expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'quota_cooldown' } })).toEqual({ tone: 'ok', label: '正常' });
+    expect(accountStatus({ ok: true, limitReached: false, windows: [{ ...okWindow, usedPercent: 70 }], credential: { availability: 'quota_cooldown' } }).label).toBe('接近上限');
     expect(accountStatus({ ok: true, limitReached: false, windows: [{ ...okWindow, usedPercent: 90 }] }).label).toBe('接近上限');
     expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow] })).toEqual({ tone: 'ok', label: '正常' });
   });
 
-  it('重置时间在月日与时间之间显示星期', () => {
-    expect(formatResetTime('2026-09-10T12:00:00')).toMatch(/09\/10 周四 12:00/);
+  it('重置时间显示星期且只精确到分钟，不对非零秒数进位', () => {
+    expect(formatResetTime('2026-09-10T12:34:56')).toMatch(/09\/10 周四 12:34$/);
+    expect(formatResetTime('2026-09-10T23:59:59')).toMatch(/09\/10 周四 23:59$/);
+    expect(formatResetTime(undefined)).toBe('—');
+    expect(formatResetTime('not-a-date')).toBe('—');
   });
 
   it('formatWan：万/亿量级与小数位', () => {
@@ -318,5 +518,62 @@ describe('helpers', () => {
     expect(baselineUsedPercent(history.points, 'volcengine:ark', 'monthly')).toBe(90);
     expect(baselineUsedPercent(history.points, 'volcengine:ark', 'weekly')).toBeNull();
     expect(baselineUsedPercent(history.points, 'codex:c1', 'primary')).toBeNull();
+  });
+});
+
+describe('quota account order', () => {
+  it.each(['not-json', 'null', '{}', '42', '"codex:c1"'])('无效的本地存储 %s 回退默认顺序', (value) => {
+    window.localStorage.setItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY, value);
+    expect(readQuotaAccountOrder()).toEqual([]);
+    expect(orderQuotaAccounts(sortableOverview.items, readQuotaAccountOrder()).map((item) => item.accountKey)).toEqual(defaultOrder);
+  });
+
+  it('去除非字符串、空值和重复项，并保持首个有效位置', () => {
+    window.localStorage.setItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY, '["codex:c1",null,42,"","codex:c1","volcengine:ark"]');
+    expect(readQuotaAccountOrder()).toEqual(['codex:c1', 'volcengine:ark']);
+  });
+
+  it('本地存储读写抛错不会影响页面', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Storage disabled'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage disabled'); });
+    expect(readQuotaAccountOrder()).toEqual([]);
+    expect(writeQuotaAccountOrder(defaultOrder)).toBe(false);
+  });
+
+  it('失效账号被忽略，新账号按供应商顺序追加，同供应商保持接口顺序', () => {
+    const items = [...sortableOverview.items, { ...overview.items[1]!, accountKey: 'codex:c2' }];
+    const saved = ['removed', 'volcengine:ark'];
+    expect(orderQuotaAccounts(items, saved).map((item) => item.accountKey))
+      .toEqual(['volcengine:ark', 'codex:c1', 'codex:c2', 'claude:c1']);
+    expect(orderQuotaAccounts(items, []).map((item) => item.accountKey))
+      .toEqual(['codex:c1', 'codex:c2', 'claude:c1', 'volcengine:ark']);
+    expect(items[0]!.accountKey).toBe('volcengine:ark');
+  });
+
+  it('移动不修改输入，支持向前向后，并忽略无效目标和原位移动', () => {
+    expect(moveQuotaAccount(defaultOrder, 'codex:c1', 'volcengine:ark')).toEqual(['claude:c1', 'volcengine:ark', 'codex:c1']);
+    expect(moveQuotaAccount(defaultOrder, 'volcengine:ark', 'codex:c1')).toEqual(['volcengine:ark', 'codex:c1', 'claude:c1']);
+    expect(moveQuotaAccount(defaultOrder, 'removed', 'codex:c1')).toBeNull();
+    expect(moveQuotaAccount(defaultOrder, 'codex:c1', 'removed')).toBeNull();
+    expect(moveQuotaAccount(defaultOrder, 'codex:c1', 'codex:c1')).toBeNull();
+    expect(defaultOrder).toEqual(['codex:c1', 'claude:c1', 'volcengine:ark']);
+  });
+});
+
+describe('ProviderQuotaPlanBadge', () => {
+  it.each([
+    ['codex_subscription', 'pro', 'bg-blue-50'],
+    ['codex_subscription', 'plus', 'bg-blue-50'],
+    ['codex_subscription', 'enterprise', 'bg-blue-50'],
+    ['codex_subscription', undefined, 'bg-blue-50'],
+    ['volcengine_ark_plan', 'Pro', 'bg-violet-50'],
+    ['volcengine_ark_plan', 'Lite', 'bg-violet-50'],
+    ['volcengine_ark_plan', 'Max', 'bg-violet-50'],
+    ['volcengine_ark_plan', undefined, 'bg-violet-50'],
+    ['claude_subscription', 'pro', 'bg-orange-50'],
+    ['claude_subscription', 'max', 'bg-amber-50'],
+  ] as const)('%s 的 %s 套餐使用 %s', (sourceKind, planType, color) => {
+    render(<ProviderQuotaPlanBadge sourceKind={sourceKind} planType={planType}>测试套餐</ProviderQuotaPlanBadge>);
+    expect(screen.getByText('测试套餐').className).toContain(color);
   });
 });

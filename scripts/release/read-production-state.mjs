@@ -103,7 +103,6 @@ function assertConfigIdentityRelationship(summary, expected, observed) {
     }
   }
   if (summary.status === 'unverifiable') {
-    // 原因必须服从 evaluator 的优先级：缺 binding、schema、config drift、版本解析。
     const reasonMatches =
       (summary.reason === 'expected_not_bound' && !expected && Boolean(observed)) ||
       (summary.reason === 'secret_ref_version_unresolved' &&
@@ -259,7 +258,6 @@ export function validateExpectedConfigIdentityObservers(
         'Production expected ConfigIdentity is missing from trusted runtime identity during candidate-readback',
       );
     }
-    // 分阶段切换允许 trusted 暂时保留旧身份，但首次升级完成后不再允许其缺失。
     return;
   }
   if (!trustedExpected && !apiExpected) {
@@ -295,8 +293,6 @@ export function validateProductionObservations(
   const apiRelease = required(api?.release, 'Production API release identity');
   const webRelease = required(web, 'Production Web release identity');
   const acsRelease = required(acs, 'Production ACS release identity');
-  // TASK-318：API 只读脱敏配置身份摘要。严格重建白名单字段，未知字段
-  // 直接拒绝，禁止意外 secret/路径进入 Production State 与 Release Evidence。
   const apiConfigIdentity =
     api?.configIdentity === undefined
       ? undefined
@@ -309,8 +305,14 @@ export function validateProductionObservations(
   ) {
     throw new Error('Every production observation must explicitly identify production');
   }
-  if (api?.status !== 'ok' || apiRelease.safetyAttested !== true)
-    throw new Error('Production API is not ready with an attested identity');
+  const apiRuntimeAdmissionPaused =
+    api?.status === 'not_ready' &&
+    api?.draining === false &&
+    api?.runtimeAdmission?.admitting === false &&
+    api?.error === undefined &&
+    api?.integrationV3?.releaseReady !== false;
+  if ((api?.status !== 'ok' && !apiRuntimeAdmissionPaused) || apiRelease.safetyAttested !== true)
+    throw new Error('Production API identity is not safely observable');
   if (webRelease.schemaVersion !== 1 || acsRelease.releaseIdentityAttested !== true)
     throw new Error('Production Web or ACS identity is not attested');
   if (acsRelease.namespace !== 'agent-saas-coding')
@@ -367,8 +369,6 @@ export function validateProductionObservations(
       acs: acsRelease.configFingerprint,
       web: webRelease.configFingerprint,
     },
-    // TASK-318：结构化配置身份（四态 + 安全摘要）。与上面的 legacy
-    // configFingerprints 并存（显式版本化，不改变旧字段语义）。
     ...(apiConfigIdentity ? { configIdentity: apiConfigIdentity } : {}),
     topology: identity.topology,
   };
@@ -442,13 +442,9 @@ export async function validatePrivateConfigIdentityReleaseBinding({
   if (summary.status !== 'consistent' || summary.releaseId !== releaseId) {
     throw new Error(`${label} is not consistent with the release binding`);
   }
-  // 发布入口传入 config-identity-cli 的 observed 形态；严格校验其 version metadata，
-  // 再与私有快照中的 release expected 绑定字段逐项比较。
   const computed = configIdentitySide(expectedConfigIdentity, `${label} computed configIdentity`, {
     observed: Object.hasOwn(expectedConfigIdentity, 'versionResolution'),
   });
-  // Only production deployment callers select an online authority. Staging and
-  // pure candidate checks retain their independently bound expected identity.
   const expected = productionConfigPath
     ? publishedExpected(productionConfigPath, releaseId, computed)
     : computed;
@@ -472,7 +468,6 @@ export async function validateCandidateReleaseReadiness({
   }
   assertAnonymousReadinessOmitsConfigIdentity(required(readiness, 'Candidate readiness response'));
   const release = required(readiness.release, 'Candidate readiness release identity');
-  // 两个环境都安装清单选定的 API；只更新 ACS 时 API 源码仍属于上一版本。
   const expectedSourceSha = manifest?.components?.api?.sourceSha;
   if (
     readiness.status !== 'ok' ||
@@ -502,7 +497,6 @@ export async function resolvePrivateConfigIdentity(options) {
       }
       snapshotPath = `/run/agent-saas-server-${activeColor}.config-identity.json`;
     } catch {
-      // 兼容尚未迁移到蓝绿模板的单实例 unit；两类路径都只允许本机 root 读取。
       snapshotPath = '/run/agent-saas-server.config-identity.json';
     }
   }
@@ -514,14 +508,31 @@ export async function resolvePrivateConfigIdentity(options) {
   }
 }
 
-async function json(url) {
+export function isRuntimeAdmissionOnlyNotReady(value) {
+  return Boolean(
+    value && typeof value === 'object' &&
+    value.status === 'not_ready' &&
+    value.draining === false &&
+    value.runtimeAdmission?.admitting === false &&
+    value.error === undefined &&
+    value.release?.environment === 'production' &&
+    value.release?.safetyAttested === true &&
+    value.integrationV3?.releaseReady !== false,
+  );
+}
+
+async function json(url, { allowRuntimeAdmissionPause = false } = {}) {
   const requestUrl = productionObservationUrl(url);
   const response = await fetch(requestUrl, {
     headers: { 'cache-control': 'no-cache' },
     signal: AbortSignal.timeout(10_000),
   });
-  if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
-  return response.json();
+  if (!response.ok && !(allowRuntimeAdmissionPause && response.status === 503))
+    throw new Error(`${url} returned HTTP ${response.status}`);
+  const body = await response.json();
+  if (!response.ok && !isRuntimeAdmissionOnlyNotReady(body))
+    throw new Error(`${url} returned HTTP ${response.status}`);
+  return body;
 }
 
 function parse(argv) {
@@ -543,7 +554,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
   if (!runtime.ok) throw new Error(runtime.blockingReasons.join(' '));
   const [publicApi, web, acs, privateConfigIdentity] = await Promise.all([
-    json(options['api-url'] ?? 'https://api.agent.kaiyan.net/api/healthz/ready'),
+    json(options['api-url'] ?? 'https://api.agent.kaiyan.net/api/healthz/ready', {
+      allowRuntimeAdmissionPause: true,
+    }),
     json(options['web-url'] ?? 'https://agent.kaiyan.net/release-identity.json'),
     json(options['acs-url'] ?? 'http://127.0.0.1:3400/health'),
     resolvePrivateConfigIdentity(options),

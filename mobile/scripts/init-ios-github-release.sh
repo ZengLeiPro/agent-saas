@@ -88,17 +88,19 @@ APP_P12="$(credential_path ios.AgentSaaS.distributionCertificate.path)"
 APP_PROFILE="$(credential_path ios.AgentSaaS.provisioningProfilePath)"
 SHARE_PROFILE="$(credential_path ios.AgentSaaSShare.provisioningProfilePath)"
 
+# gh secret set reads stdin only when --body is omitted; --body - stores a literal dash.
+# Keep credential values off the command line as well as out of logs.
 configure_environment mobile-build-production
-openssl base64 -A -in "$APP_P12" | gh secret set IOS_DISTRIBUTION_P12_BASE64 --repo "$REPOSITORY" --env mobile-build-production --body -
-credential_raw ios.AgentSaaS.distributionCertificate.password | gh secret set IOS_DISTRIBUTION_P12_PASSWORD --repo "$REPOSITORY" --env mobile-build-production --body -
-openssl base64 -A -in "$APP_PROFILE" | gh secret set IOS_APP_PROFILE_BASE64 --repo "$REPOSITORY" --env mobile-build-production --body -
-openssl base64 -A -in "$SHARE_PROFILE" | gh secret set IOS_SHARE_PROFILE_BASE64 --repo "$REPOSITORY" --env mobile-build-production --body -
+openssl base64 -A -in "$APP_P12" | gh secret set IOS_DISTRIBUTION_P12_BASE64 --repo "$REPOSITORY" --env mobile-build-production
+credential_raw ios.AgentSaaS.distributionCertificate.password | gh secret set IOS_DISTRIBUTION_P12_PASSWORD --repo "$REPOSITORY" --env mobile-build-production
+openssl base64 -A -in "$APP_PROFILE" | gh secret set IOS_APP_PROFILE_BASE64 --repo "$REPOSITORY" --env mobile-build-production
+openssl base64 -A -in "$SHARE_PROFILE" | gh secret set IOS_SHARE_PROFILE_BASE64 --repo "$REPOSITORY" --env mobile-build-production
 
 if ! $BUILD_ONLY; then
-  configure_environment mobile-submit-ios-store
-  gh secret set APP_STORE_CONNECT_API_KEY_P8 --repo "$REPOSITORY" --env mobile-submit-ios-store < "$API_KEY_P8"
-  gh variable set APP_STORE_CONNECT_API_KEY_ID --repo "$REPOSITORY" --env mobile-submit-ios-store --body "$API_KEY_ID"
-  gh variable set APP_STORE_CONNECT_ISSUER_ID --repo "$REPOSITORY" --env mobile-submit-ios-store --body "$ISSUER_ID"
+  configure_environment mobile-submit-ios-testflight
+  gh secret set APP_STORE_CONNECT_API_KEY_P8 --repo "$REPOSITORY" --env mobile-submit-ios-testflight < "$API_KEY_P8"
+  gh variable set APP_STORE_CONNECT_API_KEY_ID --repo "$REPOSITORY" --env mobile-submit-ios-testflight --body "$API_KEY_ID"
+  gh variable set APP_STORE_CONNECT_ISSUER_ID --repo "$REPOSITORY" --env mobile-submit-ios-testflight --body "$ISSUER_ID"
 fi
 
 echo "GitHub iOS release initialization completed for $REPOSITORY (build-only=$BUILD_ONLY)."

@@ -1,4 +1,5 @@
 name: 生产环境发布
+run-name: ${{ inputs.automation_key || format('生产环境发布 · {0}', inputs.operation) }}
 
 # 与 CI Web-only 兼容发布共享互斥组；RC 晋级与冷备恢复是互斥操作，不共享部署逻辑。
 
@@ -6,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'promote 晋级 RC；web-recovery-audit 审计冷备；web-recovery-repair 按已审阅计划修复冷备'
+        description: 'auto 自动发布最新已验收版本；其余为高级人工操作'
         type: choice
-        default: promote
+        default: auto
         required: true
-        options: [promote, web-recovery-audit, web-recovery-repair]
+        options: [auto, promote, checkpoint-repair, web-recovery-audit, web-recovery-repair]
       release_id:
-        description: 'promote 必填：已通过 Staging 确定性门禁的 RC ID；冷备操作必须留空'
+        description: '日常 auto 留空；仅高级 promote/checkpoint-repair 填 RC ID'
         required: false
         type: string
       recovery_mode:
@@ -36,15 +37,21 @@ on:
         default: false
         required: false
 
+      automation_id:
+        description: '内部自动调度登记；人工操作留空'
+        type: string
+        required: false
+      automation_key:
+        description: '内部关联键；人工操作留空'
+        type: string
+        required: false
+
 permissions:
   contents: write
   actions: read
   deployments: write
 
-# 生产切换、自动收尾及冷备恢复共用本次锁，并与 CI Web-only 兼容发布串行。
-concurrency:
-  group: production-runtime
-  cancel-in-progress: false
+# 锁在执行 job 上获取：协调器不占用子发布的 production-runtime 锁，避免父子互等。
 
 env:
   NODE_VERSION: '22.23.1'
@@ -62,6 +69,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
+      deployments: read
     outputs:
       operation: ${{ steps.validate.outputs.operation }}
       recovery_mode: ${{ steps.validate.outputs.recovery_mode }}
@@ -72,11 +81,56 @@ jobs:
       - name: 在读取生产凭据前拒绝无效或混用的参数
         id: validate
         run: node scripts/release/production-operation.mjs
+      - name: 验证自动子任务的不可变委派
+        if: inputs.automation_id != '' || inputs.automation_key != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs promote-release.yml
+
+  automatic:
+    concurrency:
+      group: production-auto-requests
+      cancel-in-progress: false
+      queue: max
+    name: 自动恢复未完成事务并发布固定目标
+    needs: dispatch
+    if: needs.dispatch.outputs.operation == 'auto'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: write
+      deployments: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: 固定目标、恢复、重新验收并发布（不直接持有云端凭据）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release.mjs
+      - name: 保存请求、子运行及最终目标证据
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: automatic-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/automatic-release/
+          if-no-files-found: warn
+          retention-days: 90
 
   promote:
+    concurrency:
+      group: production-runtime
+      cancel-in-progress: false
+      queue: max
     name: 晋级已批准的不可变产物
     needs: dispatch
-    if: github.ref == 'refs/heads/main' && needs.dispatch.outputs.operation == 'promote'
+    if: github.ref == 'refs/heads/main' && (needs.dispatch.outputs.operation == 'promote' || needs.dispatch.outputs.operation == 'checkpoint-repair')
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: production
@@ -107,6 +161,11 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: 排队或审批后重新验证自动委派
+        if: inputs.automation_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs promote-release.yml
       - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
       - name: 配置 Node.js
@@ -163,9 +222,16 @@ jobs:
             none:not_required|expand:required_after_observation) ;;
             *) echo 'Invalid expand/confirm/contract migration plan' >&2; exit 1 ;;
           esac
-          finalization_mode="$(node scripts/release/promotion-finalization-mode.mjs \
-            "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$GITHUB_RUN_ID")"
-          if [ "$finalization_mode" != promote ]; then
+          node scripts/release/deployment-engine.mjs .github/workflows/promote-release.yml \
+            "$RUNNER_TEMP/deployment-engine.json" "$RUNNER_TEMP/manifest.json"
+          if [ "${{ needs.dispatch.outputs.operation }}" = checkpoint-repair ]; then
+            finalization_mode="$(node scripts/release/assert-checkpoint-repair.mjs \
+              "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl")"
+          else
+            finalization_mode="$(node scripts/release/promotion-finalization-mode.mjs \
+              "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$GITHUB_RUN_ID")"
+          fi
+          if [ "$finalization_mode" = confirm ] || [ "$finalization_mode" = repair ]; then
             deployment_id="$(node scripts/release/promotion-finalization-mode.mjs \
               "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$GITHUB_RUN_ID" --deployment-id)"
             echo "PRODUCTION_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
@@ -183,6 +249,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          preflight_dir="$RUNNER_TEMP/staging-promotion-preflight"
+          mkdir -p "$preflight_dir"
+          preflight_check=attestation_retry
+          preflight_failure() {
+            local result=$?
+            trap - ERR
+            node scripts/release/staging-deployment-evidence.mjs failure \
+              "$preflight_dir" "$preflight_check" "$result" || true
+            echo "::error title=Staging promotion preflight::Failed check=$preflight_check; production mutation has not started. See report.json in the production evidence artifact."
+            exit "$result"
+          }
+          trap preflight_failure ERR
           log="$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
           # 上一次 runner 若在 durable promoting marker 与最终 outcome 之间中断，
           # 生产可能未写入、部分写入或已写入；统一先形成可审计 needs_human 尾部，
@@ -215,7 +293,9 @@ jobs:
               --operation "retry-normalize:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
               --actor "$GITHUB_ACTOR" --reason "$retry_evidence"
           fi
+          preflight_check=migration_postconditions
           node scripts/release/migration-postconditions.mjs "$RUNNER_TEMP/manifest.json"
+          preflight_check=staging_summary
           staging="$(jq -c 'select(.state=="staging_deployed")' "$log" | tail -n1)"
           test -n "$staging"
           staging_reason="$(printf '%s' "$staging" | jq -r .reason)"
@@ -236,6 +316,7 @@ jobs:
           printf '%s' "$staging_run_id" | grep -Eq '^[1-9][0-9]*$'
           test "$(printf '%s' "$staging_reason" | jq -r .manifestDigest)" = "$MANIFEST_DIGEST"
           # 仅 #349 之后的 RC 拥有独立 Staging runtime evidence；旧 RC 沿用既有 verified 证据。
+          preflight_check=staging_runtime_summary
           if [ -n "$staging_runtime_path" ]; then
             runtime_summary="$(printf '%s' "$staging_reason" | jq -ce \
               '.runtimeSummary | select(type=="object")')"
@@ -250,34 +331,22 @@ jobs:
             test "$(printf '%s' "$runtime_summary" | jq -S .)" = \
               "$(printf '%s' "$expected_runtime_summary" | jq -S .)"
           fi
-          deployment="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id")"
-          test "$(printf '%s' "$deployment" | jq -r .environment)" = staging
-          test "$(printf '%s' "$deployment" | jq -r .sha)" = "$RELEASE_SHA"
-          test "$(printf '%s' "$deployment" | jq -r .payload.releaseId)" = "$RELEASE_ID"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses" --jq '.[0].state')" = success
-          staging_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$staging_run_id")"
-          test "$(printf '%s' "$staging_run" | jq -r .head_sha)" = "$RELEASE_SHA"
-          test "$(printf '%s' "$staging_run" | jq -r .conclusion)" = success
-          test "$(printf '%s' "$staging_run" | jq -r .path)" = .github/workflows/deploy-staging.yml
-          staging_run_attempt="$(printf '%s' "$staging_run" | jq -r .run_attempt)"
-          printf '%s' "$staging_run_attempt" | grep -Eq '^[1-9][0-9]*$'
-          if ! gh run download "$staging_run_id" --repo "$GITHUB_REPOSITORY" \
-            --name "staging-evidence-$RELEASE_ID-$staging_run_attempt" \
-            --dir "$RUNNER_TEMP/staging-attempt-evidence"; then
-            echo 'Core smoke evidence is missing or expired; deploy and verify a new RC before promotion' >&2
-            exit 1
-          fi
-          node scripts/release/staging-core-smoke-evidence.mjs \
-            "$RUNNER_TEMP/staging-attempt-evidence/staging-core-smoke.json" \
-            "$RUNNER_TEMP/manifest.json" "$staging_run_id" "$staging_run_attempt"
+          preflight_check=github_staging_evidence
+          bash scripts/release/verify-staging-promotion-evidence.sh \
+            "$RUNNER_TEMP/manifest.json" "$log" "$preflight_dir"
+          jq -e '.status == "passed"' "$preflight_dir/report.json" >/dev/null
+          staging_run_attempt="$(jq -r .stagingRunAttempt "$preflight_dir/report.json")"
+          preflight_check=approval_recording
           approval_reason="$(jq -nc \
             --arg releaseId "$RELEASE_ID" --arg manifestDigest "$MANIFEST_DIGEST" \
             --arg stagingDeploymentId "$deployment_id" --arg stagingRunId "$staging_run_id" \
+            --arg stagingRunAttempt "$staging_run_attempt" \
+            --argjson stagingDeploymentEvidence "$(cat "$preflight_dir/report.json")" \
             --argjson verificationSummary "$verification_summary" \
             --arg triggeredAt "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
             --arg recoveryMode "$retry_mode" \
             --arg reason "$PROMOTION_REASON" \
-            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,recoveryMode:$recoveryMode,reason:$reason}')"
+            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,stagingRunAttempt:$stagingRunAttempt,stagingDeploymentEvidence:$stagingDeploymentEvidence,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,recoveryMode:$recoveryMode,reason:$reason}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state approved --operation "approval:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR" \
@@ -321,7 +390,9 @@ jobs:
           set -euo pipefail
           remote="/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
+          scp -i ~/.ssh/production_key scripts/release/production-preflight.mjs \
+            scripts/release/production-preflight-report.mjs scripts/release/production-runtime-observation.mjs \
+            scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \
             scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
@@ -333,8 +404,8 @@ jobs:
             --runtime-worker-action "$worker_action")"
           reader="$(printf '%s' "$baseline_plan" | jq -r .reader)"
           reader_stage="$(printf '%s' "$baseline_plan" | jq -r .configIdentityStage)"
-          if ! ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/$reader' --config-identity-stage '$reader_stage' --output '$remote/production-before.json' >/dev/null"; then
+          if ! bash scripts/release/run-production-preflight.sh "$remote" ~/.ssh/production_key \
+            "$reader" "$reader_stage" production-before.json "$PROMOTION_RETRY_MODE"; then
             test "$PRODUCTION_RECOVERY_MODE" = repair
             ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
               "sudo node '$remote/read-production-recovery-state.mjs' --manifest '$remote/manifest.json' --output '$remote/production-before.json' >/dev/null"
@@ -455,6 +526,26 @@ jobs:
             "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/built/artifact-index.json" \
             "$expected_repository"
 
+      - name: 在组件变更前预检生产 Web 冷备
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
+        run: |
+          set -euo pipefail
+          if [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ]; then exit 0; fi
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "sudo bash -s" \
+            < scripts/release/preflight-recovery-web.sh > "$RUNNER_TEMP/recovery-preflight.json"
+          ip="$(getent ahostsv4 "$ECS_HOST" | awk 'NR == 1 { print $1 }')"
+          : "${ip:?Cannot resolve recovery origin}"
+          curl -fsS --connect-timeout 10 --max-time 30 --resolve "agent.kaiyan.net:443:$ip" \
+            -D "$RUNNER_TEMP/recovery-preflight.headers" -o /dev/null \
+            "https://agent.kaiyan.net/?preflight=$GITHUB_RUN_ID"
+          grep -Eqi '^x-agent-saas-recovery:[[:space:]]*true' "$RUNNER_TEMP/recovery-preflight.headers"
+
+      - name: 自动请求开始生产变更前再次验证父请求
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && inputs.automation_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs promote-release.yml
+
       - name: 生产写入前标记并持久化发布已开始状态
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         env:
@@ -469,7 +560,8 @@ jobs:
             --arg manifestDigest "$MANIFEST_DIGEST" --arg migrationPhase "$MIGRATION_PHASE" \
             --arg migrationPlanDigest "$(jq -r .migrationPlan.planDigest "$RUNNER_TEMP/manifest.json")" \
             --arg productionBeforeDigest "$before_digest" --arg productionTargetDigest "$target_digest" \
-            '{releaseId:$releaseId,releaseSha:$releaseSha,manifestDigest:$manifestDigest,migrationPhase:$migrationPhase,migrationPlanDigest:$migrationPlanDigest,productionBeforeDigest:$productionBeforeDigest,productionTargetDigest:$productionTargetDigest}')"
+            --argjson deploymentEngine "$(jq -c '{sourceSha,implementationDigest,contract}' "$RUNNER_TEMP/deployment-engine.json")" \
+            '{releaseId:$releaseId,releaseSha:$releaseSha,manifestDigest:$manifestDigest,migrationPhase:$migrationPhase,migrationPlanDigest:$migrationPlanDigest,productionBeforeDigest:$productionBeforeDigest,productionTargetDigest:$productionTargetDigest,deploymentEngine:$deploymentEngine}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state promoting --operation "promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
@@ -513,10 +605,13 @@ jobs:
           cp "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-production-release.sh scripts/release/write-production-identity.mjs \
             scripts/release/write-live-production-identity.mjs \
-            scripts/release/acs-deployment-drain.sh \
+            scripts/release/hold-production-observation-lock.sh \
+            scripts/release/acs-deployment-drain.sh scripts/release/read-rollback-receipt.mjs \
             scripts/release/verify-installed-release.mjs \
             scripts/release/read-live-production-components.mjs scripts/release/read-production-state.mjs \
-            scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/verify-promotion-phase-state.mjs \
+            scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/verify-promotion-phase-state.mjs scripts/release/verify-app-retirement.sh scripts/release/observe-app-retirement.sh \
+            scripts/release/app-retirement-evidence.mjs scripts/release/register-app-retirement-observer.sh \
+            scripts/release/web-recovery-journal.mjs scripts/rollback-recovery-web.sh \
             scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
             scripts/release/artifact-lib.mjs scripts/release/reuse-promotion-artifacts.mjs \
             "$upload_root/"
@@ -709,6 +804,9 @@ jobs:
               --arg runId "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
               '.schemaVersion==1 and .status=="acknowledged" and .releaseId==$releaseId and .manifestDigest==$digest and .runId==$runId and .runAttempt==$attempt' \
               "$RUNNER_TEMP/app-handoff.json" >/dev/null
+            # The host installed its durable observer before signalling either old generation.
+            ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              "sudo cat '$PROMOTION_REMOTE/app-retirement-targets.json'" > "$RUNNER_TEMP/app-retirement-targets.json"
           fi
 
       - name: 持久化 API 与 Worker 操作回执
@@ -744,6 +842,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$PROMOTION_REMOTE/web-recovery-journal.mjs' check '$RELEASE_ID' '$MANIFEST_DIGEST'" > "$RUNNER_TEMP/web-recovery-state.json"
+          if [ "$(jq -r .pending "$RUNNER_TEMP/web-recovery-state.json")" = true ]; then
+            WEB_ALREADY_TARGET=false
+            echo 'WEB_ALREADY_TARGET=false' >> "$GITHUB_ENV"
+          fi
           outcome=started
           [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
           [ "$WEB_ALREADY_TARGET" = true ] && outcome=skipped
@@ -767,7 +871,9 @@ jobs:
             echo 'Web already equals the frozen production baseline; keep the current entry'
             exit 0
           fi
-          if [ "$WEB_ALREADY_TARGET" = true ]; then
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$PROMOTION_REMOTE/web-recovery-journal.mjs' check '$RELEASE_ID' '$MANIFEST_DIGEST'" > "$RUNNER_TEMP/web-recovery-state.json"
+          if [ "$WEB_ALREADY_TARGET" = true ] && [ "$(jq -r .pending "$RUNNER_TEMP/web-recovery-state.json")" != true ]; then
             echo 'Web already equals the immutable target; keep the current entry'
             exit 0
           fi
@@ -780,6 +886,7 @@ jobs:
           web_committed=false
           recovery_started=false
           web_operation_deadline=0
+          web_budget_started=$SECONDS
           web_lock_is_alive() {
             [ -n "$web_lock_pid" ] && kill -0 "$web_lock_pid" 2>/dev/null
           }
@@ -925,6 +1032,11 @@ jobs:
               return "$lock_status"
             fi
           }
+          write_web_budget() {
+            jq -nc --argjson elapsed "$((SECONDS - web_budget_started))" --argjson deploy "$1" --argjson rollback "$2" \
+              '{operationSeconds:1200,rollbackSeconds:300,lockLeaseSeconds:1700,elapsedSeconds:$elapsed,deployExitCode:$deploy,rollbackExitCode:$rollback}' \
+              > "$RUNNER_TEMP/web-budget.json"
+          }
           # 单一 EXIT trap 同时负责回滚与释放/保留主机锁，禁止在后文覆盖。
           cleanup_web_on_exit() {
             local deploy_status=$?
@@ -938,6 +1050,7 @@ jobs:
                   run_with_web_lock bash -euo pipefail -c rollback_recovery_web || rollback_status=$?
                 fi
                 restore_web_entry || rollback_status=$?
+                if [ "$rollback_status" -eq 0 ]; then finish_web_recovery rolled_back || rollback_status=$?; fi
               else
                 echo 'Web lock was lost; refusing an unlocked rollback' >&2
                 rollback_status=1
@@ -951,6 +1064,7 @@ jobs:
               web_lock_pid=''
             fi
             [ "$rollback_status" -eq 0 ] || deploy_status=1
+            write_web_budget "$deploy_status" "$rollback_status" || true
             exit "$deploy_status"
           }
           trap cleanup_web_on_exit EXIT
@@ -979,7 +1093,6 @@ jobs:
           web_lock_ready_confirmed=true
           web_operation_deadline=$((SECONDS + 1200))
           # 任何 OSS/冷备 mutation 之前先快照冷备 current；deploy/rollback-recovery-web.sh 都以它为准。
-          run_with_web_lock bash -euo pipefail -c snapshot_recovery_web
           mkdir -p "$RUNNER_TEMP/web-assets" "$RUNNER_TEMP/web-before"
           tar -xzf "$RUNNER_TEMP/selected/web-assets.tgz" -C "$RUNNER_TEMP/web-assets"
           test -s "$RUNNER_TEMP/web-assets/index.html"
@@ -990,74 +1103,8 @@ jobs:
             > "$RUNNER_TEMP/web-assets/release-identity.json"
           web_rollback_attempted_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web"
           rm -f "$web_rollback_attempted_marker"
-          # stat 还会读取对象 ACL；备份只需要 GetObject 与已有 ListObjects 权限。
-          web_object_present() {
-            local target="$1" listing
-            listing="$(run_with_web_lock aliyun --secure oss ls "$target" \
-              --limited-num 2 --region "$RELEASE_RECORD_OSS_REGION")" || return 1
-            printf '%s\n' "$listing" | awk -v target="$target" \
-              '$NF == target { found = 1 } END { print found ? "true" : "false" }'
-          }
-          run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
-            "$RUNNER_TEMP/web-before/index.html" --region "$RELEASE_RECORD_OSS_REGION"
-          had_identity="$(web_object_present "$PRODUCTION_WEB_OSS_URI/release-identity.json")"
-          if [ "$had_identity" = true ]; then
-            run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
-              "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
-          fi
-          restore_web_entry() {
-            local failed=0 readback="$RUNNER_TEMP/web-rollback-readback"
-            if ! install -m 0600 /dev/null "$web_rollback_attempted_marker"; then
-              echo "WARN: failed to persist Web rollback-attempted marker" >&2
-            fi
-            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.attempted"
-            rm -rf "$readback"
-            mkdir -p "$readback"
-            if [ "$had_identity" = true ]; then
-              if ! run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
-                  "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
-                  --region "$RELEASE_RECORD_OSS_REGION"; then
-                failed=1
-              fi
-            elif ! run_with_web_lock aliyun --secure oss rm \
-                "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
-                --region "$RELEASE_RECORD_OSS_REGION"; then
-              failed=1
-            fi
-            if ! run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-before/index.html" \
-                "$PRODUCTION_WEB_OSS_URI/index.html" --force \
-                --region "$RELEASE_RECORD_OSS_REGION"; then
-              failed=1
-            fi
-            if [ "$had_identity" = true ]; then
-              if ! run_with_web_lock aliyun --secure oss cp \
-                  "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
-                  "$readback/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION" || \
-                 ! cmp "$RUNNER_TEMP/web-before/release-identity.json" \
-                  "$readback/release-identity.json"; then
-                failed=1
-              fi
-            else
-              local identity_present
-              if ! identity_present="$(web_object_present "$PRODUCTION_WEB_OSS_URI/release-identity.json")" || \
-                 [ "$identity_present" != false ]; then
-                failed=1
-              fi
-            fi
-            if ! run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
-                "$readback/index.html" --region "$RELEASE_RECORD_OSS_REGION" || \
-               ! cmp "$RUNNER_TEMP/web-before/index.html" "$readback/index.html"; then
-              failed=1
-            fi
-            if [ "$failed" -ne 0 ]; then
-              echo 'Web rollback did not restore and verify both entry objects' >&2
-              return 1
-            fi
-            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.succeeded"
-          }
-          web_backup_ready=true
-          # 1) hash 静态资源：与兼容发布同一 create-only + gzip 契约（禁止覆盖既有对象键；
-          #    冷备与 repair-web-recovery.py 的 storageContract 均以该字节为准）。
+          # Snapshot every key this attempt may overwrite, including sw.js, manifest and icons.
+          # Hash assets are create-only and deliberately excluded from rollback.
           web_oss_credentials="$RUNNER_TEMP/web-oss-sdk-credentials.json"
           (
             umask 077
@@ -1065,9 +1112,26 @@ jobs:
               --arg accessKeySecret "$ALIBABACLOUD_ACCESS_KEY_SECRET" \
               '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$web_oss_credentials"
           )
+          source scripts/release/web-shell-recovery.sh
+          recover_previous_web_transaction
+          run_with_web_lock bash -euo pipefail -c snapshot_recovery_web
+          run_with_web_lock node scripts/release/web-shell-transaction.mjs snapshot \
+            "$RUNNER_TEMP/web-assets" "$PRODUCTION_WEB_OSS_URI" "$web_oss_credentials" \
+            "$RUNNER_TEMP/web-before" "$RELEASE_ID" "$MANIFEST_DIGEST" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RELEASE_RECORD_OSS_REGION"
+          restore_web_entry() {
+            install -m 0600 /dev/null "$web_rollback_attempted_marker" || true
+            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.attempted"
+            run_with_web_lock node scripts/release/web-shell-transaction.mjs restore \
+              "$RUNNER_TEMP/web-assets" "$PRODUCTION_WEB_OSS_URI" "$web_oss_credentials" \
+              "$RUNNER_TEMP/web-before" "$RELEASE_ID" "$MANIFEST_DIGEST" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RELEASE_RECORD_OSS_REGION" > "$RUNNER_TEMP/web-rollback.json" || return 1
+            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.succeeded"
+          }
+          persist_web_recovery
+          web_backup_ready=true
+          # Immutable assets retain the PR #634 byte/header/cancellation gates.
           test -d "$RUNNER_TEMP/web-assets/assets"
           run_with_web_lock bash scripts/release/upload-web-assets-immutable.sh \
-            "$RUNNER_TEMP/web-assets/assets" "$PRODUCTION_WEB_OSS_URI/assets" "$web_oss_credentials" "" "https://agent.kaiyan.net"
+            "$RUNNER_TEMP/web-assets/assets" "$PRODUCTION_WEB_OSS_URI/assets" "$web_oss_credentials" "" "https://agent.kaiyan.net" 4 60 "$RUNNER_TEMP/web-asset-diagnostics"
           # 2) 其余壳文件（sw.js、manifest、图标等）保持原有覆盖式上传；入口两键最后写。
           rm -rf "$RUNNER_TEMP/web-shell"
           mkdir -p "$RUNNER_TEMP/web-shell"
@@ -1113,7 +1177,10 @@ jobs:
           run_with_web_lock bash -euo pipefail -c publish_recovery_web
           run_with_web_lock bash -euo pipefail -c verify_recovery_web
           web_lock_is_alive
+          # A lost commit acknowledgement is UNKNOWN, not permission to undo a committed transaction.
+          if ! finish_web_recovery committed; then web_backup_ready=false; exit 1; fi
           web_committed=true
+          write_web_budget 0 0
           release_web_lock
           trap - EXIT
 
@@ -1146,8 +1213,9 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          # 复用 durable promoting 之前已上传的只读 reader，并重新取得共享主机锁；
-          # live read、identity commit 与现场确认必须处于同一锁租约，避免 TOCTOU。
+          # Observation has its own shared-lock lease: App rollback must not be
+          # rejected by Web's forward-deployment predecessor gate. All writes still
+          # require validated live bytes/config identity and a known component matrix.
           remote="$PROMOTION_REMOTE"
           api_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
           config_identity_readback_stage=steady-state
@@ -1219,7 +1287,7 @@ jobs:
           setsid timeout --signal=TERM --kill-after=10 970 ssh \
             -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
             -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "timeout --signal=TERM --kill-after=10 960 sudo PHASE=web RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' WEB_LOCK_READY='$identity_lock_ready' WEB_LOCK_RELEASE='$identity_lock_release' WEB_LOCK_TIMEOUT_SECONDS=900 GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            "timeout --signal=TERM --kill-after=10 960 sudo GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' OBSERVATION_LOCK_READY='$identity_lock_ready' OBSERVATION_LOCK_RELEASE='$identity_lock_release' OBSERVATION_LOCK_TIMEOUT_SECONDS=900 bash '$PROMOTION_REMOTE/hold-production-observation-lock.sh'" \
             >"$identity_lock_log" 2>&1 &
           identity_lock_pid=$!
           lock_ready=false
@@ -1244,6 +1312,10 @@ jobs:
 
           run_identity_ssh "sudo node '$remote/read-live-production-components.mjs' --config-identity-stage '$config_identity_readback_stage' --output '$remote/production-after.json'" \
             > "$RUNNER_TEMP/production-after.json"
+          # Persist the observation before deciding whether it is safe to update identity.
+          node scripts/release/verify-promotion-observation.mjs \
+            "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/production-before.json" \
+            "$RUNNER_TEMP/production-after.json" > "$RUNNER_TEMP/promotion-observation.json"
           jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
             "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
           if ! diff -u <(jq -S .components "$RUNNER_TEMP/production-after.json") \
@@ -1320,24 +1392,19 @@ jobs:
           [ ! -s "$RUNNER_TEMP/rollback-web.attempted" ] || web_attempted=true
           [ ! -s "$RUNNER_TEMP/rollback-web.succeeded" ] || web_succeeded=true
           remote_receipt_exists() {
-            local path="$1" rc
-            set +e
-            ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "test -s '$path'"
-            rc=$?
-            set -e
-            case "$rc" in
-              0) printf '%s' true ;;
-              1) printf '%s' false ;;
-              *)
-                echo "remote rollback receipt query failed for $path (ssh rc=$rc)" >&2
-                return "$rc"
-                ;;
-            esac
+            local component="$1" state="$2"
+            # The reader runs as root inside a sealed 0700 directory. Only ENOENT means absent.
+            mkdir -p "$RUNNER_TEMP/rollback-receipts"
+            ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/rollback-$component.$state' '$component' '$state' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
+              > "$RUNNER_TEMP/rollback-receipts/$component-$state.json" || return 1
+            jq -r 'if .readState=="present" then true elif .readState=="absent" then false else error("unverified rollback receipt") end' \
+              "$RUNNER_TEMP/rollback-receipts/$component-$state.json"
           }
-          acs_attempted="$(remote_receipt_exists "$PROMOTION_REMOTE/rollback-acs.attempted")"
-          acs_succeeded="$(remote_receipt_exists "$PROMOTION_REMOTE/rollback-acs.succeeded")"
-          app_attempted="$(remote_receipt_exists "$PROMOTION_REMOTE/rollback-app.attempted")"
-          app_succeeded="$(remote_receipt_exists "$PROMOTION_REMOTE/rollback-app.succeeded")"
+          acs_attempted="$(remote_receipt_exists acs attempted)"
+          acs_succeeded="$(remote_receipt_exists acs succeeded)"
+          app_attempted="$(remote_receipt_exists app attempted)"
+          app_succeeded="$(remote_receipt_exists app succeeded)"
           rollback_receipts="$(jq -nc \
             --argjson webAttempted "$web_attempted" --argjson webSucceeded "$web_succeeded" \
             --argjson acsAttempted "$acs_attempted" --argjson acsSucceeded "$acs_succeeded" \
@@ -1400,7 +1467,8 @@ jobs:
           reason="$(jq -nc --arg summary "$reason" --arg migrationPhase "$MIGRATION_PHASE" \
             --arg migrationConfirmation "$migration_confirmation" \
             --arg productionDeploymentId "${PRODUCTION_DEPLOYMENT_ID:-}" \
-            '{summary:$summary,productionDeploymentId:$productionDeploymentId,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},acceptance:{mode:"optional_staging_acceptance",blocking:false,workflow:"测试环境验收"}}')"
+            --argjson deploymentEngine "$(jq -c '{sourceSha,implementationDigest,contract}' "$RUNNER_TEMP/deployment-engine.json")" \
+            '{deploymentEngine:$deploymentEngine,summary:$summary,productionDeploymentId:$productionDeploymentId,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},acceptance:{mode:"optional_staging_acceptance",blocking:false,workflow:"测试环境验收"}}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state "$outcome" --operation "outcome:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
@@ -1451,7 +1519,9 @@ jobs:
           test "$state" = success
 
       - name: 保存可恢复的最近成功生产基线
-        if: success() && env.PROMOTION_OUTCOME == 'completed'
+        id: checkpoint
+        continue-on-error: true
+        if: success() && (env.PROMOTION_OUTCOME == 'completed' || env.PROMOTION_FINALIZATION_MODE == 'checkpoint')
         run: |
           set -euo pipefail
           checkpoint_remote="/tmp/release-checkpoint-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -1467,12 +1537,30 @@ jobs:
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "sudo cat '$checkpoint_remote/checkpoint.json'" > "$RUNNER_TEMP/production-checkpoint.json"
 
+      - name: 记录派生基线维护状态
+        if: always() && (env.PROMOTION_OUTCOME == 'completed' || env.PROMOTION_FINALIZATION_MODE == 'checkpoint')
+        env:
+          CHECKPOINT_OUTCOME: ${{ steps.checkpoint.outcome }}
+        run: |
+          set -euo pipefail
+          jq -n --arg outcome "$CHECKPOINT_OUTCOME" --arg releaseId "$RELEASE_ID" \
+            '{schemaVersion:1,releaseId:$releaseId,checkpoint:$outcome,authoritativeReleaseState:"completed",repairOperation:"checkpoint-repair"}' \
+            > "$RUNNER_TEMP/checkpoint-maintenance.json"
+          if [ "$CHECKPOINT_OUTCOME" != success ]; then
+            echo '::warning title=Checkpoint maintenance required::Release is committed. Run checkpoint-repair for this RC; do not repeat runtime promotion.'
+            echo 'Checkpoint maintenance required; committed runtime and authoritative attestation are unchanged.' >> "$GITHUB_STEP_SUMMARY"
+            [ "$PROMOTION_FINALIZATION_MODE" != checkpoint ] || exit 1
+          fi
+
       - name: 在生产变更前记录失败关闭结果
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (failure() && env.APPROVAL_RECORDED == 'true' && env.PROMOTION_STARTED != 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          node scripts/release/production-preflight-report.mjs prechange-failure \
+            "$RUNNER_TEMP/promotion-prechange-failure.json" "$PROMOTION_RETRY_MODE" \
+            || echo "::warning title=Production preflight diagnostics::Could not persist prechange diagnostic; recording authoritative attestation next"
           summary='promotion failed before the durable promoting marker and before production mutation'
           if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
             summary='recovery attempt failed before a new promoting marker; prior post-mutation recovery remains required'
@@ -1492,17 +1580,62 @@ jobs:
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
             || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
+      - name: 收集持久化恢复与退役观察回执
+        if: always() && env.PROMOTION_REMOTE != ''
+        run: |
+          set -euo pipefail
+          timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$PROMOTION_REMOTE/web-recovery-journal.mjs' check '$RELEASE_ID' '$MANIFEST_DIGEST'" \
+            > "$RUNNER_TEMP/web-recovery-last.json" || true
+          mkdir -p "$RUNNER_TEMP/rollback-receipts"
+          for component in acs app web; do
+            for state in attempted succeeded; do
+              timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+                "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/rollback-$component.$state' '$component' '$state' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
+                > "$RUNNER_TEMP/rollback-receipts/$component-$state.json" || true
+            done
+          done
+          for suffix in observation alert; do
+            timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              "sudo cat '/var/lib/agent-saas-release-recovery/retirements/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/app-retirement-$suffix.json'" \
+              > "$RUNNER_TEMP/app-retirement-$suffix.json" || true
+          done
+
+      - name: 汇总脱敏的逐阶段诊断
+        if: always()
+        run: node scripts/release/collect-promotion-diagnostics.mjs "$RUNNER_TEMP" "$RUNNER_TEMP/promotion-diagnostics"
+
       - name: 上传生产发布证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-promotion-${{ env.RELEASE_ID }}-${{ github.run_attempt }}
           if-no-files-found: warn
           retention-days: 90
           path: |
             ${{ runner.temp }}/production-before.json
+            ${{ runner.temp }}/production-preflight*.json
+            ${{ runner.temp }}/promotion-prechange-failure.json
             ${{ runner.temp }}/production-after.json
             ${{ runner.temp }}/production-confirmed.json
+            ${{ runner.temp }}/production-partial-confirmed.json
+            ${{ runner.temp }}/promotion-observation.json
+            ${{ runner.temp }}/deployment-engine.json
+            ${{ runner.temp }}/promotion-diagnostics/
+            ${{ runner.temp }}/operation-receipts/
+            ${{ runner.temp }}/rollback-receipts/
+            ${{ runner.temp }}/web-recovery-state.json
+            ${{ runner.temp }}/web-recovery-receipt.json
+            ${{ runner.temp }}/web-recovery-readback.json
+            ${{ runner.temp }}/web-recovery-replay.json
+            ${{ runner.temp }}/web-recovery-final.json
+            ${{ runner.temp }}/web-recovery-last.json
+            ${{ runner.temp }}/web-recovery-restore.json
+            ${{ runner.temp }}/web-rollback.json
+            ${{ runner.temp }}/web-budget.json
+            ${{ runner.temp }}/reconcile-input.json
+            ${{ runner.temp }}/checkpoint-maintenance.json
+            ${{ runner.temp }}/production-checkpoint.json
             ${{ runner.temp }}/reconcile.json
             ${{ runner.temp }}/app-handoff.json
             ${{ runner.temp }}/app-retirement*.json
@@ -1510,8 +1643,13 @@ jobs:
             ${{ runner.temp }}/production-live*.json
             ${{ runner.temp }}/production-api-ready*.json
             ${{ runner.temp }}/attestations/
+            ${{ runner.temp }}/staging-promotion-preflight/
 
   web_recovery:
+    concurrency:
+      group: production-runtime
+      cancel-in-progress: false
+      queue: max
     name: 审计或修复生产 Web 冷备
     needs: dispatch
     if: github.ref == 'refs/heads/main' && (needs.dispatch.outputs.operation == 'web-recovery-audit' || needs.dispatch.outputs.operation == 'web-recovery-repair')

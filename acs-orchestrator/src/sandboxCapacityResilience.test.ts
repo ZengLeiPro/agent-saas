@@ -138,7 +138,7 @@ describe('ensureCapacity 硬门禁', () => {
       },
     } as unknown as Kubectl;
     const manager = new SandboxManager(
-      config({ maxRunningSandboxes: 1, lifecycleEnabled: false }), kubectl,
+      config({ maxRunningSandboxes: 1, lifecycleEnabled: false, sandboxWaitTimeoutMs: 1_000 }), kubectl,
       { info() {}, warn() {}, error() {} },
     );
     firstSandboxName = manager.ref({ workspaceId: 'ws_kaiyan__u1', sessionId: 'session-a' }).name;

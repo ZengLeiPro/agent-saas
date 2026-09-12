@@ -125,7 +125,7 @@ test('production operations are selected before secrets, mutually exclusive, and
   const recovery = job(production, 'web_recovery');
   assert.match(dispatch, /run: node scripts\/release\/production-operation.mjs/u);
   assert.doesNotMatch(dispatch, /secrets\.|environment:\s*production/u);
-  assert.match(production, /default: promote/u);
+  assert.match(production, /default: auto/u);
   assert.match(production, /release_id:[\s\S]*?required: false/u);
   assert.match(production, /group: production-runtime\s+cancel-in-progress: false/u);
   for (const value of [promote, recovery]) {

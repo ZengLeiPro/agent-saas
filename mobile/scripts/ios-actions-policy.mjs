@@ -5,7 +5,7 @@ export const IOS_WORKFLOW = '.github/workflows/mobile-ios-release.yml';
 export const IOS_BUILD_JOB = 'iOS / 签名构建';
 export const IOS_ENVIRONMENTS = Object.freeze({
   build: 'mobile-build-production',
-  submit: 'mobile-submit-ios-store',
+  testflight: 'mobile-submit-ios-testflight',
 });
 
 export function requireSha(value, label = 'source SHA') {
@@ -45,15 +45,15 @@ export function validateDispatch(context, inputs) {
   assert.equal(context.ref, 'refs/heads/main', 'Dispatch the reviewed workflow from main only');
   assert.match(context.repository ?? '', /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u);
   const operation = inputs.operation;
-  assert.ok(['build', 'build-and-submit', 'submit'].includes(operation), 'Unknown iOS operation');
+  assert.ok(['build', 'build-and-testflight', 'testflight'].includes(operation), 'Unknown iOS operation');
   const sourceSha = requireSha(inputs.source_sha || context.sha);
-  const buildRunId = requireId(operation === 'submit' ? inputs.build_run_id : context.runId, 'build run ID');
-  const buildAttempt = requireId(operation === 'submit' ? inputs.build_run_attempt : context.attempt, 'build attempt');
-  if (operation !== 'submit') {
-    assert.ok(!inputs.build_run_id, 'build_run_id is only valid for submit');
+  const buildRunId = requireId(operation === 'testflight' ? inputs.build_run_id : context.runId, 'build run ID');
+  const buildAttempt = requireId(operation === 'testflight' ? inputs.build_run_attempt : context.attempt, 'build attempt');
+  if (operation !== 'testflight') {
+    assert.ok(!inputs.build_run_id, 'build_run_id is only valid for testflight');
   } else {
-    assert.ok(inputs.source_sha, 'submit requires the exact source_sha from the build summary');
-    assert.notEqual(buildRunId, String(context.runId), 'submit-only must reference an earlier build run');
+    assert.ok(inputs.source_sha, 'testflight requires the exact source_sha from the build summary');
+    assert.notEqual(buildRunId, String(context.runId), 'testflight-only must reference an earlier build run');
   }
   return { operation, sourceSha, buildRunId, buildAttempt };
 }
@@ -93,7 +93,7 @@ export function validateBuildRun(run, jobs, artifacts, expected) {
   if (String(run.id) !== String(expected.currentRunId)) {
     assert.equal(run.status, 'completed', 'The referenced build run is still active');
   }
-  // A successful build may be reused after a later submit job failed. Never
+  // A successful build may be reused after a later TestFlight job failed. Never
   // infer build success merely from an artifact existing or a run conclusion.
   const builds = jobs.filter((job) => job.name === IOS_BUILD_JOB);
   assert.equal(builds.length, 1, 'Missing or ambiguous signed build job');

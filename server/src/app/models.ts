@@ -1,3 +1,4 @@
+import { isSubscriptionTransport } from '../runtime/subscriptionModelAuthentication.js';
 /**
  * Model Resolver
  *
@@ -85,7 +86,7 @@ export function resolveContextAccountingFromModels(
   const disableResponseChaining = model.disable_response_chaining ?? group.disable_response_chaining ?? false;
   if (
     protocol === 'responses'
-    && responsesTransport !== 'codex_subscription'
+    && !isSubscriptionTransport(responsesTransport)
     && !disableResponseChaining
   ) {
     // previous_response_id 接力 + prompt cache 下，上游每 leg usage.input_tokens
@@ -310,7 +311,7 @@ type ConfigProviderOptions = {
   tool_call_repair?: 'off' | 'detect' | 'repair';
   // ── Responses API v1（RFC P0.5）配置层字段（snake_case 与 config.json 对齐） ──
   protocol?: 'chat_completions' | 'responses';
-  responses_transport?: 'openai_compatible' | 'codex_subscription';
+  responses_transport?: 'openai_compatible' | 'codex_subscription' | 'grok_subscription';
   alias_actual?: string;
   supports_reasoning_output?: boolean;
   supports_tool_reasoning?: boolean;
@@ -373,6 +374,7 @@ function resolveProviderOptions(
   if (disablePromptCacheKey !== undefined) options.disablePromptCacheKey = disablePromptCacheKey;
   if (mcpLoadingMode !== undefined) options.mcpLoadingMode = mcpLoadingMode;
   if (toolSearchProtocol !== undefined) options.toolSearchProtocol = toolSearchProtocol;
+  if (responsesTransport === 'grok_subscription') { options.mcpLoadingMode = 'eager'; options.toolSearchProtocol = 'none'; options.disableResponseChaining = true; options.disablePromptCacheKey = true; }
   return Object.keys(options).length > 0 ? options : undefined;
 }
 

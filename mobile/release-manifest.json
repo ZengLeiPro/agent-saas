@@ -1,11 +1,13 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "identity": {
     "displayName": "Agent SaaS",
     "slug": "agent-saas",
     "scheme": "agent-saas",
     "iosBundleIdentifier": "com.agentsaas.mobile",
     "iosAscAppId": "6808382989",
+    "iosTestFlightInternalGroupId": "a21bd778-a7de-43ee-97ca-3f6f5877d237",
+    "iosTestFlightInternalGroupName": "kaiyan",
     "iosAppleTeamId": "T4D4M5B485",
     "iosAppGroupIdentifier": "group.com.agentsaas.mobile.share",
     "androidPackage": "com.agentsaas.mobile",

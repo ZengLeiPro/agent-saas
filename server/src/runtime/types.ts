@@ -172,7 +172,7 @@ export interface ModelToolCall {
  * The platform never decrypts or exposes encrypted_content; it only preserves order.
  */
 export interface ModelProviderContinuation {
-  provider: 'openai_codex_subscription';
+  provider: 'openai_codex_subscription' | 'xai_grok_subscription';
   issuer: string;
   accountBindingHash: string;
   items: Array<{

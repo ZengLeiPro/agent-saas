@@ -51,7 +51,7 @@ function fixture(t) {
   writeFileSync(join(directory, 'pnpm-lock.yaml'), 'lockfileVersion: test-fixture\n');
   const ipa = join(directory, 'mobile/builds/AgentSaaS-1.2.3.ipa');
   // This is deliberately not a signed IPA. These tests validate handoff logic,
-  // not native signing, live Apple upload, real-device evidence or store approval.
+  // not native signing, live Apple upload or real-device evidence.
   writeFileSync(ipa, 'DETERMINISTIC CONTRACT FIXTURE; NOT AN INSTALLABLE IPA');
   writeFileSync(`${ipa}.source.json`, JSON.stringify({
     profile: 'ios-store', sourceGitSha: sha, appId: manifest.identity.iosBundleIdentifier,
@@ -66,16 +66,16 @@ function fixture(t) {
 test('iOS dispatch defaults to the immutable main workflow SHA and separates operations', () => {
   const build = validateDispatch(dispatch, { operation: 'build' });
   assert.deepEqual(build, { operation: 'build', sourceSha: sha, buildRunId: '202', buildAttempt: '1' });
-  assert.equal(validateDispatch(dispatch, { operation: 'build-and-submit' }).operation, 'build-and-submit');
-  assert.equal(validateDispatch(dispatch, { operation: 'submit', source_sha: sha, build_run_id: '101', build_run_attempt: '2' }).buildRunId, '101');
+  assert.equal(validateDispatch(dispatch, { operation: 'build-and-testflight' }).operation, 'build-and-testflight');
+  assert.equal(validateDispatch(dispatch, { operation: 'testflight', source_sha: sha, build_run_id: '101', build_run_attempt: '2' }).buildRunId, '101');
   for (const invalid of ['main', 'HEAD', 'a'.repeat(7), `${sha}\n`, '$(echo unsafe)', '-a']) {
     assert.throws(() => validateDispatch(dispatch, { operation: 'build', source_sha: invalid }));
   }
   for (const change of [{ event: 'pull_request' }, { ref: 'refs/heads/feature' }, { ref: 'refs/tags/mobile-v1.0.0' }]) {
     assert.throws(() => validateDispatch({ ...dispatch, ...change }, { operation: 'build' }));
   }
-  assert.throws(() => validateDispatch(dispatch, { operation: 'submit', build_run_id: '101', build_run_attempt: '2' }));
-  assert.throws(() => validateDispatch(dispatch, { operation: 'submit', source_sha: sha, build_run_id: '202', build_run_attempt: '1' }));
+  assert.throws(() => validateDispatch(dispatch, { operation: 'testflight', build_run_id: '101', build_run_attempt: '2' }));
+  assert.throws(() => validateDispatch(dispatch, { operation: 'testflight', source_sha: sha, build_run_id: '202', build_run_attempt: '1' }));
   assert.throws(() => validateDispatch(dispatch, { operation: 'build', build_run_id: '101' }));
   assert.throws(() => validateDispatch(dispatch, { operation: 'unknown' }));
   assert.equal(allocateBuildNumber(4, '202', '1'), '4.202.1');
@@ -94,7 +94,7 @@ test('iOS accepts only successful same-source push-main CI and its authoritative
   assert.throws(() => validateCiRun(ci, [{ ...ciJobs[0], conclusion: 'skipped' }], sha, repository));
 });
 
-test('iOS retry reuses a successful build even when its later submit failed', () => {
+test('iOS retry reuses a successful build even when its later TestFlight publish failed', () => {
   const result = validateBuildRun({ ...buildRun, conclusion: 'failure' }, buildJobs, [artifact], context);
   assert.equal(result.artifactId, '303');
   assert.equal(result.workflowSha, workflowSha);
@@ -173,24 +173,62 @@ test('iOS file readers reject symlinks and oversized metadata', (t) => {
   assert.throws(() => readJson(item.recordPath), /size bound/u);
 });
 
-test('iOS workflow keeps PR validation secret-free, uses one dispatch and keeps submission build-free', () => {
+function assertSecretFreeContract(contract) {
+  assert.doesNotMatch(contract, /EXPO_TOKEN|environment:/u);
+  // Only expressions can read the secrets context; a filename such as
+  // ios-signing-secrets.test.mjs is not a credential reference. Respect quoted
+  // strings (including escaped quotes and braces) when finding expressions.
+  const expressions = contract.matchAll(/\$\{\{(?:'(?:[^']|'')*'|(?!\}\})[^'])*\}\}/gu);
+  for (const [expression] of expressions) {
+    const code = expression.replace(/'(?:[^']|'')*'/gu, "''");
+    assert.doesNotMatch(code, /\bsecrets\b/iu, 'PR validation must not read the secrets context');
+  }
+}
+
+test('iOS PR credential guard allows secret-related test filenames and literal strings', () => {
+  for (const contract of [
+    'run: node --test mobile/scripts/ios-signing-secrets.test.mjs',
+    "run: ${{ format('node --test {0}', 'mobile/scripts/ios-signing-secrets.test.mjs') }}",
+    "run: ${{ format('it''s a literal secrets.KEY and }}', github.sha) }}",
+    'run: echo ${{ github.sha }} # secrets.TEST is not an expression',
+  ]) assert.doesNotThrow(() => assertSecretFreeContract(contract));
+});
+
+for (const [name, contract] of [
+  ['dot access', 'env: { KEY: "${{secrets.IOS_DISTRIBUTION_P12_BASE64}}" }'],
+  ['bracket access', "env: { KEY: \"${{ secrets['IOS_DISTRIBUTION_P12_BASE64'] }}\" }"],
+  ['multiline access', 'env:\n  KEY: ${{\n    secrets\n      .IOS_DISTRIBUTION_P12_BASE64\n  }}'],
+  ['whole context', 'run: echo ${{ toJSON(secrets) }}'],
+  ['mixed-case context', 'env: { KEY: "${{ SeCrEtS.KEY }}" }'],
+  ['quoted braces before access', "run: ${{ format('}} {0}', secrets.KEY) }}"],
+  ['later expression', 'run: echo ${{ github.sha }} ${{ secrets.KEY }}'],
+  ['protected environment', 'environment: mobile-build-production'],
+  ['Expo credential', 'env: { EXPO_TOKEN: external-value }'],
+]) {
+  test(`iOS PR credential guard rejects ${name}`, () => {
+    assert.throws(() => assertSecretFreeContract(contract), assert.AssertionError);
+  });
+}
+
+test('iOS workflow keeps PR validation secret-free, uses one dispatch and keeps TestFlight publishing build-free', () => {
   const workflow = readFileSync(join(root, IOS_WORKFLOW), 'utf8');
   const contract = workflow.split('  contract:')[1].split('  plan:')[0];
-  const build = workflow.split('  build_ios:')[1].split('  submit_ios:')[0];
-  const submit = workflow.split('  submit_ios:')[1];
+  const build = workflow.split('  build_ios:')[1].split('  publish_testflight:')[0];
+  const publish = workflow.split('  publish_testflight:')[1];
   assert.doesNotMatch(workflow, /pull_request_target|workflow_run:|--auto-submit|--latest|EXPO_TOKEN|eas build|eas submit/u);
   assert.match(contract, /node --test mobile\/scripts\/ios-actions\.test\.mjs/u);
-  assert.doesNotMatch(contract, /secrets\.|EXPO_TOKEN|environment:/u);
+  assertSecretFreeContract(contract);
   assert.match(build, /environment: mobile-build-production/u);
   assert.match(build, /IOS_DISTRIBUTION_P12_BASE64/u);
   assert.match(build, /build\.sh ios --build/u);
   assert.doesNotMatch(build, /submit-ios\.sh/u);
-  assert.match(submit, /environment: mobile-submit-ios-store/u);
-  assert.match(submit, /artifact-ids: \$\{\{ steps\.artifact\.outputs\.artifact_id \}\}/u);
-  assert.match(submit, /APP_STORE_CONNECT_API_KEY_P8/u);
-  assert.match(submit, /submit-ios\.sh/u);
-  assert.doesNotMatch(submit, /eas build|build\.sh|expo prebuild/u);
-  assert.match(submit, /!cancelled\(\)/u);
+  assert.match(publish, /environment: mobile-submit-ios-testflight/u);
+  assert.match(publish, /artifact-ids: \$\{\{ steps\.artifact\.outputs\.artifact_id \}\}/u);
+  assert.match(publish, /APP_STORE_CONNECT_API_KEY_P8/u);
+  assert.match(publish, /submit-ios\.sh/u);
+  assert.doesNotMatch(publish, /eas build|build\.sh|expo prebuild/u);
+  assert.doesNotMatch(publish, /reviewSubmissions|AFTER_APPROVAL|提交审核/u);
+  assert.match(publish, /!cancelled\(\)/u);
   assert.match(workflow, /persist-credentials: false/u);
   assert.match(workflow, /overwrite: false/u);
   assert.doesNotMatch(workflow, /continue-on-error: true/u);
@@ -198,6 +236,10 @@ test('iOS workflow keeps PR validation secret-free, uses one dispatch and keeps 
   assert.match(cli, /runs\.sort\(\(a, b\) => b\.id - a\.id\)\[0\]/u);
   assert.match(cli, /merge-base', '--is-ancestor'/u);
   assert.match(cli, /verify-mobile-release-artifact\.sh/u);
+  const apple = readFileSync(join(root, 'mobile/scripts/app-store-connect.mjs'), 'utf8');
+  assert.match(apple, /betaGroups/u);
+  assert.match(apple, /buildBetaDetail/u);
+  assert.doesNotMatch(apple, /reviewSubmissions|appStoreVersions|AFTER_APPROVAL|method:\s*['"](?:POST|PATCH|DELETE)/u);
 });
 
 test('iOS native toolchain is explicit and pnpm supports both macOS architectures', () => {

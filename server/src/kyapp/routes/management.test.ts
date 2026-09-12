@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { PgEntitlementStore } from '../../data/entitlements/store.js';
 import {
   createKyAppTestRig,
   seedPublishedInstallation,
@@ -18,15 +17,8 @@ const rigs: KyAppTestRig[] = [];
 afterEach(async () => {
   await Promise.all(rigs.splice(0).map((rig) => rig.close()));
 });
-const scope = (status: string, ids: string[]) =>
-  ({
-    getEntitlementSet: async () => ({ status }),
-    listResourceScopes: async () => [
-      { resourceType: 'integrated_system', mode: 'selected', resourceIds: ids },
-    ],
-  }) as unknown as PgEntitlementStore;
-async function rig(entitlements?: PgEntitlementStore) {
-  const result = await createKyAppTestRig(entitlements ? { entitlements } : {});
+async function rig() {
+  const result = await createKyAppTestRig({});
   rigs.push(result);
   await seedPublishedInstallation(result);
   return result;
@@ -40,28 +32,20 @@ const body = {
   techContactUserId: MEMBER.sub,
 };
 describe('业务系统组织安装 HTTP 权限', () => {
-  it.each([
-    ['active', [TEST_SYSTEM], 201],
-    ['active', [], 403],
-    ['suspended', [TEST_SYSTEM], 403],
-  ] as const)('%s %j → %i', async (status, ids, expected) => {
-    const app = await rig(scope(status, [...ids]));
+  it('组织权益不再拦截：组织管理员可安装已发布系统', async () => {
+    const app = await rig();
     app.setUser(ORG_ADMIN);
     const list = await app.request(
       `/api/app-contract/v1/systems/installable?tenantId=${TEST_TENANT}`,
     );
     expect(list.status).toBe(200);
-    expect((await list.json()).systems).toHaveLength(expected === 201 ? 1 : 0);
+    expect((await list.json()).systems).toHaveLength(1);
     expect(
       (await app.request('/api/app-contract/v1/installations', json('POST', body))).status,
-    ).toBe(expected);
+    ).toBe(201);
   });
-  it('依赖不可用不写入，成员、其他组织均拒绝', async () => {
+  it('成员、其他组织均拒绝', async () => {
     const app = await rig();
-    app.setUser(ORG_ADMIN);
-    expect(
-      (await app.request('/api/app-contract/v1/installations', json('POST', body))).status,
-    ).toBe(503);
     for (const identity of [MEMBER, OTHER_TENANT_ADMIN]) {
       app.setUser(identity);
       expect(

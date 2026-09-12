@@ -1,3 +1,4 @@
+import type { GrokCredentialManager } from '../runtime/responses/grokCredentialManager.js';
 import type pg from 'pg';
 
 import type { AppConfig } from '../app/config.js';
@@ -18,6 +19,7 @@ export async function createProviderQuotaRuntime(options: {
   getModelsConfig: () => AppConfig['models'];
   secretVault?: SecretVault;
   codexCredentialManager: CodexCredentialManager;
+  grokCredentialManager?: GrokCredentialManager;
   enableCollector: boolean;
   fetchImpl: typeof fetch;
   logger: {
@@ -35,6 +37,7 @@ export async function createProviderQuotaRuntime(options: {
     getModelsConfig: options.getModelsConfig,
     secretVault: options.secretVault,
     codexCredentialManager: options.codexCredentialManager,
+    grokCredentialManager: options.grokCredentialManager,
     enableCollector: options.enableCollector,
     fetchImpl: options.fetchImpl,
     logger: options.logger,

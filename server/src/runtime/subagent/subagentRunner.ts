@@ -1,3 +1,4 @@
+import { modelRequiresApiKey } from '../subscriptionModelAuthentication.js';
 /**
  * 子 agent runner（2026-07-06，方案 D1-D6 的执行核心）。
  *
@@ -312,7 +313,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   }
   const apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
   const baseUrl = connection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
-  if (!apiKey && providerOptions?.responsesTransport !== 'codex_subscription') {
+  if (!apiKey && modelRequiresApiKey(providerOptions)) {
     throw new Error('子 agent 缺少模型 apiKey（模型组未配置连接且环境无 OPENAI_API_KEY）。');
   }
 

@@ -39,7 +39,7 @@ export function renderStagingConfig(source, env = process.env) {
   // 复制凭据或通过 renderer 硬编码关闭功能来“实现隔离”。
   for (const key of [
     'models', 'cron', 'dingtalk', 'dingtalkSendMessage', 'webPush', 'apns', 'alerting',
-    'codexSubscription', 'webTools', 'imageGenTools', 'tts', 'stt', 'memory',
+    'codexSubscription', 'grokSubscription', 'webTools', 'imageGenTools', 'tts', 'stt', 'memory',
     'systemMonitor', 'runtimeEventRetention', 'integrationV3',
     'integrationV3ControlPlane', 'notification', 'notifications',
   ]) {

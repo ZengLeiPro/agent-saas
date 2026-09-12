@@ -64,7 +64,7 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   const preparation = workflow.slice(0, workflow.indexOf('  build-deploy-verify:'));
   const mutation = workflow.slice(workflow.indexOf('  build-deploy-verify:'));
   assert.doesNotMatch(preparation, /group: staging-runtime/u);
-  assert.match(preparation, /group: acr-image-\$\{\{ github.sha \}\}/u);
+  assert.match(preparation, /group: acr-image-\$\{\{ needs.prepare-evidence.outputs.source_sha \}\}/u);
   assert.match(mutation, /concurrency:\s+group: staging-runtime\s+cancel-in-progress: false/u);
   assert.doesNotMatch(preparation, /bash '\$remote\/deploy-staging-release\.sh'/u);
   assert.match(mutation, /bash '\$remote\/deploy-staging-release\.sh'/u);
@@ -206,7 +206,7 @@ test('预发固定使用稳态基线，拒绝配置身份缺失与漂移', async
   assert.match(workflow, /PRODUCTION_CONFIG_IDENTITY_STAGE: steady-state/u);
   assert.match(
     workflow,
-    /read-production-state\.mjs' --config-identity-stage '\$PRODUCTION_CONFIG_IDENTITY_STAGE'/u,
+    /read-production-state\.mjs "\$PRODUCTION_CONFIG_IDENTITY_STAGE" production\.json fresh/u,
   );
   assert.throws(
     () => validateExpectedConfigIdentityObservers(undefined, undefined),

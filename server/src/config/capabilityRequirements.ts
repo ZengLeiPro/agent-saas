@@ -124,6 +124,15 @@ function evaluateCodex({ config }: CapabilityEvaluationContext): CapabilityDraft
   return draft(codex?.enabled === true, missing, blockers);
 }
 
+function evaluateGrok({ config }: CapabilityEvaluationContext): CapabilityDraft {
+  const grok = config.grokSubscription;
+  const missing = (grok?.credentialRefs?.length ?? (configured(grok?.credentialRef) ? 1 : 0)) > 0 ? [] : ['grokSubscription.credentialRefs'];
+  const hasModel = (config.models?.groups ?? []).some((group) => group.models.some((model) =>
+    (model.responses_transport ?? group.responses_transport) === 'grok_subscription'));
+  const blockers = hasModel ? [] : [dependencyBlocker('缺少 transport 为 grok_subscription 的 Responses 模型；账号授权不会自动修改默认模型', 'models')];
+  return draft(grok?.enabled === true, missing, blockers);
+}
+
 function evaluateWebTools({ config }: CapabilityEvaluationContext): CapabilityDraft {
   const search = config.webTools?.search;
   const fetch = config.webTools?.fetch;
@@ -351,6 +360,7 @@ function evaluateAcs({ config }: CapabilityEvaluationContext): CapabilityDraft {
 export const CAPABILITY_EVALUATORS: Readonly<Record<CapabilityId, CapabilityEvaluator>> = {
   models: evaluateModels,
   codex: evaluateCodex,
+  grok: evaluateGrok,
   webTools: evaluateWebTools,
   imageGen: evaluateImageGen,
   stt: evaluateStt,

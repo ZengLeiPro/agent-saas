@@ -1,3 +1,4 @@
+import { createGrokSubscriptionAdminRouter } from '../routes/grokSubscriptionAdmin.js';
 import type { Express } from 'express';
 
 import type { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
@@ -30,6 +31,7 @@ export function registerModelProviderAdminRoutes(
           : runtime.codexWebSocketShutdown?.(),
     }),
   );
+  app.use('/api/admin/grok-subscription', createGrokSubscriptionAdminRouter({ ...deps, credentialManager: runtime.grokCredentialManager, deviceAuthService: runtime.grokDeviceAuthService, modelCatalog: runtime.grokModelCatalog }));
   app.use(
     '/api/admin/provider-quota',
     createProviderQuotaAdminRouter({ service: runtime.providerQuotaService }),

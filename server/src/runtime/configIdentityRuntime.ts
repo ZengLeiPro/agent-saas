@@ -10,6 +10,7 @@
  *
  * 非目标：不修改配置、不接受漂移、不做发布/回滚（UI 也只读）。
  */
+import { ConfigObservationTimeout, observeWithinDeadline } from './configObservationDeadline.js';
 import type { AppConfig } from '../types/index.js';
 import type { SecretVault } from '../security/secretVault.js';
 import type { ExpectedConfigIdentity } from '../release/configIdentity.js';
@@ -82,6 +83,8 @@ export interface ConfigIdentityRuntimeOptions {
   };
   /** 将严格摘要同步发布到进程外私有观察面；不得暴露到匿名 health API。 */
   onSummaryUpdated?: (summary: ConfigIdentitySummary) => void;
+  /** Total budget for all sequential read-only Vault inspections. */
+  observationTimeoutMs?: number;
   /** 注入时钟（测试）。 */
   now?: () => Date;
 }
@@ -104,6 +107,7 @@ export interface ConfigIdentityRuntime {
   refresh(reason?: string): Promise<void>;
   /** 强一致读取：过期或时钟异常时等待重算，失败则撤销旧 observation。 */
   refreshSummary(reason?: string): Promise<ConfigIdentitySummary>;
+  getRefreshFailure: () => 'config_refresh_timeout' | 'config_refresh_failed' | undefined;
   /** 稳定只读脱敏摘要；不会因读取本身制造瞬时 not_collected。 */
   getSummary(): ConfigIdentitySummary;
 }
@@ -115,6 +119,11 @@ export function createConfigIdentityRuntime(
   const processCwd = options.processCwd ?? process.cwd();
   const now = options.now ?? (() => new Date());
 
+  const observationTimeoutMs = options.observationTimeoutMs ?? 20_000;
+  if (!Number.isSafeInteger(observationTimeoutMs) || observationTimeoutMs <= 0) {
+    throw new Error('ConfigIdentity observationTimeoutMs must be a positive integer');
+  }
+  let refreshFailure: 'config_refresh_timeout' | 'config_refresh_failed' | undefined;
   let observation: ConfigIdentityObservation | undefined;
   let firstObservedAt: string | undefined;
   let lastObservedAt: string | undefined;
@@ -136,6 +145,7 @@ export function createConfigIdentityRuntime(
       (previous.digest !== next.digest ||
         previous.credentialVersionDigest !== next.credentialVersionDigest);
     observation = next;
+    refreshFailure = undefined;
     if (!firstObservedAt) firstObservedAt = next.computedAt;
     lastObservedAt = next.computedAt;
     // 首次采集建立 baseline，不算「发生变化」；只有和上一份 observed identity
@@ -159,7 +169,10 @@ export function createConfigIdentityRuntime(
   }
 
   async function compute(): Promise<ConfigIdentityObservation> {
-    const next = await computeObservedConfigIdentity(config, secretVault, processCwd, now);
+    const next = await observeWithinDeadline(
+      () => computeObservedConfigIdentity(config, secretVault, processCwd, now),
+      observationTimeoutMs,
+    );
     if (next.unresolvedRefPaths.length > 0) {
       logger?.warn(
         `[ConfigIdentity] managed secret ref versions unresolved: ${next.unresolvedRefPaths.join(', ')}`,
@@ -185,7 +198,10 @@ export function createConfigIdentityRuntime(
   async function validateConfigReload(nextConfig: AppConfig): Promise<void> {
     if (environment !== 'production') return;
     assertProductionManagedCredentialSafety(nextConfig);
-    const next = await computeObservedConfigIdentity(nextConfig, secretVault, processCwd, now);
+    const next = await observeWithinDeadline(
+      () => computeObservedConfigIdentity(nextConfig, secretVault, processCwd, now),
+      observationTimeoutMs,
+    );
     assertProductionObservation(next);
   }
 
@@ -273,6 +289,7 @@ export function createConfigIdentityRuntime(
   }
 
   function invalidateObservation(allowStrongRetry = false): void {
+    refreshFailure = undefined;
     ++computeGeneration;
     if (!observationInvalidated) invalidatedComparisonObservation = observation;
     observationInvalidated = true;
@@ -304,6 +321,7 @@ export function createConfigIdentityRuntime(
     void pending.catch((error) => {
       if (generation === computeGeneration && observationInvalidated) {
         strongRetryAllowedAfterInvalidation = true;
+        refreshFailure = error instanceof ConfigObservationTimeout ? 'config_refresh_timeout' : 'config_refresh_failed';
       }
       logger?.warn(
         `[ConfigIdentity] recompute after ${reason} failed: ${
@@ -334,7 +352,10 @@ export function createConfigIdentityRuntime(
     } catch (error) {
       // 仅当前 generation 的失败能撤销 observation；旧失败不得覆盖更新的成功结果。
       const failedCurrentGeneration = computeGeneration === running.generation;
-      if (failedCurrentGeneration) invalidateObservation(true);
+      if (failedCurrentGeneration) {
+        invalidateObservation(true);
+        refreshFailure = error instanceof ConfigObservationTimeout ? 'config_refresh_timeout' : 'config_refresh_failed';
+      }
       warnStrongRefreshFailure(error);
       return !failedCurrentGeneration;
     }
@@ -418,6 +439,7 @@ export function createConfigIdentityRuntime(
     notifyConfigChanged,
     refresh: (reason = 'explicit') => refresh(reason),
     refreshSummary,
+    getRefreshFailure: () => refreshFailure,
     getSummary: buildSummary,
   };
 }

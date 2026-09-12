@@ -4,12 +4,14 @@ export interface DeploymentDrainSnapshot {
   state: 'idle' | 'draining' | 'completed' | 'timed_out' | 'cancelled';
   inflight: number;
   startedAt?: number;
+  deadlineAt?: number;
 }
 
 /** Admission may pause for a deployment; accepted work is never killed by its deadline. */
 export class DeploymentDrain {
   private state: DeploymentDrainSnapshot['state'] = 'idle';
   private startedAt?: number;
+  private deadlineAt?: number;
   private poll?: ReturnType<typeof setInterval>;
 
   constructor(
@@ -31,13 +33,14 @@ export class DeploymentDrain {
       pid: this.options.pid,
       state: this.state,
       inflight: this.options.inflight(),
-      ...(this.startedAt === undefined ? {} : { startedAt: this.startedAt }),
+      ...(this.startedAt === undefined ? {} : { startedAt: this.startedAt, deadlineAt: this.deadlineAt }),
     };
   }
 
   begin(): void {
     if (this.state === 'draining' || this.state === 'completed') return;
     this.startedAt = (this.options.now ?? Date.now)();
+    this.deadlineAt = this.startedAt + this.options.deadlineMs();
     this.state = 'draining';
     if (!this.publish()) {
       this.state = 'idle';
@@ -59,7 +62,7 @@ export class DeploymentDrain {
       }
       clearInterval(this.poll);
       this.options.exit();
-    } else if ((this.options.now ?? Date.now)() - this.startedAt! >= this.options.deadlineMs()) {
+    } else if ((this.options.now ?? Date.now)() >= this.deadlineAt!) {
       this.resume('timed_out');
     }
   }

@@ -36,6 +36,7 @@ export async function analyzeImagesWithFallback(
     systemPrompt?: string;
   } = {},
 ): Promise<ModelVisionAnalysis | undefined> {
+  if (configs.some((config) => config.providerOptions?.responsesTransport === 'grok_subscription')) throw new Error('MODEL_TRANSPORT_UNSUPPORTED: Grok subscription 尚未支持独立图片理解辅助路径');
   const images = attachments.filter((item) => item.isImage && item.modelRelativePath && item.modelMimeType);
   if (images.length === 0 || configs.length === 0) return undefined;
 

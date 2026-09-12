@@ -13,7 +13,12 @@ export type AdminConfigOperationId =
   | 'codex.order'
   | 'codex.complete'
   | 'codex.remove'
-  | 'codex.disconnect';
+  | 'codex.disconnect'
+  | 'grok.settings'
+  | 'grok.order'
+  | 'grok.complete'
+  | 'grok.remove'
+  | 'grok.disconnect';
 
 export interface AdminConfigOperation {
   id: AdminConfigOperationId;
@@ -89,6 +94,15 @@ function allowedPrefixes(operation: AdminConfigOperation): TokenPath[] {
       return [['stt']];
     case 'tenant-remote-hands.save':
       return [['tenantRemoteHands']];
+    case 'grok.settings':
+      return [['grokSubscription', 'enabled'], ['grokSubscription', 'quotaCooldownMinutes'], ['grokSubscription', 'oauthClientId']];
+    case 'grok.order':
+      return [['grokSubscription', 'credentialRef'], ['grokSubscription', 'credentialRefs']];
+    case 'grok.complete':
+      return [['grokSubscription', 'enabled'], ['grokSubscription', 'quotaCooldownMinutes'], ['grokSubscription', 'credentialRef'], ['grokSubscription', 'credentialRefs']];
+    case 'grok.remove':
+    case 'grok.disconnect':
+      return [['grokSubscription', 'enabled'], ['grokSubscription', 'credentialRef'], ['grokSubscription', 'credentialRefs']];
     case 'codex.settings':
       return [
         ['codexSubscription', 'enabled'],

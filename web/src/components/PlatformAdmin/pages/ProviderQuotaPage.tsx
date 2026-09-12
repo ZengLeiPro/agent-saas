@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, RefreshCw, TriangleAlert } from 'lucide-react';
+import { GrokQuotaDetails } from './GrokQuotaDetails';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ChevronRight, GripVertical, Loader2, RefreshCw, TriangleAlert } from 'lucide-react';
 import type {
   ProviderQuotaHistoryPoint,
   ProviderQuotaHistoryResponse,
@@ -19,23 +20,36 @@ import { cn } from '@/lib/utils';
 import { platformAdminApi } from '../api';
 import { ProviderPlanExpiryEditor } from './ProviderPlanExpiryEditor';
 import { ProviderQuotaPlanBadge } from './ProviderQuotaPlanBadge';
+import {
+  moveQuotaAccount,
+  orderQuotaAccounts,
+  readQuotaAccountOrder,
+  writeQuotaAccountOrder,
+} from './providerQuotaOrder';
 import { formatTime } from '../format';
 
 const SOURCE_LABEL: Record<ProviderQuotaSnapshot['sourceKind'], string> = {
   codex_subscription: 'Codex 订阅',
+  grok_subscription: 'Grok 订阅',
   volcengine_ark_plan: '火山 Agent Plan',
   claude_subscription: 'Claude 订阅',
+  zhipu_coding_plan: '智谱 Coding Plan',
 };
 
 /** 推送型来源：平台没有可取数的管控面，由采集端主动上报，不提供单账号刷新。 */
 const PUSH_ONLY_SOURCES = new Set<ProviderQuotaSnapshot['sourceKind']>(['claude_subscription']);
 
-const WARNING_PERCENT = 85;
+const WARNING_PERCENT = 70;
 const HISTORY_HOURS = 24;
+/** 仅控制展示分组与顺序，不改变账号告警口径，也不补造未返回的窗口。 */
+const MAIN_WINDOW_ORDER: Partial<Record<ProviderQuotaSnapshot['sourceKind'], Record<string, number>>> = {
+  claude_subscription: { seven_day: 0, five_hour: 1 },
+  volcengine_ark_plan: { monthly: 0, weekly: 1 },
+};
 
 type Tone = 'ok' | 'warning' | 'critical';
 
-/** ≥85% 提醒、撞限或 ≥100% 告警；状态色只做强调，文字标签保证不靠颜色单独传达。 */
+/** ≥70% 提醒、撞限或 ≥100% 告警；状态色只做强调，文字标签保证不靠颜色单独传达。 */
 export function windowTone(
   window: Pick<ProviderQuotaWindow, 'usedPercent' | 'limitReached'>,
 ): Tone {
@@ -68,7 +82,7 @@ function isMainSubscriptionWindow(
 
 /**
  * 卡级总状态：先看能不能采到、凭据能不能用，再看额度。
- * 「冷却中」= 我们自己的调度器此刻在绕开这个账号，与供应商侧撞限分开显示。
+ * 调度器冷却不参与本页状态展示，不影响后端实际调度行为。
  */
 export function accountStatus(
   snapshot: Pick<ProviderQuotaSnapshot, 'ok' | 'limitReached' | 'windows' | 'credential'> & { sourceKind?: ProviderQuotaSnapshot['sourceKind'] },
@@ -77,11 +91,11 @@ export function accountStatus(
   if (snapshot.credential?.availability === 'auth_unavailable') {
     return { tone: 'critical', label: '凭据不可用' };
   }
+  if (snapshot.sourceKind === 'grok_subscription' && !snapshot.limitReached && snapshot.windows.length === 0) return { tone: 'warning', label: '额度未知' };
   const tones = snapshot.windows
     .filter((window) => isMainSubscriptionWindow(snapshot.sourceKind, window))
     .map(windowTone);
   if (snapshot.limitReached || tones.includes('critical')) return { tone: 'critical', label: '已耗尽' };
-  if (snapshot.credential?.availability === 'quota_cooldown') return { tone: 'warning', label: '冷却中' };
   if (tones.includes('warning')) return { tone: 'warning', label: '接近上限' };
   return { tone: 'ok', label: '正常' };
 }
@@ -138,7 +152,7 @@ export function formatResetTime(value?: string): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return '—';
   const weekday = `周${'日一二三四五六'[date.getDay()]}`;
-  return formatTime(value).replace(/(\d{2}\/\d{2})\s+/, `$1 ${weekday} `);
+  return formatTime(value).replace(/:\d{2}$/, '').replace(/(\d{2}\/\d{2})\s+/, `$1 ${weekday} `);
 }
 
 function WindowTile({ window }: { window: ProviderQuotaWindow }) {
@@ -183,25 +197,32 @@ function WindowTile({ window }: { window: ProviderQuotaWindow }) {
 function AccountCard({
   snapshot,
   refreshing,
+  refreshDisabled,
   onRefresh,
   onExpirySaved,
+  dragHandle,
 }: {
   snapshot: ProviderQuotaSnapshot;
   refreshing: boolean;
+  refreshDisabled: boolean;
   onRefresh: (accountKey: string) => void;
   onExpirySaved: (overview: ProviderQuotaOverviewResponse) => void;
+  dragHandle: ReactNode;
 }) {
   const status = accountStatus(snapshot);
   const credential = snapshot.credential;
   const isCodex = snapshot.sourceKind === 'codex_subscription';
-  const isClaude = snapshot.sourceKind === 'claude_subscription';
   const isPushOnly = PUSH_ONLY_SOURCES.has(snapshot.sourceKind);
+  const windowOrder = MAIN_WINDOW_ORDER[snapshot.sourceKind];
+  const isMainWindow = (window: ProviderQuotaWindow) => windowOrder
+    ? Object.prototype.hasOwnProperty.call(windowOrder, window.id)
+    : isMainSubscriptionWindow(snapshot.sourceKind, window);
   const mainWindows = snapshot.windows
-    .filter((window) => isMainSubscriptionWindow(snapshot.sourceKind, window))
-    .sort((a, b) => Number(b.windowSeconds === 604_800) - Number(a.windowSeconds === 604_800));
-  const additionalWindows = isCodex || isClaude
-    ? snapshot.windows.filter((window) => !isMainSubscriptionWindow(snapshot.sourceKind, window))
-    : [];
+    .filter(isMainWindow)
+    .sort((a, b) => windowOrder
+      ? (windowOrder[a.id] ?? 2) - (windowOrder[b.id] ?? 2)
+      : Number(b.windowSeconds === 604_800) - Number(a.windowSeconds === 604_800));
+  const additionalWindows = snapshot.windows.filter((window) => !isMainWindow(window));
   const additionalLimited = additionalWindows.filter((window) => windowTone(window) === 'critical').length;
   const lastSuccessAt =
     typeof snapshot.extra?.lastSuccessAt === 'string' ? snapshot.extra.lastSuccessAt : null;
@@ -228,14 +249,12 @@ function AccountCard({
       <CardHeader className="pb-3">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {dragHandle}
             <CardTitle className="break-all text-base">{snapshot.accountLabel}</CardTitle>
             <Badge variant={TONE_BADGE[status.tone]} className="gap-1 px-1.5 py-0 text-[11px]">
               {status.tone !== 'ok' && <TriangleAlert className="size-3" />}
               {status.label}
             </Badge>
-            {credential?.availability === 'quota_cooldown' && status.label !== '冷却中' && (
-              <Badge variant="warning" className="px-1.5 py-0 text-2xs" title={credential.cooldownUntil ? `冷却至 ${formatTime(credential.cooldownUntil)}` : undefined}>冷却中</Badge>
-            )}
             {credential?.availability === 'auth_unavailable' && status.label !== '凭据不可用' && (
               <Badge variant="danger" className="px-1.5 py-0 text-2xs" title={credential.lastFailureCode}>凭据不可用</Badge>
             )}
@@ -253,7 +272,7 @@ function AccountCard({
                 size="sm"
                 className="size-7 shrink-0 p-0 text-xs"
                 aria-label={`刷新 ${snapshot.accountLabel}`}
-                disabled={refreshing}
+                disabled={refreshDisabled}
                 onClick={() => onRefresh(snapshot.accountKey)}
               >
                 <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
@@ -272,6 +291,7 @@ function AccountCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {snapshot.sourceKind === 'grok_subscription' && <GrokQuotaDetails snapshot={snapshot} />}
         {!snapshot.ok && (
           <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger-ink">
             {snapshot.error ?? '未知错误'}
@@ -291,12 +311,13 @@ function AccountCard({
           </div>
         )}
         {additionalWindows.length > 0 && (
-          <details className="rounded-md border p-3">
-            <summary className="cursor-pointer text-xs text-muted-foreground">
-              {isClaude ? '其他额度' : '其他模型额度'}（{additionalWindows.length} 个窗口）
+          <details className="group/other">
+            <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-1 gap-y-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-open/other:rotate-90" aria-hidden="true" />
+              <span>其他（{additionalWindows.length} 个窗口）</span>
               {additionalLimited > 0 && <span className="ml-2 text-warning-ink">{additionalLimited} 个窗口已耗尽</span>}
             </summary>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className={cn('mt-3 grid gap-3', additionalWindows.length > 1 && 'sm:grid-cols-2')}>
               {additionalWindows.map((window) => (
                 <WindowTile key={window.id} window={window} />
               ))}
@@ -312,14 +333,29 @@ export function ProviderQuotaPage() {
   const [overview, setOverview] = useState<ProviderQuotaOverviewResponse | null>(null);
   const [, setHistory] = useState<ProviderQuotaHistoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMode, setRefreshMode] = useState<'reload' | 'collect' | null>(null);
+  const refreshing = refreshMode !== null;
   const [refreshingKey, setRefreshingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [accountOrder, setAccountOrder] = useState(readQuotaAccountOrder);
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
+  const [sortAnnouncement, setSortAnnouncement] = useState('');
+  const requestIdRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const pendingReloadRef = useRef(false);
 
   const load = useCallback(
-    async (mode: 'initial' | 'reload' | 'collect' = 'reload', accountKey?: string) => {
+    async function loadQuota(mode: 'initial' | 'reload' | 'collect' = 'reload', accountKey?: string): Promise<void> {
+      // 串行读取/采集，前台切换期间最多补一次读取，避免旧快照覆盖采集结果。
+      if (inFlightRef.current) {
+        if (mode === 'reload') pendingReloadRef.current = true;
+        return;
+      }
+      inFlightRef.current = true;
+      const requestId = ++requestIdRef.current;
       if (mode === 'initial') setLoading(true);
-      else setRefreshing(true);
+      else setRefreshMode(mode);
       if (accountKey) setRefreshingKey(accountKey);
       try {
         const overviewPromise =
@@ -330,6 +366,7 @@ export function ProviderQuotaPage() {
           overviewPromise,
           platformAdminApi.providerQuotaHistory(HISTORY_HOURS),
         ]);
+        if (requestId !== requestIdRef.current) return;
         if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
         if (historyResult.status === 'fulfilled') setHistory(historyResult.value);
         const failures = [overviewResult, historyResult]
@@ -339,9 +376,16 @@ export function ProviderQuotaPage() {
           );
         setError(failures.length > 0 ? failures.join(' · ') : null);
       } finally {
-        setLoading(false);
-        setRefreshing(false);
-        setRefreshingKey(null);
+        if (requestId === requestIdRef.current) {
+          inFlightRef.current = false;
+          setLoading(false);
+          setRefreshMode(null);
+          setRefreshingKey(null);
+          if (pendingReloadRef.current) {
+            pendingReloadRef.current = false;
+            void loadQuota('reload');
+          }
+        }
       }
     },
     [],
@@ -349,7 +393,56 @@ export function ProviderQuotaPage() {
 
   useEffect(() => {
     void load('initial');
+    return () => {
+      // 卸载或 StrictMode 重建后，不应用旧请求，也不启动排队的刷新。
+      requestIdRef.current += 1;
+      inFlightRef.current = false;
+      pendingReloadRef.current = false;
+    };
   }, [load]);
+
+  useEffect(() => {
+    let foreground = document.visibilityState === 'visible' && document.hasFocus();
+    const onBackground = () => { foreground = false; };
+    const onForeground = () => {
+      if (document.visibilityState !== 'visible' || foreground) return;
+      foreground = true;
+      void load('reload');
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') onForeground();
+      else onBackground();
+    };
+    // visibilitychange 覆盖标签页/最小化，focus 覆盖切换到其他应用后返回。
+    // 共用前台状态，合并同一次切换产生的两个事件；不启用定时轮询。
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onForeground);
+    window.addEventListener('blur', onBackground);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onForeground);
+      window.removeEventListener('blur', onBackground);
+    };
+  }, [load]);
+
+  const orderedItems = useMemo(
+    () => orderQuotaAccounts(overview?.items ?? [], accountOrder),
+    [overview?.items, accountOrder],
+  );
+
+  const moveAccount = (accountKey: string, targetKey: string) => {
+    const next = moveQuotaAccount(orderedItems.map((item) => item.accountKey), accountKey, targetKey);
+    if (!next) return;
+    setAccountOrder(next);
+    const saved = writeQuotaAccountOrder(next);
+    const label = orderedItems.find((item) => item.accountKey === accountKey)?.accountLabel ?? accountKey;
+    setSortAnnouncement(`已将 ${label} 移至第 ${next.indexOf(accountKey) + 1} 位，共 ${next.length} 张卡片。${saved ? '顺序已保存。' : '浏览器存储不可用，仅在本次页面内保留顺序。'}`);
+  };
+
+  const stopDragging = () => {
+    setDraggingKey(null);
+    setDropTargetKey(null);
+  };
 
   const collector = overview?.collector;
   const statusCounts = useMemo(() => {
@@ -380,7 +473,7 @@ export function ProviderQuotaPage() {
       <SettingsPanelHeader
         title="套餐额度"
         description={
-          <span>{collector?.enabled ? `每 ${Math.round(collector.intervalMs / 60_000)} 分钟自动采集。` : '本进程按需采集。'}页面不自动刷新，点击「立即采集」更新。</span>
+          <span>{collector?.enabled ? `每 ${Math.round(collector.intervalMs / 60_000)} 分钟自动采集。` : '本进程按需采集。'}切回前台自动刷新；「刷新」读取最新数据，「立即采集」触发采集。</span>
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -389,34 +482,104 @@ export function ProviderQuotaPage() {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => void load('reload')}
+              disabled={refreshing}
+              aria-busy={refreshMode === 'reload'}
+            >
+              刷新
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => void load('collect')}
               disabled={refreshing}
+              aria-busy={refreshMode === 'collect'}
             >
-              <RefreshCw className={cn('mr-1.5 size-3.5', refreshing && 'animate-spin')} />
               立即采集
             </Button>
           </div>
         }
       />
 
+      <p id="quota-order-instructions" className="sr-only">拖动卡片标题旁的六点手柄调整顺序；也可聚焦手柄后按上下方向键前移或后移。顺序保存在当前浏览器。</p>
+      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">{sortAnnouncement}</p>
       {error && <AdminErrorAlert error={error} />}
 
       {overview && overview.items.length === 0 ? (
         <EmptyState
           icon={EntityIcons.credits}
           title="尚未配置任何套餐用量来源"
-          description="在「平台配置 → 模型」里为火山 Agent Plan 分组填写管控面 AccessKey，或完成 Codex 订阅账号授权后，这里会自动出现对应账号。"
+          description="在「平台配置 → 模型」里配置智谱分组的 API Key 和官方 Base URL（也可显式选择智谱 Coding Plan），为火山 Agent Plan 填写管控面 AccessKey，或完成 Codex 订阅授权。首次采集后会出现对应卡片，也可点击「立即采集」。"
         />
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
-          {overview?.items.map((snapshot) => (
-            <AccountCard
+          {orderedItems.map((snapshot, index) => (
+            <div
               key={snapshot.accountKey}
-              snapshot={snapshot}
-              refreshing={refreshing && (refreshingKey === null || refreshingKey === snapshot.accountKey)}
-              onExpirySaved={setOverview}
-              onRefresh={(accountKey) => void load('collect', accountKey)}
-            />
+              data-quota-sortable={snapshot.accountKey}
+              className={cn(
+                'group relative min-w-0 rounded-lg transition-[box-shadow,opacity]',
+                draggingKey === snapshot.accountKey && 'opacity-50',
+                dropTargetKey === snapshot.accountKey && 'ring-2 ring-primary/50 ring-offset-2 ring-offset-background',
+              )}
+              onDragOver={(event) => {
+                if (!draggingKey) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                setDropTargetKey(draggingKey === snapshot.accountKey ? null : snapshot.accountKey);
+              }}
+              onDragLeave={(event) => {
+                const next = event.relatedTarget;
+                if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+                  setDropTargetKey((key) => key === snapshot.accountKey ? null : key);
+                }
+              }}
+              onDrop={(event) => {
+                if (!draggingKey) return;
+                event.preventDefault();
+                moveAccount(draggingKey, snapshot.accountKey);
+                stopDragging();
+              }}
+            >
+              <AccountCard
+                snapshot={snapshot}
+                refreshing={refreshMode === 'collect' && (refreshingKey === null || refreshingKey === snapshot.accountKey)}
+                refreshDisabled={refreshing}
+                onExpirySaved={setOverview}
+                onRefresh={(accountKey) => void load('collect', accountKey)}
+                dragHandle={
+                  <button
+                    type="button"
+                    draggable={orderedItems.length > 1}
+                    disabled={orderedItems.length < 2}
+                    aria-label={`拖动排序 ${snapshot.accountLabel}`}
+                    aria-describedby="quota-order-instructions"
+                    aria-keyshortcuts="ArrowUp ArrowDown"
+                    title="拖动调整顺序；也可聚焦后按上下方向键"
+                    className="-ml-1 flex size-7 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground/40 outline-none transition-colors group-hover:text-muted-foreground hover:bg-background/80 hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing disabled:cursor-default disabled:opacity-25"
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', snapshot.accountKey);
+                      const card = event.currentTarget.closest<HTMLElement>('[data-quota-sortable]');
+                      if (card) {
+                        const rect = card.getBoundingClientRect();
+                        event.dataTransfer.setDragImage(card, event.clientX - rect.left, event.clientY - rect.top);
+                      }
+                      setDraggingKey(snapshot.accountKey);
+                    }}
+                    onDragEnd={stopDragging}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+                      event.preventDefault();
+                      const target = orderedItems[index + (event.key === 'ArrowUp' ? -1 : 1)];
+                      if (target) moveAccount(snapshot.accountKey, target.accountKey);
+                    }}
+                  >
+                    <GripVertical className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                }
+              />
+            </div>
           ))}
         </div>
       )}

@@ -5,7 +5,7 @@ import { KubeApi } from './kubeApi.js';
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { SandboxManager } from './sandboxManager.js';
 import { AcsExecutor } from './executor.js';
-import { Provisioner } from './provision.js';
+import { Provisioner, sandboxResourceOverride } from './provision.js';
 import { provisionBudgets } from './provisionBudgets.js';
 import { OwnershipJournal } from './ownershipJournal.js';
 import { OwnedOperations } from './ownedOperations.js';
@@ -41,9 +41,29 @@ export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logge
     return ensurePool.run({ key: ref.name, fingerprint: digest(input), kind: 'ensure', scope: writableScope(config, ref), work: () => ensure(input, options) });
   };
   const provision = provisioner.provision.bind(provisioner);
-  provisioner.provision = (recipe, options = {}) => {
-    const ref = sandboxManager.ref({ workspaceId: recipe.workspaceId, sessionId: recipe.sessionId!, sandboxScopeId: recipe.sandboxScopeId, mountSubPath: recipe.mountSubPath, sharedReadOnlySubPath: recipe.sharedReadOnlySubPath });
-    return provisionPool.run({ key: ref.name, fingerprint: digest(recipe), kind: 'provision', scope: writableScope(config, ref), signal: options.signal, ownerTimeoutMs: provisionBudgets(recipe).totalMs, work: () => provision(recipe) });
+  provisioner.provision = async (recipe, options = {}) => {
+    const resourceOverride = sandboxResourceOverride(recipe, config);
+    const ensureInput = {
+      workspaceId: recipe.workspaceId,
+      sessionId: recipe.sessionId!,
+      sandboxScopeId: recipe.sandboxScopeId,
+      mountSubPath: recipe.mountSubPath,
+      sharedReadOnlySubPath: recipe.sharedReadOnlySubPath,
+      ...(resourceOverride ? { resources: resourceOverride } : {}),
+      workload: recipe.workload ?? { class: 'unknown' as const },
+    };
+    const ref = sandboxManager.ref(ensureInput);
+    const activeKey = `provision-admission:${ref.name}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
+    const releaseActive = activeRegistry.acquire(ref.name, activeKey);
+    try {
+      // Warmup and formal provision must share the same ensure owner. Starting a
+      // provision owner first would conflict with an in-flight warmup owner.
+      await sandboxManager.ensureRunning(ensureInput, { busySandboxNames: executor.busySandboxNames(), activeKey });
+      options.signal?.throwIfAborted();
+      return await provisionPool.run({ key: ref.name, fingerprint: digest(recipe), kind: 'provision', scope: writableScope(config, ref), signal: options.signal, ownerTimeoutMs: provisionBudgets(recipe).totalMs, work: () => provision(recipe) });
+    } finally {
+      releaseActive();
+    }
   };
   let refreshing = false;
   const refresh = async () => {

@@ -9,7 +9,6 @@ const repair = deploy.slice(
   deploy.indexOf('retire_failed_app_generation() {'),
   deploy.indexOf('\nhand_off_retired_authority() {'),
 );
-const finalization = new URL('./verify-app-retirement.sh', import.meta.url).pathname;
 
 for (const scenario of ['clean', 'children', 'mainpidchanged', 'job', 'unknownTasks', 'normal']) {
   test(`repair retires an already-failed generation only after proving no surviving authority: ${scenario}`, async () => {
@@ -67,76 +66,23 @@ retire_failed_app_generation agent-saas-server@blue "$TEST_ROOT/guard"`,
   });
 }
 
-for (const scenario of [
-  'inactive',
-  'acknowledged',
-  'enabled',
-  'emptyguard',
-  'wrongpid',
-  'failed',
-]) {
-  test(`expand finalization freshly verifies the retired generation: ${scenario}`, async () => {
-    const root = await mkdtemp(join(tmpdir(), 'finalization-retirement-'));
-    try {
-      const manifest = join(root, 'manifest.json');
-      await writeFile(
-        manifest,
-        JSON.stringify({
-          releaseId: 'rc-20260908-01',
-          digest: `sha256:${'a'.repeat(64)}`,
-          components: { api: { action: 'deploy' }, runtimeWorker: { action: 'deploy' } },
-        }),
-      );
-      for (const name of ['active-color', 'runtime-worker-active-color'])
-        await writeFile(join(root, name), 'green');
-      for (const role of ['server', 'runtime-worker']) {
-        await writeFile(join(root, `agent-saas-${role}-blue.pid`), '42');
-        await writeFile(
-          join(root, `agent-saas-${role}-blue.draining`),
-          scenario === 'emptyguard'
-            ? ''
-            : JSON.stringify({
-                pid: scenario === 'wrongpid' ? 43 : 42,
-                runtimeQuiesced: false,
-                activeStreams: 1,
-                activeUploads: 0,
-              }),
-        );
-      }
-      const result = spawnSync(
-        'bash',
-        [
-          '-c',
-          `set -euo pipefail
-systemctl() {
-  case "$*" in
-    'is-enabled --quiet '*) [ "$CASE" = enabled ] ;;
-    *--property=ActiveState*) case "$CASE" in inactive|failed) echo "$CASE" ;; *) echo active ;; esac ;;
-    *--property=MainPID*) [ "$CASE" = inactive ] && echo 0 || echo 42 ;;
-    *) return 1 ;;
-  esac
-}
-source "$PROOF_SCRIPT" "$MANIFEST"`,
-        ],
-        {
-          encoding: 'utf8',
-          env: {
-            ...process.env,
-            CASE: scenario,
-            PROOF_SCRIPT: finalization,
-            MANIFEST: manifest,
-            APP_RETIREMENT_RUN_ROOT: root,
-            APP_RETIREMENT_CONFIG_ROOT: root,
-          },
-        },
-      );
-      assert.equal(
-        result.status === 0,
-        ['inactive', 'acknowledged'].includes(scenario),
-        result.stderr,
-      );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+// Keep the old acknowledgement boundary, but bind it to one captured process generation.
+for (const scenario of ['inactive', 'acknowledged', 'enabled', 'emptyguard', 'wrongpid', 'failed']) {
+  test(`expand finalization freshly verifies the pinned generation: ${scenario}`, async () => {
+    const { captureRetirement, observeRetirement } = await import('./app-retirement-evidence.mjs');
+    const properties = { ActiveState: 'active', MainPID: '42', ExecMainPID: '42', InvocationID: 'a'.repeat(32), UnitFileState: 'disabled', Result: 'success' };
+    const systemd = (_unit, name) => properties[name];
+    const bootId = 'boot-a', startTicks = () => '1234';
+    const target = captureRetirement({ manifest: { releaseId: 'rc-20260908-01', digest: `sha256:${'a'.repeat(64)}` },
+      active: { api: 'green', runtimeWorker: 'green' }, runId: '123', runAttempt: '1', systemd, bootId, startTicks,
+      config: { runtimeEventStore: { backend: 'pg', connectionString: 'postgresql://fixture@localhost/fixture' } }, serverRoot: '/fixture' });
+    if (scenario === 'inactive') { properties.ActiveState = 'inactive'; properties.MainPID = '0'; }
+    if (scenario === 'failed') properties.ActiveState = 'failed';
+    if (scenario === 'enabled') properties.UnitFileState = 'enabled';
+    const readMarker = () => scenario === 'emptyguard' ? null : { pid: scenario === 'wrongpid' ? 43 : 42, runtimeQuiesced: false, activeStreams: 1, activeUploads: 0 };
+    const result = await observeRetirement({ target, systemd, bootId, startTicks, readMarker });
+    assert.equal(result.observation.status === 'acknowledged', ['inactive', 'acknowledged'].includes(scenario));
+    // Acknowledgement is deliberately NOT a fabricated durable-work completion proof.
+    assert.notEqual(result.observation.retirementPhase, 'completed');
   });
 }

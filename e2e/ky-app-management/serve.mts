@@ -15,15 +15,7 @@ const path = (relative: string) => fileURLToPath(new URL(relative, import.meta.u
 const url = process.env.TEST_DATABASE_URL;
 if (!url) throw new Error('必须指定隔离测试库 TEST_DATABASE_URL');
 const fixture = await createManagementPgFixture(url);
-const scope = (await fixture.entitlements.listResourceScopes('t_demo')).find(
-  (item) => item.resourceType === 'integrated_system',
-)!;
-await fixture.entitlements.replaceResourceScope('t_demo', 'integrated_system', {
-  mode: 'all',
-  resourceIds: [],
-  expectedVersion: scope.version,
-  updatedBy: 'fixture',
-});
+// 新组织不创建 integrated_system 范围；验收必须直接经过真实的无白名单安装链路。
 const vite = await createServer({
   configFile: false,
   root: path('.'),

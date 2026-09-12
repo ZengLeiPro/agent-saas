@@ -214,7 +214,7 @@ export interface ModelProviderOptions {
    * Responses wire transport。openai_compatible 保持 API Key / store=true 旧行为；
    * codex_subscription 使用 ChatGPT Codex OAuth、store=false 与全历史 replay。
    */
-  responsesTransport?: "openai_compatible" | "codex_subscription";
+  responsesTransport?: "openai_compatible" | "codex_subscription" | "grok_subscription";
   /** response.model 字段的实际别名值（用于 actualModelSeen 校验）。 */
   aliasActual?: string;
   /** 模型是否在响应里公开 reasoning summary（隐藏派=false，公开派=true）。 */

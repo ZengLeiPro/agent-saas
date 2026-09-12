@@ -31,12 +31,26 @@ export function validateProductionOperation(inputs, { eventName, ref }) {
   const digest = text(inputs.expected_plan_digest, 'expected_plan_digest');
   const confirmed = boolean(inputs.confirm_recovery_only);
   assert(
-    ['promote', 'web-recovery-audit', 'web-recovery-repair'].includes(operation),
+    ['auto', 'promote', 'checkpoint-repair', 'web-recovery-audit', 'web-recovery-repair'].includes(operation),
     'Unknown production operation',
   );
   assert(text(inputs.reason, 'reason').trim(), 'An operation reason is required');
   assert(['normal', 'repair'].includes(recoveryMode), 'Invalid RC recovery_mode');
-  if (operation === 'promote') {
+  const automationId = text(inputs.automation_id, 'automation_id');
+  const automationKey = text(inputs.automation_key, 'automation_key');
+  if (automationId || automationKey) {
+    assert(/^[1-9][0-9]*$/u.test(automationId), 'Invalid automatic reservation');
+    assert(/^auto:[1-9][0-9]*:(recover|publish|recover-checkpoint-[1-9][0-9]*|verify-[1-9][0-9]*)$/u.test(automationKey));
+    assert(['promote', 'checkpoint-repair'].includes(operation));
+    assert.equal(recoveryMode, 'normal');
+  }
+  if (operation === 'auto') {
+    assert(!releaseId && !digest && !confirmed && !automationId && !automationKey,
+      'Automatic release does not accept manual version or recovery overrides');
+    assert.equal(recoveryMode, 'normal');
+    return { operation, recoveryMode: '' };
+  }
+  if (operation === 'promote' || operation === 'checkpoint-repair') {
     assert(/^rc-[0-9]{8}-[0-9]{2,}$/u.test(releaseId), 'promote requires a valid release_id');
     assert(!digest && !confirmed, 'Cold-standby confirmation cannot be used for RC promotion');
     return { operation, recoveryMode: '' };

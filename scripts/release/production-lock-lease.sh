@@ -49,6 +49,20 @@ case "$mode" in
       echo 'Another production promotion is active' >&2
       exit 1
     }
+    # Compatibility Web writes must not bypass an unresolved RC Web transaction.
+    # Fixed host path; read/parse failures are not absence. No caller-supplied bypass.
+    node --input-type=module <<'NODE'
+import { lstatSync, readFileSync } from 'node:fs';
+const path = '/var/lib/agent-saas-release-recovery/web/active.json';
+try {
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) throw new Error('invalid journal');
+  const value = JSON.parse(readFileSync(path, 'utf8'));
+  if (value.schemaVersion !== 1 || !['committed','rolled_back'].includes(value.state)) throw new Error('unresolved journal');
+} catch (error) {
+  if (error.code !== 'ENOENT') { console.error('An unresolved or unreadable RC Web journal blocks compatibility writes'); process.exit(1); }
+}
+NODE
     rm -rf "$state_root"
     mkdir -m 0700 "$state_root"
     cleanup() {

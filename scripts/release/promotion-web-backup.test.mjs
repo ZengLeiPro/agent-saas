@@ -1,81 +1,44 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { snapshotShell } from './web-shell-transaction.mjs';
 
-const workflow = readFileSync(
-  new URL('../../.github/workflows/promote-release.yml', import.meta.url),
-  'utf8',
-);
-const backup = workflow.slice(
-  workflow.indexOf('          # stat 还会读取对象 ACL'),
-  workflow.indexOf('          restore_web_entry()'),
-);
+const identity = { releaseId: 'rc-20260911-01', manifestDigest: 'sha256:' + 'a'.repeat(64), runId: '1', runAttempt: '1' };
+const notFound = () => Object.assign(new Error('absent'), { status: 404, code: 'NoSuchKey' });
 
-function run(mode) {
-  const root = mkdtempSync(join(tmpdir(), 'promotion-web-backup-'));
-  const result = spawnSync(
-    'bash',
-    [
-      '-c',
-      `set -euo pipefail
-mkdir -p "$RUNNER_TEMP/web-before"
-run_with_web_lock() {
-  case "$4" in
-    stat) echo 'AccessDenied: no read acl permission' >&2; return 1 ;;
-    ls)
-      if [ "$MODE" = list_error ]; then echo 'ListObjects AccessDenied' >&2; return 1; fi
-      # 相同前缀的对象不能被当作当前对象存在。
-      printf 'date size %s.backup\\n' "$5"
-      if [ "$MODE" != missing ]; then printf 'date size %s\\n' "$5"; fi
-      ;;
-    cp)
-      if [ "$MODE" = read_error ]; then echo 'GetObject AccessDenied' >&2; return 1; fi
-      printf 'old entry' > "$6"
-      ;;
-    *) echo 'unexpected OSS command' >&2; return 1 ;;
-  esac
-}
-${backup}
-printf 'identity=%s\\n' "$had_identity"
-`,
-    ],
-    {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        MODE: mode,
-        RUNNER_TEMP: root,
-        PRODUCTION_WEB_OSS_URI: 'oss://agent-saas-web',
-        RELEASE_RECORD_OSS_REGION: 'cn-shenzhen',
-      },
-    },
-  );
-  return { result, root };
-}
-
-test('真实 Web 备份步骤不需要对象 ACL 权限', () => {
-  const { result, root } = run('present');
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /identity=true/u);
-  assert.equal(readFileSync(join(root, 'web-before/index.html'), 'utf8'), 'old entry');
-  assert.equal(readFileSync(join(root, 'web-before/release-identity.json'), 'utf8'), 'old entry');
+test('shell backup uses exact Head/GetObject rather than ACL or prefix listing', async (t) => {
+  const backup = await mkdtemp(join(tmpdir(), 'web-backup-'));
+  t.after(() => rm(backup, { recursive: true, force: true }));
+  const calls = [];
+  const client = {
+    head: async (key) => { calls.push(key); if (key !== 'index.html') throw notFound(); return { status: 200, res: { headers: { etag: 'old', 'content-type': 'text/html' } } }; },
+    get: async (key, sink) => { assert.equal(key, 'index.html'); sink.end('old index'); return { res: { status: 200, headers: { etag: 'old', 'content-type': 'text/html' } } }; },
+  };
+  const result = await snapshotShell({ client, backup, identity, keys: ['index.html', 'release-identity.json'] });
+  assert.deepEqual(calls, ['index.html', 'release-identity.json']);
+  assert.equal(result.entries[1].existed, false);
+  assert.equal(await readFile(join(backup, result.entries[0].file), 'utf8'), 'old index');
 });
 
-test('可选身份对象缺失时不误认同前缀对象', () => {
-  const { result, root } = run('missing');
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /identity=false/u);
-  assert.equal(existsSync(join(root, 'web-before/release-identity.json')), false);
+for (const operation of ['head', 'get']) test(`shell backup propagates ${operation} AccessDenied and never arms rollback`, async (t) => {
+  const backup = await mkdtemp(join(tmpdir(), 'web-denied-'));
+  t.after(() => rm(backup, { recursive: true, force: true }));
+  const client = {
+    head: async () => ({ status: 200, res: { headers: { etag: 'old' } } }),
+    get: async () => ({ res: { status: 200, headers: { etag: 'old' } } }),
+    [operation]: async () => { throw Object.assign(new Error('AccessDenied'), { status: 403 }); },
+  };
+  await assert.rejects(snapshotShell({ client, backup, identity, keys: ['index.html'] }), /AccessDenied/);
+  await assert.rejects(readFile(join(backup, 'snapshot.json')), { code: 'ENOENT' });
 });
 
-for (const mode of ['list_error', 'read_error']) {
-  test(`Web 备份 ${mode} 必须阻断并保留真实错误`, () => {
-    const { result } = run(mode);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /AccessDenied/u);
-    assert.doesNotMatch(result.stdout, /identity=/u);
-  });
-}
+test('production snapshots the whole shell before enabling rollback or writing hash/entry objects', async () => {
+  const workflow = await readFile(new URL('../../.github/workflows/promote-release.yml', import.meta.url), 'utf8');
+  const snapshot = workflow.indexOf('web-shell-transaction.mjs snapshot');
+  const armed = workflow.indexOf('web_backup_ready=true', snapshot);
+  assert.ok(snapshot > 0 && armed > snapshot);
+  assert.ok(workflow.indexOf('web-shell-transaction.mjs restore', snapshot) > snapshot);
+  assert.ok(workflow.indexOf('run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-shell/"', armed) > armed);
+});

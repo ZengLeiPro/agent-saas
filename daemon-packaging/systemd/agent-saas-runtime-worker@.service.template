@@ -33,7 +33,7 @@ Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-runtime-worker-%i.co
 Environment=AGENT_SAAS_RUNTIME_PERF_ENABLED=true
 Environment=AGENT_SAAS_RUNTIME_PERF_INTERVAL_MS=30000
 ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining
-ExecStartPre=/usr/bin/rm -f /run/agent-saas-runtime-worker-%i.ready /run/agent-saas-runtime-worker-%i.config-identity.json
+ExecStartPre=/usr/bin/rm -f /run/agent-saas-runtime-worker-%i.ready /run/agent-saas-runtime-worker-%i.config-identity.json /run/agent-saas-runtime-worker-%i.ready.status.json
 ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs --manifest=runtime-dependencies.json --component=runtimeWorker --production=true
 ExecStart=/usr/bin/node --enable-source-maps dist/index.js
 Restart=on-failure

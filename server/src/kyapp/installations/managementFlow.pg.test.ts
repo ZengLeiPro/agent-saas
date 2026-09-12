@@ -30,15 +30,6 @@ const url = process.env.TEST_DATABASE_URL;
       { expectedVersion: definition.version },
     );
     expect(published.status, JSON.stringify(await published.json())).toBe(200);
-    const scope = (await rig.entitlements.listResourceScopes(TEST_TENANT)).find(
-      (item) => item.resourceType === 'integrated_system',
-    )!;
-    await rig.entitlements.replaceResourceScope(TEST_TENANT, 'integrated_system', {
-      mode: 'selected',
-      resourceIds: [TEST_SYSTEM],
-      expectedVersion: scope.version,
-      updatedBy: 'fixture',
-    });
     const iid = 'e2e-business-system-tenant-a';
     const installationInput = {
       installationId: iid,

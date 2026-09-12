@@ -26,6 +26,7 @@ permissions:
 
 env:
   NODE_VERSION: '22.23.1'
+  AUTOMATIC_CHILD_EVIDENCE_PATH: ${{ runner.temp }}/automatic-child-authorization.jsonl
   ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
   ACR_REPO_ID: crr-csx99pbexlsw5qqv
   ACR_REGION_ID: cn-shenzhen
@@ -1515,6 +1516,7 @@ jobs:
             ${{ runner.temp }}/authoritative-evidence.json
             ${{ runner.temp }}/staging-before.json
             ${{ runner.temp }}/staging-final.json
+            ${{ runner.temp }}/automatic-child-authorization.jsonl
 
       - name: 完成 GitHub 测试环境部署记录
         if: always() && env.STAGING_DEPLOYMENT_ID != ''

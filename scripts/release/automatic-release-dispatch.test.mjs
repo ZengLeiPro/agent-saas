@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AutomaticLedger } from './automatic-release-ledger.mjs';
 import { AutomaticGitHub, ghCommand } from './automatic-release-github.mjs';
-import { runChild } from './automatic-release-dispatch.mjs';
+import { assertParentLive, runChild } from './automatic-release-dispatch.mjs';
 import { context, repository, sha } from './fixtures/automatic-release-fixture.mjs';
 
 function fixture(mode = '') {
@@ -11,6 +11,7 @@ function fixture(mode = '') {
   const records = [];
   if (mode === 'existing' || mode === 'existing-unknown') records.push(c.stepRecord);
   let dispatched = mode === 'existing';
+  let childReads = 0;
   let tick = Date.now();
   const child = { ...c.run, status: 'completed', conclusion: 'success' };
   const client = {
@@ -44,7 +45,16 @@ function fixture(mode = '') {
         return { workflow_run_id: 701 };
       }
       if (path === 'actions/runs/701')
-        return mode === 'wrong-engine'
+        return mode === 'queued-metadata'
+          ? childReads++ === 0
+            ? {
+                ...child,
+                status: 'queued',
+                conclusion: null,
+                display_title: '生产环境发布 · promote',
+              }
+            : child
+          : mode === 'wrong-engine'
           ? { ...child, head_sha: sha(14) }
           : mode === 'failed'
             ? { ...child, conclusion: 'failure' }
@@ -71,7 +81,7 @@ function fixture(mode = '') {
     });
   return { c, records, client, requests, ledger, execute };
 }
-for (const mode of ['', 'lost-ack', 'empty-ack', 'existing']) {
+for (const mode of ['', 'lost-ack', 'empty-ack', 'existing', 'queued-metadata']) {
   test(`bounded dispatch completes without duplicate POST: ${mode || 'normal'}`, async () => {
     const f = fixture(mode);
     const result = await f.execute();
@@ -87,6 +97,35 @@ for (const mode of ['', 'lost-ack', 'empty-ack', 'existing']) {
       );
   });
 }
+test('parent liveness requires two exact-attempt reads and reconciles one stale terminal response', async () => {
+  const c = context();
+  const sequence = [
+    { ...c.parentRun, status: 'completed', conclusion: 'failure' },
+    c.parentRun,
+    c.parentRun,
+  ];
+  const client = {
+    repository,
+    api: async () => sequence.shift() ?? c.parentRun,
+  };
+  const run = await assertParentLive(client, c.requestRecord.payload, 1, { pause: async () => {} });
+  assert.equal(run.status, 'in_progress');
+  assert.equal(sequence.length, 0);
+});
+for (const [name, mutation] of Object.entries({
+  completed: (run) => ({ ...run, status: 'completed', conclusion: 'success' }),
+  cancelled: (run) => ({ ...run, status: 'completed', conclusion: 'cancelled' }),
+  failed: (run) => ({ ...run, status: 'completed', conclusion: 'failure' }),
+  'new attempt': (run) => ({ ...run, run_attempt: 2 }),
+}))
+  test(`a truly ${name} parent cannot authorize a new child mutation`, async () => {
+    const c = context();
+    const client = { repository, api: async () => mutation(c.parentRun) };
+    await assert.rejects(
+      () => assertParentLive(client, c.requestRecord.payload, 1, { pause: async () => {} }),
+      name === 'new attempt' ? { code: 'parent_attempt_changed' } : { code: 'parent_not_live' },
+    );
+  });
 for (const mode of [
   'unknown',
   'existing-unknown',

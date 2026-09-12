@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readEvidenceJson } from './evidence-file.mjs';
 import { AutomaticGitHub } from './automatic-release-github.mjs';
+import { assertParentLive } from './automatic-release-dispatch.mjs';
 import {
   assertRequest,
   assertRun,
@@ -15,7 +16,7 @@ import {
 /** Read-only authentication before a child receives credentials, and again before mutation. */
 export async function authenticateChild(
   client,
-  { inputs, runId, runAttempt, workflow, live = true },
+  { inputs, runId, runAttempt, workflow, live = true, pause },
 ) {
   const id = inputs?.automation_id ?? '';
   const key = inputs?.automation_key ?? '';
@@ -59,39 +60,74 @@ export async function authenticateChild(
   assert(Date.parse(stepRecord.created_at) <= Date.parse(run.created_at) + 1000);
   assert(Date.parse(requestRecord.created_at) <= Date.parse(stepRecord.created_at) + 1000);
   if (live) {
-    requireAutomatic(
-      parentRun.status === 'in_progress' &&
-        String(parentRun.run_attempt) === String(step.parentRunAttempt),
-      'parent_not_live',
-      '父发布请求已停止或换代，子任务不得开始新的变更。',
-    );
+    await assertParentLive(client, request, step.parentRunAttempt, { pause });
     assert.equal(run.status, 'in_progress');
   }
   return { requestRecord, stepRecord, parentRun, run };
 }
 
 export async function childMain(env = process.env) {
-  const event = await readEvidenceJson(env.GITHUB_EVENT_PATH, 1048576);
-  const inputs = event.inputs ?? {};
-  const workflow = process.argv[2];
-  assert(['promote-release.yml', 'deploy-staging.yml'].includes(workflow));
-  assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch');
-  assert.equal(env.GITHUB_REF, 'refs/heads/main');
-  const delegated = !!(inputs.automation_id || inputs.automation_key);
+  let workflow;
+  let inputs = {};
   let context;
-  if (delegated) {
-    context = await authenticateChild(new AutomaticGitHub(env.GITHUB_REPOSITORY), {
-      inputs,
+  try {
+    const event = await readEvidenceJson(env.GITHUB_EVENT_PATH, 1048576);
+    inputs = event.inputs ?? {};
+    workflow = process.argv[2];
+    assert(['promote-release.yml', 'deploy-staging.yml'].includes(workflow));
+    assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch');
+    assert.equal(env.GITHUB_REF, 'refs/heads/main');
+    const delegated = !!(inputs.automation_id || inputs.automation_key);
+    if (delegated) {
+      context = await authenticateChild(new AutomaticGitHub(env.GITHUB_REPOSITORY), {
+        inputs,
+        workflow,
+        runId: env.GITHUB_RUN_ID,
+        runAttempt: env.GITHUB_RUN_ATTEMPT,
+      });
+    }
+    const source = context?.stepRecord.payload.sourceSha ?? env.GITHUB_SHA;
+    assert(/^[a-f0-9]{40}$/u.test(source));
+    if (process.argv[3]) await writeFile(process.argv[3], JSON.stringify(context ?? null) + '\n');
+    if (env.GITHUB_OUTPUT)
+      await appendFile(env.GITHUB_OUTPUT, `source_sha=${source}\nautomatic=${delegated}\n`);
+    await writeChildEvidence(env, {
+      status: 'accepted',
       workflow,
-      runId: env.GITHUB_RUN_ID,
-      runAttempt: env.GITHUB_RUN_ATTEMPT,
+      delegated,
+      sourceSha: source,
+      parentRunId: context?.stepRecord.payload.parentRunId ?? null,
+      parentRunAttempt: context?.stepRecord.payload.parentRunAttempt ?? null,
+      reservationId: context ? String(context.stepRecord.id) : null,
+      automationKey: context?.stepRecord.payload.key ?? null,
     });
+  } catch (error) {
+    await writeChildEvidence(env, {
+      status: 'rejected',
+      workflow: workflow ?? process.argv[2] ?? null,
+      delegated: !!(inputs.automation_id || inputs.automation_key),
+      reservationId: inputs.automation_id || null,
+      automationKey: inputs.automation_key || null,
+      rejection: error.code ?? 'validation_failed',
+    });
+    throw error;
   }
-  const source = context?.stepRecord.payload.sourceSha ?? env.GITHUB_SHA;
-  assert(/^[a-f0-9]{40}$/u.test(source));
-  if (process.argv[3]) await writeFile(process.argv[3], JSON.stringify(context ?? null) + '\n');
-  if (env.GITHUB_OUTPUT)
-    await appendFile(env.GITHUB_OUTPUT, `source_sha=${source}\nautomatic=${delegated}\n`);
+}
+
+async function writeChildEvidence(env, value) {
+  if (!env.AUTOMATIC_CHILD_EVIDENCE_PATH) return;
+  const evidence = {
+    schemaVersion: 1,
+    runId: env.GITHUB_RUN_ID ?? null,
+    runAttempt: env.GITHUB_RUN_ATTEMPT ?? null,
+    recordedAt: new Date().toISOString(),
+    ...value,
+  };
+  try {
+    await appendFile(env.AUTOMATIC_CHILD_EVIDENCE_PATH, JSON.stringify(evidence) + '\n');
+  } catch {
+    // Authorisation remains fail-closed; a diagnostic write failure never creates authority.
+  }
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {

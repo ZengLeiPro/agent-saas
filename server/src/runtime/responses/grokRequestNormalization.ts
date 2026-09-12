@@ -1,5 +1,11 @@
 import { GrokProtocolError, isRecord } from './grokProtocol.js';
 import type { GrokCatalogModel } from './grokModelCatalog.js';
+const DOCUMENTED_REASONING_EFFORTS: Readonly<Record<string, readonly string[]>> = {
+  'grok-4.6': ['low', 'medium', 'high', 'xhigh'],
+  'grok-4.5': ['low', 'medium', 'high'],
+  'grok-4.5-latest': ['low', 'medium', 'high'],
+  'grok-build-latest': ['low', 'medium', 'high'],
+};
 /** Full-history replay retains executed function results; only provider-owned anchors are removed. */
 export function normalizeGrokRequest(
   raw: Record<string, unknown>,
@@ -26,8 +32,17 @@ export function normalizeGrokRequest(
   }
   if (isRecord(body.reasoning)) {
     if (body.reasoning.effort !== undefined) {
-      if (model?.supportsReasoningEffort !== true)
+      const documented = DOCUMENTED_REASONING_EFFORTS[raw.model];
+      if (
+        model?.supportsReasoningEffort === false ||
+        (!documented && model?.supportsReasoningEffort !== true)
+      )
         throw new GrokProtocolError('reasoning_effort_capability_unverified');
+      if (
+        typeof body.reasoning.effort !== 'string' ||
+        !(documented ?? ['low', 'medium', 'high', 'xhigh']).includes(body.reasoning.effort)
+      )
+        throw new GrokProtocolError('reasoning_effort_unsupported_for_model');
       body.reasoning = { effort: body.reasoning.effort };
     } else delete body.reasoning;
   }

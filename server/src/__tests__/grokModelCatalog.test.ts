@@ -3,6 +3,7 @@ import {
   GrokModelCatalogService,
   parseGrokCatalog,
 } from '../runtime/responses/grokModelCatalog.js';
+import { isProxyRequiredEgressRequest } from '../runtime/egressRequestPolicy.js';
 import { grokFixture, jsonResponse } from './grokTestFixtures.js';
 describe('Grok subscription directory qualification', () => {
   it('unions individual account catalogs with eligibility and preserves source metadata', async () => {
@@ -39,6 +40,11 @@ describe('Grok subscription directory qualification', () => {
       fetcher.mock.calls.every(
         (c) =>
           String((c as unknown as [string])[0]) === 'https://cli-chat-proxy.grok.com/v1/models',
+      ),
+    ).toBe(true);
+    expect(
+      fetcher.mock.calls.every((call) =>
+        isProxyRequiredEgressRequest((call as unknown as [unknown, RequestInit])[1]),
       ),
     ).toBe(true);
   });

@@ -7,6 +7,7 @@ import {
   installStagingGlobalEgressFetch,
   type EgressConfigSource,
 } from '../runtime/egressDispatcher.js';
+import { proxyRequiredSingleAttemptEgressFetch } from '../runtime/egressRequestPolicy.js';
 import { DEFAULT_EGRESS_CONFIG, type EgressConfig } from '../runtime/egressPolicy.js';
 
 function makeSource(initial: Partial<EgressConfig['server']> = {}) {
@@ -150,6 +151,21 @@ describe('createEgressFetch', () => {
     expect((baseFetch.mock.calls[0] as any[])[1]).toBeUndefined();
   });
 
+  it('代理必选请求在域名未配置时拒绝直连', async () => {
+    const { egressFetch, baseFetch, proxyFetch } = harness({
+      enabled: true,
+      proxyUrl: 'http://127.0.0.1:7890',
+      matchDomains: ['openai.com'],
+    });
+    const grokFetch = proxyRequiredSingleAttemptEgressFetch(egressFetch);
+
+    await expect(grokFetch('https://cli-chat-proxy.grok.com/v1/responses')).rejects.toThrow(
+      /Proxy-required/u,
+    );
+    expect(baseFetch).not.toHaveBeenCalled();
+    expect(proxyFetch).not.toHaveBeenCalled();
+  });
+
   it('走代理时必须用 undici 自带 fetch，不能用全局 fetch', async () => {
     // 回归防线：Node 内置 undici 与外部 undici 包是两个实例，把外部 ProxyAgent
     // 交给全局 fetch 会以 "invalid onRequestStart method" 在几毫秒内失败。
@@ -227,6 +243,24 @@ describe('createEgressFetch', () => {
     expect(baseFetch).toHaveBeenCalledTimes(1);
     expect((baseFetch.mock.calls[0] as any[])[1]).toBeUndefined();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('降级直连'));
+  });
+
+  it('代理必选请求在代理故障时也禁止 fail-open 直连', async () => {
+    const { egressFetch, baseFetch, proxyFetch } = harness({
+      enabled: true,
+      proxyUrl: 'http://127.0.0.1:7890',
+      matchDomains: ['grok.com'],
+      failOpen: true,
+    });
+    proxyFetch.mockRejectedValueOnce(new Error('fetch failed'));
+
+    await expect(
+      proxyRequiredSingleAttemptEgressFetch(egressFetch)(
+        'https://cli-chat-proxy.grok.com/v1/responses',
+      ),
+    ).rejects.toThrow('fetch failed');
+    expect(proxyFetch).toHaveBeenCalledOnce();
+    expect(baseFetch).not.toHaveBeenCalled();
   });
 
   it('fail-closed：不降级，错误如实抛出', async () => {

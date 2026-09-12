@@ -5,6 +5,7 @@ import {
   type GrokQuotaCredentialSource,
 } from '../quota/grokSubscriptionQuota.js';
 import { GROK_BILLING_ENDPOINT, GROK_OAUTH_ISSUER } from '../runtime/responses/grokProtocol.js';
+import { isProxyRequiredEgressRequest } from '../runtime/egressRequestPolicy.js';
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 describe('Grok billing v1 contract (T34)', () => {
@@ -110,6 +111,7 @@ describe('Grok billing v1 contract (T34)', () => {
     expect((await fetchGrokBilling(manager, 'a', fetcher)).windows[0].usedPercent).toBe(20);
     expect(getCredentialsForCredential).toHaveBeenNthCalledWith(2, 'a', true, 1);
     expect(fetcher.mock.calls.every(([url]) => url === GROK_BILLING_ENDPOINT)).toBe(true);
+    expect(fetcher.mock.calls.every(([, init]) => isProxyRequiredEgressRequest(init))).toBe(true);
     expect(fetcher.mock.calls[1][1].headers.Authorization).toBe('Bearer fixture-new');
   });
 });

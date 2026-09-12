@@ -1,4 +1,7 @@
-import { isSingleAttemptEgressRequest } from './egressRequestPolicy.js';
+import {
+  isProxyRequiredEgressRequest,
+  isSingleAttemptEgressRequest,
+} from './egressRequestPolicy.js';
 /**
  * server(brain) 进程的出站代理 dispatcher（2026-07-25）。
  *
@@ -257,7 +260,11 @@ function createResolvedEgressFetch(
       }
       return baseFetch(input, init);
     }
-    if (!dispatcher) return baseFetch(input, init);
+    if (!dispatcher) {
+      if (isProxyRequiredEgressRequest(init))
+        throw new Error('Proxy-required egress request has no configured dispatcher.');
+      return baseFetch(input, init);
+    }
 
     const target = typeof input === 'string' ? input : String(input);
     try {

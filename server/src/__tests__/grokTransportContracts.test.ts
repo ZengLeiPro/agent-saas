@@ -4,6 +4,7 @@ import { GrokModelCatalogService } from '../runtime/responses/grokModelCatalog.j
 import { GROK_RESPONSES_ENDPOINT } from '../runtime/responses/grokProtocol.js';
 import { normalizeGrokRequest } from '../runtime/responses/grokRequestNormalization.js';
 import { createModelAdapterForProtocol } from '../runtime/modelAdapterFactory.js';
+import { isProxyRequiredEgressRequest } from '../runtime/egressRequestPolicy.js';
 import { grokFixture, jsonResponse } from './grokTestFixtures.js';
 const context = {
   runId: 'grok-run',
@@ -32,6 +33,11 @@ describe('Grok ordered subscription transport T01-T07, T25, T27-T28, T33', () =>
     await transport.execute(request);
     await transport.execute(request);
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(
+      fetcher.mock.calls.every((call) =>
+        isProxyRequiredEgressRequest((call as unknown as [unknown, RequestInit])[1]),
+      ),
+    ).toBe(true);
     expect(
       fetcher.mock.calls.every(
         (c) =>
@@ -271,5 +277,50 @@ describe('Grok ordered subscription transport T01-T07, T25, T27-T28, T33', () =>
     expect(() =>
       normalizeGrokRequest({ model: 'test', input: [], reasoning: { effort: 'high' } }, true),
     ).toThrow('reasoning_effort_capability_unverified');
+  });
+
+  it('sends documented Grok reasoning effort even when the subscription catalog omits capability metadata', () => {
+    const normalized = normalizeGrokRequest(
+      { model: 'grok-4.6', input: [], reasoning: { effort: 'xhigh', summary: 'auto' } },
+      true,
+      { id: 'grok-4.6', source: 'subscription_catalog' },
+    );
+    expect(normalized.reasoning).toEqual({ effort: 'xhigh' });
+    expect(() =>
+      normalizeGrokRequest({ model: 'grok-4.5', input: [], reasoning: { effort: 'xhigh' } }, true, {
+        id: 'grok-4.5',
+        source: 'subscription_catalog',
+      }),
+    ).toThrow('reasoning_effort_unsupported_for_model');
+    expect(() =>
+      normalizeGrokRequest({ model: 'grok-4.6', input: [], reasoning: { effort: 'high' } }, true, {
+        id: 'grok-4.6',
+        source: 'subscription_catalog',
+        supportsReasoningEffort: false,
+      }),
+    ).toThrow('reasoning_effort_capability_unverified');
+  });
+
+  it('carries documented reasoning effort through the real subscription transport body', async () => {
+    const f = await grokFixture(1);
+    const catalog = new GrokModelCatalogService(f.manager, vi.fn());
+    vi.spyOn(catalog, 'forAccount').mockResolvedValue({
+      credentialRef: f.refs[0],
+      status: 'fresh',
+      models: [{ id: 'grok-4.6', source: 'subscription_catalog' }],
+      collectedAt: new Date().toISOString(),
+    });
+    const fetcher = vi.fn().mockResolvedValue(new Response('ok'));
+
+    await new GrokSubscriptionResponsesTransport(f.manager, fetcher, catalog).execute({
+      ...request,
+      serializedBody: JSON.stringify({
+        model: 'grok-4.6',
+        input: [{ role: 'user', content: 'hello' }],
+        reasoning: { effort: 'high', summary: 'auto' },
+      }),
+    });
+
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).reasoning).toEqual({ effort: 'high' });
   });
 });

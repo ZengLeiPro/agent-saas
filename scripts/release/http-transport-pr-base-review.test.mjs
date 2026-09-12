@@ -52,6 +52,11 @@ const subagentReviewedPaths = [
   'server/src/runtime/runStoreTypes.ts',
 ];
 const subagentEvidence = 'docs/release/子Agent能力增强迁移审核-20260912.md';
+const grokEgressReviewPaths = [
+  'server/src/data/egressConfig.ts',
+  'server/src/runtime/egressDispatcher.ts',
+];
+const grokEgressEvidence = 'docs/release/Grok出站与推理强度无结构变更审核-20260912.md';
 const auditedPaths = [
   ...new Set([
     transport,
@@ -61,6 +66,7 @@ const auditedPaths = [
     ...grokNeutralPaths,
     ...grokExpandPaths,
     ...subagentReviewedPaths,
+    ...grokEgressReviewPaths,
   ]),
 ];
 const evidencePaths = [
@@ -69,6 +75,7 @@ const evidencePaths = [
   scopeEvidence,
   ...grokEvidencePaths,
   subagentEvidence,
+  grokEgressEvidence,
 ];
 const expandPaths = [providerStore, ...grokExpandPaths, 'server/src/runtime/runStoreSchema.ts'];
 const git = (...args) =>
@@ -170,6 +177,7 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
         ...grokNeutralPaths,
         ...grokExpandPaths,
         ...subagentReviewedPaths,
+        ...grokEgressReviewPaths,
       ]),
     ].sort(),
   );
@@ -192,6 +200,7 @@ test('PR642 baseline retains scope retirement plus the independently reviewed Gr
       ...grokNeutralPaths,
       ...grokExpandPaths,
       ...subagentReviewedPaths,
+      ...grokEgressReviewPaths,
     ]),
   ];
   const loaded = loadMigrationReviews({

@@ -163,6 +163,12 @@ async function runAfterScopeExit(
   const env = {
     ...process.env,
     ...value.environment,
+    PHASE: 'acs',
+    release_id: 'rc-20260912-131',
+    manifest_digest: `sha256:${'a'.repeat(64)}`,
+    GITHUB_RUN_ID: '34696842640',
+    GITHUB_RUN_ATTEMPT: '1',
+    PRECHANGE_RECOVERY_RECEIPT_PATH: join(value.root, 'prechange-acs.recovered'),
     ROLLBACK_RUNTIME_VERIFY: 'false',
     ROLLBACK_FAIL_MATCH: failure,
   };
@@ -200,6 +206,18 @@ test('ACS pre-cutover rejection survives scope exit without restarting healthy p
   assert.equal(value.result.status, 75, value.result.stderr);
   assert.doesNotMatch(value.log, /systemctl|cp |ln /u);
   assert.ok(value.log.includes(backupRemoval(value)));
+  assert.deepEqual(
+    JSON.parse(await readFile(join(value.root, 'prechange-acs.recovered'), 'utf8')),
+    {
+      schemaVersion: 1,
+      component: 'acs',
+      state: 'prechange_recovered',
+      releaseId: 'rc-20260912-131',
+      manifestDigest: `sha256:${'a'.repeat(64)}`,
+      runId: '34696842640',
+      runAttempt: '1',
+    },
+  );
 });
 
 test('ACS post-mutation failure restores every snapshot boundary after scope exit', async (t) => {
@@ -229,10 +247,16 @@ test('ACS drain cancellation failure retains evidence even before component muta
   const value = await runAfterScopeExit(t, { cancelFailure: true });
   assert.equal(value.result.status, 70, value.result.stderr);
   assert.equal(value.log.includes(backupRemoval(value)), false);
+  await assert.rejects(readFile(join(value.root, 'prechange-acs.recovered'), 'utf8'), {
+    code: 'ENOENT',
+  });
 });
 
 test('ACS committed state prevents rollback even after deployment locals disappear', async (t) => {
   const value = await runAfterScopeExit(t, { mutated: true, committed: true });
   assert.equal(value.result.status, 20, value.result.stderr);
   assert.doesNotMatch(value.log, /systemctl|cp |ln /u);
+  await assert.rejects(readFile(join(value.root, 'prechange-acs.recovered'), 'utf8'), {
+    code: 'ENOENT',
+  });
 });

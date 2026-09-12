@@ -43,6 +43,25 @@ test('unknown external effects cannot be reported as no change just because iden
   assert.equal(result.outcome, 'needs_human');
 });
 
+test('a typed ACS recovery receipt closes only the exact pre-change drain side effect', () => {
+  const result = reconcilePromotion({
+    ...base,
+    observed: before,
+    externalSideEffects: 'unknown',
+    prechangeRecoveryReceipts: { acs: { recovered: true } },
+  });
+  assert.equal(result.outcome, 'failed_before_change');
+  assert.equal(
+    reconcilePromotion({
+      ...base,
+      observed: { ...before, acs: target.acs },
+      externalSideEffects: 'unknown',
+      prechangeRecoveryReceipts: { acs: { recovered: true } },
+    }).outcome,
+    'needs_human',
+  );
+});
+
 test('missing identity fields never count as convergence, including three identical incomplete matrices', () => {
   const incomplete = { web: {}, api: {}, runtimeWorker: {}, acs: {} };
   assert.equal(componentIdentityMatrix(incomplete), null);

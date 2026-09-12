@@ -68,6 +68,11 @@ record_rollback_success() {
   [ -z "$path" ] || write_rollback_receipt "$path" succeeded
 }
 
+record_prechange_recovery() {
+  local path="${PRECHANGE_RECOVERY_RECEIPT_PATH:-}"
+  [ -z "$path" ] || write_rollback_receipt "$path" prechange_recovered
+}
+
 
 rollback_app_release() {
   # 这里只恢复旧 generation 的磁盘状态。服务、nginx 与 authority 必须由
@@ -218,6 +223,9 @@ cleanup_acs_failure() {
   fi
   if declare -F cancel_acs_deployment_drain >/dev/null; then
     cancel_acs_deployment_drain || rollback_status=70
+  fi
+  if [ "$rollback_status" -eq 0 ] && [ "${acs_mutation_started:-false}" = false ]; then
+    record_prechange_recovery || rollback_status=70
   fi
   set +e
   if [ "$acs_committed" = false ] && [ "${acs_mutation_started:-false}" = true ]; then
@@ -424,8 +432,10 @@ DEPLOY_APP_ROLLBACK_WORKER_CANDIDATE_ADMITTED=false
 DEPLOY_APP_ROLLBACK_CONFIG_IDENTITY=
 ROLLBACK_ATTEMPTED_RECEIPT_PATH="${ROLLBACK_ATTEMPTED_RECEIPT_PATH:-${ROLLBACK_RECEIPT_PATH:-}}"
 ROLLBACK_SUCCEEDED_RECEIPT_PATH="${ROLLBACK_SUCCEEDED_RECEIPT_PATH:-}"
+PRECHANGE_RECOVERY_RECEIPT_PATH="${PRECHANGE_RECOVERY_RECEIPT_PATH:-}"
 [ -z "$ROLLBACK_ATTEMPTED_RECEIPT_PATH" ] || rm -f "$ROLLBACK_ATTEMPTED_RECEIPT_PATH"
 [ -z "$ROLLBACK_SUCCEEDED_RECEIPT_PATH" ] || rm -f "$ROLLBACK_SUCCEEDED_RECEIPT_PATH"
+[ -z "$PRECHANGE_RECOVERY_RECEIPT_PATH" ] || rm -f "$PRECHANGE_RECOVERY_RECEIPT_PATH"
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
 release_sha="$(node -p "require(process.env.MANIFEST_PATH).releaseSha")"

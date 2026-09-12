@@ -291,6 +291,44 @@ test -e "$TEST_ROOT/cancelled"`,
   }
 });
 
+test('a cleanly stopped old ACS is restarted and health-verified before pre-change recovery succeeds', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'acs-drain-restart-'));
+  try {
+    await writeFile(join(root, 'acs.env'), 'ACS_ORCH_AUTH_TOKEN="test-token"\n');
+    await writeFile(join(root, 'signalled'), '');
+    const result = spawnSync(
+      'bash',
+      [
+        '-c',
+        `set -euo pipefail
+source "$DRAIN_HELPER"
+${mocks}
+ACS_DRAIN_PID=42
+ACS_DRAIN_PROTOCOL=1
+ACS_DRAIN_DROPIN=''
+acs_mutation_started=false
+cancel_acs_deployment_drain`,
+      ],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          DRAIN_HELPER: helper,
+          TEST_ROOT: root,
+          CASE: 'clean',
+          ACS_ENV_PATH: join(root, 'acs.env'),
+          ACS_SERVICE_NAME: 'acs',
+          ACS_SYSTEMD_RUNTIME_ROOT: join(root, 'systemd'),
+        },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(await readFile(join(root, 'events'), 'utf8'), /systemctl start acs/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 const drainEnv = (root, scenario = 'clean') => ({
   ...process.env,
   TEST_ROOT: root,

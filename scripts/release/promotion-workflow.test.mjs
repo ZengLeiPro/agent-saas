@@ -306,6 +306,22 @@ test('reconcile derives strict ACS/App/Web rollback receipts', async () => {
   assert.match(reconcile, /remote_receipt_exists app succeeded/u);
   assert.match(reconcile, /rollback_receipts=/u);
   assert.match(reconcile, /rollbackReceipts:\$rollbackReceipts/u);
+  assert.match(reconcile, /prechange-acs\.recovered/u);
+  assert.match(reconcile, /'acs' 'prechange_recovered'/u);
+  assert.match(reconcile, /prechange_recovery_receipts=/u);
+  assert.match(reconcile, /prechangeRecoveryReceipts:\$prechangeRecoveryReceipts/u);
+});
+
+test('ACS deploy exports a run-bound pre-change recovery receipt for reconciliation', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const start = workflow.indexOf('- name: 优先部署精确的 ACS 编排器与沙箱摘要');
+  const end = workflow.indexOf('- name: 持久化 ACS 操作回执', start);
+  const deploy = workflow.slice(start, end);
+  assert.match(
+    deploy,
+    /PRECHANGE_RECOVERY_RECEIPT_PATH='\$PROMOTION_REMOTE\/prechange-acs\.recovered'/u,
+  );
+  assert.match(workflow, /\$\{\{ runner\.temp \}\}\/prechange-receipts\//u);
 });
 
 test('malicious multiline dispatch input cannot pass release-id validation or reach shell syntax', async () => {
@@ -625,8 +641,14 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
     workflow,
     /bash scripts\/release\/run-production-preflight\.sh "\$remote" ~\/\.ssh\/production_key \\\n\s*"\$reader" "\$reader_stage" production-before\.json "\$PROMOTION_RETRY_MODE"/u,
   );
-  const preflightTransport = await readFile(new URL('./run-production-preflight.sh', import.meta.url), 'utf8');
-  assert.match(preflightTransport, /--reader '\$reader' --config-identity-stage '\$stage' --output '\$remote\/\$output'/u);
+  const preflightTransport = await readFile(
+    new URL('./run-production-preflight.sh', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    preflightTransport,
+    /--reader '\$reader' --config-identity-stage '\$stage' --output '\$remote\/\$output'/u,
+  );
   assert.doesNotMatch(workflow, /install -m 0444 daemon-packaging\/systemd/u);
   assert.match(workflow, /extract_control_file\(\)/u);
   assert.match(workflow, /tar -xOf "\$archive" -- "\$raw" > "\$candidate"/u);

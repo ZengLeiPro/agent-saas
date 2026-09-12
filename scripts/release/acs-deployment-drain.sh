@@ -100,7 +100,20 @@ cancel_acs_deployment_drain() {
     return 1
   fi
   # No current/env mutation has happened: a stopped old process can be restored.
-  systemctl start "$ACS_SERVICE_NAME"
+  systemctl start "$ACS_SERVICE_NAME" || return 1
+  for _ in $(seq 1 30); do
+    local restored_pid restored_health
+    restored_pid="$(systemctl show "$ACS_SERVICE_NAME" --property=MainPID --value)" || return 1
+    restored_health="$(curl -fsS --max-time 3 "${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}" 2>/dev/null || true)"
+    if [[ "$restored_pid" =~ ^[1-9][0-9]*$ ]] && printf '%s' "$restored_health" | jq -e \
+      --argjson pid "$restored_pid" \
+      '.draining==false and (.inflight | type=="number" and .>=0 and floor==.) and
+       ((.deploymentDrain.protocolVersion // 0)==0 or .deploymentDrain.pid==$pid)' >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 drain_acs_before_cutover() {

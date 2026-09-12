@@ -102,6 +102,21 @@ export function summarizeRollbackReceipts(receipts) {
   };
 }
 
+export function summarizePrechangeRecoveryReceipts(receipts) {
+  if (!receipts || typeof receipts !== 'object' || Array.isArray(receipts)) return null;
+  if (Object.keys(receipts).join(',') !== 'acs') return null;
+  const receipt = receipts.acs;
+  if (
+    !receipt ||
+    typeof receipt !== 'object' ||
+    Array.isArray(receipt) ||
+    Object.keys(receipt).join(',') !== 'recovered' ||
+    typeof receipt.recovered !== 'boolean'
+  )
+    return null;
+  return receipt;
+}
+
 export function reconcilePromotion(input) {
   if (!input?.releaseId || !input.before || !input.target)
     throw new Error('Promotion reconciliation requires release, before and target identities');
@@ -136,6 +151,20 @@ export function reconcilePromotion(input) {
       reason: 'legacy aggregate rollback flags are not authoritative receipts',
     };
   }
+  let prechangeRecovery = { recovered: false };
+  if (input.prechangeRecoveryReceipts !== undefined) {
+    prechangeRecovery = summarizePrechangeRecoveryReceipts(input.prechangeRecoveryReceipts);
+    if (!prechangeRecovery)
+      return {
+        outcome: 'needs_human',
+        reason: 'pre-change recovery receipts violate the strict ACS schema',
+      };
+  }
+  if (prechangeRecovery.recovered && rollback.attempted)
+    return {
+      outcome: 'needs_human',
+      reason: 'pre-change ACS recovery contradicts a component rollback attempt',
+    };
   if (rollback.attempted) {
     // Compute every scope before any terminal return. A global identity match
     // cannot attest to external side effects or erase failed byte restoration.
@@ -190,6 +219,11 @@ export function reconcilePromotion(input) {
     };
   }
   if (matrixEquals(observed, target)) {
+    if (prechangeRecovery.recovered)
+      return {
+        outcome: 'needs_human',
+        reason: 'pre-change ACS recovery contradicts target convergence',
+      };
     if (input.configIdentityConfirmed !== true) {
       return {
         outcome: 'needs_human',
@@ -203,6 +237,12 @@ export function reconcilePromotion(input) {
     };
   }
   if (input.externalSideEffects === 'unknown') {
+    if (prechangeRecovery.recovered && matrixEquals(observed, before)) {
+      return {
+        outcome: 'failed_before_change',
+        reason: 'ACS admission recovery is durably attested and no production component changed',
+      };
+    }
     return {
       outcome: 'needs_human',
       reason: 'promotion has non-reversible or unknown side effects',

@@ -48,6 +48,8 @@ function isPendingInteractionMessage(message: MessageItem): message is PendingIn
 }
 
 export interface SessionCallbacks {
+  projectMessages?: (messages: MessageItem[], sessionId: string) => MessageItem[];
+  onPersistedMessages?: (sessionId: string, messages: MessageItem[]) => void;
   resetMessages: () => void;
   setMessages: (msgs: MessageItem[]) => void;
   /** 返回当前本地消息列表引用（用于 refresh 时保留本地流式尾部，见 mergeServerMessagesWithLocalTail） */
@@ -197,7 +199,7 @@ export function useSession(
       data.blocks,
       mapSessionDetailToMessages(data, data.owner?.username ?? sessionOwner?.username),
     ),
-    applyPage: (_id, merged) => cbRef.current.setMessages(merged),
+    applyPage: (id, merged) => cbRef.current.setMessages(cbRef.current.projectMessages?.(merged, id) ?? merged),
     onHistoryRevisionMismatch: (id) => loadSessionDetail(id, { silent: true, preserveTail: true }),
     createGuard: () => {
       const requestIdentityKey = identityKeyRef.current;
@@ -340,7 +342,7 @@ export function useSession(
         const cached = await messageCache.load(id);
         if (isStale()) return;
         if (cached) {
-          cbRef.current.setMessages(cached);
+          cbRef.current.setMessages(cbRef.current.projectMessages?.(cached, id) ?? cached);
           setSessionId(id);
         }
       }
@@ -371,11 +373,13 @@ export function useSession(
           // preserveTail：refresh 时服务端 transcript 可能尚未写入最后一条 assistant text，
           // 合并保留本地尾部，避免消息瞬间消失。
           // 归属在请求前后各校验一次：飞行期间用户切走时，屏幕上已是别的会话的消息，不能再拼。
+          cbRef.current.onPersistedMessages?.(id, msgs);
           let finalMsgs = msgs;
           if (canPreserveTail && sessionIdRef.current === id && cbRef.current.getMessages) {
             const localMsgs = cbRef.current.getMessages();
             finalMsgs = mergeServerMessagesWithLocalTail(msgs, localMsgs);
           }
+          finalMsgs = cbRef.current.projectMessages?.(finalMsgs, id) ?? finalMsgs;
           cbRef.current.setMessages(finalMsgs);
           setSessionId(id);
           setSessionOwner(data.owner ?? null);
@@ -412,8 +416,9 @@ export function useSession(
               cbRef.current.getResolvedInteractionIds?.(),
               arrivedAfterRequest,
             );
-            cbRef.current.setMessages(projected);
-            messageCache.save(id, projected);
+            const settled = cbRef.current.projectMessages?.(projected, id) ?? projected;
+            cbRef.current.setMessages(settled);
+            messageCache.save(id, settled);
           }).catch(() => {
             // pending check is best-effort
           });

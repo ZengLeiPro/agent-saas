@@ -62,7 +62,11 @@ vi.mock('@agent/shared', async (importOriginal) => {
     ...actual,
     authFetch: vi.fn(async () => ({ ok: false, json: async () => null })),
     fetchAgentProfile: vi.fn(async () => null),
-    getPlatform: () => ({ storage: { getItem: vi.fn(async () => null), setItem: vi.fn(async () => undefined), removeItem: vi.fn(async () => undefined) }, messageCache: { save: vi.fn(async () => undefined) } }),
+    getPlatform: () => ({
+      storage: { getItem: vi.fn(async () => null), setItem: vi.fn(async () => undefined), removeItem: vi.fn(async () => undefined) },
+      messageCache: { save: vi.fn(async () => undefined), load: vi.fn(async () => null), clear: vi.fn(async () => undefined) },
+      platformConfig: { getBaseUrl: () => 'https://agent.test', getWsUrl: () => 'wss://agent.test/ws' },
+    }),
     useConnectionState: () => ({ connectionState: 'disconnected', dispatchConnection: h.dispatchConnection }),
     wsClient: {
       currentState: 'disconnected',
@@ -101,8 +105,19 @@ vi.mock('./useFileUpload', () => ({ useFileUpload: () => ({
   dismissUploadError: vi.fn(), pickFile: vi.fn(), pickImage: vi.fn(), takePhoto: vi.fn(),
   removeFile: vi.fn(), clearFiles: vi.fn(), consumeFiles: vi.fn(() => []), addUploadedFiles: vi.fn(), reportUploadError: vi.fn(),
 }) }));
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: null, identity: null }) }));
+vi.mock('../contexts/AuthContext', () => {
+  const identity = { userId: 'u-1', tenantId: 't-1', generation: 1 };
+  return { useAuth: () => ({ user: null, identity }) };
+});
 vi.mock('../contexts/LocalAppLockContext', () => ({ useLocalAppLock: () => ({ locked: false, offlineShell: false }) }));
+vi.mock('@react-native-async-storage/async-storage', () => ({ default: {
+  getItem: vi.fn(async () => null), setItem: vi.fn(async () => undefined), removeItem: vi.fn(async () => undefined),
+  getAllKeys: vi.fn(async () => []), multiGet: vi.fn(async () => []), multiRemove: vi.fn(async () => undefined),
+} }));
+vi.mock('react-native', async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-native')>(),
+  AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
+}));
 vi.mock('../telemetry/runtime', () => ({ telemetryClient: () => null }));
 vi.mock('../telemetry/chatTelemetry', () => ({ markChatAck: vi.fn(), markChatSubmit: vi.fn(), observeChatEvent: vi.fn() }));
 vi.mock('expo-file-system', () => ({ File: class File {} }));

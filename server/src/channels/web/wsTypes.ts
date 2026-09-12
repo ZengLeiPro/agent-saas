@@ -251,7 +251,7 @@ export type WsDownstreamEvent =
     | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'buffer_overflow' }
     | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; quotaResetAt?: string; finalOutput?: boolean }
-    | { type: 'error'; message: string; code?: string; correlationId?: string; retryAfter?: number }
+    | { type: 'error'; message: string; code?: string; correlationId?: string; retryAfter?: number; client_msg_id?: string; submissionState?: 'unknown'; sessionId?: string }
     | { type: 'respond_error'; interactionId: string; error: string; clientAttemptId?: string }
     | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string }
     | { type: 'abort_ok'; streamId?: string; runId?: string }

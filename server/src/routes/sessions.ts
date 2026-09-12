@@ -2154,6 +2154,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
    */
   /** ACK 丢失/前端超时后的权威核验；同 clientMessageId 永远指向同一 run。 */
   router.get("/messages/:clientMessageId/status", async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
     const clientMessageId = String(req.params.clientMessageId || "").trim();
     if (!clientMessageId || clientMessageId.length > 256 || !options.findRunByClientMessageId) {
       res.status(404).json({ error: "Message not found" });
@@ -2197,7 +2198,6 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       res.status(503).json({ error: "Message status unavailable" });
     }
   });
-
   router.post("/sessions/:sessionId/warmup", createSessionWarmupHandler({ readAccessibleSessionMetaForRequest, sandboxWarmup: options.sandboxWarmup }));
 
   router.get("/sessions/:sessionId", async (req: Request, res: Response) => {

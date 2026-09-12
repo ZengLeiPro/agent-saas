@@ -136,7 +136,7 @@ import {
   type MessageAttachmentDisplay,
   type SandboxProfile,
 } from '@agent/shared';
-import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
+import { buildChatSubmissionUnknownFrame, deriveSubmissionSessionId, findDurableSubmissionForReplay, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
 import { buildChatQueueSnapshot, projectChatQueueItem } from './chatQueueSnapshot.js';
 import type { ModelResolver, WebChannelConfig } from './channelConfig.js';
 import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
@@ -1150,6 +1150,7 @@ export class WebChannel implements BaseChannel {
     };
     void next.then(cleanup, (error) => {
       chatLogger.error(`[chat] 消息接收入队失败: ${error instanceof Error ? error.message : String(error)}`);
+      if (clientMsgId) this.wsSend(client.ws, buildChatSubmissionUnknownFrame(clientMsgId));
       cleanup();
     });
   }
@@ -1182,7 +1183,6 @@ export class WebChannel implements BaseChannel {
       ...(client.user?.generation !== undefined ? { generation: client.user.generation } : {}),
     });
   }
-
   private interactionResponsesConflict(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
     return JSON.stringify(normalizeInteractionResponse(left)) !== JSON.stringify(normalizeInteractionResponse(right));
   }
@@ -2135,7 +2135,8 @@ export class WebChannel implements BaseChannel {
 
     // 永久幂等事实必须先于 drain/载荷校验：重放一个已受理请求只回原权威结果，
     // 不能因本次传输载荷缺失或实例正在排水而改写为 rejected。
-    const replayStore=this.config.enqueueRuntime?.runStore;let durableRun=await replayStore?.findByIdempotencyKey(user?.tenantId??DEFAULT_TENANT_ID,user?.sub,clientMsgId);if(!durableRun&&user&&isPlatformAdminUser(user))durableRun=await replayStore?.findUniqueByIdempotencyKeyAcrossTenants?.(user.sub,clientMsgId)??null;
+    const durableRun = await findDurableSubmissionForReplay(this.config.enqueueRuntime?.runStore, user, clientMsgId);
+    if (durableRun === undefined) { this.wsSend(ws, buildChatSubmissionUnknownFrame(clientMsgId)); return; }
     if (durableRun) {
       if (durableRun.userId
         ? this.sensitiveActionAccessError(client, { tenantId: durableRun.tenantId, ownerUserId: durableRun.userId })
@@ -3215,10 +3216,8 @@ export class WebChannel implements BaseChannel {
         if (!durableAccepted) {
           // PostgreSQL 的 COMMIT 可能已生效但连接在回执前中断；先按永久幂等键反查，
           // 绝不能把“提交结果未知”直接改成 failed 并清掉 wakeMessage。
-          const committedRun = await enqueueRuntime.runStore.findByIdempotencyKey(user?.tenantId ?? DEFAULT_TENANT_ID, user?.sub, clientMsgId).catch(() => {
-            durableLookupAvailable = false;
-            return null;
-          });
+          const committedRun = await findDurableSubmissionForReplay(enqueueRuntime.runStore, user, clientMsgId);
+          durableLookupAvailable = committedRun !== undefined;
           if (committedRun) {
             durableAccepted = true;
             durableAcceptedRunId = committedRun.runId;
@@ -3292,6 +3291,7 @@ export class WebChannel implements BaseChannel {
         }
         if (!durableLookupAvailable) {
           chatLogger.warn(`[chat] enqueue outcome unknown; client must verify client_msg_id=${clientMsgId}: ${errorMessage}`);
+          this.wsSend(ws, buildChatSubmissionUnknownFrame(clientMsgId));
           return;
         }
         chatLogger.error(`[chat] enqueue-only failed: ${errorMessage}`);

@@ -45,7 +45,8 @@ function createMessageCache(getIdentity: () => BoundaryIdentity | null): IMessag
           return null;
         }
         return entry.messages.map(m =>
-          m.type === 'user' && m.status === 'pending' ? { ...m, status: 'failed' as const } : m
+          (m.type === 'user' && m.status === 'pending') || ((m.type === 'user' || m.type === 'user-voice') && m.deliveryPhase)
+            ? { ...m, status: 'failed' as const, deliveryPhase: undefined, deliveryIssue: 'missing_payload' as const, failedReason: '尚未确认是否送达，请先核验。' } : m
         );
       } catch {
         return null;

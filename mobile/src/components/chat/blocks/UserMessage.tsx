@@ -1,6 +1,6 @@
 /** 用户消息气泡：文本 / 语音转写标记 / 附件 chip、长按菜单与重试态。 */
 import React, { useState, useMemo, useCallback } from 'react';
-import { View, Text, TouchableOpacity, Pressable, Share } from 'react-native';
+import { View, Text, Pressable, Share } from 'react-native';
 import { Image as ImageIcon, Mic, Paperclip } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import type { MessageItem } from '@agent/shared';
@@ -11,6 +11,7 @@ import { useColors, useChatTypography, fontScale } from '../../../theme';
 import { hapticLight } from '../../../lib/haptics';
 import { ImageLightbox } from '../ImageLightbox';
 import { useMessageStyles } from './shared';
+import { MessageDeliveryNotice } from './MessageDeliveryNotice';
 
 // --- User Message ---
 export function UserMessage({
@@ -159,12 +160,7 @@ export function UserMessage({
         anchorTop={anchorTop}
         align="right"
       />
-      {message.status === 'failed' && onRetry && (
-        <TouchableOpacity onPress={() => onRetry(message)} style={styles.retryButton}>
-          <Text style={styles.retryText}>重试</Text>
-        </TouchableOpacity>
-      )}
-      {message.status === 'pending' && <Text style={styles.pendingText}>发送中...</Text>}
+      <MessageDeliveryNotice message={message} onRetry={onRetry} />
       {attachmentError && (
         <Text accessibilityRole="alert" style={styles.retryText}>
           {attachmentError}

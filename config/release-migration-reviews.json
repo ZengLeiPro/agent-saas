@@ -31594,7 +31594,7 @@
         },
         {
           "path": "scripts/release/migration-postconditions.pg.test.mjs",
-          "digest": "sha256:a5d29ae589d167282b5905ef783f72f749b229eee833ed18b5df23d5aef80c1a"
+          "digest": "sha256:8672c13997c56742e9b959bac281a4b2cbac961071693736c10857294b815e07"
         },
         {
           "path": "server/src/__tests__/agentDwsMigrationRoutes.test.ts",

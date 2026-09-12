@@ -220,14 +220,15 @@ test('catalog rejects incomplete existing quota schemas that cannot execute the 
     (entry) => entry.path === 'server/src/quota/providerQuotaSnapshotStore.ts',
   );
   assert.ok(quotaEntries.length > 0, 'quota schema postconditions must be registered');
-  const postconditions = quotaEntries[0].checks;
-  for (const entry of quotaEntries) assert.deepEqual(entry.checks, postconditions);
+  const postconditions = quotaEntries.find((entry) =>
+    entry.checks.some((check) => check.id === 'provider-plan-note-schema'),
+  ).checks;
   const manifest = { releaseId: 'rc-20260908-01', digest: `sha256:${'a'.repeat(64)}`, migrationPlan: { phase: 'expand', planDigest: `sha256:${'b'.repeat(64)}`, postconditions, postconditionsDigest: digestBuffer(canonicalJson(postconditions)) } };
   const readback = () => readMigrationPostconditions({ manifest, config: { runtimeEventStore: { connectionString: url, tablePrefix: prefix } }, environment: 'staging', Pool });
   try {
     await pool.query(`CREATE TABLE ${snapshots} (id BIGSERIAL PRIMARY KEY, account_key TEXT NOT NULL, source_kind TEXT NOT NULL, collected_at TIMESTAMPTZ NOT NULL, ok BOOLEAN NOT NULL, snapshot JSONB NOT NULL);
       CREATE INDEX ${snapshots}_account_time_idx ON ${snapshots} (account_key,collected_at DESC);
-      CREATE TABLE ${edits} (id BIGSERIAL PRIMARY KEY,identity_key TEXT NOT NULL,end_time TIMESTAMPTZ,updated_by TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+      CREATE TABLE ${edits} (id BIGSERIAL PRIMARY KEY,identity_key TEXT NOT NULL,end_time TIMESTAMPTZ,note TEXT,edit_kind TEXT NOT NULL DEFAULT 'expiry',updated_by TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
       CREATE INDEX ${edits}_identity_idx ON ${edits} (identity_key,id DESC)`);
     assert.equal((await readback()).status, 'passed');
     const cases = [

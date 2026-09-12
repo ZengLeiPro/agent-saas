@@ -409,17 +409,17 @@ Cron payload 支持：
 
 仓库包含多套运维文档：
 
-- Mac mini：`docs/mac-mini-ops.md`。
 - ECS：`docs/ecs-deployment.md`。
 - 网络代理：`docs/tailscale-nginx-setup.md`、`docs/wireguard-nginx-setup.md`。
 - Azeroth PG：`docs/azeroth-pg-setup.md`。
 
 生产模式为：
 
-1. `deploy-ecs` 打包不含 `web/` 的 Server release，蓝绿发布 REST API 和 WebSocket。
-2. `deploy-web-oss` 用 `VITE_API_BASE=https://api.agent.kaiyan.net` 构建 Web 并发布 OSS。
-3. 同一份分域 Web 产物独立发布到 ECS `recovery-web` 目录，供 OSS 故障时 DNS 回切。
-4. `agent.kaiyan.net` 主链路指向 OSS；`api.agent.kaiyan.net` 指向 ECS nginx/API。
+1. Server/API/Runtime Worker/ACS 变更通过 `deploy-staging.yml` 准备并部署不可变 RC，再由 `promote-release.yml` 晋级生产。
+2. 仅影响 Web 的兼容发布由 `ci.yml` 的 `workflow_dispatch` 承担，并要求显式确认 Web-only 范围。
+3. `staging-acceptance.yml` 提供独立的测试环境浏览器、Agent 与业务验收，不是生产部署入口。
+4. Web 产物发布到 OSS，同时保留同一份分域产物在 ECS `recovery-web` 目录，供 OSS 故障时 DNS 回切。
+5. `agent.kaiyan.net` 主链路指向 OSS；`api.agent.kaiyan.net` 指向 ECS nginx/API。
 
 ## 17. 关键请求链路
 

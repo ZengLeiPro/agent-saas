@@ -64,7 +64,9 @@ PR 不修改 main，不提前停用仍在 main 使用的旧生产/检查入口�
 1. 验证本次源码确实只含允许的五个入口，核对当前 main 仍等于本次 SHA；落后的 main CI 延后给新 CI 处理。
 2. 分页读取 GitHub 注册项；保留项必须仍 active；待退役项 ID、路径、名称全部匹配才允许停用。
 3. 仅调用清单中已知退役项的 disable API，然后逐项读回 disabled_manually。记录缺失/已停用时幂等跳过，未知或改名的身份不擅自修改。
-4. 不取消在途运行，不删除 workflow run、artifact、Release、RC tag、旧证据或任何别人的分支。
+4. 不取消在途运行；默认不删除 workflow run、artifact、Release、RC tag、旧证据或任何别人的分支。
+   2026-09-12 已对本次五个临时 Workflow 的历史 run 与专属 artifact 完成独立审查并物理清理，
+   不改变其他退役入口的默认保留策略。
 
 该 job 只拥有 contents:read 与 actions:write，不读取生产 Secrets、不部署。
 清单漂移/API 拒绝/读回失败会明确失败，修复后可重跑；不伪报注册项已清理。

@@ -7,6 +7,10 @@ asset_name="$(basename "$asset_path")"
 [[ "$release_id" =~ ^rc-[0-9]{8}-[0-9]{2,}$ ]]
 test -f "$asset_path"
 test -n "${GH_TOKEN:-}"
+if ! gh release view "$release_id" >/dev/null 2>&1; then
+  echo "skip GitHub Release asset $asset_name; $release_id has no GitHub Release yet"
+  exit 0
+fi
 
 metadata="$(mktemp)"
 download_root="$(mktemp -d)"

@@ -200,8 +200,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/attestations"
-          gh release download "$RELEASE_ID" --dir "$RUNNER_TEMP/release" \
-            --pattern manifest.json --pattern artifact-index.json --pattern 'attestation-*.jsonl'
+          bash scripts/release/fetch-rc-evidence.sh "$RELEASE_ID" "$RUNNER_TEMP/release"
           mv "$RUNNER_TEMP/release/manifest.json" "$RUNNER_TEMP/manifest.json"
           node scripts/release/attestation-snapshot.mjs select \
             "$RUNNER_TEMP/release"/attestation-*.jsonl \
@@ -210,10 +209,12 @@ jobs:
           node scripts/release/verify-promotion-entry.mjs "$RUNNER_TEMP/manifest.json"
           release_sha="$(jq -r .releaseSha "$RUNNER_TEMP/manifest.json")"
           manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
-          git fetch --no-tags origin "refs/tags/$RELEASE_ID:refs/tags/$RELEASE_ID"
-          test "$(git rev-parse "$RELEASE_ID^{commit}")" = "$release_sha"
-          tag_object="$(git rev-parse "$RELEASE_ID^{tag}")"
-          git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $manifest_digest"
+          if git ls-remote --tags origin "refs/tags/$RELEASE_ID" | grep -q .; then
+            git fetch --no-tags origin "refs/tags/$RELEASE_ID:refs/tags/$RELEASE_ID"
+            test "$(git rev-parse "$RELEASE_ID^{commit}")" = "$release_sha"
+            tag_object="$(git rev-parse "$RELEASE_ID^{tag}")"
+            git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $manifest_digest"
+          fi
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$release_sha" origin/main
           test "$(jq -r .migrationPlan.contract "$RUNNER_TEMP/manifest.json")" = separate_release
@@ -1528,6 +1529,33 @@ jobs:
               -f state="$state" -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
           fi
           test "$state" = success
+
+      - name: 写入永久 RC 标签与正式 Release
+        if: success() && env.PROMOTION_OUTCOME == 'completed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git fetch --no-tags origin main
+          if git ls-remote --tags origin "refs/tags/$RELEASE_ID" | grep -q .; then
+            git fetch --no-tags origin "refs/tags/$RELEASE_ID:refs/tags/$RELEASE_ID"
+            test "$(git rev-parse "$RELEASE_ID^{commit}")" = "$RELEASE_SHA"
+            tag_object="$(git rev-parse "$RELEASE_ID^{tag}")"
+            git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $MANIFEST_DIGEST"
+          else
+            git tag -a "$RELEASE_ID" "$RELEASE_SHA" \
+              -m "Agent SaaS $RELEASE_ID" -m "manifest-digest: $MANIFEST_DIGEST"
+            git push origin "refs/tags/$RELEASE_ID"
+          fi
+          if gh release view "$RELEASE_ID" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_ID" --prerelease=false --latest
+          else
+            gh release create "$RELEASE_ID" --verify-tag --latest \
+              --title "$RELEASE_ID" --notes "Production $RELEASE_ID" \
+              "$RUNNER_TEMP/manifest.json"
+          fi
 
       - name: 保存可恢复的最近成功生产基线
         id: checkpoint

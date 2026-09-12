@@ -402,7 +402,7 @@ describe('ACS deployment and classifier contract', () => {
 
   it('只晋级来自 main 的不可变 RC，生产不再等待或打包源码 HEAD', () => {
     expect(workflow).toContain("needs.dispatch.outputs.operation == 'promote'");
-    expect(workflow).toContain('gh release download "$RELEASE_ID"');
+    expect(workflow).toContain('fetch-rc-evidence.sh "$RELEASE_ID"');
     expect(workflow).toContain('git merge-base --is-ancestor "$release_sha" origin/main');
     expect(workflow).toContain('prefetch-promotion-artifacts.mjs');
     expect(workflow).toContain('verify-selected-release-artifacts.mjs');

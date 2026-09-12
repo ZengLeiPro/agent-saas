@@ -18,7 +18,7 @@
     {
       "path": "server/src/quota/providerQuotaSnapshotStore.ts",
       "baselineDigest": null,
-      "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+      "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
       "checks": [
         {
           "id": "provider-plan-expiry-schema",
@@ -32,7 +32,7 @@
     {
       "path": "server/src/quota/providerQuotaSnapshotStore.ts",
       "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-      "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+      "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
       "checks": [
         {
           "id": "provider-plan-expiry-schema",
@@ -46,7 +46,7 @@
     {
       "path": "server/src/quota/providerQuotaSnapshotStore.ts",
       "baselineDigest": "sha256:87751e906e23fa3ed1ebf702155f8d992298c2c4970fdcfa45a22480de67e4f3",
-      "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+      "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
       "checks": [
         {
           "id": "provider-plan-expiry-schema",
@@ -138,6 +138,20 @@
           "params": ["$tablePrefix"],
           "sql": "WITH suffixes(kind, suffix, column_count) AS (\n  VALUES ('state', '_grok_credential_runtime_state', 6),\n         ('journal', '_grok_credential_refresh_journal', 3)\n), names AS (\n  SELECT kind, column_count,\n    lower((CASE WHEN length($1::text) <= 44 - length(suffix) THEN $1::text\n      ELSE 'g' || left(encode(sha256(convert_to($1::text, 'UTF8')), 'hex'), 43 - length(suffix))\n    END) || suffix) AS table_name\n  FROM suffixes\n), relations AS (\n  SELECT n.*, c.oid FROM names n\n  LEFT JOIN pg_class c ON c.oid = to_regclass(format('%I.%I', current_schema(), n.table_name))\n    AND c.relkind = 'r' AND c.relpersistence = 'p'\n), expected(kind, column_name, data_type, not_null) AS (\n  VALUES ('state','credential_ref','text',true), ('state','availability','text',true),\n    ('state','credential_generation','int8',true), ('state','cooldown_until','timestamptz',false),\n    ('state','last_failure_code','text',false), ('state','updated_at','timestamptz',true),\n    ('journal','credential_ref','text',true), ('journal','credential_generation','int8',true),\n    ('journal','started_at','timestamptz',true)\n)\nSELECT\n  (SELECT count(*) = 2 AND bool_and(oid IS NOT NULL) FROM relations)\n  AND NOT EXISTS (\n    SELECT 1 FROM expected e JOIN relations r USING(kind)\n    LEFT JOIN pg_attribute a ON a.attrelid = r.oid AND a.attname = e.column_name\n      AND a.attnum > 0 AND NOT a.attisdropped\n    WHERE a.attname IS NULL OR a.atttypid <> e.data_type::regtype OR a.attnotnull <> e.not_null\n  )\n  AND NOT EXISTS (\n    SELECT 1 FROM relations r WHERE\n      (SELECT count(*) FROM pg_attribute a WHERE a.attrelid=r.oid AND a.attnum>0 AND NOT a.attisdropped) <> r.column_count\n      OR NOT EXISTS (\n        SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='credential_ref'\n        WHERE c.conrelid=r.oid AND c.contype='p' AND c.convalidated AND c.conkey=ARRAY[a.attnum]\n      )\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid\n    WHERE r.kind='state' AND c.contype='c' AND c.convalidated\n      AND regexp_replace(pg_get_constraintdef(c.oid), '\\s', '', 'g') =\n        'CHECK((availability=ANY(ARRAY[''available''::text,''quota_cooldown''::text,''auth_unavailable''::text])))'\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid\n    WHERE r.kind='journal' AND c.contype='c' AND c.convalidated\n      AND regexp_replace(pg_get_constraintdef(c.oid), '\\s', '', 'g') = 'CHECK((credential_generation>0))'\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname='credential_generation'\n    JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum\n    WHERE r.kind='state' AND pg_get_expr(d.adbin,d.adrelid)='0'\n  )\n  AND (SELECT count(*)=2 FROM relations r\n    JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname=CASE WHEN r.kind='state' THEN 'updated_at' ELSE 'started_at' END\n    JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum\n    WHERE pg_get_expr(d.adbin,d.adrelid)='now()')\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_index i ON i.indrelid=r.oid\n    JOIN pg_class idx ON idx.oid=i.indexrelid\n    JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname='cooldown_until'\n    WHERE r.kind='state' AND idx.relname=r.table_name||'_cooldown_idx'\n      AND i.indisvalid AND i.indisready AND NOT i.indisunique AND i.indnkeyatts=1\n      AND i.indkey::text=a.attnum::text AND i.indpred IS NULL AND i.indexprs IS NULL\n  ) AS ok\n",
           "description": "Grok state/journal columns, keys, validated checks, defaults and cooldown index; Codex compatibility is proven separately"
+        }
+      ]
+    },
+    {
+      "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+      "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+      "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+      "checks": [
+        {
+          "id": "provider-plan-note-schema",
+          "configPath": "runtimeEventStore",
+          "params": ["$tablePrefix"],
+          "sql": "WITH expected(column_name, data_type, not_null) AS (VALUES ('id','int8',true), ('identity_key','text',true), ('end_time','timestamptz',false), ('note','text',false), ('edit_kind','text',true), ('updated_by','text',true), ('updated_at','timestamptz',true)), columns_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_class c ON c.oid = to_regclass($1 || '_provider_plan_expiry_edits') LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = e.column_name AND a.attnum > 0 AND NOT a.attisdropped WHERE c.relkind IS DISTINCT FROM 'r' OR a.attname IS NULL OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.not_null) AS ok), defaults_ok AS (SELECT COALESCE((SELECT pg_get_expr(d.adbin, d.adrelid) FROM pg_attribute a JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum WHERE a.attrelid = to_regclass($1 || '_provider_plan_expiry_edits') AND a.attname = 'edit_kind'), '') LIKE '%expiry%' AS ok), shape_ok AS (SELECT (SELECT count(*) = 7 FROM pg_attribute WHERE attrelid = to_regclass($1 || '_provider_plan_expiry_edits') AND attnum > 0 AND NOT attisdropped) AND EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = to_regclass($1 || '_provider_plan_expiry_edits') AND c.contype = 'p' AND c.convalidated) AND EXISTS (SELECT 1 FROM pg_index i JOIN pg_class idx ON idx.oid = i.indexrelid WHERE i.indrelid = to_regclass($1 || '_provider_plan_expiry_edits') AND idx.relname = left($1 || '_provider_plan_expiry_edits_identity_idx', 63) AND i.indisvalid AND i.indisready AND i.indnkeyatts = 2) AS ok) SELECT columns_ok.ok AND defaults_ok.ok AND shape_ok.ok AS ok FROM columns_ok, defaults_ok, shape_ok",
+          "description": "套餐到期与备注共用追加式审计表，备注列、编辑类型默认值、主键及身份索引已满足持久化契约"
         }
       ]
     }

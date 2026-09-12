@@ -8,11 +8,18 @@ import type { PgProviderQuotaSnapshotStore } from './providerQuotaSnapshotStore.
 
 class FakeStore {
   edits: Array<{ key: string; endTime: string | null; userId: string }> = [];
+  notes = new Map<string, string | null>();
   async planExpiryOverrides(keys: string[]) {
     return new Map(this.edits.filter((edit) => keys.includes(edit.key)).map((edit) => [edit.key, edit.endTime]));
   }
   async setPlanExpiry(key: string, endTime: string | null, userId: string) {
     this.edits.push({ key, endTime, userId });
+  }
+  async planNotes(keys: string[]) {
+    return new Map([...this.notes.entries()].filter(([key]) => keys.includes(key)));
+  }
+  async setPlanNote(key: string, note: string | null) {
+    this.notes.set(key, note);
   }
 
   rows: ProviderQuotaSnapshot[] = [];
@@ -194,6 +201,7 @@ describe('ProviderQuotaService', () => {
     email = '';
     expect((await service.overview()).items[0]?.planExpiry?.editable).toBe(false);
     await expect(service.setPlanExpiry('codex:new', null, 'admin')).rejects.toThrow('邮箱');
+    await expect(service.setPlanNote('codex:new', '备注', 'admin')).rejects.toThrow('邮箱');
   });
 
   it('Claude 订阅：首次上报即出现在看板，采集轮跳过，点名刷新明确拒绝', async () => {

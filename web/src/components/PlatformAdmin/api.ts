@@ -360,6 +360,9 @@ export const platformAdminApi = {
   setProviderPlanExpiry(accountKey: string, endTime: string | null): Promise<ProviderQuotaOverviewResponse> {
     return mutateJson(buildAdminApiPath('/provider-quota/plan-expiry'), 'PATCH', { accountKey, endTime });
   },
+  setProviderPlanNote(accountKey: string, note: string | null): Promise<ProviderQuotaOverviewResponse> {
+    return mutateJson(buildAdminApiPath('/provider-quota/plan-note'), 'PATCH', { accountKey, note });
+  },
   search(q: string): Promise<{ matches: PlatformSearchMatch[] }> {
     return getJson(buildAdminApiPath("/search", { q }));
   },

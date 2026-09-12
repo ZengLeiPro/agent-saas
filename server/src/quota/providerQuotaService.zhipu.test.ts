@@ -36,6 +36,8 @@ function storeFixture() {
     }))),
     planExpiryOverrides: vi.fn(async () => new Map<string, string | null>()),
     setPlanExpiry: vi.fn(async () => undefined),
+    planNotes: vi.fn(async () => new Map<string, string | null>()),
+    setPlanNote: vi.fn(async () => undefined),
     pushedAccounts: vi.fn(async () => []),
     prune: vi.fn(async () => 0),
     tryAcquireCollectorLock: vi.fn(async () => async () => undefined),

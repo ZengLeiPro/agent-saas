@@ -28,7 +28,7 @@ class FakePool {
 
   async query(sql: string, params: unknown[] = []) {
     this.queries.push({ sql, params });
-    if (sql.includes('INSERT INTO')) {
+    if (sql.includes('INSERT INTO') && sql.includes('snapshot')) {
       this.rows.push(JSON.parse(String(params[4])) as ProviderQuotaSnapshot);
       return { rows: [], rowCount: 1 };
     }
@@ -92,6 +92,8 @@ describe('PgProviderQuotaSnapshotStore', () => {
       ),
     ).toBe(true);
     expect(pool.released).toBe(1);
+    expect(pool.queries.some((q) => q.sql.includes('ADD COLUMN IF NOT EXISTS note TEXT'))).toBe(true);
+    expect(pool.queries.some((q) => q.sql.includes('ADD COLUMN IF NOT EXISTS edit_kind TEXT'))).toBe(true);
     expect(
       () =>
         new PgProviderQuotaSnapshotStore(pool as unknown as pg.Pool, { tablePrefix: 'bad-prefix' }),
@@ -136,6 +138,19 @@ describe('PgProviderQuotaSnapshotStore', () => {
     ]);
     expect(pool.queries.at(-1)?.params[0]).toBe(720);
     expect(await store.prune(30)).toBe(3);
+  });
+
+  it('备注与到期时间共用追加式审计表，按编辑类型分别写入', async () => {
+    const pool = new FakePool();
+    const store = new PgProviderQuotaSnapshotStore(pool as unknown as pg.Pool);
+    await store.setPlanExpiry('codex:a', '2026-10-01T15:59:00Z', 'admin-1');
+    await store.setPlanNote('codex:a', '续费前确认额度', 'admin-2');
+    expect(pool.queries.slice(-2).map((query) => query.params)).toEqual([
+      ['codex:a', '2026-10-01T15:59:00Z', 'admin-1'],
+      ['codex:a', '续费前确认额度', 'admin-2'],
+    ]);
+    expect(pool.queries.at(-2)?.sql).toContain("edit_kind) VALUES ($1, $2, $3, 'expiry')");
+    expect(pool.queries.at(-1)?.sql).toContain("edit_kind) VALUES ($1, $2, $3, 'note')");
   });
 
   it('collector lock：拿到后 release 会 unlock 并归还连接；拿不到直接归还', async () => {

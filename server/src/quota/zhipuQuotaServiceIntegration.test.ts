@@ -12,6 +12,7 @@ type Group = Models['groups'][number];
 class MemoryStore {
   rows: ProviderQuotaSnapshot[] = [];
   overrides = new Map<string, string | null>();
+  notes = new Map<string, string | null>();
   async append(rows: readonly ProviderQuotaSnapshot[]) { this.rows.push(...rows); }
   private select(successOnly = false) {
     const selected = new Map<string, ProviderQuotaSnapshot>();
@@ -23,6 +24,8 @@ class MemoryStore {
   async pushedAccounts() { return []; }
   async planExpiryOverrides() { return this.overrides; }
   async setPlanExpiry(key: string, endTime: string | null) { this.overrides.set(key, endTime); }
+  async planNotes() { return this.notes; }
+  async setPlanNote(key: string, note: string | null) { this.notes.set(key, note); }
   async history() {
     return this.rows.map((row) => ({
       accountKey: row.accountKey, collectedAt: row.collectedAt, ok: row.ok,

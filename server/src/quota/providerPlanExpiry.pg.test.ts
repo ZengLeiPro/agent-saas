@@ -27,8 +27,9 @@ describePg('套餐到期持久化与审计', () => {
   });
   it('发布回读 SQL 能验证新增表结构', async () => {
     const catalog = JSON.parse(readFileSync(new URL('../../../config/release-migration-postconditions.json', import.meta.url), 'utf8'));
-    const entry = catalog.entries.find((item: { path: string }) => item.path === 'server/src/quota/providerQuotaSnapshotStore.ts');
-    const check = entry.checks[0];
+    const entry = catalog.entries.find((item: { path: string; checks?: Array<{ id?: string }> }) => item.path === 'server/src/quota/providerQuotaSnapshotStore.ts' && item.checks?.some((check) => check.id === 'provider-plan-note-schema'));
+    const check = entry.checks.find((item: { id?: string }) => item.id === 'provider-plan-note-schema');
+    expect(check).toBeDefined();
     expect((await pool.query(check.sql, [prefix])).rows).toEqual([{ ok: true }]);
   });
 
@@ -40,13 +41,17 @@ describePg('套餐到期持久化与审计', () => {
     expect((await another.planExpiryOverrides([key])).get(key)).toBe('2026-10-01T15:59:00.000Z');
     expect((await another.planExpiryOverrides(['codex-email:other@example.com'])).size).toBe(0);
     await another.setPlanExpiry(key, null, 'admin-3');
+    await another.setPlanNote(key, '续费前确认额度', 'admin-4');
+    expect((await store.planNotes([key])).get(key)).toBe('续费前确认额度');
+    await another.setPlanNote(key, null, 'admin-5');
+    expect((await store.planNotes([key])).get(key)).toBeNull();
     await store.prune(30);
     expect((await store.planExpiryOverrides([key])).get(key)).toBeNull();
     expect((await store.planExpiryOverrides(['volcengine:g'])).get('volcengine:g')).toBe(
       '2027-01-01T00:00:00.000Z',
     );
     const result = await pool.query(
-      `SELECT end_time, updated_by, updated_at FROM ${store.planExpiryTable} WHERE identity_key=$1 ORDER BY id`,
+      `SELECT end_time, updated_by, updated_at FROM ${store.planExpiryTable} WHERE identity_key=$1 AND edit_kind='expiry' ORDER BY id`,
       [key],
     );
     expect(result.rows.map((row) => row.updated_by)).toEqual(['admin-1', 'admin-3']);

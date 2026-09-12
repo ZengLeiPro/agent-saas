@@ -59,5 +59,5 @@ CI 重跑证据、已有 ACS workflow 契约，以及 Staging 的新证据消费
 
 `Build & Check`、`ACS Impact Gate` 及现有 Ruleset 不变。清单校验同时进入预检与发布契约测试，
 新增长期 Workflow 必须显式修改 `config/github-workflow-inventory.json` 并经过评审。
-main 的绿色 CI 后自动停用清单中六个旧注册项；不取消运行、不删除历史 run/artifact、RC 或旧证据。
+main 的绿色 CI 后自动停用清单中十一个旧注册项；不取消运行、不删除历史 run/artifact、RC 或旧证据。
 保留的 CI 手动兼容发布不属于退役范围。

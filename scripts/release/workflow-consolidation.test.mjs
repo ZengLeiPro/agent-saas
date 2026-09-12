@@ -31,7 +31,7 @@ test('only five reviewed entrypoints remain; temporary authoring workflows are r
     inventory.workflows.map((item) => item.name),
     ['CI', 'iOS 构建与发布', '测试环境部署', '测试环境验收', '生产环境发布'],
   );
-  assert.equal(inventory.retiredWorkflows.length, 6);
+  assert.equal(inventory.retiredWorkflows.length, 11);
   assert(ci.includes('run: node scripts/release/workflow-inventory.mjs'));
 });
 

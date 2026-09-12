@@ -125,4 +125,54 @@ describe('useAdminConfigWritePolicy uncertain result handling', () => {
     expect(result.current.uncertainOperationId).toBeNull();
     expect(result.current.bodyMetadata().operationId).not.toBe(metadata.operationId);
   });
+
+  it('普通 500 不建立不存在的操作台账查询，也不误报结果不确定', async () => {
+    const { result } = renderHook(() => useAdminConfigWritePolicy(false));
+    act(() =>
+      result.current.acceptMetadata({
+        revision: 'raw-revision-1',
+        writePolicy: { environment: 'development', mode: 'online', canSave: true },
+      }),
+    );
+    act(() => { result.current.bodyMetadata(); });
+    vi.mocked(authFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: '未分类的服务端失败' }), { status: 500 }),
+    );
+
+    let response!: Response;
+    await act(async () => {
+      response = await result.current.mutationFetch('/api/admin/example');
+    });
+
+    expect(response.status).toBe(500);
+    expect(authFetch).toHaveBeenCalledOnce();
+    expect(result.current.uncertainOperationId).toBeNull();
+  });
+
+  it('只有明确的提交后不确定错误才查询 operationId', async () => {
+    const { result } = renderHook(() => useAdminConfigWritePolicy(false));
+    act(() =>
+      result.current.acceptMetadata({
+        revision: 'raw-revision-1',
+        writePolicy: { environment: 'development', mode: 'online', canSave: true },
+      }),
+    );
+    let metadata!: ReturnType<typeof result.current.bodyMetadata>;
+    act(() => { metadata = result.current.bodyMetadata(); });
+    vi.mocked(authFetch)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: 'CONFIG_MUTATION_COMMITTED' }), { status: 500 }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'not_committed' }), { status: 200 }));
+
+    let response!: Response;
+    await act(async () => {
+      response = await result.current.mutationFetch('/api/admin/example');
+    });
+    expect(response.status).toBe(500);
+    expect(authFetch).toHaveBeenNthCalledWith(
+      2,
+      `/api/admin/config-operations/${encodeURIComponent(metadata.operationId)}`,
+    );
+  });
 });

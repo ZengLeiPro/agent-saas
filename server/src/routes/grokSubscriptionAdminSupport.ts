@@ -34,6 +34,7 @@ import { GrokProtocolError, isRecord } from '../runtime/responses/grokProtocol.j
 import type { GrokDeviceAuthService } from '../runtime/responses/grokOAuth.js';
 import type { GrokModelCatalogService } from '../runtime/responses/grokModelCatalog.js';
 import { orderedCredentialRefs } from '../runtime/responses/subscriptionAccountBinding.js';
+import { ConfigPublicationLockUnavailableError } from '../config/subscriptionRotationSupport.js';
 export interface GrokSubscriptionAdminOptions {
   processCwd: string;
   config: AppConfig;
@@ -222,6 +223,7 @@ export function sendGrokAdminError(res: Response, error: unknown, warning?: stri
   }
   if (
     error instanceof ConfigConflictError ||
+    error instanceof ConfigPublicationLockUnavailableError ||
     error instanceof ProductionConfigPublishRequiredError ||
     error instanceof ProductionConfirmationError ||
     error instanceof AdminConfigOperationConflictError ||

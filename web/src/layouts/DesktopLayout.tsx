@@ -104,7 +104,11 @@ export function DesktopLayout(props: LayoutProps) {
     governanceRoute, closeOrganizationSettings: closeSettings,
   });
   const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
-  const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null }); const { open: handleOpenAnalysis, close: handleCloseAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, setActiveTab });
+  const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null }); const { open: handleOpenAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, setActiveTab });
+  const handleReturnToNewSession = useCallback(() => {
+    newPersonalSession();
+    setActiveTab('chat');
+  }, [newPersonalSession, setActiveTab]);
   const subagentTranscriptContext = useSubagentTranscript();
   const subagentTranscript = subagentTranscriptContext?.transcript ?? null;
   const closeSubagentTranscript = subagentTranscriptContext?.closeTranscript;
@@ -378,12 +382,12 @@ export function DesktopLayout(props: LayoutProps) {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onOpenSettings={handleOpenUnifiedSettings}
-        onOpenAnalysis={handleOpenAnalysis} analysisMode={analysisMode} analysisRoute={analysisMode ? governanceRoute : null} onAnalysisNavigate={handleAnalysisNavigate} onCloseAnalysis={handleCloseAnalysis}
+        onOpenAnalysis={handleOpenAnalysis} analysisMode={analysisMode} analysisRoute={analysisMode ? governanceRoute : null} onAnalysisNavigate={handleAnalysisNavigate} onCloseAnalysis={handleReturnToNewSession}
         settingsMode={settingsMode}
         settingsTarget={settingsTarget}
         activeSettingsSection={activeSettingsSection}
         onSettingsNavigate={handleSettingsNavigate}
-        onCloseSettings={handleCloseUnifiedSettings}
+        onCloseSettings={handleReturnToNewSession}
         isAdmin={isAdmin}
         isPlatformAdmin={isPlatformAdmin}
         settingsAccess={managementAccess}

@@ -1,5 +1,6 @@
 import * as runtimeIdentity from '../release/runtimeIdentity.js';
 import express from 'express';
+import type { Response } from 'express';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,8 @@ import { GrokCredentialManager } from '../runtime/responses/grokCredentialManage
 import { GrokOAuthClient } from '../runtime/responses/grokOAuthClient.js';
 import { GrokDeviceAuthService } from '../runtime/responses/grokOAuth.js';
 import { createGrokSubscriptionAdminRouter } from '../routes/grokSubscriptionAdmin.js';
+import { sendGrokAdminError } from '../routes/grokSubscriptionAdminSupport.js';
+import { ConfigPublicationLockUnavailableError } from '../config/subscriptionRotationSupport.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { grokTokens } from './grokTestFixtures.js';
 const cleanups: Array<() => void> = [];
@@ -111,6 +114,21 @@ async function fixture() {
   return { call, mutate, authorize, path, config, manager, vault, client, auth };
 }
 describe('Grok admin transactions T16-T23', () => {
+  it('将生产发布锁忙映射为可重试的稳定 409，而不是通用 500', () => {
+    const res = {} as Response;
+    const json = vi.fn();
+    const status = vi.fn(() => res);
+    Object.assign(res, { status, json });
+
+    sendGrokAdminError(res, new ConfigPublicationLockUnavailableError(new Error('lock busy')));
+
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith({
+      code: 'CONFIG_PUBLICATION_LOCK_BUSY',
+      error: '生产配置正在发布或凭据刷新，请稍后重试',
+    });
+  });
+
   it('starts without a Grok root, separates external authorization from registration, and never persists tokens', async () => {
     const f = await fixture();
     expect((await (await f.call()).json()).config.enabled).toBe(false);

@@ -36323,6 +36323,118 @@
           "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。详见 PR662 套餐备注数据库持久化迁移审核。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:1361d4543a3cf67497fa0e44c877fbc21ab6bdc902098e40e91b240fefed4629",
+          "targetDigest": "sha256:6e4cdb6116f3810600ed5328bd8afc2be9e880dc492f82820ab230c719a79cd9",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：增加可选 reasoning effort 能力配置，只做 Zod 解析，不执行 SQL、DDL 或回填。"
+        },
+        {
+          "path": "server/src/app/reasoningEffortCapabilitySchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:697b640d1095e19e82365368754413fd2fcab8fcdcb6729d8fbcc6a1564c736f",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：新增纯 Zod 配置校验模块，不执行 SQL、DDL 或回填。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "targetDigest": "sha256:a50521a61ea8a658fdeae1a56cc99bf5e25355aab3abb1a6bfc9e480263316ae",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：新增不可变 Explore v3 并冻结 v1/v2；不改变持久化表结构或执行数据迁移。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "targetDigest": "sha256:4022a812f34faeef55a93e3ff1c4eff5d126cdf209aed488a38888100beec641",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：仅扩展 Profile model 策略类型，不执行 SQL、DDL 或回填。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "targetDigest": "sha256:13678137a792ade738a7b99b144006482d5283a9ec4f36b0cc424916745e9442",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：仅扩展 Worker model 运行策略，不执行 SQL、DDL 或回填。"
+        },
+        {
+          "path": "server/src/runtime/runStore.ts",
+          "baselineDigest": "sha256:d836e96f72f0c2f8bade2d7884f7484eeb591c164c7db12cb8bb2e526c739a17",
+          "targetDigest": "sha256:b4731c0523aa5b087b49971c6f5b18a733d99f0f2b4695e336d847eb608bddf3",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：拆分既有 RunStore 方法并装配续接查询，不新增表、列、约束或启动回填。"
+        },
+        {
+          "path": "server/src/runtime/runStoreBackgroundEnqueue.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f44e7f7b007993c85429cc326b35bc5418354176ae96d837e6add596559ee9",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：使用既有 runs 表和 JSONB metadata 做后台续接并发仲裁，不改变数据库结构。"
+        },
+        {
+          "path": "server/src/runtime/runStorePendingWrites.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0d0a2cae17fc800eee50b282ec7778225cde4f2c6921c532ca72470499dff148",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：使用既有 runs 表完成 continuation claim 的条件写入，不改变数据库结构。"
+        },
+        {
+          "path": "server/src/runtime/runStoreQueries.ts",
+          "baselineDigest": "sha256:379cdc7feb8fb42d0d395c82986bd5e67c53393d622adc46af14fde6aabf5c78",
+          "targetDigest": "sha256:55c8a20cc4a769c03595b48eec59cfefdb0161faab84bb8dfb71dbb47e0b2237",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：调整既有 runs 查询并拆出逻辑子 Agent 读取路径，不改变数据库结构。"
+        },
+        {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "targetDigest": "sha256:087075469ee3eb54a7bb305c37968bccb8dd03f37a0e5a1c16911b68952f83be",
+          "classification": "expand",
+          "reason": "子 Agent 能力增强复审：只增加可重复创建的非唯一部分索引，加速 tenant、父会话和稳定 agent_id 查询；不改行、列、约束或旧写入语义。"
+        },
+        {
+          "path": "server/src/runtime/runStoreSessionQueries.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:710fc9344a793e212b47d0b2863546248a1958f12e1100c8849ccf754937b867",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：从 RunStore 抽出既有 session 查询，不改变 SQL 语义或数据库结构。"
+        },
+        {
+          "path": "server/src/runtime/runStoreSubagentContinuation.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:608ad93de33d59e3891d563011f085a181a50e73d3e562f1924df0af8a7dd111",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：在既有 runs 表和 metadata 上实现授权查询与 advisory lock 仲裁，不改变数据库结构。"
+        },
+        {
+          "path": "server/src/runtime/runStoreSubagentDeferredMessages.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a7407711c825fed2e1196e631b04faf111308d1e0f035aa29e5f8af11debc82b",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：在既有 runs.metadata 中幂等保存延迟消息，不新增表、列、约束或回填。"
+        },
+        {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
+          "targetDigest": "sha256:660a2f109d2a4385b949d6bed404c410bfc9e2561e3afedcfc4c70f5146568e1",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
+        },
+        {
+          "path": "server/src/runtime/background/backgroundTaskRuntime.ts",
+          "baselineDigest": "sha256:240d40671112006ca79025461f852d07b41dc5094687ea6f156e6986597fa67a",
+          "targetDigest": "sha256:48e01577030248862791874dcf4f6480cfe7673a1a49cb2275b37175d81220e5",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：仅扩展后台子 Agent 请求和返回类型，不执行 SQL、DDL 或回填。"
+        },
+        {
+          "path": "server/src/runtime/runStoreTypes.ts",
+          "baselineDigest": "sha256:104335a8c1305e6a99448a4be3fee76868b04c28c0be7025d938215bc01fbd46",
+          "targetDigest": "sha256:fc9f8ad50a7c6cc3d92632cb385c8273b120a9a788be1385fb6137792101e517",
+          "classification": "no-schema-change",
+          "reason": "子 Agent 能力增强复审：仅扩展 RunStore 的 TypeScript 续接接口，不执行 SQL、DDL 或回填。"
         }
       ],
       "evidence": [
@@ -36333,6 +36445,10 @@
         {
           "path": "server/src/quota/providerPlanExpiry.pg.test.ts",
           "digest": "sha256:b37b03260951326f77e87b11b38972ff1551bf3c84c6d40cc596343db9fc9d10"
+        },
+        {
+          "path": "docs/release/子Agent能力增强迁移审核-20260912.md",
+          "digest": "sha256:3bc400152fe0e865b047fa55dd52f523bce4a85f3410c58fdcc1d98c4ab0ba2c"
         }
       ]
     },

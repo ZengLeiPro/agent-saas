@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+_prune_helper="$(cd "$(dirname "${BASH_SOURCE[0]-$0}")" 2>/dev/null && pwd)/prune-unreferenced-releases.sh"
+if [ -f "$_prune_helper" ]; then
+  # shellcheck disable=SC1090
+  source "$_prune_helper"
+fi
+unset _prune_helper
 
 commit_app_active_colors() {
   local api_color="$1" worker_color="$2"
@@ -1587,6 +1593,12 @@ NODE
   DEPLOY_ACS_ROLLBACK_COMMITTED=true
   disarm_deploy_rollback
   rm -rf "$rollback_root"
+  acs_keep=("$target")
+  if [ -n "$previous" ] && [ "$previous" != "$target" ]; then
+    acs_keep+=("$previous")
+  fi
+  acs_releases_root="$(dirname -- "$target")"
+  prune_unreferenced_release_dirs "$acs_releases_root" "${acs_keep[@]}"
 }
 
 other_color() { [ "$1" = blue ] && echo green || echo blue; }
@@ -2214,6 +2226,15 @@ EOF
   app_committed=true
   trap - EXIT HUP INT TERM
   rm -rf "$rollback_root"
+  app_releases_root="$(dirname -- "$target")"
+  app_keep=()
+  for link in "$APP_COLOR_ROOT/blue" "$APP_COLOR_ROOT/green" \
+    "$APP_WORKER_ROOT/blue" "$APP_WORKER_ROOT/green"; do
+    if [ -L "$link" ] || [ -e "$link" ]; then
+      app_keep+=("$(readlink -f -- "$link")")
+    fi
+  done
+  prune_unreferenced_release_dirs "$app_releases_root" "${app_keep[@]}"
 }
 
 case "$PHASE" in

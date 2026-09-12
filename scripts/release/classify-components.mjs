@@ -69,6 +69,8 @@ const NON_RUNTIME_FILES = new Set([
   'scripts/ci-source-guards.mjs',
   'scripts/ci-test-selection.mjs',
   // 删除的旧脚本仍会出现在生产基线到目标版本的差异中。
+  'scripts/deploy.sh',
+  'scripts/rollback.sh',
   'scripts/coverage-workspace-plan.mjs',
   'scripts/format-new-staged-files.mjs',
   'scripts/generate-dws-command-policy.mjs',

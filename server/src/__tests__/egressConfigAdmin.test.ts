@@ -9,6 +9,7 @@ import { EgressConfigStore } from '../data/egressConfig.js';
 import { createEgressConfigAdminRouter } from '../routes/egressConfigAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { EncryptedFileSecretVault } from '../security/secretVault.js';
+import { EgressDispatcherRegistry } from '../runtime/egressDispatcher.js';
 import type { EgressConfig } from '../runtime/egressPolicy.js';
 
 const servers: Array<{ close: () => void }> = [];
@@ -183,10 +184,14 @@ describe('egress config cross-process refresh', () => {
       { actor: 'writer' },
     );
 
-    expect(reader.refreshIfChanged(true)).toBe(true);
+    const registry = new EgressDispatcherRegistry(reader);
     expect(reader.getConfigVersion()).toBe(1);
     expect(reader.getConfig().server.matchDomains).toEqual(['x.ai', 'grok.com']);
+    expect(
+      registry.resolve('https://cli-chat-proxy.grok.com/v1/responses').dispatcher,
+    ).not.toBeNull();
     expect(reader.refreshIfChanged(true)).toBe(false);
+    await registry.close();
   });
 });
 

@@ -38,8 +38,6 @@ export interface EgressConfigSource {
   getConfigVersion(): number;
   /** 代理凭据 user:pass，已从 SecretVault 解出；无凭据返回 undefined */
   getProxyCredential?(): string | undefined;
-  /** 多进程部署下，发请求前从共享事实源刷新配置与凭据。 */
-  refresh?(): void | Promise<void>;
 }
 
 export interface EgressDispatcherLogger {
@@ -91,10 +89,6 @@ export class EgressDispatcherRegistry {
     private readonly source: EgressConfigSource,
     private readonly logger: EgressDispatcherLogger = { warn: () => undefined },
   ) {}
-
-  async refresh(): Promise<void> {
-    await this.source.refresh?.();
-  }
 
   /**
    * 取当前生效的代理 dispatcher；返回 null 表示该请求应直连。
@@ -221,13 +215,7 @@ export function createEgressFetch(
   baseFetch: typeof fetch = fetch,
   proxyFetch: typeof undiciFetch = undiciFetch,
 ): typeof fetch {
-  return createResolvedEgressFetch(
-    () => registry.refresh(),
-    (url) => registry.resolve(url),
-    logger,
-    baseFetch,
-    proxyFetch,
-  );
+  return createResolvedEgressFetch((url) => registry.resolve(url), logger, baseFetch, proxyFetch);
 }
 
 /**
@@ -241,7 +229,6 @@ export function createWebToolEgressFetch(
   proxyFetch: typeof undiciFetch = undiciFetch,
 ): typeof fetch {
   return createResolvedEgressFetch(
-    () => registry.refresh(),
     (url) => registry.resolveWebTool(url),
     logger,
     baseFetch,
@@ -255,14 +242,12 @@ export function createWebToolEgressFetch(
  * ProxyAgent 交给全局 fetch 会在内部接口校验时直接失败。
  */
 function createResolvedEgressFetch(
-  refresh: () => Promise<void>,
   resolve: (url: string | URL) => { dispatcher: Dispatcher | null; failOpen: boolean },
   logger: EgressDispatcherLogger,
   baseFetch: typeof fetch,
   proxyFetch: typeof undiciFetch,
 ): typeof fetch {
   return async function egressFetch(input, init) {
-    await refresh();
     const requestInput = input instanceof Request;
     const targetInput = requestInput ? input.url : (input as string | URL);
     const { dispatcher, failOpen } = resolve(targetInput);
@@ -313,7 +298,6 @@ export function createEgressWebSocketConnector(
   logger: EgressDispatcherLogger = { warn: () => undefined },
 ): EgressWebSocketConnector {
   return async ({ url, headers, signal, connectTimeoutMs = 15_000 }) => {
-    await registry.refresh();
     const { dispatcher, failOpen } = registry.resolve(url);
     try {
       return await openWebSocket(url, headers, dispatcher, signal, connectTimeoutMs);

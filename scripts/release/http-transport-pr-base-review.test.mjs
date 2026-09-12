@@ -34,8 +34,6 @@ const grokEvidencePaths = [
   'server/src/runtime/responses/grokSubscriptionTableNames.ts',
 ];
 const grokEgressReviewPaths = [
-  'server/src/app/runtimeGovernanceConnectors.ts',
-  'server/src/app/runtimeEgressAssembly.ts',
   'server/src/data/egressConfig.ts',
   'server/src/runtime/egressDispatcher.ts',
 ];

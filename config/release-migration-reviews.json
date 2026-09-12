@@ -488,30 +488,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -635,7 +621,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -1609,30 +1595,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -1892,7 +1864,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -2649,30 +2621,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -2912,7 +2870,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -3648,30 +3606,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -3895,7 +3839,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -4631,30 +4575,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -4878,7 +4808,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -5600,30 +5530,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -5839,7 +5755,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -6561,30 +6477,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -6800,7 +6702,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -7522,30 +7424,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -7761,7 +7649,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -8763,30 +8651,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -9014,7 +8888,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -9743,30 +9617,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -10002,7 +9862,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -10745,30 +10605,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -10996,7 +10842,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -11739,30 +11585,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -11990,7 +11822,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -12684,30 +12516,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -12919,7 +12737,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -13613,30 +13431,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -13848,7 +13652,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -14542,30 +14346,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -14777,7 +14567,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -15471,30 +15261,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -15706,7 +15482,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -16386,30 +16162,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -16617,7 +16379,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -17297,30 +17059,16 @@
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -17528,7 +17276,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -18159,30 +17907,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -18370,7 +18104,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -18994,30 +18728,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -19201,7 +18921,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -19825,30 +19545,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -20024,7 +19730,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -20648,30 +20354,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -20847,7 +20539,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -21471,30 +21163,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -21670,7 +21348,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -22266,30 +21944,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -22457,7 +22121,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -23039,30 +22703,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -23238,7 +22888,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -23792,30 +23442,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -23975,7 +23611,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -24529,30 +24165,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -24712,7 +24334,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -25224,30 +24846,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -25391,7 +24999,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -25903,30 +25511,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -26062,7 +25656,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -26560,30 +26154,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -26707,7 +26287,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -27205,30 +26785,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -27348,7 +26914,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -27846,30 +27412,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -27993,7 +27545,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -28484,30 +28036,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -28623,7 +28161,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -29114,30 +28652,16 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -29253,7 +28777,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -29744,30 +29268,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -29879,7 +29389,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -30370,30 +29880,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -30517,7 +30013,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -31008,30 +30504,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -31155,7 +30637,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -31646,30 +31128,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -31793,7 +31261,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -32249,30 +31717,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -32332,7 +31786,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -32823,30 +32277,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -32954,7 +32394,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -33060,30 +32500,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -33143,7 +32569,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -33242,30 +32668,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -33309,7 +32721,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -33401,30 +32813,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -33464,7 +32862,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -33549,30 +32947,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -33608,7 +32992,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -33686,30 +33070,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
@@ -33741,7 +33111,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -33756,30 +33126,16 @@
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。详见 PR662 套餐备注数据库持久化迁移审核。"
         },
         {
-          "path": "server/src/app/runtimeGovernanceConnectors.ts",
-          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
-          "targetDigest": "sha256:a1f9d6effb7811b53c72a5cb5139dc24ec6501f0dc3d9b715e75b71213e87c88",
-          "classification": "no-schema-change",
-          "reason": "Grok 出站修复仅将既有 Egress 运行时装配委托给独立模块；数据库 Store 初始化与 SQL 不变。"
-        },
-        {
-          "path": "server/src/app/runtimeEgressAssembly.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:d397c10464f7020895e51b5a7827099941c8461aee32814693e61785f8f5753e",
-          "classification": "no-schema-change",
-          "reason": "新增进程内 Egress 装配，读取共享 JSON 配置和 SecretVault 代理凭据；不连接数据库或执行 SQL。"
-        },
-        {
           "path": "server/src/data/egressConfig.ts",
           "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
-          "targetDigest": "sha256:85de0255da6787ef11afa53af1fe3acf6b3991f6cf4f95fdb99ca2cca2fcb1e5",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
           "classification": "no-schema-change",
           "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
         },
         {
           "path": "server/src/runtime/egressDispatcher.ts",
           "baselineDigest": "sha256:de23d3fe4c8a1a5b1984b066933966eb01ada196c82c93f645dcd41280ad5943",
-          "targetDigest": "sha256:b6f04f45948024b46c1675f91552a7de7e3d0fecff6c339ba865ee1fb116a3ba",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         },
@@ -33809,7 +33165,7 @@
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
-          "digest": "sha256:1652a0158bc023f4c6cb2c6359d729bfb4c8e4f16d1313437e8088a76021bcf3"
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     }

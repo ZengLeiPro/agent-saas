@@ -151,34 +151,6 @@ describe('createEgressFetch', () => {
     expect((baseFetch.mock.calls[0] as any[])[1]).toBeUndefined();
   });
 
-  it('请求前先刷新跨进程配置，再按新域名列表选择代理', async () => {
-    const source = makeSource();
-    source.refresh = vi.fn(async () => {
-      source.set({
-        enabled: true,
-        proxyUrl: 'http://127.0.0.1:7890',
-        matchDomains: ['grok.com'],
-      });
-      delete source.refresh;
-    });
-    const { registry } = makeRegistry(source);
-    const direct = vi.fn(async () => new Response('direct'));
-    const proxied = vi.fn(async () => new Response('proxied'));
-    const guarded = createEgressFetch(
-      registry,
-      { warn: vi.fn() },
-      direct as unknown as typeof fetch,
-      proxied as never,
-    );
-
-    expect(await (await guarded('https://cli-chat-proxy.grok.com/v1/models')).text()).toBe(
-      'proxied',
-    );
-    expect(source.refresh).toBeUndefined();
-    expect(proxied).toHaveBeenCalledOnce();
-    expect(direct).not.toHaveBeenCalled();
-  });
-
   it('代理必选请求在域名未配置时拒绝直连', async () => {
     const { egressFetch, baseFetch, proxyFetch } = harness({
       enabled: true,

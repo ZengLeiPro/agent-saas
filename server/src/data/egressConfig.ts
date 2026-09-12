@@ -78,10 +78,12 @@ export class EgressConfigStore {
   }
 
   getConfig(): EgressConfig {
+    this.refreshIfChanged();
     return clone(this.data.config);
   }
 
   getConfigVersion(): number {
+    this.refreshIfChanged();
     return this.data.configVersion;
   }
 

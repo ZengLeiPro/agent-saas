@@ -793,6 +793,9 @@ jobs:
           RELEASE_EVIDENCE_TOKEN: ${{ secrets.RELEASE_EVIDENCE_TOKEN }}
           ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ACR_READ_ACCESS_KEY_ID }}
           ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ACR_READ_ACCESS_KEY_SECRET }}
+          STAGING_RELEASE_OSS_URI: ${{ vars.STAGING_RELEASE_OSS_URI }}
+          RELEASE_RECORD_OSS_URI: ${{ vars.RELEASE_RECORD_OSS_URI }}
+          RELEASE_RECORD_OSS_REGION: cn-shenzhen
           ACR_WEBHOOK_REDELIVERY_TOKEN: ${{ secrets.ACS_WEBHOOK_REDELIVERY_TOKEN }}
           # Reuse the existing ACS workflow binding; allow an explicit rotation.
           ACR_GITHUB_HOOK_ID: ${{ vars.ACR_GITHUB_HOOK_ID || '649018221' }}
@@ -804,6 +807,12 @@ jobs:
           echo "artifact_name=prepared-acs-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
           echo 'include_acs=false' >> "$GITHUB_OUTPUT"
           # Existing RCs are validated and reused by the deployment job, never rebuilt.
+          record_uri="${STAGING_RELEASE_OSS_URI:-${RELEASE_RECORD_OSS_URI:-}}/records/$release_id"
+          if [ -n "${STAGING_RELEASE_OSS_URI:-${RELEASE_RECORD_OSS_URI:-}}" ] \
+            && aliyun --secure oss stat "$record_uri/manifest.json" \
+              --region "${RELEASE_RECORD_OSS_REGION:-cn-shenzhen}" >/dev/null 2>&1; then
+            exit 0
+          fi
           if gh release view "$release_id" >/dev/null 2>&1; then exit 0; fi
           if [ "$AUTOMATIC_RELEASE" = true ]; then
             cp "$RUNNER_TEMP/authoritative-evidence.json" "$RUNNER_TEMP/acs-authority.json"
@@ -952,11 +961,10 @@ jobs:
         run: |
           set -euo pipefail
           echo 'REUSE_RC=false' >> "$GITHUB_ENV"
-          if ! gh release view "$STAGING_RELEASE_ID" >/dev/null 2>&1; then exit 0; fi
           mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/attestations"
-          gh release download "$STAGING_RELEASE_ID" --dir "$RUNNER_TEMP/release" \
-            --pattern manifest.json --pattern artifact-index.json \
-            --pattern 'attestation-*.jsonl'
+          if ! bash scripts/release/fetch-rc-evidence.sh "$STAGING_RELEASE_ID" "$RUNNER_TEMP/release"; then
+            exit 0
+          fi
           mv "$RUNNER_TEMP/release/manifest.json" "$RUNNER_TEMP/manifest.json"
           node scripts/release/attestation-snapshot.mjs select \
             "$RUNNER_TEMP/release"/attestation-*.jsonl \
@@ -965,10 +973,12 @@ jobs:
             "$RUNNER_TEMP/manifest.json" "$STAGING_RELEASE_ID"
           test "$(jq -r .releaseSha "$RUNNER_TEMP/manifest.json")" = "$RELEASE_SOURCE_SHA"
           manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
-          git fetch --no-tags origin "refs/tags/$STAGING_RELEASE_ID:refs/tags/$STAGING_RELEASE_ID"
-          test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$RELEASE_SOURCE_SHA"
-          tag_object="$(git rev-parse "$STAGING_RELEASE_ID^{tag}")"
-          git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $manifest_digest"
+          if git ls-remote --tags origin "refs/tags/$STAGING_RELEASE_ID" | grep -q .; then
+            git fetch --no-tags origin "refs/tags/$STAGING_RELEASE_ID:refs/tags/$STAGING_RELEASE_ID"
+            test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$RELEASE_SOURCE_SHA"
+            tag_object="$(git rev-parse "$STAGING_RELEASE_ID^{tag}")"
+            git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $manifest_digest"
+          fi
           node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$RELEASE_SOURCE_SHA" || {
             destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
             rm -rf "$RUNNER_TEMP/release" && mkdir -p "$RUNNER_TEMP/release"
@@ -1156,22 +1166,17 @@ jobs:
           node scripts/release/automatic-release-child.mjs deploy-staging.yml "$RUNNER_TEMP/automation-context.json"
           node scripts/release/staging-source-authority.mjs create "$RUNNER_TEMP" "$RUNNER_TEMP/manifest.json" "$GITHUB_REPOSITORY"
 
-      - name: 创建不可变 RC 标签、Release 与构建证明
+      - name: 写入不可变 OSS 记录与构建证明
         if: env.REUSE_RC != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if git rev-parse "$STAGING_RELEASE_ID^{commit}" >/dev/null 2>&1; then
+          if git ls-remote --tags origin "refs/tags/$STAGING_RELEASE_ID" | grep -q .; then
+            git fetch --no-tags origin "refs/tags/$STAGING_RELEASE_ID:refs/tags/$STAGING_RELEASE_ID"
             test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$RELEASE_SOURCE_SHA"
             tag_object="$(git rev-parse "$STAGING_RELEASE_ID^{tag}")"
             git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $MANIFEST_DIGEST"
-          else
-            git config user.name github-actions
-            git config user.email github-actions@github.com
-            git tag -a "$STAGING_RELEASE_ID" "$RELEASE_SOURCE_SHA" \
-              -m "Agent SaaS $STAGING_RELEASE_ID" -m "manifest-digest: $MANIFEST_DIGEST"
-            git push origin "refs/tags/$STAGING_RELEASE_ID"
           fi
           mkdir -p "$RUNNER_TEMP/attestations"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
@@ -1199,15 +1204,8 @@ jobs:
           done
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
             "$record_uri/attestations/$(basename "$snapshot_path")"
-
-          ! gh release view "$STAGING_RELEASE_ID" >/dev/null 2>&1
-          gh release create "$STAGING_RELEASE_ID" --verify-tag --prerelease \
-            --title "$STAGING_RELEASE_ID" --notes "$DISPATCH_REASON" \
-            "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/release/artifact-index.json" \
-            "$snapshot_path"
           if [ "$AUTOMATIC_RELEASE" = true ]; then
             for file in staging-source-binding.json authoritative-evidence.json; do
-              bash scripts/release/upload-github-release-asset-immutable.sh "$STAGING_RELEASE_ID" "$RUNNER_TEMP/$file"
               bash scripts/release/upload-oss-object-immutable.sh "$RUNNER_TEMP/$file" "$record_uri/$file"
             done
           fi
@@ -1464,10 +1462,12 @@ jobs:
           snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
             "$log_root/$STAGING_RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
           snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh \
-            "$STAGING_RELEASE_ID" "$snapshot_path"
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
             "$STAGING_RELEASE_OSS_URI/records/$STAGING_RELEASE_ID/attestations/$(basename "$snapshot_path")"
+          if gh release view "$STAGING_RELEASE_ID" >/dev/null 2>&1; then
+            bash scripts/release/upload-github-release-asset-immutable.sh \
+              "$STAGING_RELEASE_ID" "$snapshot_path"
+          fi
 
       - name: 最终对账并阻止混合版本验收
         if: always() && env.STAGING_DEPLOYMENT_ID != ''

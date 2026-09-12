@@ -147,7 +147,7 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(workflow, /publish-release-record\.mjs[\s\S]*\$RUNNER_TEMP\/selected/u);
   assert.ok(
     workflow.indexOf('实例化并校验清单选定产物') <
-      workflow.indexOf('创建不可变 RC 标签、Release 与构建证明'),
+      workflow.indexOf('写入不可变 OSS 记录与构建证明'),
   );
   assert.ok(
     workflow.indexOf('verify-selected-release-artifacts.mjs') <
@@ -268,7 +268,8 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
   assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);
   assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
-  assert.match(workflow, /ref: refs\/tags\/\$\{\{ inputs\.release_id \}\}/u);
+  assert.match(workflow, /fetch-rc-evidence\.sh/u);
+  assert.doesNotMatch(workflow, /ref: refs\/tags\/\$\{\{ inputs\.release_id \}\}/u);
   assert.match(workflow, /配置符合运行时契约的精确 Node 版本/u);
   assert.match(workflow, /确认精确 RC 仍在测试环境生效/u);
   assert.match(workflow, /staging-web-identity\.json/u);

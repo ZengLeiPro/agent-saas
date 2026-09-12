@@ -25,7 +25,7 @@ describe('Provisioner runtime bootstrap', () => {
       'sandbox_ensure',
       'runtime_bootstrap',
     ]);
-    const bootstrap = calls.find((call) => call.args.includes('/app/acs-orchestrator/src/sandboxRunner.ts'));
+    const bootstrap = calls.find((call) => call.args.includes('/app/acs-orchestrator/dist/sandboxRunner.mjs'));
     expect(bootstrap).toBeTruthy();
     expect(bootstrap?.args).toEqual([
       'exec',
@@ -34,8 +34,8 @@ describe('Provisioner runtime bootstrap', () => {
       '-c',
       'sandbox',
       '--',
-      '/app/acs-orchestrator/node_modules/.bin/tsx',
-      '/app/acs-orchestrator/src/sandboxRunner.ts',
+      '/usr/local/bin/node',
+      '/app/acs-orchestrator/dist/sandboxRunner.mjs',
     ]);
     const bootstrapInput = JSON.parse(bootstrap?.input ?? '{}');
     expect(bootstrapInput).toMatchObject({
@@ -71,7 +71,7 @@ describe('Provisioner runtime bootstrap', () => {
       'runtime_bootstrap',
       'provision_idempotency',
     ]);
-    expect(calls.find((call) => call.args.includes('/app/acs-orchestrator/src/sandboxRunner.ts'))).toBeTruthy();
+    expect(calls.find((call) => call.args.includes('/app/acs-orchestrator/dist/sandboxRunner.mjs'))).toBeTruthy();
   });
 
   it('attests the exact SandboxRef returned by ensureRunning and binds every run identity field', async () => {

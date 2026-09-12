@@ -15,7 +15,6 @@ export type {
   IPlatformConfig,
   PlatformDeps,
 } from './platform/types';
-
 // Types - re-export the public runtime and product contracts from types/index
 export {
   ACTIVITY_TYPES,

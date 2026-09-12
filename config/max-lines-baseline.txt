@@ -7,7 +7,7 @@
 acs-orchestrator/src/sandboxManager.test.ts	1677	test
 acs-orchestrator/src/sandboxManager.ts	1016	production
 acs-orchestrator/src/snatManager.test.ts	854	test
-mobile/src/hooks/useChatAppState.ts	1810	production
+mobile/src/hooks/useChatAppState.ts	1696	production
 server/src/__tests__/appConfig.test.ts	877	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test
 server/src/__tests__/feishuTokenBroker.test.ts	809	test
@@ -16,7 +16,6 @@ server/src/__tests__/rawAgentLoop.test.ts	4824	test
 server/src/__tests__/responsesApiAdapter.test.ts	2744	test
 server/src/__tests__/runtimeScheduler.test.ts	849	test
 server/src/__tests__/runtimeTraceRoutes.test.ts	1016	test
-server/src/__tests__/sessionsRoutesMetaOnly.test.ts	812	test
 server/src/__tests__/skillsRouterTenantIsolation.test.ts	833	test
 server/src/__tests__/taskboardStore.pg.test.ts	818	test
 server/src/__tests__/toolRuntime.test.ts	1266	test

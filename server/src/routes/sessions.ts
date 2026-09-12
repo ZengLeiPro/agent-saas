@@ -2198,7 +2198,6 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       res.status(503).json({ error: "Message status unavailable" });
     }
   });
-
   router.post("/sessions/:sessionId/warmup", createSessionWarmupHandler({ readAccessibleSessionMetaForRequest, sandboxWarmup: options.sandboxWarmup }));
 
   router.get("/sessions/:sessionId", async (req: Request, res: Response) => {

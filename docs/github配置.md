@@ -31,7 +31,7 @@ Workflow、部署服务或修改云资源。
   `.permissions.admin` 为 `true`。
 - 先只读盘点，再执行变更；发现与本文档不一致的已有配置时停止，不得覆盖或删除未知配置。
 - 不修改 `.github/workflows/` 下任何文件。
-- 保留 `CI` 的手动 Web-only 兼容发布；ACS 旧直发及其他临时入口按 `config/github-workflow-inventory.json` 在合并后由绿色 CI 停用，不删除历史运行。
+- 保留 `CI` 的手动 Web-only 兼容发布；ACS 旧直发及其他临时入口按 `config/github-workflow-inventory.json` 在合并后由绿色 CI 停用。历史运行默认保留；经独立审查并列入专项清单的临时 Workflow 运行及其专属 artifact 可另行物理清理。
 - 生产凭据只允许保存在 `production` Environment；迁移完成并核对全部生产 Secret 读取 job 的
   Environment 绑定后，必须删除同名 Repository/organization Secret，禁止把高层级 Secret 当兜底。
 - 不执行 `workflow_dispatch`，不创建 Release，不创建 RC tag，不 push，不部署。

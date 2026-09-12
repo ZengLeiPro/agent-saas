@@ -139,6 +139,12 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  for (const filePath of ['scripts/deploy.sh', 'scripts/rollback.sh']) {
+    assert.deepEqual(classifyPath(filePath), {
+      components: [],
+      blockingReason: null,
+    });
+  }
   for (const filePath of [
     'scripts/ci-coverage-blobs.mjs',
     'scripts/ci-source-guards.mjs',

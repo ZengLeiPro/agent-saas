@@ -219,8 +219,9 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   `web-recovery-audit` / `web-recovery-repair` 使用独立 `web_recovery` job，RC ID 必须留空，
   不得混用 RC 的 `recovery_mode=repair`。冷备 repair 必须提交已审阅的 `expected_plan_digest`
   并勾选 `confirm_recovery_only`。原 audit/repair 的生产锁、固定 SSH 身份、现场重读、失败补偿及审计附件不变。
-- 四个长期入口由 `config/github-workflow-inventory.json` 约束。绿色 main CI 才停用清单内已退役注册项，
-  以 ID、文件路径、显示名称三重核对；保留历史运行与发布证据，不删除其他分支、不取消正在执行的任务。
+- 五个长期入口由 `config/github-workflow-inventory.json` 约束。绿色 main CI 才停用清单内已退役注册项，
+  以 ID、文件路径、显示名称三重核对；历史运行与发布证据默认保留，但经独立审查并列入专项清单的临时
+  Workflow 运行及其专属 artifact 可另行物理清理，不删除其他分支、不取消正在执行的任务。
 - Production Promotion 的硬门禁仅包含不可变制品、确定性 Staging 部署证据、物理组件收敛、
   runtime identity 和逐组件 durable receipts。完整浏览器、Agent 与业务验收由独立的
   `测试环境验收` 手工 Workflow 承担，默认不运行、不阻断 Promotion，也不写入发布 attestation。

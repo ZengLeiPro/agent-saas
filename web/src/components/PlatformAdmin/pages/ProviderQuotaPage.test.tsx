@@ -173,10 +173,10 @@ describe('ProviderQuotaPage', () => {
     expect(api.providerQuotaHistory).toHaveBeenCalledWith(24);
   });
 
-  it('「立即采集」全量刷新，卡上的刷新按钮只刷该账号', async () => {
+  it('「采集」全量刷新，卡上的刷新按钮只刷该账号', async () => {
     render(<ProviderQuotaPage />);
     await waitFor(() => expect(screen.getByTestId('quota-account-volcengine:ark')).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: /立即采集/u }));
+    fireEvent.click(screen.getByRole('button', { name: /采集/u }));
     await waitFor(() => expect(api.refreshProviderQuota).toHaveBeenCalledWith(undefined));
     fireEvent.click(screen.getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' }));
     await waitFor(() => expect(api.refreshProviderQuota).toHaveBeenCalledWith('codex:c1'));
@@ -423,9 +423,9 @@ describe('ProviderQuotaPage', () => {
     expect(window.localStorage.getItem(PROVIDER_QUOTA_ORDER_STORAGE_KEY)).toBe(JSON.stringify(expected));
     expect(api.refreshProviderQuota).not.toHaveBeenCalled();
     expect(api.providerQuota).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole('button', { name: '立即采集' }));
+    fireEvent.click(screen.getByRole('button', { name: '采集' }));
     await waitFor(() => expect(api.refreshProviderQuota).toHaveBeenCalledWith(undefined));
-    await waitFor(() => expect(screen.getByRole('button', { name: '立即采集' }).hasAttribute('disabled')).toBe(false));
+    await waitFor(() => expect(screen.getByRole('button', { name: '采集' }).hasAttribute('disabled')).toBe(false));
     expect(renderedAccountKeys()).toEqual(expected);
     view.unmount();
     render(<ProviderQuotaPage />);

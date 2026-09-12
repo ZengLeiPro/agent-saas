@@ -117,8 +117,8 @@ describe('Zhipu quota dashboard card', () => {
     expect(screen.getByText('接近上限')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '刷新 智谱测试分组' }));
     await waitFor(() => expect(mocks.api.refreshProviderQuota).toHaveBeenCalledWith('zhipu:glm'));
-    await waitFor(() => expect((screen.getByRole('button', { name: '立即采集' }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole('button', { name: '立即采集' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: '采集' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: '采集' }));
     await waitFor(() => expect(mocks.api.refreshProviderQuota).toHaveBeenCalledWith(undefined));
   });
 

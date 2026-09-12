@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 
 import { platformAdminApi } from '../api';
 import { ProviderPlanExpiryEditor } from './ProviderPlanExpiryEditor';
+import { ProviderQuotaNoteEditor } from './ProviderQuotaNoteEditor';
 import { ProviderQuotaPlanBadge } from './ProviderQuotaPlanBadge';
 import {
   moveQuotaAccount,
@@ -307,6 +308,7 @@ function AccountCard({
           </div>
           <div className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" title={isCodex && credential?.expiresAt ? `凭据到期 ${formatMinuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
             <ProviderQuotaPlanBadge sourceKind={snapshot.sourceKind} planType={snapshot.plan?.type}>{subtitle}</ProviderQuotaPlanBadge>
+            <ProviderQuotaNoteEditor accountKey={snapshot.accountKey} accountLabel={snapshot.accountLabel} />
             {showCredits && <span className="whitespace-nowrap tabular-nums text-muted-foreground">Credits {credits!.balance}</span>}
           </div>
           <div className="col-start-2 row-start-2 justify-self-end text-right">
@@ -497,13 +499,14 @@ export function ProviderQuotaPage() {
       <SettingsPanelHeader
         title="套餐额度"
         description={
-          <span>{collector?.enabled ? `每 ${Math.round(collector.intervalMs / 60_000)} 分钟自动采集。` : '本进程按需采集。'}切回前台自动刷新；「刷新」读取最新数据，「立即采集」触发采集。</span>
+          <span>{collector?.enabled ? `每 ${Math.round(collector.intervalMs / 60_000)} 分钟自动采集。` : '本进程按需采集。'}切回前台自动刷新；「刷新」读取最新数据，「采集」触发采集。</span>
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {criticalCount > 0 && <Badge variant="danger" title={`采集失败 ${statusCounts.collectionFailed} · 额度耗尽 ${statusCounts.exhausted} · 凭据不可用 ${statusCounts.credentialUnavailable}`}>{criticalCount} 个异常</Badge>}
             {statusCounts.warning > 0 && <Badge variant="warning">{statusCounts.warning} 个需关注</Badge>}
             <Button
+              className="min-w-16"
               variant="outline"
               size="sm"
               onClick={() => void load('reload')}
@@ -513,13 +516,14 @@ export function ProviderQuotaPage() {
               刷新
             </Button>
             <Button
+              className="min-w-16"
               variant="outline"
               size="sm"
               onClick={() => void load('collect')}
               disabled={refreshing}
               aria-busy={refreshMode === 'collect'}
             >
-              立即采集
+              采集
             </Button>
           </div>
         }
@@ -533,7 +537,7 @@ export function ProviderQuotaPage() {
         <EmptyState
           icon={EntityIcons.credits}
           title="尚未配置任何套餐用量来源"
-          description="在「平台配置 → 模型」里配置智谱分组的 API Key 和官方 Base URL（也可显式选择智谱 Coding Plan），为火山 Agent Plan 填写管控面 AccessKey，或完成 Codex 订阅授权。首次采集后会出现对应卡片，也可点击「立即采集」。"
+          description="在「平台配置 → 模型」里配置智谱分组的 API Key 和官方 Base URL（也可显式选择智谱 Coding Plan），为火山 Agent Plan 填写管控面 AccessKey，或完成 Codex 订阅授权。首次采集后会出现对应卡片，也可点击「采集」。"
         />
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">

@@ -114,4 +114,74 @@ describe('Grok billing v1 contract (T34)', () => {
     expect(fetcher.mock.calls.every(([, init]) => isProxyRequiredEgressRequest(init))).toBe(true);
     expect(fetcher.mock.calls[1][1].headers.Authorization).toBe('Bearer fixture-new');
   });
+
+  it('retries a transport failure once on the same proxy-required fetch, then succeeds', async () => {
+    const manager = {
+      getConfiguration: () => ({ enabled: true }),
+      getCredentialRefs: () => ['a'],
+      getCredentialsForCredential: vi.fn().mockResolvedValue({
+        accessToken: 'fixture-access',
+        generation: 1,
+      }),
+      getStatuses: async () => [],
+    } as unknown as GrokQuotaCredentialSource;
+    const fetcher = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(json({ config: { creditUsagePercent: 11 } }));
+    expect((await fetchGrokBilling(manager, 'a', fetcher)).windows[0].usedPercent).toBe(11);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.every(([, init]) => isProxyRequiredEgressRequest(init))).toBe(true);
+  });
+
+  it('does not retry HTTP 401 as a transport error', async () => {
+    const manager = {
+      getConfiguration: () => ({ enabled: true }),
+      getCredentialRefs: () => ['a'],
+      getCredentialsForCredential: vi.fn().mockResolvedValue({
+        accessToken: 'fixture-access',
+        generation: 1,
+      }),
+      getStatuses: async () => [],
+    } as unknown as GrokQuotaCredentialSource;
+    const fetcher = vi.fn(async () => json({}, 401));
+    await expect(fetchGrokBilling(manager, 'a', fetcher)).rejects.toMatchObject({ code: 'billing_unavailable', status: 401 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries HTTP 503 once, then keeps billing_unavailable', async () => {
+    const manager = {
+      getConfiguration: () => ({ enabled: true }),
+      getCredentialRefs: () => ['a'],
+      getCredentialsForCredential: vi.fn().mockResolvedValue({
+        accessToken: 'fixture-access',
+        generation: 1,
+      }),
+      getStatuses: async () => [],
+    } as unknown as GrokQuotaCredentialSource;
+    const fetcher = vi.fn(async () => json({ error: 'unavailable' }, 503));
+    await expect(fetchGrokBilling(manager, 'a', fetcher)).rejects.toMatchObject({
+      code: 'billing_unavailable',
+      status: 503,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves the undici cause on billing_request_failed after a second transport failure', async () => {
+    const manager = {
+      getConfiguration: () => ({ enabled: true }),
+      getCredentialRefs: () => ['a'],
+      getCredentialsForCredential: vi.fn().mockResolvedValue({
+        accessToken: 'fixture-access',
+        generation: 1,
+      }),
+      getStatuses: async () => [],
+    } as unknown as GrokQuotaCredentialSource;
+    const fetcher = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+    await expect(fetchGrokBilling(manager, 'a', fetcher)).rejects.toMatchObject({
+      code: 'billing_request_failed',
+      cause: expect.objectContaining({ message: 'fetch failed' }),
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 });

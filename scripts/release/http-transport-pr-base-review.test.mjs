@@ -33,9 +33,30 @@ const grokEvidencePaths = [
   'scripts/release/grok-subscription-postcondition.sql',
   'server/src/runtime/responses/grokSubscriptionTableNames.ts',
 ];
-const auditedPaths = [transport, quotaSchema, scopeStore, providerStore, ...grokNeutralPaths, ...grokExpandPaths];
+const grokEgressReviewPaths = [
+  'server/src/app/runtimeGovernanceConnectors.ts',
+  'server/src/app/runtimeEgressAssembly.ts',
+  'server/src/data/egressConfig.ts',
+  'server/src/runtime/egressDispatcher.ts',
+];
+const grokEgressEvidence = 'docs/release/Grok出站与推理强度无结构变更审核-20260912.md';
+const auditedPaths = [
+  transport,
+  quotaSchema,
+  scopeStore,
+  providerStore,
+  ...grokNeutralPaths,
+  ...grokExpandPaths,
+  ...grokEgressReviewPaths,
+];
 const expandPaths = [providerStore, ...grokExpandPaths];
-const evidencePaths = [evidence, quotaEvidence, scopeEvidence, ...grokEvidencePaths];
+const evidencePaths = [
+  evidence,
+  quotaEvidence,
+  scopeEvidence,
+  ...grokEvidencePaths,
+  grokEgressEvidence,
+];
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 const target = git('rev-parse', 'HEAD').trim();
@@ -127,7 +148,14 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
   });
   assert.deepEqual(
     [...loaded.entries.keys()].sort(),
-    [quotaSchema, scopeStore, providerStore, ...grokNeutralPaths, ...grokExpandPaths].sort(),
+    [
+      quotaSchema,
+      scopeStore,
+      providerStore,
+      ...grokNeutralPaths,
+      ...grokExpandPaths,
+      ...grokEgressReviewPaths,
+    ].sort(),
   );
   assert.equal(loaded.entries.get(quotaSchema).classification, 'no-schema-change');
   const result = createMigrationPlan({
@@ -139,10 +167,15 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
   assert.notEqual(result.migrationPlan.phase, 'contract');
 });
 
-
 test('PR642 baseline retains scope retirement plus the independently reviewed Grok migration', () => {
   const scopeBaseline = 'eec01d4c1d043a3de0eec54f9fc1ab8d64651c4b';
-  const paths = [scopeStore, providerStore, ...grokNeutralPaths, ...grokExpandPaths];
+  const paths = [
+    scopeStore,
+    providerStore,
+    ...grokNeutralPaths,
+    ...grokExpandPaths,
+    ...grokEgressReviewPaths,
+  ];
   const loaded = loadMigrationReviews({
     baseline: scopeBaseline,
     baselineSnapshot: snapshot(scopeBaseline),

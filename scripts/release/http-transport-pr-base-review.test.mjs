@@ -127,7 +127,7 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
   });
   assert.deepEqual(
     [...loaded.entries.keys()].sort(),
-    [quotaSchema, scopeStore, ...grokNeutralPaths, ...grokExpandPaths].sort(),
+    [quotaSchema, scopeStore, providerStore, ...grokNeutralPaths, ...grokExpandPaths].sort(),
   );
   assert.equal(loaded.entries.get(quotaSchema).classification, 'no-schema-change');
   const result = createMigrationPlan({
@@ -142,7 +142,7 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
 
 test('PR642 baseline retains scope retirement plus the independently reviewed Grok migration', () => {
   const scopeBaseline = 'eec01d4c1d043a3de0eec54f9fc1ab8d64651c4b';
-  const paths = [scopeStore, ...grokNeutralPaths, ...grokExpandPaths];
+  const paths = [scopeStore, providerStore, ...grokNeutralPaths, ...grokExpandPaths];
   const loaded = loadMigrationReviews({
     baseline: scopeBaseline,
     baselineSnapshot: snapshot(scopeBaseline),
@@ -152,7 +152,7 @@ test('PR642 baseline retains scope retirement plus the independently reviewed Gr
   for (const path of paths) {
     assert.equal(
       loaded.entries.get(path).classification,
-      grokExpandPaths.includes(path) ? 'expand' : 'no-schema-change',
+      expandPaths.includes(path) ? 'expand' : 'no-schema-change',
     );
   }
   const result = createMigrationPlan({ baseline: scopeBaseline, target, changedPaths: paths });

@@ -1,5 +1,7 @@
 import type { PgRunStore } from './runStore.js';
 import type { AttentionItem } from './attention.js';
+import { parentOwnedSubagentSql, unreadyBackgroundTaskSql } from './background/backgroundTaskRuntime.js';
+import { runLeaseBlockersClearedSql } from './runLeaseEligibility.js';
 
 const FAILURE_WINDOW_MINUTES = 10;
 const FAILURE_MIN_COUNT = 5;
@@ -71,11 +73,18 @@ export async function buildRunSystemIncidents(runStore?: PgRunStore): Promise<At
        WHERE (status = 'completed' AND completed_at >= now() - interval '${FAILURE_WINDOW_MINUTES} minutes')
           OR (status = 'failed' AND failed_at >= now() - interval '${FAILURE_WINDOW_MINUTES} minutes')
      ), stalled_pending AS (
-       SELECT user_id
-       FROM ${runStore.runsTable}
-       WHERE status = 'pending'
-         AND CASE WHEN started_at IS NULL THEN requested_at ELSE updated_at END
+       SELECT candidate.user_id
+       FROM ${runStore.runsTable} candidate
+       WHERE candidate.status = 'pending'
+         AND CASE WHEN candidate.started_at IS NULL THEN candidate.requested_at ELSE candidate.updated_at END
              < now() - interval '${QUEUE_STALL_MINUTES} minutes'
+         AND NOT (${parentOwnedSubagentSql('candidate')})
+         AND NOT (
+           candidate.status = 'pending'
+           AND COALESCE(candidate.metadata->>'schedulerState', '') = 'staged'
+         )
+         AND NOT (${unreadyBackgroundTaskSql('candidate')})
+         AND ${runLeaseBlockersClearedSql('candidate', runStore.runsTable, runStore.steeringInputsTable)}
      )
      SELECT
        (SELECT count(*) FROM recent_terminal) AS recent_total,

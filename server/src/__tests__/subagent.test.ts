@@ -443,7 +443,7 @@ describe('runSubagent', () => {
     expect(toolNames).not.toContain('MemoryCommand');
   });
 
-  it('explore 白名单：开放 Shell 搜索，但不暴露独立 Write/Edit 工具', async () => {
+  it('explore 白名单：开放搜索与报告生成所需的 Write/Edit 工具', async () => {
     const fixture = await makeFixture({ cleanupDirs });
     const adapter = new TextOnlyAdapter();
     await runSubagent({
@@ -457,9 +457,11 @@ describe('runSubagent', () => {
     const toolNames = adapter.requests[0]!.tools.map((tool) => tool.name);
     expect(toolNames).toContain('Read');
     expect(toolNames).toContain('Shell');
-    for (const excluded of ['Write', 'Edit', 'TodoWrite', 'AskUserQuestion', 'Agent', 'List', 'Glob', 'Grep']) {
+    for (const excluded of ['TodoWrite', 'AskUserQuestion', 'Agent', 'List', 'Glob', 'Grep']) {
       expect(toolNames).not.toContain(excluded);
     }
+    expect(toolNames).toContain('Write');
+    expect(toolNames).toContain('Edit');
     expect(SUBAGENT_TYPES.explore.systemPrompt).toContain('Shell 是完整命令行能力，不是只读边界');
     expect(SUBAGENT_TYPES.explore.systemPrompt).not.toContain('你只有只读工具');
   });
@@ -484,6 +486,7 @@ describe('AgentToolProvider', () => {
       childSessionId: `sub-${randomUUID()}`,
       childRunId: `${Date.now()}-${randomUUID()}`,
       model: 'mock-model',
+      effort: 'high',
       ...overrides,
     };
   }
@@ -507,8 +510,10 @@ describe('AgentToolProvider', () => {
           childSessionId: outcome.childSessionId,
           childRunId: outcome.childRunId,
           model: outcome.model,
+          ...(outcome.effort ? { effort: outcome.effort } : {}),
+          agentId: params.request.agentId,
         });
-        return outcome;
+        return { ...outcome, agentId: params.request.agentId };
       }),
     });
   }
@@ -534,7 +539,7 @@ describe('AgentToolProvider', () => {
     expect(SUBAGENT_HARD_TIMEOUT_MS).toBe(120 * 60 * 1000);
   });
 
-  it('dispatcher Agent schema 只能表达 background，且不能覆盖 Worker 模型', async () => {
+  it('dispatcher Agent schema 只能表达 background，但保留 model/effort/resume 请求', async () => {
     const fixture = await makeFixture({ cleanupDirs });
     const enqueue = vi.fn().mockResolvedValue({
       taskId: 'bg-task-1',
@@ -553,10 +558,10 @@ describe('AgentToolProvider', () => {
       description: '执行任务', prompt: '完成任务', mode: 'foreground',
     }).success).toBe(false);
     const parsed = descriptor!.schema.parse({
-      description: '执行任务', prompt: '完成任务', model: '越权模型',
+      description: '执行任务', prompt: '完成任务', model: '请求模型', effort: 'high', resume: 'agent-1',
     }) as Record<string, unknown>;
-    expect(parsed).toMatchObject({ mode: 'background' });
-    expect(parsed).not.toHaveProperty('model');
+    expect(parsed).toMatchObject({ model: '请求模型', effort: 'high', resume: 'agent-1' });
+    expect(parsed.mode).toBeUndefined();
 
     const result = await provider.invoke({
       toolId: 'Agent',

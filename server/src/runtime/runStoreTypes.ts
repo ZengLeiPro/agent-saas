@@ -83,6 +83,19 @@ export interface UpsertRunInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface SubagentContinuationReservation {
+  state: 'reserved' | 'active';
+  record: RunRecord;
+}
+
+export interface SubagentDeferredMessage {
+  messageId: string;
+  prompt: string;
+  acceptedAt: string;
+  senderId?: string;
+  senderName?: string;
+}
+
 export class RunCreateConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -309,6 +322,23 @@ export interface RunStore {
   ): Promise<RunRecord | null>;
   patchMetadata?(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null>;
   get(runId: string): Promise<RunRecord | null>;
+  /** 按租户、根父会话和稳定 agent_id 查询逻辑子 Agent 的全部物理 run。 */
+  listSubagentRunsByAgentId?(
+    tenantId: string,
+    parentSessionId: string,
+    agentId: string,
+    options?: { userId?: string; limit?: number },
+  ): Promise<RunRecord[]>;
+  reserveSubagentContinuation?(
+    input: UpsertRunInput & { agentId: string; parentSessionId: string },
+  ): Promise<SubagentContinuationReservation>;
+  queueSubagentDeferredMessage?(input: {
+    taskRunId: string; agentId: string; tenantId: string; parentSessionId: string; userId?: string;
+    message: SubagentDeferredMessage;
+  }): Promise<{ state: 'accepted' } | { state: 'physical_active'; target: RunRecord }>;
+  drainSubagentDeferredMessages?(input: {
+    taskRunId: string; childRunId: string; agentId: string; tenantId: string;
+  }): Promise<SubagentDeferredMessage[]>;
   /** Permanent message acceptance lookup, isolated by authoritative tenant and submitter. */
   findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
   findUniqueByIdempotencyKeyAcrossTenants?(userId: string, idempotencyKey: string): Promise<RunRecord | null>;

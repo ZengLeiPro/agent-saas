@@ -8,6 +8,8 @@ import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
 import { recoverableRunHandoffSql, releaseRunLeaseForHandoff } from './runLeaseHandoff.js';
 import { UNREADY_BACKGROUND_TASK_SQL } from './background/backgroundTaskRuntime.js';
+import { listSubagentRunsByAgentId } from './runStoreSubagentContinuation.js';
+import { listRunsBySession } from './runStoreSessionQueries.js';
 
 /** SQL implementation for authoritative Runtime Run state; all steering joins preserve tenant/session identity. */
 export class PgRunStoreQueries {
@@ -418,18 +420,15 @@ export class PgRunStoreQueries {
   }
 
   async listBySession(sessionId: string, options: { limit?: number; beforeUpdatedAt?: string } = {}): Promise<RunRecord[]> {
-    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      SELECT row_to_json(${this.runsTable}.*) AS row_json
-      FROM ${this.runsTable}
-      WHERE session_id = $1
-        AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
-        AND ($2::timestamptz IS NULL OR updated_at < $2::timestamptz)
-      ORDER BY updated_at DESC
-      LIMIT $3
-    `, [sessionId, options.beforeUpdatedAt ?? null, limit]);
-    return result.rows.map((row) => normalizeRunRecord(row.row_json));
+    return listRunsBySession(this.pool, this.runsTable, sessionId, options);
   }
+
+  async listSubagentRunsByAgentId(
+    tenantId: string,
+    parentSessionId: string,
+    agentId: string,
+    options: { userId?: string; limit?: number } = {},
+  ): Promise<RunRecord[]> { return listSubagentRunsByAgentId(this.pool, this.runsTable, tenantId, parentSessionId, agentId, options); }
 
   async listSessionIdsByTenant(tenantId: string): Promise<string[]> {
     const result = await this.pool.query<{ session_id: string }>(

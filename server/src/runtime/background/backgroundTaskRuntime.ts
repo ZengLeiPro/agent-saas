@@ -17,6 +17,10 @@ export interface BackgroundAgentRequest {
   prompt: string;
   agentType: 'general' | 'explore';
   model?: string;
+  effort?: string;
+  /** 稳定的逻辑子 Agent 身份；首次调用省略时由父提交幂等键派生。 */
+  agentId?: string;
+  continuation?: { previousRunId?: string; previousSessionId?: string; sequence?: number };
   includeCompanyInfo: boolean;
 }
 
@@ -26,6 +30,10 @@ export interface BackgroundTaskStartResult {
   status: 'pending';
   description: string;
   model: string;
+  modelRef?: string;
+  effort?: string;
+  agentId: string;
+  delivery: 'accepted';
 }
 
 export interface BackgroundCommandRequest {

@@ -4,12 +4,19 @@ import { dirname, join } from 'node:path';
 import type { UserIdentity } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
 import type { RunRecord, RunStatus, RunStore } from '../runStore.js';
+import type { RuntimeSessionRecord } from '../sessionCatalog.js';
 import { SUBAGENT_RESULT_MAX_CHARS } from '../subagent/subagentLimits.js';
 import type { SubagentOutcome } from '../subagent/subagentRunner.js';
 import { metadataString } from './backgroundTaskMetadata.js';
 import { truncateResult, type StoredBackgroundResult } from './backgroundTaskFormatting.js';
 
 const logger = createLogger('BackgroundTaskService');
+
+export function resolveBackgroundSkillUsername(
+  session: Pick<RuntimeSessionRecord, 'username' | 'orgAgentSnapshot'>,
+): string | undefined {
+  return session.orgAgentSnapshot ? undefined : session.username;
+}
 
 export function requireBackgroundRunStore(runStore: RunStore | undefined): RunStore {
   if (!runStore?.enqueueBackgroundTask || !runStore.listBackgroundTasks) {

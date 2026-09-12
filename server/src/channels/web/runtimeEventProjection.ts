@@ -361,6 +361,8 @@ function projectRuntimePlatformEventLegacy(
           childSessionId: event.childSessionId,
           childRunId: event.childRunId,
           model: event.model,
+          agentId: event.agentId,
+          effort: event.effort,
         }],
       };
     case 'subagent_finished':
@@ -373,6 +375,8 @@ function projectRuntimePlatformEventLegacy(
           childSessionId: event.childSessionId,
           childRunId: event.childRunId,
           model: event.model,
+          agentId: event.agentId,
+          effort: event.effort,
           durationMs: event.durationMs,
           totalTokens: event.totalTokens,
           toolUseCount: event.toolUseCount,

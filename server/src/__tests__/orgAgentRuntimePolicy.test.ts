@@ -105,6 +105,15 @@ describe('Org Agent Runtime Policy', () => {
     expect(worker.tools.denylist).toContain('Agent');
   });
 
+  it('Worker 可配置为可覆盖默认模型，且不会被解释成 fixed 锁定', () => {
+    const runtime = policy({
+      executionMode: 'dispatcher',
+      workerModel: { strategy: 'default', modelRef: 'tenant/worker-default' },
+    });
+    const worker = mergeOrgAgentWorkerRuntimePolicy(sharedProfile(), runtime);
+    expect(worker.model).toEqual({ strategy: 'default', modelRef: 'tenant/worker-default' });
+  });
+
   it('governance projection 将已发布版本的 runtime policy 写入 legacy record', async () => {
     const root = await mkdtemp(join(tmpdir(), 'org-agent-runtime-projection-'));
     cleanup.add(root);

@@ -139,8 +139,8 @@ type WsEventPayload =
     | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string; isError?: boolean; presentation?: unknown; metadata?: unknown }
     | { type: 'permission_request'; interactionId: string; version?: number; order?: number; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string; confirmation?: WsToolConfirmationCard }
     | { type: 'ask_user'; interactionId: string; version?: number; order?: number; questions: WsAskUserQuestion[] }
-    | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string }
-    | { type: 'subagent_end'; toolId: string; agentType?: string; status?: Exclude<SubagentStatus, 'running'>; childSessionId?: string; childRunId?: string; model?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; resultPreview?: string }
+    | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string; agentId?: string; effort?: string }
+    | { type: 'subagent_end'; toolId: string; agentType?: string; status?: Exclude<SubagentStatus, 'running'>; childSessionId?: string; childRunId?: string; model?: string; agentId?: string; effort?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; resultPreview?: string }
     | { type: 'moderation_outcome'; moderationId: string; outcome: 'allowed' | 'blocked' | 'flagged'; reasonCode?: string }
     | { type: 'file_download'; fileName: string; fileType: string; filePath: string; fileSize: number; owner?: string }
     | { type: 'artifact_created'; artifactId: string; fileName: string; kind: 'file' | 'screenshot' | 'patch' | 'log' | 'blob'; sourcePath?: string; sizeBytes?: number; mimeType?: string; sha256?: string; owner?: string }

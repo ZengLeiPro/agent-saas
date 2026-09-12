@@ -79,7 +79,7 @@ const EXPLORE_TOOLS_V1 = [
   'WebSearch',
 ];
 
-const EXPLORE_TOOLS = [
+const EXPLORE_TOOLS_V2 = [
   'MemorySearch',
   'Read',
   'Shell',
@@ -88,7 +88,14 @@ const EXPLORE_TOOLS = [
   'WebSearch',
 ];
 
+const EXPLORE_TOOLS_V3 = [
+  ...EXPLORE_TOOLS_V2,
+  'Edit',
+  'Write',
+];
+
 const SHELL_FIRST_PROFILE_PUBLISHED_AT = '2026-07-24T17:04:00.000Z';
+const EXPLORE_WRITE_PROFILE_PUBLISHED_AT = '2026-09-12T07:50:00.000Z';
 const TENANT_INSTRUCTIONS_PROFILE_PUBLISHED_AT = '2026-07-25T04:10:00.000Z';
 const TOOL_CONSOLIDATION_PROFILE_PUBLISHED_AT = '2026-08-02T19:00:00.000Z';
 
@@ -200,15 +207,19 @@ export const BUILTIN_AGENT_PROFILES: readonly BuiltinAgentProfileDefinition[] = 
     profileId: 'arp_system_subagent_explore',
     profileKey: 'subagent_explore',
     name: '子 Agent · Explore',
-    description: '搜索与定位专用子 Agent；Shell 可用，但仍禁用交互、嵌套、排程与后台任务。',
-    purpose: '搜索定位子 Agent',
-    versionNumber: 2,
+    description: '研究、分析与报告交付专用子 Agent；可读写工作区，但仍禁用交互、嵌套、排程与后台任务。',
+    purpose: '研究分析与报告交付子 Agent',
+    versionNumber: 3,
     previousVersions: [{
       versionNumber: 1,
       config: exploreConfig(EXPLORE_TOOLS_V1, false),
+    }, {
+      versionNumber: 2,
+      config: exploreConfig(EXPLORE_TOOLS_V2, true),
+      publishedAt: SHELL_FIRST_PROFILE_PUBLISHED_AT,
     }],
-    publishedAt: SHELL_FIRST_PROFILE_PUBLISHED_AT,
-    config: exploreConfig(EXPLORE_TOOLS, true),
+    publishedAt: EXPLORE_WRITE_PROFILE_PUBLISHED_AT,
+    config: exploreConfig(EXPLORE_TOOLS_V3, true),
   },
   {
     profileId: 'arp_system_subagent_general',

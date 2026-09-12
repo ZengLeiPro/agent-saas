@@ -629,6 +629,8 @@ export function processWsEvent(
                 ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
                 ...(data.childRunId ? { childRunId: data.childRunId } : {}),
                 ...(data.model ? { model: data.model } : {}),
+                ...(data.agentId ? { agentId: data.agentId } : {}),
+                ...(data.effort ? { effort: data.effort } : {}),
               }
             : message
         );
@@ -644,6 +646,8 @@ export function processWsEvent(
           ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
           ...(data.childRunId ? { childRunId: data.childRunId } : {}),
           ...(data.model ? { model: data.model } : {}),
+          ...(data.agentId ? { agentId: data.agentId } : {}),
+          ...(data.effort ? { effort: data.effort } : {}),
         }));
         return;
       }
@@ -656,6 +660,8 @@ export function processWsEvent(
       ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
       ...(data.childRunId ? { childRunId: data.childRunId } : {}),
       ...(data.model ? { model: data.model } : {}),
+      ...(data.agentId ? { agentId: data.agentId } : {}),
+      ...(data.effort ? { effort: data.effort } : {}),
     });
     return;
   }
@@ -676,6 +682,8 @@ export function processWsEvent(
           ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
           ...(data.childRunId ? { childRunId: data.childRunId } : {}),
           ...(data.model ? { model: data.model } : {}),
+          ...(data.agentId ? { agentId: data.agentId } : {}),
+          ...(data.effort ? { effort: data.effort } : {}),
           ...(typeof data.durationMs === "number" ? { durationMs: data.durationMs } : {}),
           ...(typeof data.totalTokens === "number" ? { totalTokens: data.totalTokens } : {}),
           ...(typeof data.toolUseCount === "number" ? { toolUseCount: data.toolUseCount } : {}),
@@ -693,6 +701,8 @@ export function processWsEvent(
         ...(data.childSessionId ? { childSessionId: data.childSessionId } : {}),
         ...(data.childRunId ? { childRunId: data.childRunId } : {}),
         ...(data.model ? { model: data.model } : {}),
+        ...(data.agentId ? { agentId: data.agentId } : {}),
+        ...(data.effort ? { effort: data.effort } : {}),
         ...(typeof data.durationMs === "number" ? { durationMs: data.durationMs } : {}),
         ...(typeof data.totalTokens === "number" ? { totalTokens: data.totalTokens } : {}),
         ...(typeof data.toolUseCount === "number" ? { toolUseCount: data.toolUseCount } : {}),

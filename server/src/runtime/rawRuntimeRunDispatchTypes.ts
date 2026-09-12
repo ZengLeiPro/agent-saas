@@ -320,6 +320,10 @@ export interface RawRuntimeRunDispatchConfig {
     connection?: { apiKey?: string; baseUrl?: string };
     providerOptions?: ModelProviderOptions;
   } | null;
+  /** 仅含当前租户可见字段；不得包含连接、凭据、原始隐藏名称。 */
+  getSubagentModelCatalog?: (
+    tenantId: string | undefined,
+  ) => import('./subagent/subagentModelCatalog.js').SubagentBaseModelCatalog | null;
   /** 客户端尚未选定模型时，解析当前组织的默认模型稳定引用。 */
   defaultModelResolver?: (tenantId?: string) => {
     ref: string;

@@ -145,6 +145,8 @@ export type MessageItem =
       childSessionId?: string;
       childRunId?: string;
       model?: string;
+      agentId?: string;
+      effort?: string;
       durationMs?: number;
       totalTokens?: number;
       toolUseCount?: number;

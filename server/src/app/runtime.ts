@@ -1528,7 +1528,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     create: async (index) => createMemoryIndexService(processCwd, await resolveMemoryIndexConfig(index, secretVault), { beginEmbeddingBillingRun: beginMemoryEmbeddingBillingRun }),
     publish: (service) => publishMemoryIndexService(service), warn: (message) => serverLogger.warn(message),
   });
-  const { modelResolver, defaultModelResolver, getRuntimeModels, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
+  const { modelResolver, defaultModelResolver, getRuntimeModels, getSubagentModelCatalog, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
     processCwd, recoveryGate: configIdentityAssembly.recoveryGate,
     tenantStore,
@@ -1691,7 +1691,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     },
     userOverrides: config.agent.userOverrides,
     dispatch: config.dispatch,
-    executionConfig, modelResolver,
+    executionConfig, modelResolver, getSubagentModelCatalog,
     defaultModelResolver,
     ...(agentDwsAccountStore ? { resolveLegacyDwsCompletionAccount: (tenantId: string, accountId: string) => agentDwsAccountStore.getForTenant(tenantId, accountId) } : {}),
     ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(

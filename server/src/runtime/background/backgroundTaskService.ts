@@ -2,10 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { type ToolCallContext, type ToolProvider } from '../../agent/toolRuntime.js';
 import { readSessionMeta } from '../../data/transcripts/meta.js';
-import {
-  mergeOrgAgentWorkerRuntimePolicy,
-  resolveOrgAgentRuntimeSkillIds,
-} from '../../data/orgAgents/runtimePolicy.js';
+import { resolveOrgAgentRuntimeSkillIds } from '../../data/orgAgents/runtimePolicy.js';
 import type { ChannelContext } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
 import { buildConnectorRunEnv } from '../connectorRunEnv.js';
@@ -65,11 +62,15 @@ import {
   prepareOrgAgentBackgroundWork,
 } from './orgAgentBackgroundWork.js';
 import { executionContextSessionSnapshot } from './orgAgentExecutionContext.js';
+import { buildBackgroundTaskStartResult } from './backgroundTaskStartResult.js';
+import { buildBackgroundDeferredMessageLoader } from './backgroundSubagentDeferredMessages.js';
+import { resolveBackgroundSubagentProfile } from './backgroundSubagentProfile.js';
+import { SUBAGENT_CONTINUATION_PROTOCOL_VERSION } from '../subagent/subagentContinuationProtocol.js';
 import {
-  assertAgentProfileExecutionTarget,
-  profileRunMetadata,
-  type BoundAgentRuntimeProfile,
-} from '../agentProfiles.js';
+  deriveSubagentAgentId,
+  resolveSubagentExecutionOptions,
+} from '../subagent/subagentExecutionOptions.js';
+import { profileRunMetadata } from '../agentProfiles.js';
 import type {
   BackgroundAgentRequest,
   BackgroundCommandRequest,
@@ -92,16 +93,15 @@ import {
   outcomeToRunStatus,
   persistResultText,
   requireBackgroundRunStore,
+  resolveBackgroundSkillUsername,
   sessionIdentity,
 } from './backgroundTaskServiceSupport.js';
 export type { BackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 // 结果模型与格式化函数已迁至 ./backgroundTaskFormatting.ts，这里按既有 import 路径继续对外转发。
 export { escapeXml } from './backgroundTaskFormatting.js';
+export { resolveBackgroundSkillUsername } from './backgroundTaskServiceSupport.js';
 const logger = createLogger('BackgroundTaskService');
 const CANCEL_POLL_MS = 2_000;
-export function resolveBackgroundSkillUsername(session: Pick<RuntimeSessionRecord, 'username' | 'orgAgentSnapshot'>): string | undefined {
-  return session.orgAgentSnapshot ? undefined : session.username;
-}
 export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   private readonly runSubagentImpl: typeof runSubagent;
   private readonly orgWork: OrgAgentBackgroundWorkCoordinator;
@@ -141,45 +141,41 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     }
     const effectiveOrgAgentSnapshot = currentOrgAgent
       ? createOrgAgentSessionSnapshot(currentOrgAgent) : parentSession.orgAgentSnapshot;
-    let boundProfile: BoundAgentRuntimeProfile | undefined;
-    if (this.config.agentRuntimeProfileResolver) {
-      boundProfile = await this.config.agentRuntimeProfileResolver.resolveForSession({
-        existingSession: null,
-        bindingKey: request.agentType === 'explore' ? 'background_explore' : 'background_general',
-      });
-      if (effectiveOrgAgentSnapshot) {
-        boundProfile = {
-          ...boundProfile,
-          version: {
-            ...boundProfile.version,
-            config: mergeOrgAgentWorkerRuntimePolicy(
-              boundProfile.version.config,
-              effectiveOrgAgentSnapshot.runtime,
-            ),
-          },
-        };
-      }
-      assertAgentProfileExecutionTarget(boundProfile.version.config, executionTarget);
-    }
-    const configuredWorkerModel = effectiveOrgAgentSnapshot?.runtime.workerModel;
-    const modelRef = boundProfile?.version.config.model.strategy === 'fixed'
-      ? boundProfile.version.config.model.modelRef
-      : configuredWorkerModel?.strategy === 'fixed'
-        ? configuredWorkerModel.modelRef
-        : request.model?.trim() || parentSession.modelRef;
-    let model: string | undefined;
-    if (modelRef && this.config.modelResolver) {
-      const resolved = this.config.modelResolver(modelRef, tenantId);
-      if (!resolved) {
-        throw new Error(`后台 Agent 模型 "${modelRef}" 配置刷新失败或不在当前组织可用模型白名单内。`);
-      }
-      model = resolved.model;
-    }
-    // 仅未装配 resolver 的 file/test backend 可继承原始 ref；resolver 返回 null 必须拒绝。
-    model ??= modelRef ?? parentRun?.model;
-    if (!model || !modelRef) throw new Error('无法确定后台 Agent 模型。');
-
+    const boundProfile = await resolveBackgroundSubagentProfile({
+      config: this.config,
+      sessionCatalog,
+      request,
+      tenantId,
+      userId,
+      executionTarget,
+      orgAgentSnapshot: effectiveOrgAgentSnapshot,
+    });
     const toolCallId = context.toolCallId ?? `agent-${randomUUID()}`;
+    const configuredWorkerModel = effectiveOrgAgentSnapshot?.runtime.workerModel;
+    const executionOptions = resolveSubagentExecutionOptions({
+      requestedModelRef: request.model,
+      requestedEffort: request.effort,
+      inheritedModelRef: parentSession.modelRef,
+      parentRunModel: parentRun?.model,
+      inheritedEffort: typeof parentRun?.metadata.effort === 'string' ? parentRun.metadata.effort : undefined,
+      tenantId,
+      modelResolver: this.config.modelResolver,
+      profileModel: boundProfile?.version.config.model,
+      workerModel: configuredWorkerModel,
+    });
+    const model = executionOptions.model;
+    // 后台任务必须把选择依据固化在 metadata。没有 model ref 的旧 file/test fixture
+    // 只能把实际 model 作为回退标识；生产 resolver 路径始终返回真实 ref。
+    const modelRef = executionOptions.resolvedModelRef
+      ?? request.model?.trim()
+      ?? parentSession.modelRef
+      ?? parentRun?.model
+      ?? model;
+    const agentId = request.agentId?.trim() || deriveSubagentAgentId({
+      parentSessionId,
+      parentRunId,
+      toolCallId,
+    });
     const taskDigest = createHash('sha256').update(`${parentRunId}:${toolCallId}`).digest('hex');
     const taskId = `bg-${taskDigest.slice(0, 32)}`;
     const shortTaskId = `T-${taskDigest.slice(0, 24).toUpperCase()}`;
@@ -192,11 +188,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     const existingTask = await runStore.get(taskId);
     if (existingTask) {
       if (!isBackgroundAgentIdempotentReplay(existingTask, {
-        parentRunId, parentSessionId, toolCallId, taskSessionId, tenantId, model, request,
+        parentRunId, parentSessionId, toolCallId, taskSessionId, tenantId, model, agentId, request,
         ...(context.channelContext.orgAgentChannel
           ? { orgChannel: context.channelContext.orgAgentChannel } : {}),
       })) throw new Error('BACKGROUND_AGENT_IDEMPOTENCY_CONFLICT');
-      return { taskId, shortTaskId, status: 'pending', description: request.description, model };
+      return buildBackgroundTaskStartResult({ taskId, shortTaskId, request, model, agentId, executionOptions });
     }
     const { taskLayout, workOrder } = await prepareOrgAgentBackgroundWork({
       config: this.config, context, request, parentRunId, toolCallId, taskId,
@@ -287,6 +283,17 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         description: request.description,
         basePrompt: request.prompt,
         prompt: request.prompt,
+        subagentAgentId: agentId,
+        subagentContinuationProtocolVersion: SUBAGENT_CONTINUATION_PROTOCOL_VERSION,
+        subagentMode: 'background',
+        ...(request.continuation ? { subagentContinuation: request.continuation } : {}),
+        ...(executionOptions.requestedModelRef ? { requestedModelRef: executionOptions.requestedModelRef } : {}),
+        ...(executionOptions.modelSource ? { modelSource: executionOptions.modelSource } : {}),
+        ...(executionOptions.modelLocked ? { modelLocked: true } : {}),
+        ...(executionOptions.requestedEffort ? { requestedEffort: executionOptions.requestedEffort } : {}),
+        ...(executionOptions.resolvedEffort ? { effort: executionOptions.resolvedEffort } : {}),
+        effortSource: executionOptions.effortSource,
+        ...(executionOptions.effortCapability ? { effortCapability: executionOptions.effortCapability } : {}),
         ...(workOrder && taskLayout ? { executionRole: 'worker' as const } : {}),
         ...(parentSession.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
         ...(effectiveOrgAgentSnapshot?.runtime.executionMode
@@ -333,11 +340,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     } catch (error) {
       const concurrentTask = await runStore.get(taskId).catch(() => null);
       if (isBackgroundAgentIdempotentReplay(concurrentTask, {
-        parentRunId, parentSessionId, toolCallId, taskSessionId, tenantId, model, request,
+        parentRunId, parentSessionId, toolCallId, taskSessionId, tenantId, model, agentId, request,
         ...(context.channelContext.orgAgentChannel
           ? { orgChannel: context.channelContext.orgAgentChannel } : {}),
       })) {
-        return { taskId, shortTaskId, status: 'pending', description: request.description, model };
+        return buildBackgroundTaskStartResult({ taskId, shortTaskId, request, model, agentId, executionOptions });
       }
       await sessionCatalog.markStatus(taskSessionId, 'error').catch(() => undefined);
       if (workOrder && taskLayout) {
@@ -357,7 +364,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       description: request.description,
       model: taskRun.model ?? model,
     });
-    return { taskId, shortTaskId, status: 'pending', description: request.description, model };
+    return buildBackgroundTaskStartResult({ taskId, shortTaskId, request, model, agentId, executionOptions });
   }
   async reserveCommand(context: ToolCallContext, request: BackgroundCommandRequest): Promise<BackgroundCommandReservation> {
     const runStore = requireBackgroundRunStore(this.config.runStore);
@@ -609,6 +616,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
             Boolean(metadata.orgAgentChannel),
           ),
           model: effectiveExecutionContext?.model.modelRef ?? metadata.modelRef,
+          ...(metadata.effort ? { effort: metadata.effort } : {}),
+          mode: 'background',
+          ...(metadata.subagentAgentId ? { agentId: metadata.subagentAgentId } : {}),
+          ...(metadata.subagentContinuation ? { continuation: metadata.subagentContinuation } : {}),
           includeCompanyInfo: metadata.includeCompanyInfo,
         },
         preparedChildIdentity: preparedIdentity,
@@ -619,6 +630,12 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           await this.config.runStore?.markStatus(record.runId, 'running', 'background_task_started', {
             executionChildSessionId: identity.childSessionId, executionChildRunId: identity.childRunId,
           }); },
+        ...buildBackgroundDeferredMessageLoader({
+          runStore: this.config.runStore,
+          taskRunId: record.runId,
+          agentId: metadata.subagentAgentId,
+          tenantId: record.tenantId,
+        }),
       });
       if (outcome.childSessionId !== preparedIdentity.childSessionId || outcome.childRunId !== preparedIdentity.childRunId)
         throw new Error('subagent outcome identity does not match prepared background child');

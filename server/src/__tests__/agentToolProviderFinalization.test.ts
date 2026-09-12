@@ -60,7 +60,16 @@ describe('AgentToolProvider finalization ordering', () => {
       } as never,
     );
 
-    expect(result).toEqual({ content: '完成' });
+    if (!result) {
+      throw new Error('Agent 工具未返回执行结果');
+    }
+    expect(result.content).toContain('[子 Agent 执行信息]');
+    expect(result.content).toContain('agent_id=agent-');
+    expect(result.content).toContain('child_session_id=child-session');
+    expect(result.content).toContain('run_id=child-run');
+    expect(result.content).toContain('model_ref=test-model');
+    expect(result.content).toContain('status=completed');
+    expect(result.content).toContain('\n\n完成');
     expect(order).toEqual(['subagent_started', 'format_outcome', 'subagent_finished']);
   });
 });

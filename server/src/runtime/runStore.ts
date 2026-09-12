@@ -8,7 +8,7 @@ import type { PlatformEvent, PlatformEventInput } from './types.js';
 import { buildRunCancellationEvents } from './runCancellationEvents.js';
 import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
-import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
+import { normalizeRunRecord, sanitizeIdentifier, serializeRuntimeEvent } from './runStoreRecordHelpers.js';
 import { PgRunStoreQueries } from './runStoreQueries.js';
 import { contractPgRunStoreTenantSchema, disablePgRunStoreLegacyWriterCapability, initializePgRunStore, recordPgRunStoreDrainEvidence, registerPgRunStoreLegacyWriterCapability, registerPgRunStoreTenantNativeWriterCapability, type PgRunStoreContractGate, type PgRunStoreDrainEvidence, type PgRunStoreLegacyWriterCapability } from './runStoreSchema.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
@@ -22,11 +22,14 @@ import {
 } from './runStoreBackgroundQueries.js';
 import { acquireSandboxCleanupClaimGuard } from './sandboxRunAdmissionFence.js';
 import { buildAppliedSteeringEventInputs, selectSteeringEventCandidates } from './steeringRuntimeEvents.js';
+import { reserveSubagentContinuation } from './runStoreSubagentContinuation.js';
+import { createPendingRun, upsertPendingRun } from './runStorePendingWrites.js';
+import { enqueueBackgroundTask } from './runStoreBackgroundEnqueue.js';
+import { drainSubagentDeferredMessages, queueSubagentDeferredMessage } from './runStoreSubagentDeferredMessages.js';
 const { Pool } = pg;
 type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
-import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
-import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseAuthority, RunLeaseIdentity, RunLeaseReleaseOptions, RunRecord, RunStatus, RunStore, SandboxCleanupClaimGuard, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
+import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseAuthority, RunLeaseIdentity, RunLeaseReleaseOptions, RunRecord, RunStatus, RunStore, SandboxCleanupClaimGuard, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, SubagentContinuationReservation, SubagentDeferredMessage, UpsertRunInput } from './runStoreTypes.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 export class PgRunStore implements RunStore {
   readonly pool: PgPool; readonly runsTable: string;
@@ -68,65 +71,11 @@ export class PgRunStore implements RunStore {
   async recordTenantDrainEvidence(evidence: PgRunStoreDrainEvidence): Promise<void> { await recordPgRunStoreDrainEvidence(this, evidence); }
   async contractTenantSchema(gate: PgRunStoreContractGate): Promise<void> { await contractPgRunStoreTenantSchema(this, gate); }
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
-  async upsertPending(input: UpsertRunInput): Promise<RunRecord> {
-    const now = new Date().toISOString();
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      INSERT INTO ${this.runsTable}
-        (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
-         liveness_state, liveness_detected_at, liveness_version)
-      VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
-         'active',$7,1)
-      ON CONFLICT (run_id) DO UPDATE SET
-        updated_at = EXCLUDED.updated_at,
-        status = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
-                      THEN 'pending' ELSE ${this.runsTable}.status END,
-        status_reason = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
-                             THEN NULL ELSE ${this.runsTable}.status_reason END,
-        worker_id = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
-                         THEN NULL ELSE ${this.runsTable}.worker_id END,
-        lease_expires_at = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
-                                THEN NULL ELSE ${this.runsTable}.lease_expires_at END,
-        liveness_state = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
-                              THEN 'active' ELSE ${this.runsTable}.liveness_state END,
-        liveness_reason_code = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
-                                    THEN NULL ELSE ${this.runsTable}.liveness_reason_code END,
-        liveness_detected_at = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
-                                    THEN EXCLUDED.updated_at ELSE ${this.runsTable}.liveness_detected_at END,
-        liveness_version = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
-                                THEN COALESCE(${this.runsTable}.liveness_version,0)+1 ELSE ${this.runsTable}.liveness_version END,
-        sandbox_scope_id = COALESCE(EXCLUDED.sandbox_scope_id, ${this.runsTable}.sandbox_scope_id),
-        submitter_scope = COALESCE(EXCLUDED.submitter_scope, ${this.runsTable}.submitter_scope),
-        metadata = ${this.runsTable}.metadata || EXCLUDED.metadata
-      RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, input.submitterUserId ?? input.userId ?? null, JSON.stringify(input.metadata ?? {})]);
-    return normalizeRunRecord(result.rows[0]!.row_json);
-  }
-  async createPending(input: UpsertRunInput): Promise<{ record: RunRecord; created: boolean }> {
-    const now = new Date().toISOString();
-    let result: { rows: Array<{ row_json: RunRecord }> };
-    try {
-      result = await this.pool.query<{ row_json: RunRecord }>(`
-        INSERT INTO ${this.runsTable}
-          (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
-           liveness_state, liveness_detected_at, liveness_version)
-        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
-           'active',$7,1)
-        ON CONFLICT (run_id) DO NOTHING
-        RETURNING row_to_json(${this.runsTable}.*) AS row_json
-      `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, input.submitterUserId ?? input.userId ?? null, JSON.stringify(input.metadata ?? {})]);
-    } catch (error) {
-      if ((error as { code?: unknown }).code === '23505') {
-        throw new RunCreateConflictError(`Run create-only idempotency conflict: ${input.runId}`);
-      }
-      throw error;
-    }
-    if (result.rows[0]) {
-      return { record: normalizeRunRecord(result.rows[0].row_json), created: true };
-    }
-    const existing = await this.get(input.runId);
-    if (!existing) throw new Error(`Run create-only conflict disappeared: ${input.runId}`);
-    return { record: existing, created: false };
-  }
+  async upsertPending(input: UpsertRunInput): Promise<RunRecord> { return upsertPendingRun(this.pool, this.runsTable, input); }
+  async createPending(input: UpsertRunInput): Promise<{ record: RunRecord; created: boolean }> { return createPendingRun(this.pool, this.runsTable, input); }
+  async reserveSubagentContinuation(
+    input: UpsertRunInput & { agentId: string; parentSessionId: string },
+  ): Promise<SubagentContinuationReservation> { return reserveSubagentContinuation(this.pool, this.runsTable, input); }
   async enqueueSteeringAware(input: UpsertRunInput): Promise<RunRecord> {
     return this.enqueueUserMessage({ ...input, idempotencyKey: input.idempotencyKey ?? input.runId }, 'steer');
   }
@@ -184,7 +133,7 @@ export class PgRunStore implements RunStore {
             AND target.session_id = $2
             AND target.run_id <> $3
             AND target.status IN ${STEERING_TARGET_STATUS_SQL}
-            AND target.channel = 'web'
+            AND (target.channel = 'web' OR target.metadata ? 'subagentAgentId')
             AND target.model IS NOT DISTINCT FROM $4::text
             AND target.execution_target IS NOT DISTINCT FROM $5::text
             AND target.workspace_id IS NOT DISTINCT FROM $6::text
@@ -1036,78 +985,7 @@ export class PgRunStore implements RunStore {
   async enqueueBackgroundTask(
     input: UpsertRunInput,
     limits: EnqueueBackgroundTaskLimits,
-  ): Promise<RunRecord> {
-    const parentRunId = stringMetadata(input.metadata, 'parentRunId');
-    const parentSessionId = stringMetadata(input.metadata, 'parentSessionId');
-    if (!parentRunId || !parentSessionId || input.metadata?.backgroundTask !== true) {
-      throw new Error('enqueueBackgroundTask requires backgroundTask/parentRunId/parentSessionId metadata');
-    }
-    const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      // 后台任务创建频率低，用单一事务锁换取多 brain 下明确的硬配额语义。
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${this.runsTable}:background-task-quota`]);
-      const counts = await client.query<{
-        parent_active: string | number;
-        tenant_active: string | number;
-      }>(`
-        SELECT
-          COUNT(*) FILTER (
-            WHERE metadata->>'parentRunId' = $1
-              AND status IN ('pending','running')
-          ) AS parent_active,
-          COUNT(*) FILTER (
-            WHERE tenant_id = $2
-              AND status IN ('pending','running')
-          ) AS tenant_active
-        FROM ${this.runsTable}
-        WHERE metadata->>'backgroundTask' = 'true'
-      `, [parentRunId, tenantId]);
-      const row = counts.rows[0];
-      const parentActive = parseCount(row?.parent_active);
-      const tenantActive = parseCount(row?.tenant_active);
-      if (parentActive >= limits.perParentActive) {
-        throw new BackgroundTaskLimitError(`本次运行同时活跃的后台任务已达上限 ${limits.perParentActive}`);
-      }
-      if (tenantActive >= limits.perTenantActive) {
-        throw new BackgroundTaskLimitError(`当前组织同时活跃的后台任务已达上限 ${limits.perTenantActive}`);
-      }
-      const now = new Date().toISOString();
-      const result = await client.query<{ row_json: RunRecord }>(`
-        INSERT INTO ${this.runsTable}
-          (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at,
-           idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
-           liveness_state, liveness_detected_at, liveness_version)
-        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
-           'active',$7,1)
-        ON CONFLICT (run_id) DO NOTHING
-        RETURNING row_to_json(${this.runsTable}.*) AS row_json
-      `, [
-        input.runId,
-        input.sessionId,
-        input.userId ?? null,
-        tenantId,
-        input.model ?? null,
-        input.channel ?? null,
-        now,
-        input.idempotencyKey ?? null,
-        input.executionTarget ?? null,
-        input.workspaceId ?? null,
-        input.sandboxScopeId ?? null,
-        input.submitterUserId ?? input.userId ?? null,
-        JSON.stringify(input.metadata ?? {}),
-      ]);
-      if (!result.rows[0]) throw new Error(`background task run already exists: ${input.runId}`);
-      await client.query('COMMIT');
-      return normalizeRunRecord(result.rows[0].row_json);
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
+  ): Promise<RunRecord> { return enqueueBackgroundTask(this.pool, this.runsTable, input, limits); }
   async listBackgroundTasks(
     parentSessionId: string,
     options: ListBackgroundTasksOptions = {},
@@ -1174,15 +1052,16 @@ export class PgRunStore implements RunStore {
   async markStatusIfCurrent(runId: string, expectedStatuses: readonly RunStatus[], nextStatus: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}, leaseAuthority?: import('./runStoreTypes.js').RunLeaseAuthority): Promise<RunRecord | null> { return this.queries.markStatusIfCurrent(runId, expectedStatuses, nextStatus, reason, metadataPatch, leaseAuthority); }
   async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.patchMetadata(runId, metadataPatch); }
   async get(runId: string): Promise<RunRecord | null> { return this.queries.get(runId); }
+  async listSubagentRunsByAgentId(tenantId: string, parentSessionId: string, agentId: string, options: { userId?: string; limit?: number } = {}): Promise<RunRecord[]> { return this.queries.listSubagentRunsByAgentId(tenantId, parentSessionId, agentId, options); }
+  async queueSubagentDeferredMessage(input: { taskRunId: string; agentId: string; tenantId: string; parentSessionId: string; userId?: string; message: SubagentDeferredMessage }): Promise<{ state: 'accepted' } | { state: 'physical_active'; target: RunRecord }> { return queueSubagentDeferredMessage(this.pool, this.runsTable, input); }
+  async drainSubagentDeferredMessages(input: { taskRunId: string; childRunId: string; agentId: string; tenantId: string }): Promise<SubagentDeferredMessage[]> { return drainSubagentDeferredMessages(this.pool, this.runsTable, input); }
   async cancelActiveByUser(userId: string, reason: string): Promise<number> { return this.queries.cancelActiveByUser(userId, reason); }
   async cancelActiveByTenant(tenantId: string, reason: string): Promise<number> { return this.queries.cancelActiveByTenant(tenantId, reason); } async listActiveByUser(userId: string): Promise<RunRecord[]> { return this.queries.listActiveByUser(userId); }
   async updateApprovalPolicyForActiveByUser(userId: string, approvalPolicy: Record<string, unknown> | null): Promise<string[]> { return this.queries.updateApprovalPolicyForActiveByUser(userId, approvalPolicy); }
   async findByIdempotencyKey(tenantId:string,userId:string|undefined,key:string):Promise<RunRecord|null>{return this.queries.findByIdempotencyKey(tenantId,userId,key);} async findUniqueByIdempotencyKeyAcrossTenants(userId:string,key:string):Promise<RunRecord|null>{return this.queries.findUniqueByIdempotencyKeyAcrossTenants(userId,key);}
   async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> { return this.queries.getActiveBySession(tenantId, sessionId); }
   async getActiveCounts(): Promise<ActiveRunCounts> { return this.queries.getActiveCounts(); }
-  async listBySession(sessionId: string, options: { limit?: number; beforeUpdatedAt?: string } = {}): Promise<RunRecord[]> {
-    return this.queries.listBySession(sessionId, options);
-  }
+  async listBySession(sessionId: string, options: { limit?: number; beforeUpdatedAt?: string } = {}): Promise<RunRecord[]> { return this.queries.listBySession(sessionId, options); }
   async listSessionIdsByTenant(tenantId: string): Promise<string[]> { return this.queries.listSessionIdsByTenant(tenantId); }
   async deleteByTenant(tenantId: string): Promise<number> { return this.queries.deleteByTenant(tenantId); }
   async listRecoverable(now = new Date()): Promise<RunRecord[]> { return this.queries.listRecoverable(now); }

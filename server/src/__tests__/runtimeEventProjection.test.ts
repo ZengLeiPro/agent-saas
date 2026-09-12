@@ -104,6 +104,8 @@ describe("runtimeEventProjection", () => {
       description: "策略测试",
       childSessionId: "child-session",
       childRunId: "child-run",
+      agentId: "agent-stable-1",
+      effort: "high",
       status: "failed",
       totalTokens: 10,
       toolUseCount: 0,
@@ -118,6 +120,8 @@ describe("runtimeEventProjection", () => {
       failureKind: "policy_rejection",
       recoveryAction: "switch_model",
       errorMessage: "当前模型受策略限制，请切换其他模型继续。",
+      agentId: "agent-stable-1",
+      effort: "high",
     })]);
   });
 

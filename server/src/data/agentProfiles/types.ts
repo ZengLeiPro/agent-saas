@@ -57,6 +57,10 @@ export const agentRuntimeProfileConfigSchema = z.object({
   model: z.discriminatedUnion('strategy', [
     z.object({ strategy: z.literal('inherit') }).strict(),
     z.object({
+      strategy: z.literal('default'),
+      modelRef: z.string().trim().min(1).max(200),
+    }).strict(),
+    z.object({
       strategy: z.literal('fixed'),
       modelRef: z.string().trim().min(1).max(200),
     }).strict(),

@@ -15,6 +15,7 @@ import type { MemoryIndexRuntimeTransaction } from './memoryIndexRuntimeUpdate.j
 import type { ConfigRuntimeRecoveryGate } from '../config/runtimeRecoveryGate.js';
 import type { AppConfig } from './config.js';
 import { getTenantPublicModelList, isModelAllowedForTenant, resolveModelRef } from './models.js';
+import { createSubagentModelCatalogGetter } from './subagentModelCatalogRuntime.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
@@ -28,6 +29,7 @@ import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
 import type { ToolControlsRuntimeUpdateCommit } from './toolControlsRuntimeUpdate.js';
 import type { ImageGenRuntimeUpdateCommit } from './imageGenRuntimeUpdate.js';
 import type { TenantRemoteHandsRuntimeUpdateCommit } from './tenantRemoteHandsRuntimeUpdate.js';
+import type { SubagentBaseModelCatalog } from '../runtime/subagent/subagentModelCatalog.js';
 
 export type ModelResolver = (
   ref: string,
@@ -43,6 +45,7 @@ export interface ModelResolvers {
   defaultModelResolver: DefaultModelResolver | undefined;
   /** 当前已解析 SecretVault 的模型快照，供惰性辅助模型链复用。 */
   getRuntimeModels: () => AppConfig['models'];
+  getSubagentModelCatalog: (tenantId: string | undefined) => SubagentBaseModelCatalog | null;
   sharedConfigRefresher: SharedConfigRefresher;
   updateModelsConfig: (models: NonNullable<AppConfig['models']>) => Promise<void>;
 }
@@ -208,11 +211,20 @@ export function createModelResolvers(params: {
         return resolved ? { ref, ...resolved } : null;
       }
     : undefined;
+  const readSubagentModelCatalog = createSubagentModelCatalogGetter({
+    getRuntimeModels: () => runtimeModels,
+    getTenantSettings: tenantId => tenantStore?.getSettings(tenantId),
+  });
+  const getSubagentModelCatalog = (tenantId: string | undefined): SubagentBaseModelCatalog | null => {
+    if (!refreshForSyncResolution()) return null;
+    return readSubagentModelCatalog(tenantId);
+  };
 
   return {
     modelResolver,
     defaultModelResolver,
     getRuntimeModels: () => runtimeModels,
+    getSubagentModelCatalog,
     sharedConfigRefresher,
     updateModelsConfig,
   };

@@ -2,6 +2,7 @@ import type { ChannelContext } from '../../types/index.js';
 import type { RunRecord } from '../runStore.js';
 import type { BackgroundAgentRequest } from './backgroundTaskRuntime.js';
 import { parseBackgroundTaskMetadata } from './backgroundTaskMetadata.js';
+import { SUBAGENT_CONTINUATION_PROTOCOL_VERSION } from '../subagent/subagentContinuationProtocol.js';
 
 export function isBackgroundAgentIdempotentReplay(
   task: RunRecord | null,
@@ -12,6 +13,7 @@ export function isBackgroundAgentIdempotentReplay(
     taskSessionId: string;
     tenantId?: string;
     model: string;
+    agentId?: string;
     request: BackgroundAgentRequest;
     orgChannel?: NonNullable<ChannelContext['orgAgentChannel']>;
   },
@@ -29,6 +31,11 @@ export function isBackgroundAgentIdempotentReplay(
     task.sessionId === input.taskSessionId &&
     task.tenantId === input.tenantId &&
     task.model === input.model &&
+    metadata.requestedEffort === (input.request.effort?.trim() || undefined) &&
+    (!input.agentId || (
+      metadata.subagentAgentId === input.agentId &&
+      metadata.subagentContinuationProtocolVersion === SUBAGENT_CONTINUATION_PROTOCOL_VERSION
+    )) &&
     Boolean(metadata.orgAgentChannel) === Boolean(input.orgChannel) &&
     (!input.orgChannel ||
       (metadata.orgAgentChannel?.agentId === input.orgChannel.agentId &&

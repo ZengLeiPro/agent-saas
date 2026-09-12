@@ -33,9 +33,44 @@ const grokEvidencePaths = [
   'scripts/release/grok-subscription-postcondition.sql',
   'server/src/runtime/responses/grokSubscriptionTableNames.ts',
 ];
-const auditedPaths = [transport, quotaSchema, scopeStore, providerStore, ...grokNeutralPaths, ...grokExpandPaths];
-const expandPaths = [providerStore, ...grokExpandPaths];
-const evidencePaths = [evidence, quotaEvidence, scopeEvidence, ...grokEvidencePaths];
+const subagentReviewedPaths = [
+  'server/src/app/config.ts',
+  'server/src/app/reasoningEffortCapabilitySchema.ts',
+  'server/src/app/runtime.ts',
+  'server/src/data/agentProfiles/builtins.ts',
+  'server/src/data/agentProfiles/types.ts',
+  'server/src/data/orgAgents/runtimePolicy.ts',
+  'server/src/runtime/background/backgroundTaskRuntime.ts',
+  'server/src/runtime/runStore.ts',
+  'server/src/runtime/runStoreBackgroundEnqueue.ts',
+  'server/src/runtime/runStorePendingWrites.ts',
+  'server/src/runtime/runStoreQueries.ts',
+  'server/src/runtime/runStoreSchema.ts',
+  'server/src/runtime/runStoreSessionQueries.ts',
+  'server/src/runtime/runStoreSubagentContinuation.ts',
+  'server/src/runtime/runStoreSubagentDeferredMessages.ts',
+  'server/src/runtime/runStoreTypes.ts',
+];
+const subagentEvidence = 'docs/release/子Agent能力增强迁移审核-20260912.md';
+const auditedPaths = [
+  ...new Set([
+    transport,
+    quotaSchema,
+    scopeStore,
+    providerStore,
+    ...grokNeutralPaths,
+    ...grokExpandPaths,
+    ...subagentReviewedPaths,
+  ]),
+];
+const evidencePaths = [
+  evidence,
+  quotaEvidence,
+  scopeEvidence,
+  ...grokEvidencePaths,
+  subagentEvidence,
+];
+const expandPaths = [providerStore, ...grokExpandPaths, 'server/src/runtime/runStoreSchema.ts'];
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 const target = git('rev-parse', 'HEAD').trim();
@@ -127,7 +162,16 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
   });
   assert.deepEqual(
     [...loaded.entries.keys()].sort(),
-    [quotaSchema, scopeStore, providerStore, ...grokNeutralPaths, ...grokExpandPaths].sort(),
+    [
+      ...new Set([
+        quotaSchema,
+        scopeStore,
+        providerStore,
+        ...grokNeutralPaths,
+        ...grokExpandPaths,
+        ...subagentReviewedPaths,
+      ]),
+    ].sort(),
   );
   assert.equal(loaded.entries.get(quotaSchema).classification, 'no-schema-change');
   const result = createMigrationPlan({
@@ -139,10 +183,17 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
   assert.notEqual(result.migrationPlan.phase, 'contract');
 });
 
-
 test('PR642 baseline retains scope retirement plus the independently reviewed Grok migration', () => {
   const scopeBaseline = 'eec01d4c1d043a3de0eec54f9fc1ab8d64651c4b';
-  const paths = [scopeStore, providerStore, ...grokNeutralPaths, ...grokExpandPaths];
+  const paths = [
+    ...new Set([
+      scopeStore,
+      providerStore,
+      ...grokNeutralPaths,
+      ...grokExpandPaths,
+      ...subagentReviewedPaths,
+    ]),
+  ];
   const loaded = loadMigrationReviews({
     baseline: scopeBaseline,
     baselineSnapshot: snapshot(scopeBaseline),

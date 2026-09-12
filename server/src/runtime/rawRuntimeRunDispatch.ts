@@ -208,7 +208,7 @@ import { resolveSessionOwnerTenantId, resolveWakeSessionOwner } from './runtimeS
 export { resolveSessionOwnerTenantId, resolveWakeSessionOwner } from './runtimeSessionOwner.js';
 // 注意：subagent/agentToolProvider.js 反向 import 本文件的装配小件（ESM 循环依赖，
 // 仅函数级引用、无模块求值期访问，安全）。
-import { AgentToolProvider } from './subagent/agentToolProvider.js';
+import { createSubagentToolProvider, type SubagentToolingDeps } from './subagent/subagentToolProviderFactory.js';
 import { orphanUnrecoverableSubagentWake } from './subagent/orphanUnrecoverableSubagentWake.js';
 import { reconcileInterruptedForegroundToolCalls } from './subagent/recovery.js';
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
@@ -329,10 +329,6 @@ export class RunStateTrackingEventStore implements EventStore {
  * AgentToolProvider 派生子 loop 时必须复用**同一实例**（serverRemote 注册、
  * vault 解析缓存都挂在上面），所以经参数显式传入 collectRuntimeTooling。
  */
-interface SubagentToolingDeps {
-  executionTransportRegistry: ExecutionTransportRegistry;
-  tenantHandResolver: TenantRemoteHandAuthTokenResolver; agentModePolicy?: 'any' | 'background_only';
-}
 /**
  * 收集本次 dispatch 用到的所有 tool providers + buildInstructions 入参。
  * 两条 dispatch（首跑 / approval resume）共用同一构造，保证 instructions 一致。
@@ -425,12 +421,7 @@ export async function collectRuntimeTooling(
   // 在 push 之前截取，子工具集从快照派生 → 子 agent 天然拿不到 Agent 工具（禁嵌套，
   // 工具移除式，D4）。subagentDeps 缺失（调用方未接线）时不挂载。
   if (subagentDeps && isToolEnabled(config.toolControls, 'Agent')) {
-    providers.push(new AgentToolProvider({
-      config,
-      executionTransportRegistry: subagentDeps.executionTransportRegistry,
-      tenantHandResolver: subagentDeps.tenantHandResolver,
-      parentProviders: [...providers], modePolicy: subagentDeps.agentModePolicy ?? 'any',
-    }));
+    providers.push(await createSubagentToolProvider(config, subagentDeps, [...providers]));
   }
   return { providers };
 }
@@ -1187,7 +1178,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             buildOrgAgentChannelSkillFilter(context.orgAgentChannel), profileSkillFilter)
         : composeSkillFilters(baseSkillFilter, profileSkillFilter),
       orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
-      { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
+      { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode), inheritedModelRef: sessionRecord.modelRef, workerModel: orgAgent?.runtime?.workerModel },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId ? { runId, sessionId, userId: sessionRecord.userId, tenantId: sessionRecord.tenantId } : undefined,
     );
@@ -1807,7 +1798,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           ),
       orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
-      { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
+      { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode), inheritedModelRef: sessionRecord.modelRef, workerModel: orgAgent?.runtime?.workerModel },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId
         ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId, tenantId: sessionRecord.tenantId }
@@ -2291,7 +2282,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           ),
       orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
-      { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
+      { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode), inheritedModelRef: sessionRecord.modelRef, workerModel: orgAgent?.runtime?.workerModel },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId
         ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId, tenantId: sessionRecord.tenantId }

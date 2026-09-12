@@ -366,7 +366,7 @@ function EffectiveSummary({ config, platformTools }: { config: Record<string, un
     <div className="mb-2 text-sm font-medium">有效配置摘要（平台开关 ∩ 配置档）</div>
     <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
       <div>上下文：{context.modules?.join(" / ") || "无可选模块"}</div>
-      <div>模型：{model.strategy === "fixed" ? model.modelRef : "继承入口/会话"}</div>
+      <div>模型：{model.strategy === "fixed" ? `锁定 ${model.modelRef}` : model.strategy === "default" ? `默认 ${model.modelRef}（可覆盖）` : "继承入口/会话"}</div>
       <div>记忆：{memory.scope ?? "full"}</div>
       <div>最大轮次：{limits.maxTurns ?? "继承平台与账号上限"}</div>
       <div>工具：平台当前有效 {effective.length} 项{tools.allowlist ? ` / 配置档允许 ${tools.allowlist.length} 项` : ""}{tools.denylist?.length ? `，配置档禁止 ${tools.denylist.length} 项` : ""}</div>

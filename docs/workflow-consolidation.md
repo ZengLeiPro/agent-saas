@@ -17,18 +17,23 @@
 `web_only_compatibility` 确认参数、main 限制、production Environment、主机锁、范围校验和失败补偿。
 这不是开放 Server/API/Worker/ACS 的兼容直发。
 
-## 六个退役入口及替代
+## 十一个退役入口及替代
 
 `config/github-workflow-inventory.json` 记录本次 GitHub 实际盘点的 ID、路径和名称：
 
-| 退役入口                         | 替代                                                                   |
-| -------------------------------- | ---------------------------------------------------------------------- |
-| ACS Manual Deploy                | ACS 通过 Staging 不可变 RC → Production Promotion                      |
-| ACS remote Python contracts      | CI / ACS Impact Gate 显式执行真实 Python 远程进程测试                  |
-| ACS repair evidence              | CI 完整 Orchestrator 回归 + 构建 + 结构化证据；ratchets 复用 preflight |
-| Production Web Recovery Repair   | 生产环境发布的 web-recovery-audit / web-recovery-repair                |
-| ACS isolated branch authoring    | 无长期替代；主分支已经没有该文件，停用历史注册项                       |
-| Prepare unified CI (branch-only) | 无长期替代；主分支已经没有该文件，停用历史注册项                       |
+| 退役入口                          | 替代                                                                   |
+| --------------------------------- | ---------------------------------------------------------------------- |
+| ACS Manual Deploy                 | ACS 通过 Staging 不可变 RC → Production Promotion                      |
+| ACS remote Python contracts       | CI / ACS Impact Gate 显式执行真实 Python 远程进程测试                  |
+| ACS repair evidence               | CI 完整 Orchestrator 回归 + 构建 + 结构化证据；ratchets 复用 preflight |
+| Production Web Recovery Repair    | 生产环境发布的 web-recovery-audit / web-recovery-repair                |
+| ACS isolated branch authoring     | 无长期替代；主分支已经没有该文件，停用历史注册项                       |
+| Prepare unified CI (branch-only)  | 无长期替代；主分支已经没有该文件，停用历史注册项                       |
+| iOS delivery isolated workbench   | iOS 构建与发布；PR656 已完成，停用历史注册项                           |
+| Subagent source export            | 无长期替代；一次性源码导出已完成，停用历史注册项                       |
+| iOS delivery ratchet workbench    | PR656 ratchet 修复已完成，停用历史注册项                               |
+| Workbench PR656 ratchet repair    | PR656 ratchet 修复已完成，停用历史注册项                               |
+| Workbench PR656 ratchet repair v2 | PR656 ratchet 修复已完成，停用历史注册项                               |
 
 旧文件存在性测试已迁移到真实 CI/RC 调用链；原有底层 rollback、不可变镜像来源、分页、
 完整 SHA、digest、发布锁及身份回读的测试继续保留。历史审计材料和拒绝旧证据来源的负向测试
@@ -58,7 +63,7 @@ PR 不修改 main，不提前停用仍在 main 使用的旧生产/检查入口�
 
 1. 验证本次源码确实只含允许的五个入口，核对当前 main 仍等于本次 SHA；落后的 main CI 延后给新 CI 处理。
 2. 分页读取 GitHub 注册项；保留项必须仍 active；待退役项 ID、路径、名称全部匹配才允许停用。
-3. 仅调用六个已知旧项的 disable API，然后逐项读回 disabled_manually。记录缺失/已停用时幂等跳过，未知或改名的身份不擅自修改。
+3. 仅调用清单中已知退役项的 disable API，然后逐项读回 disabled_manually。记录缺失/已停用时幂等跳过，未知或改名的身份不擅自修改。
 4. 不取消在途运行，不删除 workflow run、artifact、Release、RC tag、旧证据或任何别人的分支。
 
 该 job 只拥有 contents:read 与 actions:write，不读取生产 Secrets、不部署。

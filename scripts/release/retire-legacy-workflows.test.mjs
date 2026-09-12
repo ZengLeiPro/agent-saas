@@ -37,16 +37,19 @@ function fixture({ source = snapshot(), currentSha = sha } = {}) {
   return { api, calls, source };
 }
 
-test('audit is read-only; apply disables only the six exact known identities and is idempotent', () => {
+test('audit is read-only; apply disables only the exact known identities and is idempotent', () => {
   const f = fixture();
   assert.equal(retireLegacyWorkflows({ env, api: f.api }).mode, 'audit');
   assert(f.calls.every((call) => call.method === 'GET'));
   assert.equal(retireLegacyWorkflows({ apply: true, env, api: f.api }).mode, 'applied');
   const writes = f.calls.filter((call) => call.method === 'PUT');
-  assert.equal(writes.length, 6);
+  assert.equal(writes.length, inventory.retiredWorkflows.length);
   for (const call of writes) assert.match(call.resource, /\/actions\/workflows\/\d+\/disable$/u);
   assert.equal(retireLegacyWorkflows({ apply: true, env, api: f.api }).mode, 'applied');
-  assert.equal(f.calls.filter((call) => call.method === 'PUT').length, 6);
+  assert.equal(
+    f.calls.filter((call) => call.method === 'PUT').length,
+    inventory.retiredWorkflows.length,
+  );
   for (const kept of f.source.slice(0, 4)) assert.equal(kept.state, 'active');
 });
 

@@ -261,6 +261,18 @@ describe("平台概览站内链接", () => {
     expect(overviewSnapshot).toHaveBeenCalledTimes(3);
   });
 
+  it("趋势辅助请求失败时与空数据区分，并提供重试入口", async () => {
+    billingTrend.mockRejectedValueOnce(new Error("billing unavailable"));
+    overviewTrends.mockRejectedValueOnce(new Error("usage unavailable"));
+    render(<OverviewPage />);
+
+    expect(await screen.findByText("使用趋势暂不可用")).toBeTruthy();
+    expect(screen.getByText("成本趋势暂不可用")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "重试" })).toHaveLength(2);
+    expect(screen.queryByText("近期暂无使用趋势")).toBeNull();
+    expect(screen.queryByText("近期暂无成本数据")).toBeNull();
+  });
+
   it("首次加载悬挂超时后明确标记 unavailable", async () => {
     vi.useFakeTimers();
     const pendingSnapshot = deferred<typeof snapshot>();

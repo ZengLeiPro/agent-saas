@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ListX, Loader2, PackageOpen, RefreshCw, SearchX } from "lucide-react";
 
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useAuth } from "@/contexts/AuthContext";
 import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, ScopeFilters, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
@@ -44,6 +45,33 @@ const SESSION_CHANNEL_OPTIONS: AdminSelectOption[] = [
   { value: "api", label: "API" },
 ];
 
+const SESSION_CURSOR_STACK_STORAGE_PREFIX = "platform-sessions-cursor-stack:";
+
+function sessionCursorScope(values: readonly unknown[]): string {
+  return JSON.stringify(values);
+}
+
+function readSessionCursorStack(scope: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const value: unknown = JSON.parse(window.sessionStorage.getItem(`${SESSION_CURSOR_STACK_STORAGE_PREFIX}${scope}`) ?? "null");
+    return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSessionCursorStack(scope: string, stack: readonly string[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const key = `${SESSION_CURSOR_STACK_STORAGE_PREFIX}${scope}`;
+    if (stack.length > 0) window.sessionStorage.setItem(key, JSON.stringify(stack));
+    else window.sessionStorage.removeItem(key);
+  } catch {
+    // 分页仍以 URL 中的 cursor 为准；存储不可用时只损失返回上一页按钮的恢复能力。
+  }
+}
+
 export function SessionsPage({ sessionId }: { sessionId: string | null }) {
   if (sessionId) return <SessionDetail sessionId={sessionId} />;
   return <SessionList />;
@@ -52,12 +80,12 @@ export function SessionsPage({ sessionId }: { sessionId: string | null }) {
 function SessionList() {
   const adminQuery = useAdminUrlQuery();
   const patchQuery = adminQuery.patch;
+  const { user } = useAuth();
   const { labelFor } = useModelDisplayMap();
   const [rows, setRows] = useState<PlatformSessionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [cursorStack, setCursorStack] = useState<string[]>([]);
 
   const tenantId = adminQuery.get("tenantId") ?? "";
   const userId = adminQuery.get("userId") ?? "";
@@ -69,6 +97,21 @@ function SessionList() {
   const days = adminQuery.get("days") ?? "";
   const includeDeleted = adminQuery.get("includeDeleted") === "true";
   const cursor = adminQuery.get("cursor") ?? "";
+  const cursorScope = sessionCursorScope([user?.id ?? "", tenantId, userId, q, status, kind, channel, days, includeDeleted]);
+  const cursorScopeRef = useRef(cursorScope);
+  const [cursorStack, setCursorStack] = useState<string[]>(() => readSessionCursorStack(cursorScope));
+
+  useEffect(() => {
+    if (cursorScopeRef.current === cursorScope) return;
+    cursorScopeRef.current = cursorScope;
+    setCursorStack([]);
+    writeSessionCursorStack(cursorScope, []);
+  }, [cursorScope]);
+
+  const updateCursorStack = useCallback((next: string[]) => {
+    setCursorStack(next);
+    writeSessionCursorStack(cursorScope, next);
+  }, [cursorScope]);
 
   useEffect(() => {
     setQInput(q);
@@ -109,8 +152,11 @@ function SessionList() {
 
   const hasFilters = Boolean(tenantId || userId || q || status || channel || days || includeDeleted);
   const clearFilters = useCallback(
-    () => adminQuery.clear(["tenantId", "userId", "q", "status", "channel", "days", "includeDeleted", "cursor"]),
-    [adminQuery],
+    () => {
+      updateCursorStack([]);
+      adminQuery.clear(["tenantId", "userId", "q", "status", "channel", "days", "includeDeleted", "cursor"]);
+    },
+    [adminQuery, updateCursorStack],
   );
 
   return (
@@ -179,12 +225,12 @@ function SessionList() {
         onPrev={() => {
           const prev = [...cursorStack];
           const next = prev.pop() ?? "";
-          setCursorStack(prev);
+          updateCursorStack(prev);
           adminQuery.patch({ cursor: next || null });
         }}
         onNext={() => {
           if (!nextCursor) return;
-          setCursorStack(prev => [...prev, cursor]);
+          updateCursorStack([...cursorStack, cursor]);
           adminQuery.patch({ cursor: nextCursor });
         }}
         columns={[

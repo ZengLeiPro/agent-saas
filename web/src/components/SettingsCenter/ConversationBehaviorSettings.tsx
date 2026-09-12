@@ -78,34 +78,45 @@ export function ConversationBehaviorSettings() {
             </p>
           </div>
           {approvalSaving ? (
-            <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
+            <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" role="status">
+              <Loader2 className="size-4 animate-spin" /> 保存中
+            </span>
           ) : approvalSaved ? (
             <span className="shrink-0 text-xs text-success">已保存</span>
-          ) : null}
+          ) : (
+            <span className="shrink-0 text-xs text-muted-foreground">更改后立即生效</span>
+          )}
         </div>
         <div
           className="mt-3 grid gap-2 sm:grid-cols-3"
-          role="radiogroup"
-          aria-labelledby="operation-confirmation"
         >
-          {APPROVAL_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              role="radio"
-              aria-checked={approvalTier === option.value}
-              disabled={approvalSaving}
-              onClick={() => {
-                void changeApprovalTier(option.value);
-              }}
-              className={`rounded-xl border p-3 text-left text-sm transition-colors disabled:opacity-60 ${approvalTier === option.value ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}
-            >
-              <div className="font-medium">{option.title}</div>
-              <div className="mt-1 text-xs leading-5 text-muted-foreground">
-                {option.description}
-              </div>
-            </button>
-          ))}
+          {APPROVAL_OPTIONS.map((option) => {
+            const selected = approvalTier === option.value;
+            return (
+              <label
+                key={option.value}
+                className={`flex cursor-pointer gap-3 rounded-xl border p-3 text-left text-sm transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 ${selected ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'} ${approvalSaving ? 'cursor-default opacity-60' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="operation-confirmation-tier"
+                  value={option.value}
+                  checked={selected}
+                  disabled={approvalSaving}
+                  onChange={() => {
+                    void changeApprovalTier(option.value);
+                  }}
+                  className="mt-0.5 size-4 shrink-0 accent-primary"
+                />
+                <span>
+                  <span className="block font-medium">{option.title}</span>
+                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                    {option.description}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
         </div>
         {approvalError ? (
           <div className="mt-3 text-sm text-destructive" role="alert">

@@ -53,9 +53,7 @@ describe('ConversationBehaviorSettings', () => {
     });
     render(<ConversationBehaviorSettings />);
 
-    expect(screen.getByRole('radio', { name: /尽量自动执行/ }).getAttribute('aria-checked')).toBe(
-      'true',
-    );
+    expect((screen.getByRole('radio', { name: /尽量自动执行/ }) as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole('radio', { name: /自动执行低风险操作/ }));
 
     await waitFor(() =>

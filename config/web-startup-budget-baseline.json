@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 361310,
-    "startupCssGzipBytes": 35197,
-    "startupJsBrotliBytes": 288192,
-    "startupCssBrotliBytes": 27884,
-    "largestJsGzipBytes": 361310,
-    "largestCssGzipBytes": 35197,
-    "largestJsBrotliBytes": 288192,
-    "largestCssBrotliBytes": 27884,
-    "largestJs": "assets/index-Bg00PK2S.js",
-    "largestCss": "assets/index-CHYt5AIH.css"
+    "startupJsGzipBytes": 362350,
+    "startupCssGzipBytes": 35403,
+    "startupJsBrotliBytes": 288648,
+    "startupCssBrotliBytes": 27993,
+    "largestJsGzipBytes": 362350,
+    "largestCssGzipBytes": 35403,
+    "largestJsBrotliBytes": 288648,
+    "largestCssBrotliBytes": 27993,
+    "largestJs": "assets/index-CedqvuH7.js",
+    "largestCss": "assets/index-DOyEMDW4.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "统一管理页标题与操作区并修复权限重验，按生产构建产物登记必要的启动包增长",
-  "updatedAt": "2026-09-10"
+  "reason": "设置与分析工作区首批改造新增布局状态、错误反馈与键盘交互所需启动代码",
+  "updatedAt": "2026-09-12"
 }

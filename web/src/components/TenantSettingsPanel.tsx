@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { governanceAccessApi } from "@agent/shared/lib/governanceApi";
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { Button } from "@/components/ui/button";
@@ -81,28 +82,47 @@ export function TenantSettingsPanel({
     && (tenantId === DEFAULT_TENANT_ID || !canPlatform("customer_config.manage"));
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(DEFAULT_TENANT_SETTINGS));
   const [baselineSettings, setBaselineSettings] = useState<TenantSettings | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [defaultMcpText, setDefaultMcpText] = useState("");
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [settingsUpdatedAt, setSettingsUpdatedAt] = useState<string | null>(null);
+  const loadedTenantId = useRef<string | null>(null);
+  const loadRequestId = useRef(0);
 
   const load = useCallback(async () => {
-    if (!tenantId) return;
+    const requestId = ++loadRequestId.current;
+    if (!tenantId) {
+      loadedTenantId.current = null;
+      setBaselineSettings(null);
+      setLoading(false);
+      return;
+    }
+    if (loadedTenantId.current !== tenantId) {
+      loadedTenantId.current = tenantId;
+      setBaselineSettings(null);
+      setSettings(cloneTenantSettings(DEFAULT_TENANT_SETTINGS));
+      setSettingsUpdatedAt(null);
+      setDefaultMcpText("");
+      setSaved(false);
+    }
     setLoading(true);
+    setError(null);
     try {
       const data = await governanceAccessApi.getTenantSettings<GovernedTenantSettingsResponse>(tenantId);
+      if (requestId !== loadRequestId.current) return;
       setSettings(data.settings);
       setBaselineSettings(cloneTenantSettings(data.settings));
       setSettingsUpdatedAt(data.updatedAt);
       setDefaultMcpText(data.settings.mcp.defaultEnabledServerIds.join("\n"));
       setError(null);
     } catch (err) {
+      if (requestId !== loadRequestId.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   }, [tenantId]);
 
@@ -130,10 +150,12 @@ export function TenantSettingsPanel({
     });
     setSaved(false);
   }, []);
+  const settingsReady = Boolean(baselineSettings && loadedTenantId.current === tenantId);
 
   const save = useCallback(async () => {
     setSaving(true);
     try {
+      if (!settingsReady) throw new Error("组织配置尚未加载，请稍候");
       if (!settingsUpdatedAt) throw new Error("组织设置版本不可用，请刷新后重试");
       const payload = cloneTenantSettings(settings);
       payload.mcp.defaultEnabledServerIds = splitLines(defaultMcpText);
@@ -156,14 +178,14 @@ export function TenantSettingsPanel({
     } finally {
       setSaving(false);
     }
-  }, [defaultMcpText, settings, settingsUpdatedAt, tenantId, updateTenantFeatures, user?.tenantId]);
+  }, [defaultMcpText, settings, settingsReady, settingsUpdatedAt, tenantId, updateTenantFeatures, user?.tenantId]);
 
   const settingsDraft = cloneTenantSettings(settings);
   settingsDraft.mcp.defaultEnabledServerIds = splitLines(defaultMcpText);
   useSettingsDirtyEntry({
     id: `organization-settings:${tenantId}`,
     label: "组织设置",
-    dirty: Boolean(baselineSettings && JSON.stringify(settingsDraft) !== JSON.stringify(baselineSettings)),
+    dirty: Boolean(settingsReady && JSON.stringify(settingsDraft) !== JSON.stringify(baselineSettings)),
     save: async () => { if (!await save()) throw new Error("Tenant settings save failed"); },
     discard: () => {
       if (!baselineSettings) return;
@@ -234,15 +256,26 @@ export function TenantSettingsPanel({
   const showModelTools = section === "all" || section === "model-tools";
   const showBrand = section === "all" || section === "brand";
   const showSecurity = section === "all" || section === "security";
-
   return (
     <div className={cn("flex h-full min-h-0 flex-col", SETTINGS_CONTENT_WIDTH)}>
       <SettingsPanelHeader
         title={sectionCopy[section].title}
         description={sectionCopy[section].description}
-        actions={<Button onClick={() => { void save(); }} disabled={readOnly || loading || saving}>{saving ? "保存中..." : "保存设置"}</Button>}
+        actions={<Button onClick={() => { void save(); }} disabled={readOnly || loading || saving || !settingsReady}>{saving ? "保存中..." : "保存设置"}</Button>}
       />
-      <fieldset disabled={readOnly} className="min-h-0 flex-1 space-y-5 overflow-auto">
+      {loading && !settingsReady ? (
+        <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+          <Loader2 className="size-4 animate-spin" /> 正在读取组织配置…
+        </div>
+      ) : error && !settingsReady ? (
+        <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-center" role="alert">
+          <p className="text-sm text-destructive">组织配置读取失败：{error}</p>
+          <Button type="button" variant="outline" size="sm" onClick={() => { void load(); }}>
+            <RefreshCw className="mr-1.5 size-3.5" /> 重试
+          </Button>
+        </div>
+      ) : (
+      <fieldset disabled={readOnly || loading || !settingsReady} className="min-h-0 flex-1 space-y-5 overflow-auto">
       {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
       {saved && <div className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">
         {section === "brand" ? "品牌资料已保存，本页预览已更新。" : "组织管理已保存"}
@@ -460,6 +493,7 @@ export function TenantSettingsPanel({
         </Card>}
       </div>
       </fieldset>
+      )}
     </div>
   );
 }

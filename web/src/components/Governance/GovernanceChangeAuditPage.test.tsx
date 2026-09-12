@@ -86,6 +86,16 @@ describe("GovernanceChangeAuditPage", () => {
     });
   });
 
+  it("筛选当前批次无命中时仍保留加载更早记录入口", async () => {
+    mocks.listAuditEvents.mockResolvedValue({ events: [event()], nextBefore: "2026-08-10T10:00:00.000Z" });
+    render(<GovernanceChangeAuditPage tenantId="tenant-a" />);
+    await screen.findByText("change-1");
+
+    fireEvent.change(screen.getByLabelText("搜索治理审计"), { target: { value: "没有这个目标" } });
+    expect(screen.getByText("当前已加载的记录中没有匹配项；仍可继续加载更早记录。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "加载更早记录" })).toBeTruthy();
+  });
+
   it("查询不可用时 fail closed", async () => {
     mocks.listAuditEvents.mockRejectedValue(new Error("503"));
     render(<GovernanceChangeAuditPage />);

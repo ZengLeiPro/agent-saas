@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
+import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -150,16 +151,11 @@ export function GovernanceChangeAuditPage({ tenantId }: { tenantId?: string }) {
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
 
   return <div className="space-y-4">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h2 className="text-xl font-semibold">治理审计</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {tenantId ? `仅展示组织 ${tenantId} 的权威治理账本。` : "展示平台作用域的权威治理账本。"}
-          身份、授权、策略与资源配置变更不会混入登录日志。
-        </p>
-      </div>
-      <Button type="button" variant="outline" onClick={retry}><RefreshCw className="mr-2 size-4" />刷新</Button>
-    </div>
+    <SettingsPanelHeader
+      title="治理审计"
+      description={<>{tenantId ? `仅展示组织 ${tenantId} 的权威治理账本。` : "展示平台作用域的权威治理账本。"}身份、授权、策略与资源配置变更不会混入登录日志。</>}
+      actions={<Button type="button" variant="outline" onClick={retry}><RefreshCw className="mr-2 size-4" />刷新</Button>}
+    />
 
     <div className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-2 xl:grid-cols-5">
       <Input
@@ -195,7 +191,7 @@ export function GovernanceChangeAuditPage({ tenantId }: { tenantId?: string }) {
       </div>
     </section>}
 
-    {!filteredEvents.length ? <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">当前筛选范围没有治理审计事件。</div> : <>
+    {!filteredEvents.length ? <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">{events.length > 0 ? "当前已加载的记录中没有匹配项；仍可继续加载更早记录。" : "当前筛选范围没有治理审计事件。"}</div> : <>
       <div className="overflow-x-auto rounded-xl border bg-card" tabIndex={0} aria-label="治理审计列表，可横向滚动">
         <table className="min-w-[980px] w-full text-sm">
           <thead className="bg-muted/50 text-left text-muted-foreground"><tr><th className="px-4 py-3">时间</th><th className="px-4 py-3">操作者</th><th className="px-4 py-3">动作</th><th className="px-4 py-3">目标</th><th className="px-4 py-3">结果</th><th className="px-4 py-3">原因 / 回执</th></tr></thead>
@@ -209,15 +205,15 @@ export function GovernanceChangeAuditPage({ tenantId }: { tenantId?: string }) {
           </tr>)}</tbody>
         </table>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="text-xs text-muted-foreground">已载入 {events.length} 条，筛选命中 {filteredEvents.length} 条 · 第 {page + 1} / {pageCount} 页</div>
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(current => Math.max(0, current - 1))}>上一页</Button>
-          <Button type="button" variant="outline" size="sm" disabled={page + 1 >= pageCount} onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))}>下一页</Button>
-          {nextBefore && <Button type="button" variant="outline" size="sm" disabled={loadingMore} onClick={() => { void loadMore(); }}>{loadingMore ? "加载中…" : "加载更早记录"}</Button>}
-        </div>
-      </div>
     </>}
+    {(events.length > 0 || nextBefore) && <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="text-xs text-muted-foreground">已载入 {events.length} 条，筛选命中 {filteredEvents.length} 条 · 第 {page + 1} / {pageCount} 页</div>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(current => Math.max(0, current - 1))}>上一页</Button>
+        <Button type="button" variant="outline" size="sm" disabled={page + 1 >= pageCount} onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))}>下一页</Button>
+        {nextBefore && <Button type="button" variant="outline" size="sm" disabled={loadingMore} onClick={() => { void loadMore(); }}>{loadingMore ? "加载中…" : "加载更早记录"}</Button>}
+      </div>
+    </div>}
     {loadMoreError && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">加载更早记录失败：{loadMoreError}</div>}
   </div>;
 }

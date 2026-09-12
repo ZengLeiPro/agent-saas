@@ -53,9 +53,10 @@ describe('ManagementShell 统一布局', () => {
     );
     const shell = screen.getByTestId('management-shell');
     expect(shell.getAttribute('data-surface')).toBe('analytics');
+    expect(shell.getAttribute('data-layout')).toBe('dashboard');
     expect(shell.getAttribute('data-scroll-container')).toBe('true');
     expect(shell.className).toContain('overflow-y-auto');
-    expect(screen.getByTestId('management-page-content').parentElement?.className).toContain(
+    expect(screen.getByTestId('management-page-content').parentElement?.className).not.toContain(
       'max-w-6xl',
     );
     expect(screen.getByTestId('management-page-content').className).toContain('[&>*]:max-w-none');
@@ -103,8 +104,13 @@ describe('ManagementShell 统一布局', () => {
       </ManagementShell>,
     );
     expect(screen.getAllByRole('tab')).toHaveLength(4);
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toContain('management-page-tab');
     expect(screen.getByTestId('organization-scope-banner').className).toContain('mb-4');
     expect(screen.getByTestId('organization-scope-banner').className).toContain('rounded-lg');
     fireEvent.click(screen.getByRole('tab', { name: 'MCP 服务' }));
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'MCP 服务' }), { key: 'ArrowRight' });
+    expect(navigationMocks.navigateGovernance).toHaveBeenLastCalledWith(expect.objectContaining({
+      routeId: 'organization.agents.connector-mappings',
+    }));
   });
 });

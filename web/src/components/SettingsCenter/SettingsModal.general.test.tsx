@@ -79,4 +79,27 @@ describe("通用设置", () => {
     expect(mocks.saveUserPreferences.mock.calls[0]?.[0]).not.toHaveProperty("businessStepDisplayMode");
     expect(mocks.saveUserPreferences.mock.calls[0]?.[0]).not.toHaveProperty("authorizationModeEnabled");
   });
+
+  it("模型目录失败时显示可操作错误，而不是持续显示加载中", async () => {
+    mocks.authFetch.mockRejectedValue(new Error("模型服务不可用"));
+    render(<GeneralSection />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("模型服务不可用");
+    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+    expect(screen.queryByText("正在加载可选模型…")).toBeNull();
+  });
+
+  it("默认模型保存失败时保留草稿并提供重试入口", async () => {
+    mocks.saveUserPreferences.mockRejectedValueOnce(new Error("保存服务不可用"));
+    render(<GeneralSection />);
+
+    const trigger = await screen.findByLabelText("新建会话默认模型");
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole("option", { name: "GPT Next" }));
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect((await screen.findByText("保存默认模型失败：保存服务不可用")).textContent).toContain("保存服务不可用");
+    expect(screen.getByLabelText("新建会话默认模型").textContent).toContain("GPT Next");
+    expect(screen.getByRole("button", { name: "重试保存" })).toBeTruthy();
+  });
 });

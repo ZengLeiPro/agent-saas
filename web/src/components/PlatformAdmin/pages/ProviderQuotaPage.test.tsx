@@ -162,9 +162,9 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getByText(/Codex usage HTTP 401。下方为/u)).toBeTruthy();
     expect(screen.queryByText(/24h [+-]/u)).toBeNull();
     expect(screen.queryByText('已撞限')).toBeNull();
-    expect(screen.queryByText(/每 5 分钟自动采集/u)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
     expect(screen.getByText(/每 5 分钟自动采集/u)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
+    expect(screen.getByRole('dialog').textContent).toContain('每 5 分钟自动采集');
     expect(screen.getByText(/1 个异常/u)).toBeTruthy();
     expect(screen.getByTitle('采集失败 1 · 额度耗尽 0 · 凭据不可用 0')).toBeTruthy();
     expect(screen.getByText(/1 个需关注/u)).toBeTruthy();
@@ -252,7 +252,7 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getByText('1 个窗口已耗尽')).toBeTruthy();
     expect(screen.queryByText('已撞限')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
-    expect(screen.getByText(/切回前台自动刷新/u)).toBeTruthy();
+    expect(screen.getByRole('dialog').textContent).toContain('切回前台自动刷新');
     expect(screen.queryByText(/页面不自动刷新/u)).toBeNull();
     expect(screen.queryByText('可用')).toBeNull();
     expect(screen.queryByText('已耗尽')).toBeNull();

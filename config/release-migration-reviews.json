@@ -34447,6 +34447,10 @@
         {
           "path": "docs/release/子Agent能力增强迁移审核-20260912.md",
           "digest": "sha256:3bc400152fe0e865b047fa55dd52f523bce4a85f3410c58fdcc1d98c4ab0ba2c"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
         }
       ]
     },
@@ -35405,6 +35409,10 @@
         {
           "path": "docs/release/子Agent能力增强迁移审核-20260912.md",
           "digest": "sha256:3bc400152fe0e865b047fa55dd52f523bce4a85f3410c58fdcc1d98c4ab0ba2c"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
         }
       ]
     },
@@ -35648,6 +35656,10 @@
         {
           "path": "docs/release/子Agent能力增强迁移审核-20260912.md",
           "digest": "sha256:3bc400152fe0e865b047fa55dd52f523bce4a85f3410c58fdcc1d98c4ab0ba2c"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
         }
       ]
     },
@@ -35880,6 +35892,10 @@
         {
           "path": "docs/release/子Agent能力增强迁移审核-20260912.md",
           "digest": "sha256:3bc400152fe0e865b047fa55dd52f523bce4a85f3410c58fdcc1d98c4ab0ba2c"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
         }
       ]
     },
@@ -36101,6 +36117,10 @@
         {
           "path": "docs/release/子Agent能力增强迁移审核-20260912.md",
           "digest": "sha256:3bc400152fe0e865b047fa55dd52f523bce4a85f3410c58fdcc1d98c4ab0ba2c"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
         }
       ]
     },
@@ -36311,6 +36331,10 @@
         {
           "path": "docs/release/子Agent能力增强迁移审核-20260912.md",
           "digest": "sha256:3bc400152fe0e865b047fa55dd52f523bce4a85f3410c58fdcc1d98c4ab0ba2c"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
         }
       ]
     },
@@ -36449,6 +36473,10 @@
         {
           "path": "docs/release/子Agent能力增强迁移审核-20260912.md",
           "digest": "sha256:3bc400152fe0e865b047fa55dd52f523bce4a85f3410c58fdcc1d98c4ab0ba2c"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
         }
       ]
     },
@@ -36587,6 +36615,10 @@
         {
           "path": "server/src/quota/providerPlanExpiry.pg.test.ts",
           "digest": "sha256:b37b03260951326f77e87b11b38972ff1551bf3c84c6d40cc596343db9fc9d10"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:1d65d752ee4e6edae2fd7d47bf464daf92763c7b736439358f70f8479ef89e83"
         }
       ]
     }

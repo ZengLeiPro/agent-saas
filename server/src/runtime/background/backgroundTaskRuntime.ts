@@ -136,7 +136,8 @@ export function isBackgroundTaskReady(record: Pick<RunRecord, 'metadata'>): bool
 
 /** 直接子 Agent Run 由父 loop 驱动；后台任务协调 Run 仍归调度器。 */
 export function parentOwnedSubagentSql(alias: 'run' | 'candidate'): string {
-  return `${alias}.metadata->>'subagent' = 'true' AND ${alias}.metadata->>'backgroundTask' IS DISTINCT FROM 'true'`;
+  return `COALESCE(${alias}.metadata->>'subagent', 'false') = 'true' AND `
+    + `${alias}.metadata->>'backgroundTask' IS DISTINCT FROM 'true'`;
 }
 
 export function unreadyBackgroundTaskSql(alias: 'run' | 'candidate'): string {

@@ -442,7 +442,7 @@ describe('PgRunStore steering inbox', () => {
         );
         expect(sql).not.toContain(`'waiting_user','waiting_hand'`);
         expect(sql).toContain("COALESCE(run.metadata->>'schedulerState', '') = 'staged'");
-        expect(sql).toContain("run.metadata->>'subagent' = 'true'");
+        expect(sql).toContain("COALESCE(run.metadata->>'subagent', 'false') = 'true'");
         expect(sql).toContain("run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'");
         return { rows: [] };
       }),

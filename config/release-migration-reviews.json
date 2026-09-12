@@ -695,7 +695,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -1984,7 +1984,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -3064,7 +3064,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -4107,7 +4107,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -5150,7 +5150,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -6171,7 +6171,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -7192,7 +7192,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -8213,7 +8213,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -9498,7 +9498,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -10546,7 +10546,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -11600,7 +11600,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -12654,7 +12654,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -13650,7 +13650,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -14646,7 +14646,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -15642,7 +15642,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -16638,7 +16638,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -17616,7 +17616,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -18594,7 +18594,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -19503,7 +19503,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -20408,7 +20408,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -21305,7 +21305,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -22202,7 +22202,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -23099,7 +23099,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -23960,7 +23960,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -24815,7 +24815,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -25626,7 +25626,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -26437,7 +26437,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -27204,7 +27204,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -27963,7 +27963,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -28696,7 +28696,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -29425,7 +29425,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -30158,7 +30158,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -30876,7 +30876,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -31594,7 +31594,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -32308,7 +32308,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -33034,7 +33034,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -33760,7 +33760,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -34486,7 +34486,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -35148,7 +35148,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
@@ -35830,7 +35830,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "scripts/release/grok-runtime-review.test.mjs",
@@ -36146,7 +36146,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
@@ -36411,7 +36411,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
@@ -36665,7 +36665,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
@@ -36908,7 +36908,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
@@ -37140,7 +37140,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
@@ -37314,7 +37314,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
@@ -37488,7 +37488,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         },
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
@@ -37651,7 +37651,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         }
       ]
     },
@@ -37778,7 +37778,7 @@
         },
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
-          "digest": "sha256:da1c831aa01161d8c1d301e9176d3d08e76fa24c2928b2da9d783de61d0c18e9"
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         }
       ]
     }

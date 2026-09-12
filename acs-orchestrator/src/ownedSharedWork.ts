@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { OwnedOperation, OwnedOperations } from './ownedOperations.js';
 import { OwnershipBlockedError, ownershipIsTerminal, type OperationKind, type WritableScope } from './ownershipState.js';
-import { waitForOwned, OWNED_WAIT_BUDGETS } from './ownedWait.js';
+import { waitForOwned, OWNED_WAIT_BUDGETS, OwnedWaitEndedError } from './ownedWait.js';
 
 interface Leader<T> {
   fingerprint: string;
@@ -29,6 +29,10 @@ export class OwnedSharedWork<T> {
     for (;;) {
       const existing = this.leaders.get(input.key);
       if (existing) {
+        if (existing.operation && ownershipIsTerminal(existing.operation.record)) {
+          if (this.leaders.get(input.key) === existing) this.leaders.delete(input.key);
+          continue;
+        }
         if (existing.operation && existing.operation.record.resource === 'unknown') {
           throw new OwnershipBlockedError(existing.operation.record.operationId);
         }
@@ -39,9 +43,12 @@ export class OwnedSharedWork<T> {
             timeoutMs: input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs,
           });
         } catch (error) {
+          if (existing.operation && ownershipIsTerminal(existing.operation.record)) {
+            if (this.leaders.get(input.key) === existing) this.leaders.delete(input.key);
+            continue;
+          }
           // Incompatible callers do not turn an unresolved failed owner into a retry.
-          if (existing.fingerprint !== input.fingerprint && existing.operation
-            && !ownershipIsTerminal(existing.operation.record)) {
+          if (existing.fingerprint !== input.fingerprint && existing.operation) {
             throw new OwnershipBlockedError(existing.operation.record.operationId);
           }
           throw error;
@@ -50,6 +57,7 @@ export class OwnedSharedWork<T> {
         if (!existing.operation || !ownershipIsTerminal(existing.operation.record)) {
           throw new OwnershipBlockedError(existing.operation?.record.operationId);
         }
+        if (this.leaders.get(input.key) === existing) this.leaders.delete(input.key);
         continue;
       }
       if (input.signal?.aborted) input.signal.throwIfAborted();
@@ -63,17 +71,18 @@ export class OwnedSharedWork<T> {
           attemptId: `${input.kind}:${randomUUID()}`,
         });
         leader.operation = operation;
+        let workReturned = false;
         try {
           const result = await this.operations.context.run(operation, () =>
             operation.phase(input.kind, () => input.work(operation), input.ownerTimeoutMs ?? input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs));
+          workReturned = true;
           if (operation.record.resource === 'unknown') throw new OwnershipBlockedError(operation.record.operationId);
           await operation.complete('success', {
             kind: 'coordinator_settled', attemptId: operation.record.attemptId,
           });
           return result;
         } catch (error) {
-          // A failed ensure/provision can have made remote changes even without a
-          // tool dispatch. It stays owned until explicit evidence reconciles it.
+          if (await settleUnfencedSharedFailure(operation, error, workReturned)) throw error;
           await operation.unknown('shared_work_unconfirmed').catch(() => undefined);
           throw error;
         }
@@ -88,5 +97,25 @@ export class OwnedSharedWork<T> {
         timeoutMs: input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs,
       });
     }
+  }
+}
+
+/** Failed unfenced ensure/provision that never dispatched can leave drain. */
+async function settleUnfencedSharedFailure(
+  operation: OwnedOperation,
+  error: unknown,
+  workReturned: boolean,
+): Promise<boolean> {
+  // A waiter timeout detaches while work may still mutate the cluster.
+  if (workReturned || error instanceof OwnedWaitEndedError || !operation.canProveNeverDispatched()) {
+    return false;
+  }
+  try {
+    await operation.complete(operation.controller.signal.aborted ? 'cancelled' : 'failed', {
+      kind: 'never_dispatched', attemptId: operation.record.attemptId, sandboxUid: operation.record.sandboxUid,
+    }, 'not_started');
+    return true;
+  } catch {
+    return false;
   }
 }

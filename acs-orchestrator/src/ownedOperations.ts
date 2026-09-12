@@ -89,6 +89,12 @@ export class OwnedOperation {
     this.dispatched = true;
   }
 
+  /** Local proof that this attempt never reserved or launched a remote fence. */
+  canProveNeverDispatched(): boolean {
+    return !this.dispatched && !this.record.remoteFence
+      && this.record.resource !== 'running' && this.record.resource !== 'background_owned';
+  }
+
   async unknown(reasonCode: string): Promise<void> {
     if (ownershipIsTerminal(this.record) && this.durable) return;
     this.markUncertain(reasonCode);
@@ -104,7 +110,9 @@ export class OwnedOperation {
       throw new OwnershipBlockedError(this.record.operationId);
     }
     if (proof.kind === 'never_dispatched') {
-      if (this.dispatched || this.uncertain || resource !== 'not_started') throw new OwnershipBlockedError(this.record.operationId);
+      // Absence of dispatch/fence is the proof. An earlier local `unknown` does not
+      // create a remote attempt, so it cannot block this terminal.
+      if (!this.canProveNeverDispatched() || resource !== 'not_started') throw new OwnershipBlockedError(this.record.operationId);
     } else if (proof.kind === 'coordinator_settled') {
       if (this.dispatched || this.uncertain || this.record.remoteFence || resource !== 'stopped'
         || this.registry.hasUnresolvedChildren(this.record.operationId)) throw new OwnershipBlockedError(this.record.operationId);

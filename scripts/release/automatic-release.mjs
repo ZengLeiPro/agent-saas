@@ -41,6 +41,7 @@ export async function executeAutomaticRelease({
   readProduction = productionResult,
   readCandidate = readRelease,
   readStaging = downloadResult,
+  parentLive = assertParentLive,
   now = Date.now,
 }) {
   await mkdir(directory, { recursive: true });
@@ -69,19 +70,35 @@ export async function executeAutomaticRelease({
   await save(directory, 'request.json', record);
   const results = [];
   const dispatch = async (stage, workflow, sourceSha, inputs) => {
-    const result = await child({
-      client,
-      ledger,
-      requestRecord: record,
-      parentAttempt: run.run_attempt,
-      stage,
-      workflow,
-      sourceSha,
-      inputs,
-      deadline,
-      signal,
-      now,
-    });
+    let result;
+    try {
+      result = await child({
+        client,
+        ledger,
+        requestRecord: record,
+        parentAttempt: run.run_attempt,
+        stage,
+        workflow,
+        sourceSha,
+        inputs,
+        deadline,
+        signal,
+        now,
+      });
+    } catch (error) {
+      await save(directory, 'child-failure.json', {
+        schemaVersion: 1,
+        requestDigest: request.digest,
+        targetSourceSha: request.target.sourceSha,
+        stage,
+        parentRunId: String(run.id),
+        parentRunAttempt: run.run_attempt,
+        ...(error.automaticRelease ?? {}),
+        rejection: error.code ?? 'validation_failed',
+        recordedAt: new Date(now()).toISOString(),
+      });
+      throw error;
+    }
     results.push({
       stage,
       runId: result.run.id,
@@ -201,7 +218,7 @@ export async function executeAutomaticRelease({
       // A green worker with a checkpoint warning is NOT a fulfilled automatic request.
       await save(directory, 'publication.json', result);
     }
-    await assertParentLive(client, request, run.run_attempt);
+    await parentLive(client, request, run.run_attempt);
     // Fresh readback on EACH parent attempt; never treat a stale successful child as current truth.
     const result = await checkpoint(candidate, `verify-${run.run_attempt}`);
     assert.equal(result.sourceSha, request.target.sourceSha);

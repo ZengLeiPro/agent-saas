@@ -56,6 +56,12 @@ test('automatic is the UI default without removing any manual advanced operation
   assert.match(staging, /needs: \[ensure-evidence-writer, guard\]/u);
   assert.match(job(staging, 'guard'), /source_sha: \$\{\{ steps.binding.outputs.source_sha \}\}/u);
 });
+test('automatic child authorization is retained as a durable diagnostic in every mutating workflow', () => {
+  for (const workflow of [production, staging]) {
+    assert.match(workflow, /AUTOMATIC_CHILD_EVIDENCE_PATH: \$\{\{ runner\.temp \}\}\/automatic-child-authorization\.jsonl/u);
+    assert.match(workflow, /automatic-child-authorization\.jsonl/u);
+  }
+});
 test('manual child guard really binds source to github.sha, rejects non-main and mixed delegation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'manual-source-'));
   try {

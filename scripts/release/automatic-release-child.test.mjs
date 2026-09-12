@@ -30,6 +30,7 @@ function setup() {
       workflow: 'deploy-staging.yml',
       runId: '701',
       runAttempt: '1',
+      pause: async () => {},
     });
   return { c, inputs, client, check };
 }
@@ -38,6 +39,21 @@ test('child source is independently authenticated from exact immutable parent re
   const result = await s.check();
   assert.equal(result.stepRecord.payload.sourceSha, sha(10));
   assert.equal(result.run.head_sha, sha(15));
+});
+test('one stale parent observation is reconciled before a queued approval child receives authority', async () => {
+  const s = setup();
+  let reads = 0;
+  const original = s.client.api;
+  s.client.api = async (path) => {
+    if (path === 'actions/runs/501') {
+      reads += 1;
+      if (reads === 2) return { ...s.c.parentRun, status: 'completed', conclusion: 'failure' };
+    }
+    return original(path);
+  };
+  const result = await s.check();
+  assert.equal(result.parentRun.status, 'in_progress');
+  assert.equal(reads, 4);
 });
 for (const [name, change] of Object.entries({
   'cancelled parent': (s) => {

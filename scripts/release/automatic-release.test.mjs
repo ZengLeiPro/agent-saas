@@ -112,6 +112,10 @@ async function scenario(mode = 'recovery') {
           checkpointPending: false,
         };
       },
+      parentLive: async () => {
+        assert.equal(rootRun.status, 'in_progress');
+        return rootRun;
+      },
     });
   return { directory, steps, statuses, execute, records, target };
 }

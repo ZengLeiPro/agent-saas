@@ -1,3 +1,6 @@
+import type { GrokCredentialManager } from '../runtime/responses/grokCredentialManager.js';
+import type { GrokDeviceAuthService } from '../runtime/responses/grokOAuth.js';
+import type { GrokModelCatalogService } from '../runtime/responses/grokModelCatalog.js';
 import type { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
 import type { AppConfig } from '../types/index.js';
 import type { AuthEpochAuthority } from '../auth/authEpochAuthority.js';
@@ -193,6 +196,9 @@ export interface AppRuntime {
   secretVault?: SecretVault;
   codexCredentialManager: CodexCredentialManager;
   codexDeviceAuthService: CodexDeviceAuthService;
+  grokCredentialManager: GrokCredentialManager;
+  grokDeviceAuthService: GrokDeviceAuthService;
+  grokModelCatalog: GrokModelCatalogService;
   /** 套餐额度采集/读取（仅 PG runtime 装配；ws-only 只读+按需刷新，Worker 跑周期采集）。 */
   providerQuotaService?: ProviderQuotaService;
   codexWebSocketShutdown?: () => void;

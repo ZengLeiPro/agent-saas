@@ -23,6 +23,7 @@ export function resolveGuardrailModelConfigs(input: {
       logger?.warn(`Guardrail: model ref "${ref}" not found, skipped`);
       continue;
     }
+    if (resolved.providerOptions?.responsesTransport === 'grok_subscription') throw new Error('MODEL_TRANSPORT_UNSUPPORTED: Grok subscription 尚未支持内容安全门禁辅助路径');
     configs.push({ model: resolved.model, connection: resolved.connection });
     logger?.info(`Guardrail: model "${resolved.model}" from "${ref}"`);
     const refModelId = ref.split('/').pop() ?? '';

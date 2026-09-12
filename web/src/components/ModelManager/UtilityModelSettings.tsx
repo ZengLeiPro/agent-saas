@@ -18,7 +18,8 @@ type ModelGroup = {
   id: string;
   name: string;
   protocol?: string;
-  models: { id: string; name: string; protocol?: string }[];
+  responses_transport?: string;
+  models: { id: string; name: string; protocol?: string; responses_transport?: string }[];
 };
 export type UtilityModelAdminFields = TitleGeneratorAdminFields & {
   guardrail?: GuardrailConfig | null;
@@ -81,8 +82,9 @@ export function UtilityModelSettings(props: {
     ref: `${group.id}/${model.id}`,
     label: `${group.name}/${model.name}`,
     protocol: model.protocol ?? group.protocol ?? 'chat_completions',
+    transport: model.responses_transport ?? group.responses_transport,
   })));
-  const options = configuredModels.filter((model) => model.protocol === 'chat_completions');
+  const options = configuredModels.filter((model) => model.protocol === 'chat_completions' && model.transport !== 'grok_subscription');
   const chain = guardrail ? [guardrail.model, ...(guardrail.fallbackModels ?? [])] : [];
   const unavailableLabel = (ref: string) => {
     const configured = configuredModels.find((model) => model.ref === ref);

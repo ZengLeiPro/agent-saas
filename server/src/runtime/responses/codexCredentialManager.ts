@@ -1,4 +1,8 @@
-import { createHash } from 'node:crypto';
+import type { SubscriptionCredentialRotationTransaction } from './subscriptionCredentialRotation.js';
+import { LocalSubscriptionCredentialLock as LocalCodexCredentialLock, type SubscriptionCredentialLock as CodexCredentialLock } from './subscriptionCredentialLock.js';
+export { LocalSubscriptionCredentialLock as LocalCodexCredentialLock, PgSubscriptionCredentialLock as PgCodexCredentialLock, type SubscriptionCredentialLock as CodexCredentialLock, type PgLockPool } from './subscriptionCredentialLock.js';
+import { hashAccountBinding, orderedCredentialRefs } from './subscriptionAccountBinding.js';
+export { hashAccountBinding } from './subscriptionAccountBinding.js';
 
 import type { SecretVault, VaultCaller, VaultOperation } from '../../security/secretVault.js';
 import {
@@ -99,55 +103,9 @@ export interface CodexCredentialStatus {
   error?: string;
 }
 
-export interface CodexCredentialLock {
-  runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T>;
-}
-
-interface PgLockClient {
-  query(sql: string, values?: unknown[]): Promise<unknown>;
-  release(): void;
-}
-
-export interface PgLockPool {
-  connect(): Promise<PgLockClient>;
-}
-
-export class PgCodexCredentialLock implements CodexCredentialLock {
-  constructor(private readonly pool: PgLockPool) {}
-
-  async runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [key]);
-      return await fn();
-    } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]).catch(() => undefined);
-      client.release();
-    }
-  }
-}
-
-export class LocalCodexCredentialLock implements CodexCredentialLock {
-  private readonly tails = new Map<string, Promise<void>>();
-
-  async runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const previous = this.tails.get(key) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => { release = resolve; });
-    const tail = previous.catch(() => undefined).then(() => current);
-    this.tails.set(key, tail);
-    await previous.catch(() => undefined);
-    try {
-      return await fn();
-    } finally {
-      release();
-      if (this.tails.get(key) === tail) this.tails.delete(key);
-    }
-  }
-}
-
 export class CodexCredentialManager {
   private credentialRotationCoordinator?: (credentialRef: string) => Promise<void>;
+  private credentialRotationTransaction?: SubscriptionCredentialRotationTransaction;
   private readonly refreshInFlight = new Map<string, Promise<CodexTokenBundle>>();
   private readonly telemetry = new CodexSubscriptionTelemetry();
   private readonly runtimeStateStore: CodexCredentialRuntimeStateStore;
@@ -170,14 +128,10 @@ export class CodexCredentialManager {
     this.credentialRotationCoordinator = coordinator;
   }
 
+  setCredentialRotationTransaction(transaction: SubscriptionCredentialRotationTransaction | undefined): void { this.credentialRotationTransaction = transaction; }
+
   getCredentialRefs(): string[] {
-    const raw = this.options.getConfig() ?? {};
-    const refs = raw.credentialRefs?.length
-      ? raw.credentialRefs
-      : raw.credentialRef
-        ? [raw.credentialRef]
-        : [];
-    return Array.from(new Set(refs.filter((ref): ref is string => typeof ref === 'string' && ref.trim().length > 0)));
+    return orderedCredentialRefs(this.options.getConfig());
   }
 
   getConfiguration(): Required<Pick<CodexSubscriptionRuntimeConfig, 'enabled' | 'endpoint' | 'originator' | 'websocketEnabled' | 'quotaCooldownMinutes'>>
@@ -463,7 +417,7 @@ export class CodexCredentialManager {
     staleGeneration?: number,
   ): Promise<CodexTokenBundle> {
     const observedRuntimeGeneration = await this.runtimeStateStore.getGeneration(credentialRef);
-    const result = await this.lock.runExclusive(this.lockKey(credentialRef), async () => {
+    const rotate = () => this.lock.runExclusive(this.lockKey(credentialRef), async () => {
       const latest = await this.readBundleFromVault(
         credentialRef,
         observedRuntimeGeneration ?? 0,
@@ -503,13 +457,14 @@ export class CodexCredentialManager {
           JSON.stringify(next),
           systemVaultCaller('rotate'),
         );
-        await this.credentialRotationCoordinator?.(credentialRef);
+        if (!this.credentialRotationTransaction) await this.credentialRotationCoordinator?.(credentialRef);
         return { bundle: next, refreshed: true };
       } catch (error) {
         this.telemetry.recordRefreshFailure(error);
         throw new CodexCredentialRefreshError(latest.generation, error);
       }
     });
+    const result = this.credentialRotationTransaction ? await this.credentialRotationTransaction(credentialRef, rotate) : await rotate();
     await this.runtimeStateStore.clear(credentialRef, result.bundle.generation);
     if (result.refreshed) this.telemetry.recordRefreshSuccess(result.bundle.generation);
     return result.bundle;
@@ -677,9 +632,7 @@ function extractAccountIdClaim(payload: Record<string, unknown> | null): string 
   return undefined;
 }
 
-export function hashAccountBinding(accountId: string): string {
-  return createHash('sha256').update(accountId).digest('hex').slice(0, 32);
-}
+
 
 function isRecoverableStoredCredentialError(error: unknown): boolean {
   return errorMessages(error).some((message) => (

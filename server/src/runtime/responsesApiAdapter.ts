@@ -1,3 +1,6 @@
+import { isPreviousResponseNotFound } from './responses/continuationErrors.js';
+export { isPreviousResponseNotFound } from './responses/continuationErrors.js';
+import { resolveContinuationBinding } from './responses/resolveContinuationBinding.js';
 /**
  * ResponsesApiAdapter（RFC v1 P0.1）
  *
@@ -114,17 +117,6 @@ const RESERVED_EXTRA_BODY_KEYS = new Set([
   'include',
   'text',
 ]);
-
-/**
- * 上游拒绝 previous_response_id 的判定。
- * - 火山 Ark：HTTP 400 `{"error":{"code":"InvalidParameter.PreviousResponseNotFound","param":"previous_response_id",...}}`
- * - OpenAI：HTTP 400/404 `Previous response with id 'resp_x' not found`
- * 仅在请求确实带了 previous_response_id 时调用（调用方保证），无误伤面。
- */
-export function isPreviousResponseNotFound(status: number, bodyText: string): boolean {
-  if (status !== 400 && status !== 404) return false;
-  return /previous[_\s]?response/i.test(bodyText);
-}
 
 /** 单个 input item，对齐 OpenAI Responses input items 协议。 */
 type ResponsesInputItem =
@@ -258,7 +250,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         tools: request.tools,
         context,
       });
-    const expectedContinuationBinding = await this.transport.getContinuationBinding?.();
+    const expectedContinuationBinding = await resolveContinuationBinding(this.transport, context, request.model);
     const buildRequestBody = async (): Promise<Record<string, unknown>> => {
       const { instructions, input } = usePrevious
         ? { instructions: undefined, input: await this.extractIncrementalInput(request.messages, context.cwd, sessionIdShort) }

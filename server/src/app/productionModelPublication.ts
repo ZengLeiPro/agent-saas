@@ -1,3 +1,4 @@
+import type { GrokCredentialManager } from '../runtime/responses/grokCredentialManager.js';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -61,6 +62,7 @@ export function initializeProductionModelPublication(options: {
   processCwd: string;
   processRole: string;
   secretVault: SecretVault;
+  grokCredentialManager?: GrokCredentialManager;
   refresher: SharedConfigRefresher;
   identity: RuntimeConfigIdentityAssembly;
   logger: { warn(message: string): void };
@@ -178,6 +180,8 @@ export function initializeProductionModelPublication(options: {
           secretVault: options.secretVault,
           targets: () => activeTargets(configPath),
           observeLocal: observe,
+          pendingCredentialRotations: () => options.grokCredentialManager?.getPendingPublicationRefs() ?? Promise.resolve([]),
+          acknowledgeCredentialRotation: (ref) => options.grokCredentialManager?.acknowledgeCredentialRotation(ref) ?? Promise.resolve(),
         });
   const mutationService = publisher
     && role === 'ws-only' ? new AdminConfigMutationService({
@@ -193,10 +197,11 @@ export function initializeProductionModelPublication(options: {
     if (stopped || recovering || !mutationService) return;
     try {
       const state = readPublication(configPath);
+      const hasPendingRotation = (await options.grokCredentialManager?.getPendingPublicationRefs() ?? []).length > 0;
       if (
         !state ||
-        state.phase === 'committed' ||
-        (state.phase !== 'recovery_required' && state.owner && isOwnerAlive(state.owner))
+        (state.phase === 'committed' && !hasPendingRotation) ||
+        (state.phase !== 'committed' && state.phase !== 'recovery_required' && state.owner && isOwnerAlive(state.owner))
       )
         return;
       if (
@@ -221,6 +226,7 @@ export function initializeProductionModelPublication(options: {
   return {
     mutationService,
     coordinateCredentialRotation: (credentialRef: string) => publisher.coordinateCredentialRotation(credentialRef),
+    withCredentialRotation: <T>(ref: string, rotate: () => Promise<T>) => publisher.withCredentialRotation(ref, rotate),
     observe,
     stop: () => {
       stopped = true;

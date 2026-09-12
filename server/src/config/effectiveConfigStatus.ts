@@ -60,7 +60,7 @@ const SAFE_SECRET_METADATA = new Set([
 ]);
 
 function targetForSecret(path: string): EffectiveConfigTarget | null {
-  if (path.startsWith('models.') || path.startsWith('codexSubscription.')) return 'models';
+  if (path.startsWith('models.') || path.startsWith('codexSubscription.') || path.startsWith('grokSubscription.')) return 'models';
   if (
     path.startsWith('webTools.') ||
     path.startsWith('imageGenTools.') ||

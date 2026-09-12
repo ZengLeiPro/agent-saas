@@ -1,3 +1,4 @@
+import { isSingleAttemptEgressRequest } from './egressRequestPolicy.js';
 /**
  * server(brain) 进程的出站代理 dispatcher（2026-07-25）。
  *
@@ -268,7 +269,7 @@ function createResolvedEgressFetch(
       // 但类型来自不同声明，调用方只用标准成员，断言安全。
       return response as unknown as Response;
     } catch (err) {
-      if (!failOpen || !isProxyTransportError(err)) throw err;
+      if (!failOpen || isSingleAttemptEgressRequest(init) || !isProxyTransportError(err)) throw err;
       logger.warn(
         `[egress] 经代理请求失败，已降级直连重试: ${target}` +
           ` (${err instanceof Error ? err.message : String(err)})`,

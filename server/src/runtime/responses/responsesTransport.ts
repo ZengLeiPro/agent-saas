@@ -7,7 +7,7 @@ import type {
   RunContext,
 } from '../types.js';
 
-export type ResponsesTransportId = 'openai_compatible' | 'codex_subscription';
+export type ResponsesTransportId = 'openai_compatible' | 'codex_subscription' | 'grok_subscription';
 
 export type ResponsesWireMode = ModelWireMode;
 
@@ -46,7 +46,7 @@ export interface ResponsesTransportCapabilities {
 }
 
 export interface ProviderContinuationBinding {
-  provider: 'openai_codex_subscription';
+  provider: 'openai_codex_subscription' | 'xai_grok_subscription';
   issuer: string;
   accountBindingHash: string;
 }
@@ -93,6 +93,7 @@ export interface ResponsesTransport {
   }): string | undefined;
 
   getContinuationBinding?(): Promise<ProviderContinuationBinding>;
+  getContinuationBindingForRequest?(input: { context: RunContext; model: string }): Promise<ProviderContinuationBinding | undefined>;
 
   execute(input: ResponsesTransportExecuteInput): Promise<ResponsesTransportExecuteResult>;
 

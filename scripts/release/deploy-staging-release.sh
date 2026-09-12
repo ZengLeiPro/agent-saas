@@ -490,12 +490,20 @@ const failures = [];
 if (!config.models?.groups?.length) failures.push('models must be explicitly configured');
 for (const group of config.models?.groups ?? []) {
   if (group.apiKey) failures.push(`models.${group.id}.apiKey must use a Staging SecretRef`);
-  const usesCodex = group.responses_transport === 'codex_subscription'
-    || (group.models ?? []).some((model) => model.responses_transport === 'codex_subscription');
-  if (!usesCodex && !group.apiKeyRef) failures.push(`models.${group.id}.apiKeyRef is required`);
+  const groupUsesSubscription = group.responses_transport === 'codex_subscription'
+    || group.responses_transport === 'grok_subscription';
+  const requiresApiKey = (group.models ?? []).length === 0
+    ? !groupUsesSubscription
+    : group.models.some((model) => model.responses_transport === undefined
+      ? !groupUsesSubscription
+      : model.responses_transport !== 'codex_subscription' && model.responses_transport !== 'grok_subscription');
+  if (requiresApiKey && !group.apiKeyRef) failures.push(`models.${group.id}.apiKeyRef is required`);
 }
 if (config.codexSubscription?.enabled && !(config.codexSubscription.credentialRefs?.length || config.codexSubscription.credentialRef)) {
   failures.push('enabled Codex requires a Staging credentialRef');
+}
+if (config.grokSubscription?.enabled && !(config.grokSubscription.credentialRefs?.length || config.grokSubscription.credentialRef)) {
+  failures.push('enabled Grok requires a Staging credentialRef');
 }
 if (config.stt?.enabled) {
   for (const key of ['apiKeyRef', 'ossAccessKeyIdRef', 'ossAccessKeySecretRef']) {

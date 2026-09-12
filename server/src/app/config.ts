@@ -1,3 +1,5 @@
+import { validateSubscriptionModels } from './subscriptionModelConfigValidation.js';
+import { grokSubscriptionConfigSchema } from './grokSubscriptionConfigSchema.js';
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { parse as parseJsonc } from 'jsonc-parser';
@@ -420,7 +422,7 @@ const modelResponsesOptionsSchema = z.object({
    * Responses 底层 transport；默认 openai_compatible。
    * codex_subscription 只改变认证和 wire contract，不接管 Agent/tool loop。
    */
-  responses_transport: z.enum(['openai_compatible', 'codex_subscription']).optional(),
+  responses_transport: z.enum(['openai_compatible', 'codex_subscription', 'grok_subscription']).optional(),
   /**
    * Responses API 返回的 response.model 字段实际值（别名展开后）。
    * 用于 adapter 层 actualModelSeen 校验，不一致时告警。
@@ -1193,6 +1195,7 @@ export const appConfigSchema = z.object({
   auth: authConfigSchema.optional(),
   models: modelsConfigSchema.optional(),
   codexSubscription: codexSubscriptionConfigSchema.optional(),
+  grokSubscription: grokSubscriptionConfigSchema.optional(),
   titleGenerator: titleGeneratorConfigSchema.optional(),
   guardrail: guardrailConfigSchema.optional(),
   audit: auditConfigSchema.optional(),
@@ -1218,27 +1221,7 @@ export const appConfigSchema = z.object({
       message: `${path} requires runtimeEventStore.backend="pg" ${reason}`,
     });
   }
-  for (const [groupIndex, group] of (value.models?.groups ?? []).entries()) {
-    for (const [modelIndex, model] of group.models.entries()) {
-      const transport = model.responses_transport ?? group.responses_transport;
-      if (transport !== 'codex_subscription') continue;
-      const protocol = model.protocol ?? group.protocol ?? 'chat_completions';
-      if (protocol !== 'responses') {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['models', 'groups', groupIndex, 'models', modelIndex, 'responses_transport'],
-          message: 'codex_subscription 只能用于 protocol="responses"',
-        });
-      }
-      if (!value.codexSubscription) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['codexSubscription'],
-          message: '存在 codex_subscription 模型时必须配置 codexSubscription',
-        });
-      }
-    }
-  }
+  validateSubscriptionModels(value, ctx);
 });
 
 export type ProxyConfig = z.infer<typeof proxyConfigSchema>;
@@ -1275,6 +1258,7 @@ export type SelfSignupConfig = z.infer<typeof selfSignupConfigSchema>;
 export type ModelItem = z.infer<typeof modelItemSchema>;
 export type ModelGroup = z.infer<typeof modelGroupSchema>;
 export type ModelsConfig = z.infer<typeof modelsConfigSchema>;
+export type GrokSubscriptionConfig = z.infer<typeof grokSubscriptionConfigSchema>;
 export type CodexSubscriptionConfig = z.infer<typeof codexSubscriptionConfigSchema>;
 export type TitleGeneratorAppConfig = z.infer<typeof titleGeneratorConfigSchema>;
 export type GuardrailAppConfig = z.infer<typeof guardrailConfigSchema>;

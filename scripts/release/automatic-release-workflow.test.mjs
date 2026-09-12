@@ -120,7 +120,10 @@ test('all refreshed build, tag and deployment identities use pinned source, whil
   const build = job(staging, 'build-deploy-verify');
   assert.match(build, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/u);
   assert.match(build, /git merge-base --is-ancestor "\$RELEASE_SOURCE_SHA" origin\/main/u);
-  assert.match(build, /git tag -a "\$STAGING_RELEASE_ID" "\$RELEASE_SOURCE_SHA"/u);
+  assert.doesNotMatch(build, /git tag -a "\$STAGING_RELEASE_ID" "\$RELEASE_SOURCE_SHA"/u);
+  assert.doesNotMatch(build, /git push origin "refs\/tags\/\$STAGING_RELEASE_ID"/u);
+  assert.match(build, /写入不可变 OSS 记录与构建证明/u);
+  assert.match(build, /fetch-rc-evidence\.sh/u);
   assert.match(build, /--sha="\$RELEASE_SOURCE_SHA"/u);
   assert.match(build, /--arg ref "\$RELEASE_SOURCE_SHA"/u);
   assert.match(build, /automaticSource:\$sourceBinding/u);
@@ -185,4 +188,14 @@ test('queued preparation rechecks parent immediately before Writer and Staging r
     assert.match(guard, /automatic-release-child\.mjs deploy-staging\.yml/u);
     assert(staging.indexOf(guard) < staging.indexOf(`      - name: ${name}\n`));
   }
+});
+
+test('Promotion completed seals the permanent rc tag; staging does not push refs/tags', () => {
+  assert.doesNotMatch(staging, /git push origin "refs\/tags\/\$STAGING_RELEASE_ID"/u);
+  assert.doesNotMatch(staging, /gh release create "\$STAGING_RELEASE_ID" --verify-tag/u);
+  const seal = step(production, '写入永久 RC 标签与正式 Release');
+  assert.match(seal, /git tag -a "\$RELEASE_ID" "\$RELEASE_SHA"/u);
+  assert.match(seal, /git push origin "refs\/tags\/\$RELEASE_ID"/u);
+  assert.match(seal, /gh release create "\$RELEASE_ID" --verify-tag --latest/u);
+  assert.match(production, /fetch-rc-evidence\.sh/u);
 });

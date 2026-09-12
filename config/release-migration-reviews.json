@@ -598,6 +598,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -1512,7 +1526,7 @@
           "baselineDigest": null,
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
-          "reason": "新增 tenant-aware 恢复 SELECT 助手，无 DDL。"
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         },
         {
           "path": "server/src/runtime/runStoreSchema.ts",
@@ -1751,6 +1765,13 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -2851,6 +2872,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -3910,6 +3945,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -4953,6 +5002,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -5982,6 +6045,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -7003,6 +7080,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -8024,6 +8115,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -9058,7 +9163,7 @@
           "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
-          "reason": "新增 tenant-aware 恢复 SELECT 助手，无 DDL。"
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         },
         {
           "path": "server/src/runtime/runStoreSchema.ts",
@@ -9297,6 +9402,13 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -10337,6 +10449,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -11399,6 +11525,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -12453,6 +12593,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -13465,6 +13619,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -14461,6 +14629,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -15457,6 +15639,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -16453,6 +16649,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -17435,6 +17645,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -18413,6 +18637,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -19342,6 +19580,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -20251,6 +20503,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -21156,6 +21422,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -22053,6 +22333,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -22950,6 +23244,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -23819,6 +24127,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -24666,6 +24988,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -25493,6 +25829,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -26304,6 +26654,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -27087,6 +27451,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -27854,6 +28232,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -28599,6 +28991,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -29332,6 +29738,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -30061,6 +30481,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -30787,6 +31221,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -31505,6 +31953,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -32223,6 +32685,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -32937,6 +33413,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -33663,6 +34153,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -34389,6 +34893,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -35087,6 +35605,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -35753,6 +36285,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -36085,6 +36631,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -36366,6 +36926,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -36624,6 +37198,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -36871,6 +37459,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -37107,6 +37709,20 @@
           "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
           "classification": "no-schema-change",
           "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -37297,6 +37913,20 @@
           "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
           "reason": "Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -37471,6 +38101,20 @@
           "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
           "reason": "Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -37638,6 +38282,20 @@
           "targetDigest": "sha256:fc9f8ad50a7c6cc3d92632cb385c8273b120a9a788be1385fb6137792101e517",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：仅扩展 RunStore 的 TypeScript 续接接口，不执行 SQL、DDL 或回填。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -37769,6 +38427,20 @@
           "targetDigest": "sha256:fc9f8ad50a7c6cc3d92632cb385c8273b120a9a788be1385fb6137792101e517",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：仅扩展 RunStore 的 TypeScript 续接接口，不执行 SQL、DDL 或回填。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
         }
       ],
       "evidence": [

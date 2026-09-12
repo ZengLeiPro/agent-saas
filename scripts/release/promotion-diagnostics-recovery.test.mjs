@@ -79,6 +79,51 @@ test('one bounded summary carries object/phase, operation, budget, rollback scop
   assert.equal(summary.nextAction, 'inspect_external_side_effects_before_resume');
   assert.doesNotMatch(await readFile(join(root, 'out/summary.json'), 'utf8'), /DO_NOT_EXPORT/);
 });
+test('ACS drain diagnostics JSONL is projected without unreviewed properties', async (t) => {
+  const { root, put } = await fixture(t);
+  await writeFile(
+    join(root, 'acs-drain-diagnostics.jsonl'),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      drainPhase: 'cancelled',
+      observedAt: '2026-09-12T15:17:21.580Z',
+      oldAcsPid: 1687931,
+      snapshotDigest: 'sha256:' + 'e'.repeat(64),
+      credential: 'DO_NOT_EXPORT',
+      diagnostics: {
+        protocolVersion: 1,
+        requests: 1,
+        recovery: 0,
+        unresolvedInvocations: 0,
+        ownedWork: 1,
+        journalAvailable: true,
+        persistedUnresolved: 0,
+        secret: 'DO_NOT_EXPORT',
+        blockers: [
+          {
+            operationId: 'op-1',
+            invocationId: 'agent-dws-events-account-one',
+            kind: 'invoke',
+            phase: 'running',
+            resource: 'sandbox',
+            sandboxName: 'sb-1',
+            workspaceId: 'ws-1',
+            elapsedMs: 600000,
+            durable: true,
+            token: 'DO_NOT_EXPORT',
+          },
+        ],
+      },
+    })}\n`,
+  );
+  const summary = await collectDiagnostics(root, join(root, 'out'));
+  assert.equal(summary.evidencePresent['acs-drain-diagnostics.jsonl'], true);
+  assert.equal(summary.acsDrain.last.requests, 1);
+  assert.equal(summary.acsDrain.last.ownedWork, 1);
+  assert.equal(summary.acsDrain.last.blockers[0].invocationId, 'agent-dws-events-account-one');
+  assert.equal(summary.acsDrain.last.blockers[0].token, undefined);
+  assert.doesNotMatch(await readFile(join(root, 'out/summary.json'), 'utf8'), /DO_NOT_EXPORT/);
+});
 test('oversized and linked evidence is rejected rather than exported; unavailable evidence is explicit', async (t) => {
   const { root } = await fixture(t);
   await writeFile(join(root, 'oversized'), 'x'.repeat(512001));

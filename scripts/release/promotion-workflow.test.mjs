@@ -324,6 +324,16 @@ test('ACS deploy exports a run-bound pre-change recovery receipt for reconciliat
   assert.match(workflow, /\$\{\{ runner\.temp \}\}\/prechange-receipts\//u);
 });
 
+test('ACS drain diagnostics JSONL is collected into the promotion artifact', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  assert.match(
+    workflow,
+    /sudo cat '\$PROMOTION_REMOTE\/acs-drain-diagnostics-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT\.jsonl'/u,
+  );
+  assert.match(workflow, /\$\{\{ runner\.temp \}\}\/acs-drain-diagnostics\.jsonl/u);
+  assert.match(workflow, /\$\{\{ runner\.temp \}\}\/acs-drain-proof\.json/u);
+});
+
 test('malicious multiline dispatch input cannot pass release-id validation or reach shell syntax', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   assert.ok(

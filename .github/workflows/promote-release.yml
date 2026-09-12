@@ -1609,6 +1609,12 @@ jobs:
           timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/prechange-acs.recovered' 'acs' 'prechange_recovered' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
             > "$RUNNER_TEMP/prechange-receipts/acs-recovered-final.json" || true
+          timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo cat '$PROMOTION_REMOTE/acs-drain-diagnostics-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.jsonl'" \
+            > "$RUNNER_TEMP/acs-drain-diagnostics.jsonl" || true
+          timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo cat '$PROMOTION_REMOTE/acs-drain-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json'" \
+            > "$RUNNER_TEMP/acs-drain-proof.json" || true
           for suffix in observation alert; do
             timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
               "sudo cat '/var/lib/agent-saas-release-recovery/retirements/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/app-retirement-$suffix.json'" \
@@ -1639,6 +1645,8 @@ jobs:
             ${{ runner.temp }}/operation-receipts/
             ${{ runner.temp }}/rollback-receipts/
             ${{ runner.temp }}/prechange-receipts/
+            ${{ runner.temp }}/acs-drain-diagnostics.jsonl
+            ${{ runner.temp }}/acs-drain-proof.json
             ${{ runner.temp }}/web-recovery-state.json
             ${{ runner.temp }}/web-recovery-receipt.json
             ${{ runner.temp }}/web-recovery-readback.json

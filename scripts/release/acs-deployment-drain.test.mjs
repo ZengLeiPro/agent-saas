@@ -114,6 +114,38 @@ curl() {
         printf '{"status":"ok","runtimeConfig":{"deploymentDrainDeadlineMs":%s,"drainDeadlineMs":120000}}' "$current"
       fi
       return 0 ;;
+    *diagnostics/drain*)
+      printf 'curl diagnostics %s\\n' "$args" >> "$TEST_ROOT/events"
+      case "$args" in *Bearer*) echo 'token leaked into argv' >&2; return 1 ;; esac
+      test "$1" = -q || { echo 'diagnostics call did not disable .curlrc as the first argument' >&2; return 1; }
+      local seen_diag_config=false prev_diag=''
+      for arg in "$@"; do
+        if [ "$prev_diag" = -K ] && [ "$arg" = - ]; then seen_diag_config=true; fi
+        prev_diag="$arg"
+      done
+      test "$seen_diag_config" = true \
+        || { echo 'diagnostics call did not read a stdin curl config' >&2; return 1; }
+      local diag_header
+      diag_header="$(cat)"
+      test "$diag_header" = 'header = "Authorization: Bearer test-token"' \
+        || { echo 'diagnostics call did not carry the stdin auth header' >&2; return 1; }
+      test "$CASE" != diagnosticsmissing || return 22
+      test "$CASE" != diagnosticsunauth || return 22
+      if [ "$CASE" = diagnosticsinvalid ]; then
+        printf '{"protocolVersion":2,"inflight":1}'
+        return 0
+      fi
+      local requests=0 recovery=0 unresolved=0 owned=0 journal=true blockers='[]' draining=false
+      case "$CASE" in
+        timeout|pidchange)
+          requests=1
+          owned=1
+          blockers='[{"operationId":"op-1","attemptId":"att-1","invocationId":"agent-dws-events-account-one","kind":"invoke","phase":"running","resource":"sandbox","sandboxName":"sb-1","workspaceId":"ws-1","elapsedMs":600000,"waiters":1,"durable":true,"reasonCode":null}]'
+          ;;
+      esac
+      printf '{"protocolVersion":1,"requests":%s,"recovery":%s,"unresolvedInvocations":%s,"ownedWork":%s,"draining":%s,"httpWaiters":0,"journalAvailable":%s,"persistedUnresolved":0,"blockers":%s}' \
+        "$requests" "$recovery" "$unresolved" "$owned" "$draining" "$journal" "$blockers"
+      return 0 ;;
   esac
   local protocol=1 inflight=0 state=idle draining=false
   case "$CASE" in
@@ -151,6 +183,9 @@ for (const scenario of [
   'patchrefused',
   'patchfails',
   'missingtoken',
+  'diagnosticsmissing',
+  'diagnosticsinvalid',
+  'diagnosticsunauth',
 ]) {
   test(`ACS cutover observes old PID outcome: ${scenario}`, async () => {
     const root = await mkdtemp(join(tmpdir(), 'acs-drain-host-'));
@@ -213,8 +248,9 @@ for (const scenario of [
         assert.match(result.stderr, /ACS did not exit cleanly/u);
       }
       const events = await readFile(join(root, 'events'), 'utf8');
-      if (['patchrefused', 'patchfails', 'missingtoken'].includes(scenario)) {
+      if (['patchrefused', 'patchfails', 'missingtoken', 'diagnosticsmissing', 'diagnosticsinvalid', 'diagnosticsunauth'].includes(scenario)) {
         // 对齐不确定就不能开始换代：绝不能已经停了准入却拿不到足够的 drain 窗口。
+        // 对象级 diagnostics 在发 USR2 前 fail-closed，不能退回只看总 inflight。
         assert.doesNotMatch(events, /kill -USR2/u);
       }
       if (scenario === 'legacyconfig') {
@@ -228,6 +264,43 @@ for (const scenario of [
         assert.equal(await readFile(join(root, 'deadline'), 'utf8'), '1140000');
         assert.match(result.stderr, /Aligned ACS drain deadline .*120000ms -> 1140000ms/u);
         assert.match(result.stderr, /Waiting for ACS drain: .*inflight=/u);
+        const records = (await readFile(join(root, 'acs-drain-diagnostics-123-2.jsonl'), 'utf8'))
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line));
+        assert.ok(records.some((record) => record.drainPhase === 'before_signal'));
+        assert.ok(records.some((record) => record.drainPhase === 'after_signal'));
+        for (const record of records) {
+          assert.equal(record.releaseId, 'rc-20260908-01');
+          assert.equal(record.manifestDigest, `sha256:${'a'.repeat(64)}`);
+          assert.equal(record.runId, '123');
+          assert.equal(record.runAttempt, '2');
+          assert.equal(record.oldAcsPid, 42);
+          assert.match(record.snapshotDigest, /^sha256:[a-f0-9]{64}$/u);
+          assert.equal(record.diagnostics.protocolVersion, 1);
+        }
+        assert.doesNotMatch(await readFile(join(root, 'acs-drain-diagnostics-123-2.jsonl'), 'utf8'), /test-token/u);
+        assert.ok(events.indexOf('curl diagnostics') < events.indexOf('kill -USR2'));
+      }
+      if (['diagnosticsmissing', 'diagnosticsinvalid', 'diagnosticsunauth'].includes(scenario)) {
+        assert.match(result.stderr, /ACS drain diagnostics unavailable or invalid/u);
+        await assert.rejects(readFile(join(root, 'acs-drain-diagnostics-123-2.jsonl')), { code: 'ENOENT' });
+      }
+      if (scenario === 'timeout') {
+        const records = (await readFile(join(root, 'acs-drain-diagnostics-123-2.jsonl'), 'utf8'))
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line));
+        assert.deepEqual(
+          records.map((record) => record.drainPhase).filter((phase) => ['before_signal', 'after_signal', 'cancelled'].includes(phase)),
+          ['before_signal', 'after_signal', 'cancelled'],
+        );
+        const last = records.at(-1);
+        assert.equal(last.oldAcsPid, 42);
+        assert.equal(last.diagnostics.requests, 1);
+        assert.equal(last.diagnostics.ownedWork, 1);
+        assert.equal(last.diagnostics.blockers[0].invocationId, 'agent-dws-events-account-one');
+        assert.match(result.stderr, /invocationId":"agent-dws-events-account-one"/u);
       }
       if (scenario === 'deadlinealreadyaligned') {
         assert.doesNotMatch(events, /-X PATCH/u);
@@ -286,6 +359,14 @@ test -e "$TEST_ROOT/cancelled"`,
     assert.doesNotMatch(events, /restart|kill -KILL|kill -TERM|start acs/u);
     // Only the dedicated deployment budget changes. The shared SNAT setting stays untouched.
     assert.equal(await readFile(join(root, 'deadline'), 'utf8'), '1140000');
+    const records = (await readFile(join(root, 'acs-drain-diagnostics-123-2.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.ok(records.some((record) => record.drainPhase === 'cancelled'));
+    assert.ok(records.some((record) => record.drainPhase === 'recovered'));
+    assert.equal(records.at(-1).drainPhase, 'recovered');
+    assert.doesNotMatch(await readFile(join(root, 'acs-drain-diagnostics-123-2.jsonl'), 'utf8'), /test-token/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

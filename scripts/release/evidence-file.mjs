@@ -34,3 +34,24 @@ export async function readEvidenceJson(path, limit) {
     throw new Error('Evidence is not valid UTF-8 JSON');
   }
 }
+
+export async function readEvidenceJsonl(path, limit = 1048576) {
+  const bytes = await readEvidenceFile(path, limit);
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('Evidence is not valid UTF-8 JSONL');
+  }
+  const records = [];
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    try {
+      records.push(JSON.parse(line));
+    } catch {
+      throw new Error('Evidence is not valid UTF-8 JSONL');
+    }
+    if (records.length > 256) break;
+  }
+  return records;
+}

@@ -152,6 +152,7 @@ describe('Zhipu ProviderQuotaService integration', () => {
     expect(item.ok).toBe(false);
     expect(item.error).toContain('429');
     expect(item.extra?.lastSuccessAt).toBe(firstTime);
+    expect(item.collectedAt).toBe(firstTime);
     expect(item.windows[0]?.usedPercent).toBe(30);
     expect(JSON.stringify(item)).not.toContain('test-key');
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('test-key');

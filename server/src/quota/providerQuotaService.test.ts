@@ -349,6 +349,8 @@ describe('ProviderQuotaService', () => {
     expect(codex.ok).toBe(false);
     expect(codex.windows).toHaveLength(1);
     expect(codex.extra?.lastSuccessAt).toBeTypeOf('string');
+    expect(codex.collectedAt).toBe(codex.extra?.lastSuccessAt);
+    expect(codex.collectedAt).not.toBe(second.find((s) => s.accountKey === 'codex:c1')!.collectedAt);
     expect(overview.collector).toMatchObject({ enabled: false, intervalMs: 300_000 });
     // 失败时拿不到 usage 邮箱，回落到凭据状态里的邮箱
     expect(overview.collector.lastError).toMatch(/c1@mail: Codex usage HTTP 401/u);

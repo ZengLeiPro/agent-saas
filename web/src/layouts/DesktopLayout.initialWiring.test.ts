@@ -25,6 +25,13 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).not.toContain('<GovernanceConsole');
   });
 
+  it("分析与设置侧栏返回按钮都回到新建会话，而不是回放浏览器历史", () => {
+    expect(source).toContain("const handleReturnToNewSession = useCallback(() => {");
+    expect(source).toContain("newPersonalSession();");
+    expect(source).toContain("onCloseAnalysis={handleReturnToNewSession}");
+    expect(source).toContain("onCloseSettings={handleReturnToNewSession}");
+  });
+
   it("能力中心与任务中心使用同一 Header 高度和水平位置", () => {
     expect(source).toContain('activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6"');
   });

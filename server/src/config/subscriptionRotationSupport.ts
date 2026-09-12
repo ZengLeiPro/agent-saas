@@ -1,6 +1,8 @@
 import type { AppConfig } from '../app/config.js';
 import { orderedCredentialRefs } from '../runtime/responses/subscriptionAccountBinding.js';
 export class ConfigPublicationLockUnavailableError extends Error {
+  readonly code = 'CONFIG_PUBLICATION_LOCK_BUSY';
+
   constructor(cause: unknown) {
     super('生产发布互斥锁暂不可用，请稍后重试', { cause });
     this.name = 'ConfigPublicationLockUnavailableError';

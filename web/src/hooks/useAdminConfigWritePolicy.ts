@@ -33,6 +33,17 @@ async function assertOperationRetrySafe(operationId: string): Promise<void> {
   );
 }
 
+const AMBIGUOUS_MUTATION_CODES = new Set([
+  'CONFIG_MUTATION_COMMITTED',
+  'CONFIG_RUNTIME_RESTORE_FAILED',
+]);
+
+async function isAmbiguousMutationResponse(response: Response): Promise<boolean> {
+  if (response.status < 500) return false;
+  const payload = (await response.clone().json().catch(() => ({}))) as { code?: unknown };
+  return typeof payload.code === 'string' && AMBIGUOUS_MUTATION_CODES.has(payload.code);
+}
+
 /** 配置页统一使用服务端策略与 raw revision，不根据域名猜环境。 */
 export function useAdminConfigWritePolicy(accountReadOnly: boolean) {
   const [revision, setRevision] = useState('');
@@ -113,7 +124,7 @@ export function useAdminConfigWritePolicy(accountReadOnly: boolean) {
           }
           throw error;
         }
-        if (response.status >= 500 && operationId) {
+        if (operationId && await isAmbiguousMutationResponse(response)) {
           try {
             await assertOperationRetrySafe(operationId);
           } catch (statusError) {

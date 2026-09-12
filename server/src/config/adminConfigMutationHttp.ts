@@ -20,6 +20,7 @@ import {
   CapabilityEnableError,
   capabilityEnableHttpStatus,
 } from './capabilityEnableTransaction.js';
+import { ConfigPublicationLockUnavailableError } from './subscriptionRotationSupport.js';
 
 export function mutationRequestContext(req: Request): {
   actor: string;
@@ -107,6 +108,14 @@ export function sendCapabilityEnableError(res: Response, error: unknown): void {
 }
 
 export function sendConfigMutationError(res: Response, error: unknown, details: { warning?: string } = {}): void {
+  if (error instanceof ConfigPublicationLockUnavailableError) {
+    res.status(409).json({
+      ...details,
+      code: error.code,
+      error: error.message,
+    });
+    return;
+  }
   if (error instanceof AdminConfigOperationConflictError) {
     res.status(409).json({ ...details, code: error.code, error: error.message });
     return;

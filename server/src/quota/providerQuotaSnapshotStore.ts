@@ -48,10 +48,15 @@ export class PgProviderQuotaSnapshotStore {
           id BIGSERIAL PRIMARY KEY,
           identity_key TEXT NOT NULL,
           end_time TIMESTAMPTZ,
+          note TEXT,
+          edit_kind TEXT NOT NULL DEFAULT 'expiry',
           updated_by TEXT NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `);
+      // 兼容已有的到期编辑表；备注和到期时间共用追加式审计表，但按编辑类型独立读取。
+      await client.query(`ALTER TABLE ${this.planExpiryTable} ADD COLUMN IF NOT EXISTS note TEXT`);
+      await client.query(`ALTER TABLE ${this.planExpiryTable} ADD COLUMN IF NOT EXISTS edit_kind TEXT NOT NULL DEFAULT 'expiry'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.planExpiryTable}_identity_idx
         ON ${this.planExpiryTable} (identity_key, id DESC)`);
     } finally {
@@ -154,7 +159,7 @@ export class PgProviderQuotaSnapshotStore {
     if (identityKeys.length === 0) return new Map();
     const result = await this.pool.query<{ identity_key: string; end_time: Date | string | null }>(
       `SELECT DISTINCT ON (identity_key) identity_key, end_time
-       FROM ${this.planExpiryTable} WHERE identity_key = ANY($1::text[])
+       FROM ${this.planExpiryTable} WHERE identity_key = ANY($1::text[]) AND edit_kind = 'expiry'
        ORDER BY identity_key, id DESC`,
       [identityKeys],
     );
@@ -165,8 +170,26 @@ export class PgProviderQuotaSnapshotStore {
 
   async setPlanExpiry(identityKey: string, endTime: string | null, userId: string): Promise<void> {
     await this.pool.query(
-      `INSERT INTO ${this.planExpiryTable} (identity_key, end_time, updated_by) VALUES ($1, $2, $3)`,
+      `INSERT INTO ${this.planExpiryTable} (identity_key, end_time, updated_by, edit_kind) VALUES ($1, $2, $3, 'expiry')`,
       [identityKey, endTime, userId],
+    );
+  }
+
+  async planNotes(identityKeys: string[]): Promise<Map<string, string | null>> {
+    if (identityKeys.length === 0) return new Map();
+    const result = await this.pool.query<{ identity_key: string; note: string | null }>(
+      `SELECT DISTINCT ON (identity_key) identity_key, note
+       FROM ${this.planExpiryTable} WHERE identity_key = ANY($1::text[]) AND edit_kind = 'note'
+       ORDER BY identity_key, id DESC`,
+      [identityKeys],
+    );
+    return new Map(result.rows.map((row) => [row.identity_key, row.note]));
+  }
+
+  async setPlanNote(identityKey: string, note: string | null, userId: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO ${this.planExpiryTable} (identity_key, note, updated_by, edit_kind) VALUES ($1, $2, $3, 'note')`,
+      [identityKey, note, userId],
     );
   }
 

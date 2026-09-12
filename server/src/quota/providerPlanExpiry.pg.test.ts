@@ -40,6 +40,10 @@ describePg('套餐到期持久化与审计', () => {
     expect((await another.planExpiryOverrides([key])).get(key)).toBe('2026-10-01T15:59:00.000Z');
     expect((await another.planExpiryOverrides(['codex-email:other@example.com'])).size).toBe(0);
     await another.setPlanExpiry(key, null, 'admin-3');
+    await another.setPlanNote(key, '续费前确认额度', 'admin-4');
+    expect((await store.planNotes([key])).get(key)).toBe('续费前确认额度');
+    await another.setPlanNote(key, null, 'admin-5');
+    expect((await store.planNotes([key])).get(key)).toBeNull();
     await store.prune(30);
     expect((await store.planExpiryOverrides([key])).get(key)).toBeNull();
     expect((await store.planExpiryOverrides(['volcengine:g'])).get('volcengine:g')).toBe(

@@ -33,6 +33,7 @@ function fakeService() {
   };
   return {
     setPlanExpiry: vi.fn(async () => undefined),
+    setPlanNote: vi.fn(async () => undefined),
     overview: vi.fn(async () => overview),
     history: vi.fn(async (hours: number) => ({ hours, points: [], generatedAt: 'now' })),
     refresh: vi.fn(async () => []),
@@ -88,6 +89,25 @@ describe('provider quota admin router', () => {
     const other = fakeService();
     expect((await patch(listen({ service: other }, 'user'), { accountKey: 'codex:c1', endTime: null })).status).toBeGreaterThanOrEqual(401);
     expect(other.setPlanExpiry).not.toHaveBeenCalled();
+  });
+
+  it('套餐备注只能由管理员更新，校验请求体并从认证会话记录修改人', async () => {
+    const service = fakeService();
+    const base = listen({ service });
+    const patch = (body: unknown) => fetch(`${base}/plan-note`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    expect((await patch({ accountKey: 'codex:c1', note: 42 })).status).toBe(400);
+    expect((await patch({ accountKey: 'codex:c1', note: '续费前确认额度', userId: 'spoofed' })).status).toBe(400);
+    expect((await patch({ accountKey: 'codex:c1', note: '续费前确认额度' })).status).toBe(200);
+    expect(service.setPlanNote).toHaveBeenLastCalledWith('codex:c1', '续费前确认额度', 'u');
+    expect((await patch({ accountKey: 'codex:c1', note: null })).status).toBe(200);
+    expect(service.setPlanNote).toHaveBeenLastCalledWith('codex:c1', null, 'u');
+    const other = fakeService();
+    expect((await fetch(`${listen({ service: other }, 'user')}/plan-note`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountKey: 'codex:c1', note: null }),
+    })).status).toBeGreaterThanOrEqual(401);
+    expect(other.setPlanNote).not.toHaveBeenCalled();
   });
 
   it('test：校验请求体，服务端错误转成 400 文案', async () => {

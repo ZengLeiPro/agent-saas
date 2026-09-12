@@ -53,6 +53,7 @@ test -f "$config_identity_reader" || {
   exit 1
 }
 source "$(dirname "$0")/acs-deployment-drain.sh"
+source "$(dirname "$0")/prune-unreferenced-releases.sh"
 ACS_SERVICE_NAME=agent-saas-acs-orchestrator-staging.service
 ACS_HEALTH_URL=http://127.0.0.1:3410/health
 ACS_ENV_PATH="$acs_env"
@@ -136,6 +137,22 @@ restore_optional_file() {
 }
 rollback() {
   local rollback_failed=false
+  if [ "$had_previous_release" != true ]; then
+    local previous_link="${STAGING_PREVIOUS_LINK:-}"
+    if [ -z "$previous_link" ] && [ -n "${root:-}" ]; then
+      previous_link="$root/previous"
+    fi
+    if [ -n "$previous_link" ] && [ -L "$previous_link" ]; then
+      local previous_from_link
+      previous_from_link="$(readlink -f -- "$previous_link" || true)"
+      case "$previous_from_link" in
+        "${root:-/opt/agent-saas-staging}/releases/"*)
+          previous="$previous_from_link"
+          had_previous_release=true
+          ;;
+      esac
+    fi
+  fi
   restore_optional_file "$had_server_config" "$rollback_root/config.json" "$server_config" || rollback_failed=true
   restore_optional_file "$had_server_env" "$rollback_root/server.env" "$server_env" || rollback_failed=true
   restore_optional_file "$had_acs_env" "$rollback_root/acs-orchestrator.env" "$acs_env" || rollback_failed=true
@@ -694,5 +711,20 @@ NODE
 
 install -m 0444 "$MANIFEST_PATH" "$state_root/releases/$release_id.manifest.json"
 deployment_committed=true
+if [ "$had_previous_release" = true ] && [ -n "$previous" ] && [ "$previous" != "$target" ]; then
+  ln -sfn "$previous" "$root/previous"
+fi
+staging_keep=("$target")
+rollback_keep_prefixes=("rollback-$release_id")
+manifest_keep_ids=("$release_id")
+if [ -n "$previous" ] && [ "$previous" != "$target" ]; then
+  staging_keep+=("$previous")
+  previous_id="$(basename -- "$previous")"
+  rollback_keep_prefixes+=("rollback-$previous_id")
+  manifest_keep_ids+=("$previous_id")
+fi
+prune_unreferenced_release_dirs "$root/releases" "${staging_keep[@]}"
+prune_unreferenced_prefixed_dirs "$state_root/rollback-" "${rollback_keep_prefixes[@]}"
+prune_unreferenced_files_matching_keep_ids "$state_root/releases" "${manifest_keep_ids[@]}"
 trap - HUP INT TERM
 echo "$release_id deployed to isolated Staging runtime"

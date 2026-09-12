@@ -20,6 +20,7 @@ case "$task" in
     bash scripts/release/production-deploy-rollback.test.sh
     bash scripts/release/compat-app-authority.test.sh
     bash scripts/release/staging-deploy-cleanup.test.sh
+    bash scripts/release/prune-unreferenced-releases.test.sh
     # test:release-contracts already includes all 14 runtime-dependency/rollback
     # Node test files. Keep the standalone package command for focused local use.
     pnpm -F server typecheck

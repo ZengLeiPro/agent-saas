@@ -604,7 +604,8 @@ jobs:
           rm -rf "$upload_root"
           mkdir -p "$upload_root/artifacts"
           cp "$RUNNER_TEMP/manifest.json" \
-            scripts/release/deploy-production-release.sh scripts/release/write-production-identity.mjs \
+            scripts/release/deploy-production-release.sh scripts/release/prune-unreferenced-releases.sh \
+            scripts/release/write-production-identity.mjs \
             scripts/release/write-live-production-identity.mjs \
             scripts/release/hold-production-observation-lock.sh \
             scripts/release/acs-deployment-drain.sh scripts/release/read-rollback-receipt.mjs \
@@ -945,7 +946,7 @@ jobs:
               RECOVERY_WEB_BEFORE_TARGET=$before_q \
               RELEASE_ID='$recovery_release_id' RUN_ID='$recovery_run_id' \
               ARCHIVE='$recovery_remote/recovery-web.tgz' bash -s" \
-              < scripts/deploy-recovery-web.sh
+              < <(cat scripts/release/prune-unreferenced-releases.sh scripts/deploy-recovery-web.sh)
           }
           verify_recovery_web() {
             set -euo pipefail

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { OrganizationScopeBanner } from '@/components/GovernanceConsole';
 import type { SettingsDirtyController } from '@/components/PersonalSettings/dirtyRegistry';
@@ -10,6 +10,7 @@ import {
 } from '@/components/SettingsCenter/SettingsPanelHeader';
 import {
   activeManagementTab,
+  managementLayoutForPage,
   managementPageForRoute,
   managementPagesFor,
   managementRouteForPage,
@@ -34,6 +35,39 @@ const detailTabLabels: Readonly<Record<string, string>> = {
   'security-lifecycle': '安全与生命周期',
 };
 
+function detailTabDefinition(route: GovernanceRouteState): readonly string[] | null {
+  if (!route.entityId || !route.tab) return null;
+  if (route.routeId === 'organization.members.member') {
+    return ['profile', 'access', 'assignments', 'usage-policy', 'security-audit'];
+  }
+  if (route.routeId === 'platform.org-business.tenants') {
+    return ['overview', 'entitlements', 'resource-scope', 'billing', 'security-lifecycle'];
+  }
+  return null;
+}
+
+function handleTabKeyDown(
+  event: KeyboardEvent<HTMLButtonElement>,
+  index: number,
+  count: number,
+  activate: (index: number) => void,
+) {
+  const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown'
+    ? 1
+    : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+      ? -1
+      : event.key === 'Home'
+        ? -index
+        : event.key === 'End'
+          ? count - index - 1
+          : null;
+  if (direction === null) return;
+  event.preventDefault();
+  const nextIndex = (index + direction + count) % count;
+  event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+  activate(nextIndex);
+}
+
 function ManagementTabs({ route }: { route: GovernanceRouteState }) {
   const page = managementPageForRoute(route);
   if (!page) return null;
@@ -41,18 +75,25 @@ function ManagementTabs({ route }: { route: GovernanceRouteState }) {
   if (!page.tabs?.length) return null;
   return (
     <div className="flex gap-6 overflow-x-auto border-b" role="tablist" aria-label={`${page.label}页面切换`}>
-      {page.tabs.map((item) => {
+      {page.tabs.map((item, index) => {
         const selected = activeTab?.id === item.id;
         return (
           <button
             key={item.id}
             type="button"
             role="tab"
+            id={`management-page-tab-${page.id}-${item.id}`}
+            aria-controls="management-page-panel"
             aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
             className={cn(
               'relative -mb-px border-b-2 border-transparent px-0.5 pb-2.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
               selected && 'border-primary text-primary',
             )}
+            onKeyDown={(event) => handleTabKeyDown(event, index, page.tabs!.length, (nextIndex) => {
+              const next = page.tabs?.[nextIndex];
+              if (next) navigateGovernance(managementRouteForTab(page, next.id, route));
+            })}
             onClick={() => navigateGovernance(managementRouteForTab(page, item.id, route))}
           >
             {item.label}
@@ -64,14 +105,9 @@ function ManagementTabs({ route }: { route: GovernanceRouteState }) {
 }
 
 function DetailTabs({ route }: { route: GovernanceRouteState }) {
-  if (!route.entityId || !route.tab) return null;
-  const definition =
-    route.routeId === 'organization.members.member'
-      ? ['profile', 'access', 'assignments', 'usage-policy', 'security-audit']
-      : route.routeId === 'platform.org-business.tenants'
-        ? ['overview', 'entitlements', 'resource-scope', 'billing', 'security-lifecycle']
-        : null;
+  const definition = detailTabDefinition(route);
   if (!definition) return null;
+  const activeTab = route.tab === 'configuration' ? 'entitlements' : route.tab;
   return (
     <div
       className="mt-5 flex gap-6 overflow-x-auto border-b"
@@ -83,12 +119,19 @@ function DetailTabs({ route }: { route: GovernanceRouteState }) {
           key={item}
           type="button"
           role="tab"
-          aria-selected={(route.tab === 'configuration' ? 'entitlements' : route.tab) === item}
+          id={`management-detail-tab-${route.routeId}-${item}`}
+          aria-controls="management-page-panel"
+          aria-selected={activeTab === item}
+          tabIndex={activeTab === item ? 0 : -1}
           className={cn(
             'relative -mb-px shrink-0 border-b-2 border-transparent px-0.5 pb-2.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
             (route.tab === 'configuration' ? 'entitlements' : route.tab) === item &&
               'border-primary text-primary',
           )}
+          onKeyDown={(event) => handleTabKeyDown(event, definition.indexOf(item), definition.length, (nextIndex) => {
+            const next = definition[nextIndex];
+            if (next) navigateGovernance({ ...route, tab: next });
+          })}
           onClick={() => navigateGovernance({ ...route, tab: item })}
         >
           {detailTabLabels[item] ?? item}
@@ -148,6 +191,9 @@ export function ManagementShell({
 }) {
   const page = managementPageForRoute(route);
   const collectionRoute = governanceCollectionRoute(route);
+  const layout = page ? managementLayoutForPage(page) : null;
+  const detailTabs = detailTabDefinition(route);
+  const activePageTab = page ? activeManagementTab(page, route) : null;
   const [headerActionsTarget, setHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   if (!page) {
     return (
@@ -166,11 +212,12 @@ export function ManagementShell({
       className="h-full overflow-y-auto bg-muted/20"
       data-testid="management-shell"
       data-surface={page.surface}
+      data-layout={layout ?? undefined}
       data-scroll-container="true"
     >
       <MobileManagementNavigation route={route} access={access} />
       <main className="px-4 py-5 md:px-8 md:py-6">
-        <div className={SETTINGS_CONTENT_WIDTH}>
+        <div className={cn('min-w-0', layout === 'form' ? SETTINGS_CONTENT_WIDTH : 'w-full')}>
           <SettingsPanelHeader
             title={page.label}
             description={page.description}
@@ -201,8 +248,16 @@ export function ManagementShell({
           <ManagementTabs route={route} />
           <DetailTabs route={route} />
           <div
-            className="mt-6 [&>*]:mx-0 [&>*]:max-w-none"
+            className="mt-6 min-w-0 [&>*]:mx-0 [&>*]:max-w-none"
             data-testid="management-page-content"
+            id="management-page-panel"
+            role={page.tabs?.length || detailTabs ? 'tabpanel' : undefined}
+            tabIndex={page.tabs?.length || detailTabs ? 0 : undefined}
+            aria-labelledby={detailTabs
+              ? `management-detail-tab-${route.routeId}-${route.tab === 'configuration' ? 'entitlements' : route.tab}`
+              : activePageTab
+                ? `management-page-tab-${page.id}-${activePageTab.id}`
+                : undefined}
           >
             <SettingsPanelHeaderPortalProvider target={headerActionsTarget}>
               {children}

@@ -104,39 +104,48 @@ export function GeneralSection() {
     defaultModel?: string;
   }>("chat-model"));
   const [modelList, setModelList] = useState<ModelList | null>(null);
+  const [modelLoading, setModelLoading] = useState(true);
+  const [modelError, setModelError] = useState<string | null>(null);
   const [draftDefaultModel, setDraftDefaultModel] = useState(recoveredDraft.current?.defaultModel ?? preferredDefaultModel ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const modelInitialised = useRef(false);
+  const modelRequestId = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    authFetch("/api/models")
-      .then(async (response) => {
-        if (!response.ok) throw new Error("加载可选模型失败");
-        return response.json() as Promise<ModelList>;
-      })
-      .then((data) => {
-        if (cancelled) return;
-        setModelList(data);
-      })
-      .catch(() => {
-        if (!cancelled) setModelList(null);
-      });
-    return () => { cancelled = true; };
-  }, [preferredDefaultModel]);
-
-  useEffect(() => {
-    if (recoveredDraft.current && modelList) {
-      setDraftDefaultModel(recoveredDraft.current.defaultModel ?? modelList.default);
-      recoveredDraft.current = null;
-    } else if (!recoveredDraft.current) {
-      setDraftDefaultModel(modelList?.default ?? "");
+  const loadModels = useCallback(async () => {
+    const requestId = ++modelRequestId.current;
+    setModelLoading(true);
+    setModelError(null);
+    try {
+      const response = await authFetch("/api/models");
+      if (!response.ok) throw new Error("加载可选模型失败");
+      const data = await response.json() as ModelList;
+      if (requestId !== modelRequestId.current) return;
+      setModelList(data);
+    } catch (error) {
+      if (requestId !== modelRequestId.current) return;
+      setModelError(error instanceof Error ? error.message : "加载可选模型失败");
+    } finally {
+      if (requestId === modelRequestId.current) setModelLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    void loadModels();
+    return () => { modelRequestId.current += 1; };
+  }, [loadModels, preferredDefaultModel]);
+
+  useEffect(() => {
+    if (!modelList || modelInitialised.current) return;
+    setDraftDefaultModel(recoveredDraft.current?.defaultModel ?? modelList.default);
+    recoveredDraft.current = null;
+    modelInitialised.current = true;
     setSaved(false);
   }, [modelList]);
 
-  const currentDefaultModel = modelList?.default ?? "";
-  const hasChanges = !!draftDefaultModel && draftDefaultModel !== currentDefaultModel;
+  const currentDefaultModel = modelList?.default ?? preferredDefaultModel ?? "";
+  const hasChanges = Boolean(modelList && draftDefaultModel && draftDefaultModel !== currentDefaultModel);
 
   const handleSave = useCallback(async () => {
     const next = {
@@ -144,34 +153,37 @@ export function GeneralSection() {
     };
     setSaving(true);
     setSaved(false);
-    updatePreferences(next);
+    setSaveError(null);
     try {
       const savedPreferences = await saveUserPreferences(next);
       if (!savedPreferences) throw new Error("保存失败");
       updatePreferences(savedPreferences);
+      setModelList((current) => current ? {
+        ...current,
+        default: savedPreferences.defaultModel ?? current.default,
+      } : current);
+      setDraftDefaultModel(savedPreferences.defaultModel ?? draftDefaultModel);
       if (savedPreferences.defaultModel) {
         window.dispatchEvent(new CustomEvent("agent:default-model-changed", {
           detail: { model: savedPreferences.defaultModel },
         }));
       }
+      setSaveError(null);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (error) {
-      updatePreferences({
-        defaultModel: preferredDefaultModel,
-      });
-      setDraftDefaultModel(modelList?.default ?? "");
-      window.alert(error instanceof Error ? error.message : "保存失败");
+      setSaveError(error instanceof Error ? error.message : "保存失败");
       throw error;
     } finally {
       setSaving(false);
     }
-  }, [draftDefaultModel, modelList?.default, preferredDefaultModel, updatePreferences]);
+  }, [draftDefaultModel, updatePreferences]);
 
   const discardDraft = useCallback(() => {
-    setDraftDefaultModel(modelList?.default ?? "");
+    setDraftDefaultModel(modelList?.default ?? preferredDefaultModel ?? "");
+    setSaveError(null);
     setSaved(false);
-  }, [modelList?.default]);
+  }, [modelList?.default, preferredDefaultModel]);
 
   useSettingsDirtyEntry({
     id: "chat-model",
@@ -206,9 +218,9 @@ export function GeneralSection() {
               仅可选择当前组织允许你使用的模型；已存在会话仍保留各自的模型设置。
             </div>
           </div>
-          <Select value={draftDefaultModel} onValueChange={(value) => { setDraftDefaultModel(value); setSaved(false); }} disabled={saving || !modelList}>
+          <Select value={draftDefaultModel} onValueChange={(value) => { setDraftDefaultModel(value); setSaved(false); setSaveError(null); }} disabled={saving || modelLoading || !modelList}>
             <SelectTrigger className="w-[260px] max-w-full" aria-label="新建会话默认模型">
-              <SelectValue placeholder={modelList ? "请选择模型" : "加载中..."} />
+              <SelectValue placeholder={modelLoading ? "加载中..." : modelError ? "模型加载失败" : "请选择模型"} />
             </SelectTrigger>
             <SelectContent>
               {modelList?.groups.flatMap((group) => group.models.map((model) => {
@@ -222,6 +234,14 @@ export function GeneralSection() {
             </SelectContent>
           </Select>
         </div>
+        {modelLoading && <div className="text-sm text-muted-foreground" role="status">正在加载可选模型…</div>}
+        {modelError && !modelLoading && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert">
+            <span>{modelError}</span>
+            <Button type="button" variant="outline" size="sm" onClick={() => void loadModels()}>重试</Button>
+          </div>
+        )}
+        {saveError && <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert"><span>保存默认模型失败：{saveError}</span><Button type="button" variant="outline" size="sm" onClick={() => { void handleSave().catch(() => undefined); }} disabled={saving}>重试保存</Button></div>}
         <ConversationBehaviorSettings />
         <BrowserNotificationSettings />
       </div>

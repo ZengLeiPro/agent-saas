@@ -2,6 +2,7 @@ import { governanceRoute, type GovernanceRouteState } from '@/lib/governanceNavi
 
 export type ManagementSurface = 'config' | 'analytics';
 export type ManagementArea = 'organization' | 'platform';
+export type ManagementPageLayout = 'form' | 'collection' | 'dashboard' | 'trace';
 
 export interface ManagementTabDefinition {
   id: string;
@@ -19,6 +20,7 @@ export interface ManagementPageDefinition {
   description: string;
   iconKey: string;
   routeId: string;
+  layout?: ManagementPageLayout;
   search?: string;
   aliases?: readonly string[];
   tabs?: readonly ManagementTabDefinition[];
@@ -41,6 +43,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '登记系统配置，并跟踪各组织的接入进度。',
     iconKey: 'blocks',
     routeId: 'platform.resource-center.business-systems',
+    layout: 'collection',
   },
   {
     id: 'organization-business-systems',
@@ -51,6 +54,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '查看页面、Agent 能力和授权状态，并按提示完成接入。',
     iconKey: 'blocks',
     routeId: 'organization.agents.business-systems',
+    layout: 'collection',
   },
   {
     id: 'org-agents',
@@ -61,6 +65,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '配置组织内的专职智能体、能力和开放范围。',
     iconKey: 'bot',
     routeId: 'organization.agents.org-agents',
+    layout: 'collection',
     tabs: [
       tab('agents', '智能体清单', 'organization.agents.org-agents'),
       tab('templates', '模板范围', 'organization.agents.org-agents', '?view=templates'),
@@ -75,6 +80,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理组织技能以及成员和群组的可用范围。',
     iconKey: 'sparkles',
     routeId: 'organization.agents.skills',
+    layout: 'collection',
     tabs: [
       tab('catalog', '技能清单', 'organization.agents.skills'),
       tab('access', '授权范围', 'organization.agents.skills', '?view=access'),
@@ -89,6 +95,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '配置组织可见的工作流和展示方式。',
     iconKey: 'workflow',
     routeId: 'organization.agents.workflows',
+    layout: 'collection',
   },
   {
     id: 'org-connectors',
@@ -99,6 +106,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '统一管理已接系统、凭据、MCP 服务、字段映射和钉钉账号。',
     iconKey: 'plug',
     routeId: 'organization.agents.connectors',
+    layout: 'collection',
     aliases: [
       'organization.agents.mcp-catalog',
       'organization.agents.connector-mappings',
@@ -120,6 +128,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理知识来源、组织记忆以及文件与数据。',
     iconKey: 'database',
     routeId: 'organization.agents.memory-knowledge',
+    layout: 'collection',
     aliases: ['organization.agents.files-data'],
     tabs: [
       tab('knowledge', '知识与记忆', 'organization.agents.memory-knowledge'),
@@ -166,6 +175,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理组织成员、身份、资源指派、用量策略和安全记录。',
     iconKey: 'users',
     routeId: 'organization.members.list',
+    layout: 'collection',
     aliases: ['organization.members.accounts', 'organization.members.member'],
   },
   {
@@ -177,6 +187,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '查看组织目录同步后的部门与群组。',
     iconKey: 'groups',
     routeId: 'organization.members.groups',
+    layout: 'collection',
   },
   {
     id: 'org-roles',
@@ -187,6 +198,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理组织所有者、管理员和权限策略。',
     iconKey: 'shield',
     routeId: 'organization.members.owners',
+    layout: 'collection',
     aliases: ['organization.members.policies'],
     tabs: [
       tab('admins', '所有者与管理员', 'organization.members.owners'),
@@ -219,6 +231,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '先完成资源交接，再安全撤销成员权限。',
     iconKey: 'user-minus',
     routeId: 'organization.members.offboarding',
+    layout: 'collection',
   },
   {
     id: 'org-profile',
@@ -270,6 +283,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理组织授权、配额、资源范围和生命周期。',
     iconKey: 'building',
     routeId: 'platform.org-business.tenants',
+    layout: 'collection',
   },
   {
     id: 'platform-users',
@@ -280,6 +294,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '跨组织检索用户并查看账号归属。',
     iconKey: 'search',
     routeId: 'platform.org-business.users',
+    layout: 'collection',
   },
   {
     id: 'platform-models',
@@ -290,6 +305,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '维护平台模型目录、能力和定价参数。',
     iconKey: 'cpu',
     routeId: 'platform.resource-center.models',
+    layout: 'collection',
   },
   {
     id: 'platform-skills',
@@ -300,6 +316,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理平台技能及其发布状态。',
     iconKey: 'sparkles',
     routeId: 'platform.resource-center.skills',
+    layout: 'collection',
   },
   {
     id: 'platform-connectors',
@@ -310,6 +327,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理平台 MCP 服务和字段映射目录。',
     iconKey: 'plug',
     routeId: 'platform.resource-center.connectors',
+    layout: 'collection',
     tabs: [
       tab('mcp', 'MCP 服务', 'platform.resource-center.connectors'),
       tab('mappings', '字段映射', 'platform.resource-center.connectors', '?view=mappings'),
@@ -324,6 +342,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理智能体模板和执行环境模板。',
     iconKey: 'layout-template',
     routeId: 'platform.resource-center.agent-templates',
+    layout: 'collection',
     aliases: ['platform.resource-center.environment-templates'],
     tabs: [
       tab('agents', '智能体模板', 'platform.resource-center.agent-templates'),
@@ -339,6 +358,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理平台工具开关和全局策略。',
     iconKey: 'wrench',
     routeId: 'platform.resource-center.tools',
+    layout: 'collection',
   },
   {
     id: 'platform-system',
@@ -431,6 +451,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '查看质检结果、风险和改进趋势。',
     iconKey: 'message',
     routeId: 'organization.governance.qa',
+    layout: 'collection',
   },
   {
     id: 'org-audit',
@@ -441,6 +462,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '追踪组织管理操作和回执。',
     iconKey: 'history',
     routeId: 'organization.governance.audit',
+    layout: 'collection',
   },
 
   {
@@ -462,6 +484,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '汇总各组织套餐、消耗和账单。',
     iconKey: 'wallet',
     routeId: 'platform.org-business.entitlements-billing',
+    layout: 'collection',
   },
   {
     id: 'platform-provider-quota',
@@ -482,6 +505,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '检索平台会话并下钻查看详情。',
     iconKey: 'message',
     routeId: 'platform.runtime.sessions',
+    layout: 'collection',
   },
   {
     id: 'platform-runs',
@@ -492,6 +516,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '追踪运行步骤、用量和原始事件。',
     iconKey: 'workflow',
     routeId: 'platform.runtime.runs',
+    layout: 'trace',
   },
   {
     id: 'platform-environments',
@@ -502,6 +527,7 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '查看执行提供方和环境实例状态。',
     iconKey: 'server',
     routeId: 'platform.runtime.execution-providers',
+    layout: 'collection',
     aliases: ['platform.runtime.environments'],
     tabs: [
       tab('providers', '提供方', 'platform.runtime.execution-providers'),
@@ -537,10 +563,15 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '追踪平台级管理操作和回执。',
     iconKey: 'history',
     routeId: 'platform.governance.audit',
+    layout: 'collection',
   },
 ];
 
 const PAGE_BY_ID = new Map(MANAGEMENT_PAGES.map((page) => [page.id, page]));
+
+export function managementLayoutForPage(page: ManagementPageDefinition): ManagementPageLayout {
+  return page.layout ?? (page.surface === 'analytics' ? 'dashboard' : 'form');
+}
 
 function normalizedSearch(search: string | undefined): URLSearchParams {
   return new URLSearchParams(search?.startsWith('?') ? search.slice(1) : (search ?? ''));

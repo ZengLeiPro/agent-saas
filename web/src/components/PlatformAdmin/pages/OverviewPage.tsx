@@ -44,6 +44,7 @@ function navigateRef(ref: OverviewAttentionEntityRef | undefined) {
 }
 
 type SnapshotFreshness = "loading" | "fresh" | "stale" | "unavailable";
+type AuxiliaryDataState = "loading" | "success" | "error";
 
 const SNAPSHOT_REQUEST_TIMEOUT_MS = 15_000;
 const AUXILIARY_REQUEST_TIMEOUT_MS = 15_000;
@@ -54,6 +55,8 @@ export function OverviewPage() {
   const [snapshotFreshness, setSnapshotFreshness] = useState<SnapshotFreshness>("loading");
   const [costTrend, setCostTrend] = useState<BillingDailyPoint[]>([]);
   const [platformTrend, setPlatformTrend] = useState<PlatformTrendResponse | null>(null);
+  const [costTrendState, setCostTrendState] = useState<AuxiliaryDataState>("loading");
+  const [platformTrendState, setPlatformTrendState] = useState<AuxiliaryDataState>("loading");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,9 +105,15 @@ export function OverviewPage() {
     } else {
       setRefreshing(true);
     }
+    setCostTrendState("loading");
+    setPlatformTrendState("loading");
 
-    const trendRequest = platformAdminApi.billingTrend(14, auxiliaryController.signal).catch(() => null);
-    const usageTrendRequest = platformAdminApi.overviewTrends(14, auxiliaryController.signal).catch(() => null);
+    const trendRequest = platformAdminApi.billingTrend(14, auxiliaryController.signal)
+      .then((data) => ({ state: "success" as const, data }))
+      .catch(() => ({ state: "error" as const, data: null }));
+    const usageTrendRequest = platformAdminApi.overviewTrends(14, auxiliaryController.signal)
+      .then((data) => ({ state: "success" as const, data }))
+      .catch(() => ({ state: "error" as const, data: null }));
     const auxiliaryTimeout = window.setTimeout(
       () => auxiliaryController.abort(),
       AUXILIARY_REQUEST_TIMEOUT_MS,
@@ -113,8 +122,10 @@ export function OverviewPage() {
     void Promise.all([trendRequest, usageTrendRequest])
       .then(([trend, usageTrend]) => {
         if (generation !== loadGeneration.current) return;
-        setCostTrend(trend?.audit.daily ?? []);
-        setPlatformTrend(usageTrend);
+        setCostTrendState(trend.state);
+        setPlatformTrendState(usageTrend.state);
+        if (trend.state === "success") setCostTrend(trend.data.audit.daily ?? []);
+        if (usageTrend.state === "success") setPlatformTrend(usageTrend.data);
       })
       .finally(() => {
         window.clearTimeout(auxiliaryTimeout);
@@ -272,9 +283,8 @@ export function OverviewPage() {
       )}
       {error && <AdminErrorAlert error={error} />}
 
-      {/* 6 张卡在 xl 上单行排完（原来 4 列 → 第二行只有 2 张，白吃一屏高度）。
-          每张卡都是入口：点进去带上对应筛选参数，这是我们优于对标产品的设计，不要改成纯展示。 */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {/* 每张卡都是入口；列数按内容区可用宽度自动换行，不为浏览器断点硬塞六列。 */}
+      <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr))]">
         <MetricCard
           title="正在执行"
           value={formatNumber(health?.activeRuns.total)}
@@ -333,16 +343,33 @@ export function OverviewPage() {
             <Button variant="ghost" size="sm" onClick={() => navigate("runs", { hours: 168 })}>查看记录</Button>
           </CardHeader>
           <CardContent>
-            {usagePoints.length === 0 ? (
+            {usagePoints.length === 0 && platformTrendState === "loading" ? (
+              <EmptyState
+                compact
+                icon={ChartNoAxesColumn}
+                title="正在加载使用趋势"
+                description="正在读取近 14 天的执行记录聚合。"
+              />
+            ) : usagePoints.length === 0 && platformTrendState === "error" ? (
               <EmptyState
                 compact
                 icon={ChartNoAxesColumn}
                 title="使用趋势暂不可用"
-                description="趋势依赖执行记录聚合，采集未启用或窗口内没有任何执行时这里为空。可以直接看执行记录确认。"
+                description="这次刷新没有取得使用趋势，稍后可以重试；也可以直接看执行记录确认。"
+                action={{ label: "重试", onClick: () => void load() }}
+              />
+            ) : usagePoints.length === 0 ? (
+              <EmptyState
+                compact
+                icon={ChartNoAxesColumn}
+                title="近期暂无使用趋势"
+                description="近 14 天没有可展示的执行记录聚合。可以直接看执行记录确认。"
                 action={{ label: "查看近 7 天执行记录", onClick: () => navigate("runs", { hours: 168 }) }}
               />
             ) : (
               <>
+                {platformTrendState === "loading" && <div className="mb-2 text-xs text-muted-foreground" role="status">趋势正在更新…</div>}
+                {platformTrendState === "error" && <div className="mb-2 text-xs text-warning-ink" role="status">本次刷新失败，仍显示上次成功的使用趋势。</div>}
                 {/* 数据源缺失必须显式告知：否则矮柱会被读成「真的没量」 */}
                 {platformTrend && !platformTrend.available && <div className="mb-2 text-xs text-warning-ink">部分数据源不可用：{platformTrend.missingSources.join("、")}，柱高可能偏低，不代表实际用量。</div>}
                 <MiniBarTrend
@@ -365,22 +392,41 @@ export function OverviewPage() {
             <Button variant="ghost" size="sm" onClick={() => navigate("efficiency")}>查看执行效率</Button>
           </CardHeader>
           <CardContent>
-            {costPoints.length === 0 ? (
+            {costPoints.length === 0 && costTrendState === "loading" ? (
+              <EmptyState
+                compact
+                icon={ChartNoAxesColumn}
+                title="正在加载成本趋势"
+                description="正在读取近 14 天的计费流水汇总。"
+              />
+            ) : costPoints.length === 0 && costTrendState === "error" ? (
               <EmptyState
                 compact
                 icon={ChartNoAxesColumn}
                 title="成本趋势暂不可用"
-                description="成本来自计费流水的日汇总，尚未产生流水或汇总任务未跑时这里为空。"
+                description="这次刷新没有取得成本趋势，稍后可以重试。"
+                action={{ label: "重试", onClick: () => void load() }}
+              />
+            ) : costPoints.length === 0 ? (
+              <EmptyState
+                compact
+                icon={ChartNoAxesColumn}
+                title="近期暂无成本数据"
+                description="近 14 天没有可展示的计费流水日汇总。"
                 action={{ label: "查看执行效率", onClick: () => navigate("efficiency") }}
               />
             ) : (
-              <MiniBarTrend
-                points={costPoints}
-                height={128}
-                barClassName="bg-primary/70"
-                formatValue={(value) => formatYuan(value)}
-                emptyText="区间内没有成本"
-              />
+              <>
+                {costTrendState === "loading" && <div className="mb-2 text-xs text-muted-foreground" role="status">趋势正在更新…</div>}
+                {costTrendState === "error" && <div className="mb-2 text-xs text-warning-ink" role="status">本次刷新失败，仍显示上次成功的成本趋势。</div>}
+                <MiniBarTrend
+                  points={costPoints}
+                  height={128}
+                  barClassName="bg-primary/70"
+                  formatValue={(value) => formatYuan(value)}
+                  emptyText="区间内没有成本"
+                />
+              </>
             )}
           </CardContent>
         </Card>

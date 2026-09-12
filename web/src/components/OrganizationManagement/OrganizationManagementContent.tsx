@@ -23,6 +23,7 @@ import { TenantSettingsPanel } from '@/components/TenantSettingsPanel';
 import { OverviewSection as TenantOverviewSection } from '@/components/TenantAnalytics/OverviewSection';
 import type { GovernanceRouteState } from '@/lib/governanceNavigation';
 import { governanceRoute } from '@/lib/governanceNavigation';
+import { navigateGovernance } from '@/lib/urlSync';
 import { organizationRouteDefinition } from './organizationManagementRouting';
 
 const AgentDwsAccountsPage = lazy(() => import('@/components/AgentDwsAccounts'));
@@ -60,7 +61,12 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   Record<string, OrganizationManagementRenderer>
 > = {
   'organization.agents.business-systems': ({ tenantId, route }) => <OrganizationSystemsPage key={tenantId} tenantId={tenantId} installationId={route.entityId} />,
-  'organization.overview.overview': ({ tenantId }) => <TenantOverviewSection tenantId={tenantId} />,
+  'organization.overview.overview': ({ tenantId }) => (
+    <TenantOverviewSection
+      tenantId={tenantId}
+      onNavigateUsage={() => navigateGovernance(governanceRoute('organization.governance.usage', { orgId: tenantId }))}
+    />
+  ),
   'organization.members.list': ({ tenantId, route }) => (
     <OrganizationMembersPage tenantId={tenantId} route={route} />
   ),

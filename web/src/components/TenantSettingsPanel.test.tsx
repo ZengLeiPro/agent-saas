@@ -106,6 +106,15 @@ beforeEach(() => {
 });
 
 describe("TenantSettingsPanel model-tools 别名编辑", () => {
+  it("首次读取失败时不展示看似可编辑的默认组织配置", async () => {
+    mocks.getTenantSettings.mockRejectedValueOnce(new Error("配置服务不可用"));
+    render(<TenantSettingsPanel tenantId="tenant-a" section="general" />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("配置服务不可用");
+    expect(screen.getByRole("button", { name: /重试/ })).toBeTruthy();
+    expect(screen.queryByText("功能开关")).toBeNull();
+  });
+
   it("general 只渲染功能、配额和个性化，不加载模型目录", async () => {
     render(<TenantSettingsPanel tenantId="tenant-a" section="general" />);
     expect(await screen.findByText("功能与配额")).toBeTruthy();

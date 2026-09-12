@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../api', () => ({ platformAdminApi: api }));
 
+import { formatTime } from '../format';
 import {
   ProviderQuotaPage,
   accountStatus,
@@ -20,6 +21,10 @@ import {
   formatWan,
   windowTone,
 } from './ProviderQuotaPage';
+
+function minuteTime(value: string): string {
+  return formatTime(value).replace(/:\d{2}$/, '');
+}
 import { ProviderQuotaPlanBadge } from './ProviderQuotaPlanBadge';
 import {
   PROVIDER_QUOTA_ORDER_STORAGE_KEY,
@@ -153,7 +158,8 @@ describe('ProviderQuotaPage', () => {
     render(<ProviderQuotaPage />);
     await waitFor(() => expect(screen.getByTestId('quota-account-volcengine:ark')).toBeTruthy());
     expect(screen.getAllByText('接近上限')).toHaveLength(1);
-    expect(screen.getByText('采集失败')).toBeTruthy();
+    expect(screen.queryByText('采集失败')).toBeNull();
+    expect(screen.getByText('已耗尽')).toBeTruthy();
     expect(screen.getByText('94.1%')).toBeTruthy();
     expect(screen.getByText('37.8万 / 40.2万')).toBeTruthy();
     expect(screen.queryByText(/已用 37\.8万 \/ 40\.2万 AFP/u)).toBeNull();
@@ -161,14 +167,15 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getByText('Codex 订阅 · Pro · 重置券 2')).toBeTruthy();
     expect(screen.getByTitle(/^凭据到期 /u)).toBeTruthy();
     expect(screen.queryByText('冷却中')).toBeNull();
-    expect(screen.getByText(/Codex usage HTTP 401。下方为/u)).toBeTruthy();
+    expect(screen.queryByText(/Codex usage HTTP 401/u)).toBeNull();
+    expect(screen.queryByText(/最后一次成功数据/u)).toBeNull();
     expect(screen.queryByText(/24h [+-]/u)).toBeNull();
     expect(screen.queryByText('已撞限')).toBeNull();
     expect(screen.getByText(/每 5 分钟自动采集/u)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
     expect(screen.getByRole('dialog').textContent).toContain('每 5 分钟自动采集');
     expect(screen.getByText(/1 个异常/u)).toBeTruthy();
-    expect(screen.getByTitle('采集失败 1 · 额度耗尽 0 · 凭据不可用 0')).toBeTruthy();
+    expect(screen.getByTitle('额度耗尽 1 · 凭据不可用 0')).toBeTruthy();
     expect(screen.getByText(/1 个需关注/u)).toBeTruthy();
     expect(api.providerQuotaHistory).toHaveBeenCalledWith(24);
   });
@@ -275,7 +282,35 @@ describe('ProviderQuotaPage', () => {
     expect(timestamp?.className).toContain('tabular-nums');
     expect(timestamp?.textContent).not.toContain('采集于');
     expect(timestamp?.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
+    expect(timestamp?.textContent).toContain(minuteTime('2026-09-05T06:25:00.000Z'));
+    expect(timestamp?.textContent).not.toContain(minuteTime('2026-09-05T06:30:00.000Z'));
+    expect(timestamp?.querySelector('span')?.className).toContain('text-danger');
     expect(within(card).getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' })).toBeTruthy();
+  });
+
+  it('采集失败不显示红框和胶囊，不计入顶部异常，采集时间停在上次成功', async () => {
+    const item = {
+      ...overview.items[1]!,
+      ok: false,
+      error: 'Codex usage HTTP 401',
+      limitReached: false,
+      credential: { availability: 'available' as const },
+      windows: [{ id: 'primary', label: '每周', usedPercent: 20 }],
+      collectedAt: '2026-09-05T06:30:00.000Z',
+      extra: { lastSuccessAt: '2026-09-05T06:25:00.000Z' },
+    };
+    api.providerQuota.mockResolvedValue({ ...overview, items: [item] });
+    render(<ProviderQuotaPage />);
+    const card = await screen.findByTestId('quota-account-codex:c1');
+    expect(within(card).queryByText('采集失败')).toBeNull();
+    expect(within(card).getByText('正常')).toBeTruthy();
+    expect(screen.queryByText(/个异常/u)).toBeNull();
+    expect(screen.queryByText(/Codex usage HTTP 401/u)).toBeNull();
+    expect(screen.queryByText(/最后一次成功数据/u)).toBeNull();
+    const timestamp = [...card.querySelectorAll('span')].find((el) => el.textContent?.includes('采集 '));
+    expect(timestamp?.textContent).toContain(minuteTime('2026-09-05T06:25:00.000Z'));
+    expect(timestamp?.textContent).not.toContain(minuteTime('2026-09-05T06:30:00.000Z'));
+    expect(timestamp?.querySelector('span')?.className).toContain('text-danger');
   });
 
   it('零重置券隐藏，采集与到期统一为两个字标签、相同字号与等宽数字', async () => {
@@ -488,9 +523,12 @@ describe('helpers', () => {
     expect(windowTone({ usedPercent: 100 })).toBe('critical');
   });
 
-  it('accountStatus：采集失败 > 凭据不可用 > 已耗尽 > 接近上限 > 正常，忽略调度冷却', () => {
+  it('accountStatus：凭据不可用 > 已耗尽 > 接近上限 > 正常；采集失败不单独成状态，忽略调度冷却', () => {
     const okWindow = { id: 'w', label: 'w', usedPercent: 10 };
-    expect(accountStatus({ ok: false, limitReached: false, windows: [] })).toEqual({ tone: 'critical', label: '采集失败' });
+    expect(accountStatus({ ok: false, limitReached: false, windows: [] })).toEqual({ tone: 'ok', label: '正常' });
+    expect(accountStatus({ ok: false, limitReached: false, windows: [{ ...okWindow, usedPercent: 20 }] })).toEqual({ tone: 'ok', label: '正常' });
+    expect(accountStatus({ ok: false, limitReached: true, windows: [{ ...okWindow, usedPercent: 100 }] }).label).toBe('已耗尽');
+    expect(accountStatus({ ok: false, limitReached: false, windows: [okWindow], credential: { availability: 'auth_unavailable' } }).label).toBe('凭据不可用');
     expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'auth_unavailable' } }).label).toBe('凭据不可用');
     expect(accountStatus({ ok: true, limitReached: true, windows: [okWindow], credential: { availability: 'quota_cooldown' } }).label).toBe('已耗尽');
     expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'quota_cooldown' } })).toEqual({ tone: 'ok', label: '正常' });

@@ -86,13 +86,13 @@ function isMainSubscriptionWindow(
 }
 
 /**
- * 卡级总状态：先看能不能采到、凭据能不能用，再看额度。
+ * 卡级总状态：凭据能不能用，再看额度。
+ * 采集失败不单独成状态、不进顶部异常；沿用上次成功窗口判断额度，采集时间变红提示。
  * 调度器冷却不参与本页状态展示，不影响后端实际调度行为。
  */
 export function accountStatus(
   snapshot: Pick<ProviderQuotaSnapshot, 'ok' | 'limitReached' | 'windows' | 'credential'> & { sourceKind?: ProviderQuotaSnapshot['sourceKind'] },
 ): AccountStatus {
-  if (!snapshot.ok) return { tone: 'critical', label: '采集失败' };
   if (snapshot.credential?.availability === 'auth_unavailable') {
     return { tone: 'critical', label: '凭据不可用' };
   }
@@ -179,10 +179,12 @@ function formatMinuteTime(value: string): string {
 function WindowTile({
   window,
   collectedAt,
+  collectionFailed,
   showAmount,
 }: {
   window: ProviderQuotaWindow;
   collectedAt: string;
+  collectionFailed: boolean;
   showAmount: boolean;
 }) {
   const tone = windowTone(window);
@@ -199,7 +201,9 @@ function WindowTile({
       data-testid={`quota-window-${window.id}`}
     >
       <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
-        <span className="min-w-0 truncate tabular-nums">{label} · 采集 {formatMinuteTime(collectedAt)}</span>
+        <span className="min-w-0 truncate tabular-nums">
+          {label} · <span className={cn(collectionFailed && 'text-danger')}>采集 {formatMinuteTime(collectedAt)}</span>
+        </span>
         {amount && <span className="shrink-0 whitespace-nowrap text-right tabular-nums">{amount}</span>}
       </div>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -254,6 +258,7 @@ function AccountCard({
   const additionalLimited = additionalWindows.filter((window) => windowTone(window) === 'critical').length;
   const lastSuccessAt =
     typeof snapshot.extra?.lastSuccessAt === 'string' ? snapshot.extra.lastSuccessAt : null;
+  const displayCollectedAt = !snapshot.ok && lastSuccessAt ? lastSuccessAt : snapshot.collectedAt;
   const credits = snapshot.extra?.credits as
     { balance?: string | number; hasCredits?: boolean } | undefined;
   const creditBalance = Number(credits?.balance ?? 0);
@@ -318,21 +323,19 @@ function AccountCard({
       </CardHeader>
       <CardContent className="space-y-3">
         {snapshot.sourceKind === 'grok_subscription' && <GrokQuotaDetails snapshot={snapshot} />}
-        {!snapshot.ok && (
-          <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger-ink">
-            {snapshot.error ?? '未知错误'}
-            {lastSuccessAt && snapshot.windows.length > 0
-              ? `。下方为 ${formatTime(lastSuccessAt)} 的最后一次成功数据。`
-              : ''}
-          </div>
-        )}
         {snapshot.windows.length === 0 && snapshot.ok && (
           <p className="text-xs text-muted-foreground">供应商未返回额度窗口。</p>
         )}
         {mainWindows.length > 0 && (
           <div className={cn('grid gap-3', mainWindows.length > 1 && 'sm:grid-cols-2')}>
             {mainWindows.map((window) => (
-              <WindowTile key={window.id} window={window} collectedAt={snapshot.collectedAt} showAmount={showWindowAmounts} />
+              <WindowTile
+                key={window.id}
+                window={window}
+                collectedAt={displayCollectedAt}
+                collectionFailed={!snapshot.ok}
+                showAmount={showWindowAmounts}
+              />
             ))}
           </div>
         )}
@@ -345,7 +348,13 @@ function AccountCard({
             </summary>
             <div className={cn('mt-3 grid gap-3', additionalWindows.length > 1 && 'sm:grid-cols-2')}>
               {additionalWindows.map((window) => (
-                <WindowTile key={window.id} window={window} collectedAt={snapshot.collectedAt} showAmount={showWindowAmounts} />
+                <WindowTile
+                  key={window.id}
+                  window={window}
+                  collectedAt={displayCollectedAt}
+                  collectionFailed={!snapshot.ok}
+                  showAmount={showWindowAmounts}
+                />
               ))}
             </div>
           </details>
@@ -472,10 +481,9 @@ export function ProviderQuotaPage() {
 
   const collector = overview?.collector;
   const statusCounts = useMemo(() => {
-    const counts = { collectionFailed: 0, exhausted: 0, credentialUnavailable: 0, warning: 0 };
+    const counts = { exhausted: 0, credentialUnavailable: 0, warning: 0 };
     for (const item of overview?.items ?? []) {
       const status = accountStatus(item);
-      if (status.label === '采集失败') counts.collectionFailed += 1;
       if (status.label === '已耗尽') counts.exhausted += 1;
       if (status.label === '凭据不可用') counts.credentialUnavailable += 1;
       if (status.tone === 'warning') counts.warning += 1;
@@ -483,7 +491,7 @@ export function ProviderQuotaPage() {
     return counts;
   }, [overview?.items]);
 
-  const criticalCount = statusCounts.collectionFailed + statusCounts.exhausted + statusCounts.credentialUnavailable;
+  const criticalCount = statusCounts.exhausted + statusCounts.credentialUnavailable;
 
   if (loading && !overview) {
     return (
@@ -503,7 +511,7 @@ export function ProviderQuotaPage() {
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {criticalCount > 0 && <Badge variant="danger" title={`采集失败 ${statusCounts.collectionFailed} · 额度耗尽 ${statusCounts.exhausted} · 凭据不可用 ${statusCounts.credentialUnavailable}`}>{criticalCount} 个异常</Badge>}
+            {criticalCount > 0 && <Badge variant="danger" title={`额度耗尽 ${statusCounts.exhausted} · 凭据不可用 ${statusCounts.credentialUnavailable}`}>{criticalCount} 个异常</Badge>}
             {statusCounts.warning > 0 && <Badge variant="warning">{statusCounts.warning} 个需关注</Badge>}
             <Button
               className="min-w-16"

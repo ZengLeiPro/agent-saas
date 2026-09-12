@@ -125,7 +125,7 @@ describe('Grok admin transactions T16-T23', () => {
     expect(status).toHaveBeenCalledWith(409);
     expect(json).toHaveBeenCalledWith({
       code: 'CONFIG_PUBLICATION_LOCK_BUSY',
-      error: '生产配置正在发布或凭据刷新，请稍后重试',
+      error: '生产发布互斥锁暂不可用，请稍后重试',
     });
   });
 

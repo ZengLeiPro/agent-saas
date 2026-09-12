@@ -233,7 +233,7 @@ function kubectlStub(
     async run(args: string[], runOptions: { input?: string } = {}): Promise<KubectlResult> {
       calls.push({ args, input: runOptions.input });
       const joinedArgs = args.join('\n');
-      if (args.includes('/app/acs-orchestrator/src/sandboxRunner.ts')) {
+      if (args.includes('/app/acs-orchestrator/dist/sandboxRunner.mjs')) {
         await options.onBootstrap?.();
         return {
           stdout: JSON.stringify({

@@ -218,6 +218,7 @@ export function useAttachmentUploads(options: AttachmentUploadsOptions): Attachm
     setUploadError(null);
     const current = uploadedFilesRef.current;
     // 不触发 onDiscardFiles：调用方（发送消息）短时间内仍要用这些文件。
+    uploadedFilesRef.current = [];
     setUploadedFiles([]);
     return current;
   }, [fence]);

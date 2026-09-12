@@ -56,15 +56,19 @@ describe('TASK-375 移动端 V1 复核整改', () => {
 
   it('ACK 未确认 intent 保留幂等键，interaction 生命周期绑定原会话', () => {
     const source = readMobile('src/hooks/useChatAppState.ts');
-    // ACK 截止时间与回执已按域提取；同时检查真实接线和实现，不能只检查旧 Hook 的字符串。
-    const receipts = readMobile('src/lib/chatDeliveryReceipt.ts');
+    const deliveryHook = readMobile('src/hooks/useMobileChatDelivery.ts');
+    const controller = readMobile('src/lib/mobileChatDeliveryController.ts');
+    const state = readMobile('src/lib/mobileChatDeliveryState.ts');
     const interactions = readMobile('src/hooks/useInteractionResponses.ts');
 
-    expect(source).toContain('armMobileChatAckDeadline(clientMsgId');
-    expect(source).toContain('...createMobileChatReceiptHandlers({');
-    expect(receipts).toContain("entry.state = 'verifying'");
-    expect(receipts).toContain("getEntry(clientMsgId) !== entry || entry.state !== 'sending'");
-    expect(source).toContain('message.clientMsgId,');
+    expect(source).toContain('const delivery = useMobileChatDelivery({');
+    expect(source).toContain('const receiptOwner = delivery;');
+    expect(source).toContain('applyAuthoritativeWsEvent(data');
+    expect(deliveryHook).toContain('delivery.restoreReference(reference)');
+    expect(controller).toContain('verify(clientMsgId: string');
+    expect(controller).toContain("if (record.fact.kind === 'accepted') return Promise.resolve({ kind: 'already_accepted' })");
+    expect(state).toContain("record.fact.kind === 'accepted'");
+    expect(state).toContain("deliveryIssue: record.canonical ? 'unknown' : 'missing_payload'");
     expect(interactions).toContain('pendingInteractionKey(currentSessionId, interactionId)');
     expect(interactions).toContain('sessionId: pending.sessionId');
     expect(interactions).toContain('if (sessionIdRef.current !== pending.sessionId) return');

@@ -90,11 +90,12 @@ describe('mobile delivery receipts and ACK deadline ordering', () => {
     h.ack();
     expect(h.target.messagesRef.current[0]).toMatchObject({ id: 'voice', status: 'sent', failedReason: undefined });
   });
-  it('wires receipt correlation, typed callbacks and deadline ownership into the real mobile hook', () => {
+  it('wires receipt correlation, controller ownership and recovery into the real mobile hook', () => {
     const source = readFileSync(new URL('../hooks/useChatAppState.ts', import.meta.url), 'utf8');
-    expect(source).toContain('armMobileChatAckDeadline(clientMsgId');
-    expect(source).toContain('...createMobileChatReceiptHandlers({');
-    expect(source).toContain('outbox: outboxRef');
+    expect(source).toContain("import { useMobileChatDelivery } from './useMobileChatDelivery';");
+    expect(source).toContain('const delivery = useMobileChatDelivery({');
+    expect(source).toContain('const receiptOwner = delivery;');
+    expect(source).toContain('applyAuthoritativeWsEvent(data');
     expect(source).toContain('const isDeliveryReceipt =');
     expect(source).toContain('if (!isMetadata && !isDeliveryReceipt) return;');
   });

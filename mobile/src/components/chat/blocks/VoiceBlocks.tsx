@@ -6,6 +6,7 @@ import type { MessageItem } from '@agent/shared';
 import { useVoicePlayer } from '../../../hooks/useVoicePlayer';
 import { useColors, useChatTypography } from '../../../theme';
 import { useMessageStyles } from './shared';
+import { MessageDeliveryNotice } from './MessageDeliveryNotice';
 
 // --- Voice Block ---
 export function VoiceBlock({ message }: { message: MessageItem & { type: 'voice' } }) {
@@ -22,7 +23,10 @@ export function VoiceBlock({ message }: { message: MessageItem & { type: 'voice'
 }
 
 // --- User Voice Block ---
-export function UserVoiceBlock({ message }: { message: MessageItem & { type: 'user-voice' } }) {
+export function UserVoiceBlock({ message, onRetry }: {
+  message: MessageItem & { type: 'user-voice' };
+  onRetry?: (message: MessageItem) => void;
+}) {
   const colors = useColors();
   const typo = useChatTypography();
   const styles = useMessageStyles(colors, typo);
@@ -76,6 +80,7 @@ export function UserVoiceBlock({ message }: { message: MessageItem & { type: 'us
           </Text>
         </Pressable>
       </View>
+      <MessageDeliveryNotice message={message} onRetry={onRetry} />
     </View>
   );
 }

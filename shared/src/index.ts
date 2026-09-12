@@ -5,6 +5,8 @@ export * from './lib/sessionAutomationCommands.js';
 export { GOVERNANCE_CAPABILITIES, governanceCapability } from './types/governanceCapability';
 export { GovernanceApiError, governanceApiErrorMessage } from './lib/governanceErrors';
 export * from './mobileV1';
+export * from './lib/messageStatus';
+export * from './lib/messageStatusProbePool';
 export { initPlatform, getPlatform } from './platform/context';
 export type {
   IStorage,
@@ -13,7 +15,6 @@ export type {
   IPlatformConfig,
   PlatformDeps,
 } from './platform/types';
-
 // Types - re-export the public runtime and product contracts from types/index
 export {
   ACTIVITY_TYPES,

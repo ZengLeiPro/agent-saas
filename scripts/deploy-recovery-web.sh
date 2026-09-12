@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+if ! declare -F prune_unreferenced_release_dirs >/dev/null; then
+  source "$(dirname "$0")/release/prune-unreferenced-releases.sh"
+fi
 
 : "${RECOVERY_WEB_ROOT:?Missing RECOVERY_WEB_ROOT}"
 : "${RELEASE_ID:?Missing RELEASE_ID}"
@@ -209,4 +212,17 @@ fi
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 test "$(readlink -f "$CURRENT_LINK")" = "$RELEASE_DIR"
 write_receipt activated
+web_keep=("$RELEASE_DIR")
+if [ -L "$PREVIOUS_LINK" ]; then
+  web_previous="$(readlink -f -- "$PREVIOUS_LINK")"
+  if [ -n "$web_previous" ] && [ "$web_previous" != "$RELEASE_DIR" ]; then
+    web_keep+=("$web_previous")
+  fi
+fi
+prune_unreferenced_release_dirs "$RELEASES_DIR" "${web_keep[@]}"
+web_keep_ids=()
+for web_keep_path in "${web_keep[@]}"; do
+  web_keep_ids+=("$(basename -- "$web_keep_path")")
+done
+prune_unreferenced_files_matching_keep_ids "$ARTIFACTS_DIR" "${web_keep_ids[@]}"
 echo "recovery Web active: $RELEASE_ID"

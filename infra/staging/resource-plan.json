@@ -89,6 +89,7 @@
     "runtime": {
       "releaseRoot": "/opt/agent-saas-staging/releases",
       "currentLink": "/opt/agent-saas-staging/current",
+      "previousLink": "/opt/agent-saas-staging/previous",
       "stateRoot": "/var/lib/agent-saas-staging",
       "configRoot": "/etc/agent-saas-staging",
       "lockRoot": "/run/lock/agent-saas-staging",

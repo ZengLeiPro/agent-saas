@@ -15,7 +15,7 @@ function setup(role: 'admin' | 'user' = 'admin') {
   const service = {
     overview: vi.fn(async () => ({ items: [], collector: { enabled: false, intervalMs: 300_000, lastRunAt: null, lastError: null }, generatedAt: 'now' })),
     history: vi.fn(async () => ({ hours: 24, points: [], generatedAt: 'now' })),
-    refresh: vi.fn(async () => []), setPlanExpiry: vi.fn(async () => {}),
+    refresh: vi.fn(async () => []), setPlanExpiry: vi.fn(async () => {}), setPlanNote: vi.fn(async () => {}),
     test: vi.fn(async () => ({ windows: [], limitReached: false })),
   };
   const app = express();

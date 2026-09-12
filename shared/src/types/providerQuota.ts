@@ -62,6 +62,7 @@ export interface ProviderQuotaSnapshot {
     endTime?: string;
     manualEndTime?: string;
     providerEndTime?: string;
+    note?: string;
   };
   windows: ProviderQuotaWindow[];
   limitReached: boolean;

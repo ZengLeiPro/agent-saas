@@ -308,7 +308,7 @@ function AccountCard({
           </div>
           <div className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" title={isCodex && credential?.expiresAt ? `凭据到期 ${formatMinuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
             <ProviderQuotaPlanBadge sourceKind={snapshot.sourceKind} planType={snapshot.plan?.type}>{subtitle}</ProviderQuotaPlanBadge>
-            <ProviderQuotaNoteEditor accountKey={snapshot.accountKey} accountLabel={snapshot.accountLabel} />
+            <ProviderQuotaNoteEditor snapshot={snapshot} onSaved={onExpirySaved} />
             {showCredits && <span className="whitespace-nowrap tabular-nums text-muted-foreground">Credits {credits!.balance}</span>}
           </div>
           <div className="col-start-2 row-start-2 justify-self-end text-right">

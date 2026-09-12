@@ -479,7 +479,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -1215,7 +1222,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -2342,7 +2349,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -3330,7 +3337,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -4281,7 +4288,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -5218,7 +5225,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -6147,7 +6154,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -7076,7 +7083,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -8145,7 +8152,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -9240,7 +9247,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -10210,7 +10217,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -11172,7 +11179,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -12078,7 +12085,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -12975,7 +12982,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -13872,7 +13879,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -14769,7 +14776,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -15659,7 +15666,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -16538,7 +16545,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -17361,7 +17368,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -18171,7 +18178,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -18970,7 +18977,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -19761,7 +19768,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -20552,7 +20559,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -21343,7 +21350,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -22098,7 +22105,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -22819,7 +22826,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -23524,7 +23531,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -24194,7 +24201,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -24841,7 +24848,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -25466,7 +25473,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -26079,7 +26086,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -26688,7 +26695,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -27294,7 +27301,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。 本批仅新增只读方法 pushedAccounts（单条 SELECT DISTINCT ON，参数化 source_kind 与保留天数），用于发现推送型来源的账号；建表语句、索引与 advisory lock 初始化未变。"
         },
@@ -27892,7 +27899,7 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:87751e906e23fa3ed1ebf702155f8d992298c2c4970fdcfa45a22480de67e4f3",
-          "targetDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "本批仅新增只读方法 pushedAccounts：单条 SELECT DISTINCT ON 用于发现推送型来源（Claude 订阅）的账号，参数化 source_kind 与保留天数。建表语句、索引与 advisory lock 初始化一字未改，无新表、无列变更、无回填、无删除。"
         },
@@ -28640,7 +28647,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -29227,7 +29241,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -29826,7 +29847,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -30425,7 +30453,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -30989,7 +31024,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -31524,7 +31566,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -31545,7 +31594,7 @@
         },
         {
           "path": "scripts/release/migration-postconditions.pg.test.mjs",
-          "digest": "sha256:a5d29ae589d167282b5905ef783f72f749b229eee833ed18b5df23d5aef80c1a"
+          "digest": "sha256:a27f1036727b59a97ca25801ad7e9e00df3fada7b863b3034edc97a415a6335e"
         },
         {
           "path": "server/src/__tests__/agentDwsMigrationRoutes.test.ts",
@@ -31722,7 +31771,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -31865,7 +31921,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -31985,7 +32048,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -32094,7 +32164,14 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
-        }
+        },
+        {
+            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+            "classification": "expand",
+            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+          }
       ],
       "evidence": [
         {
@@ -32192,6 +32269,13 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
         }
       ],
       "evidence": [
@@ -32218,6 +32302,28 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        }
+      ]
+    },
+    {
+      "baselineSha": "ecddc3349e1d8aa9ad60200e2a503d4490b8ab91",
+      "files": [
+        {
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。详见 PR662 套餐备注数据库持久化迁移审核。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/PR662-套餐备注数据库持久化迁移审核-20260912.md",
+          "digest": "sha256:3e00d8a35378becd91e709df86534624ba002fbc0790297594e0769ad9257f8c"
+        },
+        {
+          "path": "server/src/quota/providerPlanExpiry.pg.test.ts",
+      "digest": "sha256:b37b03260951326f77e87b11b38972ff1551bf3c84c6d40cc596343db9fc9d10"
         }
       ]
     }

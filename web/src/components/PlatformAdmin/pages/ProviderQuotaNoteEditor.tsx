@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pencil } from 'lucide-react';
 
-import type { ProviderQuotaSnapshot } from '@agent/shared';
+import type { ProviderQuotaOverviewResponse, ProviderQuotaSnapshot } from '@agent/shared';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -13,67 +13,50 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 
-export const PROVIDER_QUOTA_NOTE_STORAGE_KEY = 'platform-console.provider-quota.notes.v1';
+import { platformAdminApi } from '../api';
 
-function readNotes(): Record<string, string> {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(PROVIDER_QUOTA_NOTE_STORAGE_KEY) ?? '{}');
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-    return Object.fromEntries(
-      Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-    );
-  } catch {
-    return {};
-  }
-}
-
-function writeNotes(notes: Record<string, string>): void {
-  try {
-    if (Object.keys(notes).length === 0) {
-      localStorage.removeItem(PROVIDER_QUOTA_NOTE_STORAGE_KEY);
-    } else {
-      localStorage.setItem(PROVIDER_QUOTA_NOTE_STORAGE_KEY, JSON.stringify(notes));
-    }
-  } catch {
-    // 本地存储不可用时仍保留当前页面内的备注。
-  }
-}
-
-export function ProviderQuotaNoteEditor({ accountKey, accountLabel }: {
-  accountKey: ProviderQuotaSnapshot['accountKey'];
-  accountLabel: string;
+export function ProviderQuotaNoteEditor({
+  snapshot,
+  onSaved,
+}: {
+  snapshot: ProviderQuotaSnapshot;
+  onSaved: (overview: ProviderQuotaOverviewResponse) => void;
 }) {
-  const [note, setNote] = useState(() => readNotes()[accountKey] ?? '');
-  const [draft, setDraft] = useState(note);
   const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const state = snapshot.planExpiry;
+  const note = snapshot.planExpiry?.note ?? '';
 
-  const openEditor = () => {
-    setDraft(note);
-    setOpen(true);
-  };
-
-  const save = () => {
-    const nextNote = draft.trim();
-    const notes = readNotes();
-    if (nextNote) {
-      notes[accountKey] = nextNote;
-    } else {
-      delete notes[accountKey];
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      onSaved(await platformAdminApi.setProviderPlanNote(snapshot.accountKey, draft.trim() || null));
+      setOpen(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '保存失败，请重试');
+    } finally {
+      setSaving(false);
     }
-    writeNotes(notes);
-    setNote(nextNote);
-    setOpen(false);
-  };
+  }
+
+  if (!state?.editable) return null;
 
   return (
     <>
       <span className="inline-flex min-w-0 max-w-40 items-center gap-1">
         <button
           type="button"
-          aria-label={`编辑 ${accountLabel} 备注`}
+          aria-label={`编辑 ${snapshot.accountLabel} 备注`}
           title="编辑备注"
           className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          onClick={openEditor}
+          onClick={() => {
+            setDraft(note);
+            setError(null);
+            setOpen(true);
+          }}
         >
           <Pencil className="size-3" aria-hidden="true" />
         </button>
@@ -83,26 +66,45 @@ export function ProviderQuotaNoteEditor({ accountKey, accountLabel }: {
           </span>
         )}
       </span>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!saving) setOpen(next);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>套餐备注</DialogTitle>
-            <DialogDescription>{accountLabel}</DialogDescription>
+            <DialogDescription>{snapshot.accountLabel}</DialogDescription>
           </DialogHeader>
-          <Textarea
-            aria-label="备注内容"
-            value={draft}
-            placeholder="填写备注"
-            onChange={(event) => setDraft(event.target.value)}
-          />
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-              取消
-            </Button>
-            <Button type="button" onClick={save}>
-              保存
-            </Button>
-          </DialogFooter>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void save();
+            }}
+          >
+            <Textarea
+              aria-label="备注内容"
+              value={draft}
+              disabled={saving}
+              placeholder="填写备注"
+              onChange={(event) => setDraft(event.target.value)}
+            />
+            {error && (
+              <p role="alert" className="text-xs text-danger-ink">
+                {error}
+              </p>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={saving} onClick={() => setOpen(false)}>
+                取消
+              </Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? '保存中…' : '保存'}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </>

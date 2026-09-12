@@ -152,9 +152,11 @@ export class ProviderQuotaService {
     const sources = await this.sources();
     const activeKeys = new Set(sources.map((source) => source.accountKey));
     const identities = new Map(sources.map((source) => [source.accountKey, source.expiryIdentity]));
-    const overrides = await this.options.store.planExpiryOverrides(
-      sources.flatMap((source) => source.expiryIdentity ? [source.expiryIdentity] : []),
-    );
+    const identityKeys = sources.flatMap((source) => source.expiryIdentity ? [source.expiryIdentity] : []);
+    const [overrides, notes] = await Promise.all([
+      this.options.store.planExpiryOverrides(identityKeys),
+      this.options.store.planNotes(identityKeys),
+    ]);
     const [latest, latestOk] = await Promise.all([
       this.options.store.latest(),
       this.options.store.latestSuccessful(),
@@ -181,6 +183,7 @@ export class ProviderQuotaService {
         const identity = identities.get(merged.accountKey);
         const manualEndTime = identity ? overrides.get(identity) ?? undefined : undefined;
         const providerEndTime = merged.plan?.endTime;
+        const note = identity && notes.has(identity) ? notes.get(identity) ?? undefined : undefined;
         return {
           ...merged,
           ...(credential ? { credential } : {}),
@@ -189,6 +192,7 @@ export class ProviderQuotaService {
             endTime: manualEndTime ?? providerEndTime,
             manualEndTime,
             providerEndTime,
+            ...(note ? { note } : {}),
           },
         };
       })
@@ -216,6 +220,14 @@ export class ProviderQuotaService {
     if (!source.expiryIdentity) throw new Error('尚未取得账号邮箱，无法保存套餐到期时间');
     if (endTime !== null && !Number.isFinite(Date.parse(endTime))) throw new Error('到期时间无效');
     await this.options.store.setPlanExpiry(source.expiryIdentity, endTime, userId);
+  }
+
+  async setPlanNote(accountKey: string, note: string | null, userId: string): Promise<void> {
+    const source = (await this.sources()).find((item) => item.accountKey === accountKey);
+    if (!source) throw new Error('账号不存在或已移除');
+    if (!source.expiryIdentity) throw new Error('尚未取得账号邮箱，无法保存套餐备注');
+    const normalized = note?.trim() || null;
+    await this.options.store.setPlanNote(source.expiryIdentity, normalized, userId);
   }
 
   async history(hours: number): Promise<ProviderQuotaHistoryResponse> {

@@ -16,6 +16,7 @@ import {
   baselineUsedPercent,
   formatResetIn,
   formatResetTime,
+  formatQuotaWindowLabel,
   formatWan,
   windowTone,
 } from './ProviderQuotaPage';
@@ -154,7 +155,8 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getAllByText('接近上限')).toHaveLength(1);
     expect(screen.getByText('采集失败')).toBeTruthy();
     expect(screen.getByText('94.1%')).toBeTruthy();
-    expect(screen.getByText(/已用 37\.8万 \/ 40\.2万 AFP/u)).toBeTruthy();
+    expect(screen.getByText('37.8万 / 40.2万')).toBeTruthy();
+    expect(screen.queryByText(/已用 37\.8万 \/ 40\.2万 AFP/u)).toBeNull();
     expect(screen.getByText('100.0%')).toBeTruthy();
     expect(screen.getByText('Codex 订阅 · Pro · 重置券 2')).toBeTruthy();
     expect(screen.getByTitle(/^凭据到期 /u)).toBeTruthy();
@@ -216,8 +218,8 @@ describe('ProviderQuotaPage', () => {
     const main = within(card).getByTestId('quota-window-seven_day').parentElement!;
     expect(main.className).toContain('sm:grid-cols-2');
     expect(within(main).getAllByRole('progressbar').map((bar) => bar.getAttribute('aria-label')))
-      .toEqual(['7 天 已用', '5 小时 已用']);
-    const summary = within(card).getByText(/其他（1 个窗口）/u);
+      .toEqual(['周 已用', '5h 已用']);
+    const summary = within(card).getByText(/其他（1）/u);
     const details = summary.closest('details')!;
     expect(details.open).toBe(false);
     expect(details.classList.contains('border')).toBe(false);
@@ -246,8 +248,8 @@ describe('ProviderQuotaPage', () => {
     render(<ProviderQuotaPage />);
     await waitFor(() => expect(screen.getByText('正常')).toBeTruthy());
     const windows = screen.getAllByRole('progressbar');
-    expect(windows[0]?.getAttribute('aria-label')).toBe('周用量 已用');
-    const summary = screen.getByText(/其他（1 个窗口）/u);
+    expect(windows[0]?.getAttribute('aria-label')).toBe('周 已用');
+    const summary = screen.getByText(/其他（1）/u);
     expect(summary.closest('details')?.open).toBe(false);
     expect(screen.getByText('1 个窗口已耗尽')).toBeTruthy();
     expect(screen.queryByText('已撞限')).toBeNull();
@@ -264,16 +266,16 @@ describe('ProviderQuotaPage', () => {
     const tile = screen.getByTestId('quota-window-primary');
     expect(tile.parentElement?.className).not.toContain('sm:grid-cols-2');
     expect(tile.textContent).toContain('100.0%');
-    expect(tile.textContent).toContain('周用量');
+    expect(tile.textContent).toContain('周');
     expect(tile.textContent).not.toContain('剩余');
     expect(card.className).toContain('bg-gradient-to-b');
     expect(card.className).toContain('from-brand-50/80');
     expect(card.className).not.toContain('border-l-[3px]');
-    const timestamp = [...card.querySelectorAll('span')].find(el => el.textContent?.startsWith('采集 '));
+    const timestamp = [...card.querySelectorAll('span')].find(el => el.textContent?.includes('采集 '));
     expect(timestamp?.className).toContain('tabular-nums');
     expect(timestamp?.textContent).not.toContain('采集于');
     expect(timestamp?.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
-    expect(timestamp?.parentElement?.querySelector('button')?.getAttribute('aria-label')).toContain('刷新');
+    expect(within(card).getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' })).toBeTruthy();
   });
 
   it('零重置券隐藏，采集与到期统一为两个字标签、相同字号与等宽数字', async () => {
@@ -338,8 +340,8 @@ describe('ProviderQuotaPage', () => {
     const main = within(card).getByTestId('quota-window-monthly').parentElement!;
     expect(main.className).toContain('sm:grid-cols-2');
     expect(within(main).getAllByRole('progressbar').map((bar) => bar.getAttribute('aria-label')))
-      .toEqual(['近一月 已用', '近一周 已用']);
-    const details = within(card).getByText('其他（2 个窗口）').closest('details')!;
+      .toEqual(['月 已用', '周 已用']);
+    const details = within(card).getByText('其他（2）').closest('details')!;
     expect(details.open).toBe(false);
     expect(within(details).getByTestId('quota-window-five_hour')).toBeTruthy();
     expect(within(details).getByTestId('quota-window-daily')).toBeTruthy();
@@ -371,6 +373,15 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getByRole('progressbar').firstElementChild?.className).toContain('bg-warning');
     expect(screen.queryByText('冷却中')).toBeNull();
     expect(screen.getByText('1 个需关注')).toBeTruthy();
+  });
+
+  it('统一压缩不同供应商的周期标签，并保留模型前缀', () => {
+    expect(formatQuotaWindowLabel('周用量模型积分')).toBe('周');
+    expect(formatQuotaWindowLabel('Mini · 每周')).toBe('Mini · 周');
+    expect(formatQuotaWindowLabel('Fable · 7 天')).toBe('Fable · 周');
+    expect(formatQuotaWindowLabel('近一月')).toBe('月');
+    expect(formatQuotaWindowLabel('5 小时模型额度')).toBe('5h');
+    expect(formatQuotaWindowLabel('近一天')).toBe('天');
   });
 
   it('没有本地偏好时，默认按 Codex、Claude、火山排列', async () => {

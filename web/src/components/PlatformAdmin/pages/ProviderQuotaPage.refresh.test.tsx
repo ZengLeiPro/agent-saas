@@ -83,7 +83,7 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     render(<ProviderQuotaPage />);
     await ready();
     const card = screen.getByTestId('quota-account-volcengine:test');
-    const details = within(card).getByText('其他（1 个窗口）').closest('details')!;
+    const details = within(card).getByText('其他（1）').closest('details')!;
     fireEvent.click(details.querySelector('summary')!);
     const refresh = screen.getByRole('button', { name: /^刷新$/u });
     const collect = screen.getByRole('button', { name: '立即采集' });
@@ -234,6 +234,6 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     const tile = within(card).getByTestId(`quota-window-${id}`);
     expect(tile.textContent).toContain('09/10 周四 12:34');
     expect(tile.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
-    expect(within(card).getByText(/^采集 /).textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
+    expect(within(card).getByText(/采集 /).textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
   });
 });

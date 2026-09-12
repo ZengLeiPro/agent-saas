@@ -38,6 +38,10 @@ const SOURCE_LABEL: Record<ProviderQuotaSnapshot['sourceKind'], string> = {
 
 /** 推送型来源：平台没有可取数的管控面，由采集端主动上报，不提供单账号刷新。 */
 const PUSH_ONLY_SOURCES = new Set<ProviderQuotaSnapshot['sourceKind']>(['claude_subscription']);
+const AMOUNT_SOURCES = new Set<ProviderQuotaSnapshot['sourceKind']>([
+  'volcengine_ark_plan',
+  'zhipu_coding_plan',
+]);
 
 const WARNING_PERCENT = 70;
 const HISTORY_HOURS = 24;
@@ -122,6 +126,18 @@ export function formatWan(value: number): string {
   return value.toFixed(value === Math.round(value) ? 0 : 1);
 }
 
+/** 周期标签只保留用户需要的最短表达，兼容不同供应商和未来新增模型卡片的原始文案。 */
+export function formatQuotaWindowLabel(label: string): string {
+  return label
+    .replace(/(?:周用量模型(?:积分|额度)|每周模型(?:积分|额度)|订阅周用量|周用量|近一周|每周|7\s*天|\d+\s*周)/gu, '周')
+    .replace(/(?:每月|近一月|月用量|月额度|30\s*天)/gu, '月')
+    .replace(/(?:\d+\s*小时|五小时)(?:模型(?:积分|额度))?/gu, (value) => {
+      const hours = value.match(/\d+/u)?.[0];
+      return hours ? `${hours}h` : '5h';
+    })
+    .replace(/(?:近一天|1\s*天)/gu, '天');
+}
+
 /** 每个账号窗口在 24h 前最早一条成功快照里的已用百分比。 */
 export function baselineUsedPercent(
   points: ProviderQuotaHistoryPoint[],
@@ -155,19 +171,35 @@ export function formatResetTime(value?: string): string {
   return formatTime(value).replace(/:\d{2}$/, '').replace(/(\d{2}\/\d{2})\s+/, `$1 ${weekday} `);
 }
 
-function WindowTile({ window }: { window: ProviderQuotaWindow }) {
+function formatMinuteTime(value: string): string {
+  return formatTime(value).replace(/:\d{2}$/, '');
+}
+
+function WindowTile({
+  window,
+  collectedAt,
+  showAmount,
+}: {
+  window: ProviderQuotaWindow;
+  collectedAt: string;
+  showAmount: boolean;
+}) {
   const tone = windowTone(window);
-  const label = window.label.replace(/每周/g, '周用量');
+  const label = formatQuotaWindowLabel(window.label);
   const fill = Math.min(100, Math.max(0, window.usedPercent));
   const hasAmount = window.used !== undefined && window.unit !== undefined && window.unit !== '%';
   const resetIn = formatResetIn(window.resetAt);
+  const amount = showAmount && hasAmount
+    ? `${formatWan(window.used!)}${window.quota !== undefined ? ` / ${formatWan(window.quota)}` : ''}`
+    : null;
   return (
     <div
       className="space-y-2 rounded-md border bg-muted/10 p-3"
       data-testid={`quota-window-${window.id}`}
     >
-      <div className="text-xs text-muted-foreground">
-        <span className="truncate">{label}</span>
+      <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span className="min-w-0 truncate tabular-nums">{label} · 采集 {formatMinuteTime(collectedAt)}</span>
+        {amount && <span className="shrink-0 whitespace-nowrap text-right tabular-nums">{amount}</span>}
       </div>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="text-2xl font-semibold tabular-nums leading-none text-foreground">
@@ -185,11 +217,6 @@ function WindowTile({ window }: { window: ProviderQuotaWindow }) {
       >
         <div className={cn('h-full rounded-full', TONE_BAR[tone])} style={{ width: `${fill}%` }} />
       </div>
-      {hasAmount && (
-        <div className="text-xs text-muted-foreground">
-          已用 {formatWan(window.used!)}{window.quota !== undefined ? ` / ${formatWan(window.quota)}` : ''} {window.unit}
-        </div>
-      )}
     </div>
   );
 }
@@ -236,7 +263,7 @@ function AccountCard({
     snapshot.resetCredits && snapshot.resetCredits > 0 ? `重置券 ${snapshot.resetCredits}` : undefined,
     !isCodex && snapshot.plan?.autoRenew ? '自动续费' : undefined,
   ].filter(Boolean).join(' · ');
-  const minuteTime = (value: string) => formatTime(value).replace(/:\d{2}$/, '');
+  const showWindowAmounts = AMOUNT_SOURCES.has(snapshot.sourceKind);
   return (
     <Card
       className={cn(
@@ -263,9 +290,6 @@ function AccountCard({
             )}
           </div>
           <div className="col-start-2 row-start-1 flex items-center justify-end gap-3">
-            <span className={cn('whitespace-nowrap text-xs font-normal tabular-nums text-muted-foreground', !snapshot.ok && 'text-danger-ink')}>
-              采集 {minuteTime(snapshot.collectedAt)}
-            </span>
             {!isPushOnly ? (
               <Button
                 variant="ghost"
@@ -281,7 +305,7 @@ function AccountCard({
               <span className="size-7 shrink-0" aria-hidden="true" />
             )}
           </div>
-          <div className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" title={isCodex && credential?.expiresAt ? `凭据到期 ${minuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
+          <div className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" title={isCodex && credential?.expiresAt ? `凭据到期 ${formatMinuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
             <ProviderQuotaPlanBadge sourceKind={snapshot.sourceKind} planType={snapshot.plan?.type}>{subtitle}</ProviderQuotaPlanBadge>
             {showCredits && <span className="whitespace-nowrap tabular-nums text-muted-foreground">Credits {credits!.balance}</span>}
           </div>
@@ -306,7 +330,7 @@ function AccountCard({
         {mainWindows.length > 0 && (
           <div className={cn('grid gap-3', mainWindows.length > 1 && 'sm:grid-cols-2')}>
             {mainWindows.map((window) => (
-              <WindowTile key={window.id} window={window} />
+              <WindowTile key={window.id} window={window} collectedAt={snapshot.collectedAt} showAmount={showWindowAmounts} />
             ))}
           </div>
         )}
@@ -314,12 +338,12 @@ function AccountCard({
           <details className="group/other">
             <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-1 gap-y-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
               <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-open/other:rotate-90" aria-hidden="true" />
-              <span>其他（{additionalWindows.length} 个窗口）</span>
+              <span>其他（{additionalWindows.length}）</span>
               {additionalLimited > 0 && <span className="ml-2 text-warning-ink">{additionalLimited} 个窗口已耗尽</span>}
             </summary>
             <div className={cn('mt-3 grid gap-3', additionalWindows.length > 1 && 'sm:grid-cols-2')}>
               {additionalWindows.map((window) => (
-                <WindowTile key={window.id} window={window} />
+                <WindowTile key={window.id} window={window} collectedAt={snapshot.collectedAt} showAmount={showWindowAmounts} />
               ))}
             </div>
           </details>

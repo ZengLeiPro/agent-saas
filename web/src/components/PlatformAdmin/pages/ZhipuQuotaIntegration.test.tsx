@@ -28,7 +28,7 @@ const overview: ProviderQuotaOverviewResponse = {
     sourceKind: 'zhipu_coding_plan', accountKey: 'zhipu:glm', accountLabel: '智谱测试分组', groupId: 'glm',
     windows: [
       { id: 'tokens_limit:3:5', label: '5 小时模型额度', windowSeconds: 18_000, usedPercent: 25 },
-      { id: 'credit_limit:6:1', label: '每周模型积分', windowSeconds: 604_800, usedPercent: 80 },
+      { id: 'credit_limit:6:1', label: '每周模型积分', windowSeconds: 604_800, usedPercent: 80, used: 125000, quota: 400000, unit: '积分' },
     ],
     ok: true, limitReached: false, collectedAt: '2026-09-11T08:00:00.000Z',
     extra: { quotaScope: 'account' },
@@ -112,6 +112,8 @@ describe('Zhipu quota dashboard card', () => {
     expect(screen.queryByText(/个人套餐|账号共享额度|不能相加|不做推算/u)).toBeNull();
     expect(screen.getByText('25.0%')).toBeTruthy();
     expect(screen.getByText('80.0%')).toBeTruthy();
+    expect(screen.getByText('12.5万 / 40.0万')).toBeTruthy();
+    expect(screen.queryByText(/积分|已用/u)).toBeNull();
     expect(screen.getByText('接近上限')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '刷新 智谱测试分组' }));
     await waitFor(() => expect(mocks.api.refreshProviderQuota).toHaveBeenCalledWith('zhipu:glm'));

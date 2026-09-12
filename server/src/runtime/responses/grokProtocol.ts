@@ -29,8 +29,9 @@ export class GrokProtocolError extends Error {
     readonly code: string,
     readonly status?: number,
     readonly outcomeUnknown = false,
+    options?: ErrorOptions,
   ) {
-    super(`Grok ${code}${status === undefined ? '' : ` (HTTP ${status})`}`);
+    super(`Grok ${code}${status === undefined ? '' : ` (HTTP ${status})`}`, options);
     this.name = 'GrokProtocolError';
   }
 }

@@ -462,9 +462,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -738,6 +738,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -1699,9 +1703,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -2034,6 +2038,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -2778,9 +2786,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -3128,6 +3136,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -3851,9 +3863,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -4185,6 +4197,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -4908,9 +4924,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -5242,6 +5258,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -5951,9 +5971,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -6277,6 +6297,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -6986,9 +7010,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -7312,6 +7336,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -8021,9 +8049,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -8347,6 +8375,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -9336,9 +9368,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -9639,6 +9671,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -10355,9 +10391,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -10701,6 +10737,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -11431,9 +11471,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -11769,6 +11809,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -12499,9 +12543,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -12837,6 +12881,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -13518,9 +13566,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -13847,6 +13895,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -14528,9 +14580,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -14857,6 +14909,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -15538,9 +15594,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -15867,6 +15923,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -16548,9 +16608,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -16877,6 +16937,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -17544,9 +17608,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -17869,6 +17933,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -18536,9 +18604,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -18861,6 +18929,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -19472,9 +19544,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -19784,6 +19856,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -20388,9 +20464,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -20703,6 +20779,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -21307,9 +21387,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -21614,6 +21694,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -22218,9 +22302,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -22525,6 +22609,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -23129,9 +23217,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -23436,6 +23524,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -24012,9 +24104,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -24311,6 +24403,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -24873,9 +24969,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -25180,6 +25276,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -25714,9 +25814,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -26005,6 +26105,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -26539,9 +26643,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -26830,6 +26934,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -27322,9 +27430,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -27611,6 +27719,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -28103,9 +28215,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -28384,6 +28496,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -28862,9 +28978,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -29131,6 +29247,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -29609,9 +29729,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -29874,6 +29994,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -30352,9 +30476,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -30621,6 +30745,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -31092,9 +31220,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -31353,6 +31481,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -31824,9 +31956,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -32085,6 +32217,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -32549,9 +32685,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -32813,6 +32949,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -33277,9 +33417,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -33553,6 +33693,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -34017,9 +34161,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -34293,6 +34437,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -34757,9 +34905,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -35033,6 +35181,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -35462,9 +35614,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -35685,6 +35837,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -36149,9 +36305,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -36409,6 +36565,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -36488,9 +36648,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -36711,6 +36871,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -36783,9 +36947,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -36990,6 +37154,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -37055,9 +37223,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -37258,6 +37426,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -37316,9 +37488,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -37515,6 +37687,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -37573,9 +37749,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -37761,6 +37937,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -37910,9 +38090,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/runLeaseEligibility.ts",
@@ -37949,6 +38129,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -38098,9 +38282,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/runtime/runLeaseEligibility.ts",
@@ -38137,6 +38321,10 @@
         {
           "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -38167,9 +38355,9 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
-          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
           "classification": "no-schema-change",
-          "reason": "Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -38310,6 +38498,10 @@
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
           "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
+        },
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     },
@@ -38508,6 +38700,45 @@
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
           "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
+        }
+      ]
+    },
+    {
+      "baselineSha": "5cc153f4c8cc1603b0cb4bf1ec8020d3d6249cca",
+      "files": [
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "classification": "no-schema-change",
+          "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
+        },
+        {
+          "path": "server/src/quota/grokSubscriptionQuota.ts",
+          "baselineDigest": "sha256:54294e699d7fe7e523c5bcd1fae522f1fb7365697b3fe59972e29d5bcc74e36f",
+          "targetDigest": "sha256:ddaa9581b0b7183e03d25e86a781905ad820f366304b0ee84e72899fb767b05c",
+          "classification": "no-schema-change",
+          "reason": "同一代理有限重试并保留 billing 传输错误 cause；不改快照表结构。"
+        },
+        {
+          "path": "server/src/quota/grokQuotaSources.ts",
+          "baselineDigest": "sha256:490f16068befb0caba11fc31dbb0945d1a11088880467af5a678d5c1e8fcff00",
+          "targetDigest": "sha256:6a2896b695f8f33d743194b7cbacf60d8ee4837cca4028cc9d5e262006907453",
+          "classification": "no-schema-change",
+          "reason": "凭据失效时省略 collect；失败文案带脱敏传输原因。不改表结构。"
+        },
+        {
+          "path": "server/src/quota/providerQuotaService.ts",
+          "baselineDigest": "sha256:cfb21275bf7c3e5e9c6d866f5543f0afca2293fba6eaac71d420521c06dfdda5",
+          "targetDigest": "sha256:c85649f19f83b1d08832d09a26606312db237a91dea7d671f3fceab7680c95b1",
+          "classification": "no-schema-change",
+          "reason": "skipCollect 账号周期采集不写失败快照；点名刷新要求重授权。不改表结构。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
+          "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
         }
       ]
     }

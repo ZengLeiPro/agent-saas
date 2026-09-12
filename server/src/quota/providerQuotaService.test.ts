@@ -488,4 +488,48 @@ describe('ProviderQuotaService', () => {
       vi.useRealTimers();
     }
   });
+
+  it('Grok 凭据不可用时周期采集不打 billing、不写失败快照，点名刷新明确拒绝', async () => {
+    const store = new FakeStore();
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('billing should not be called');
+    });
+    const grokCredentialManager = {
+      getConfiguration: () => ({
+        enabled: true,
+        credentialRefs: ['dead'],
+        credentialRef: 'dead',
+        endpoint: 'https://cli-chat-proxy.grok.com/v1/responses',
+        quotaCooldownMinutes: 60,
+        oauthClientId: 'test-client',
+      }),
+      getCredentialRefs: () => ['dead'],
+      getCredentialsForCredential: vi.fn(),
+      getStatuses: async () => [
+        {
+          id: 'dead',
+          configured: true,
+          connected: false,
+          availability: 'auth_unavailable' as const,
+          lastFailureCode: 'refresh_outcome_unknown',
+          email: 'dead@x.ai',
+        },
+      ],
+    };
+    const service = new ProviderQuotaService({
+      store: store as unknown as PgProviderQuotaSnapshotStore,
+      getModelsConfig: () => undefined,
+      grokCredentialManager,
+      enableCollector: false,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now,
+      logger,
+    });
+    await service.refresh();
+    expect(store.rows).toHaveLength(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(grokCredentialManager.getCredentialsForCredential).not.toHaveBeenCalled();
+    await expect(service.refresh('grok:dead')).rejects.toThrow('凭据不可用，请先重授权');
+    expect(store.rows).toHaveLength(0);
+  });
 });

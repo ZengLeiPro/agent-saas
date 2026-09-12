@@ -94,7 +94,7 @@ export function accountStatus(
   snapshot: Pick<ProviderQuotaSnapshot, 'ok' | 'limitReached' | 'windows' | 'credential'> & { sourceKind?: ProviderQuotaSnapshot['sourceKind'] },
 ): AccountStatus {
   if (snapshot.credential?.availability === 'auth_unavailable') {
-    return { tone: 'critical', label: '凭据不可用' };
+    return { tone: 'critical', label: '凭据不可用，请重授权' };
   }
   if (snapshot.sourceKind === 'grok_subscription' && !snapshot.limitReached && snapshot.windows.length === 0) return { tone: 'warning', label: '额度未知' };
   const tones = snapshot.windows
@@ -288,8 +288,8 @@ function AccountCard({
               {status.tone !== 'ok' && <TriangleAlert className="size-3" />}
               {status.label}
             </Badge>
-            {credential?.availability === 'auth_unavailable' && status.label !== '凭据不可用' && (
-              <Badge variant="danger" className="px-1.5 py-0 text-2xs" title={credential.lastFailureCode}>凭据不可用</Badge>
+            {credential?.availability === 'auth_unavailable' && status.label !== '凭据不可用，请重授权' && (
+              <Badge variant="danger" className="px-1.5 py-0 text-2xs" title={credential.lastFailureCode}>凭据不可用，请重授权</Badge>
             )}
             {!isCodex && snapshot.plan?.status && snapshot.plan.status !== 'Running' && (
               <Badge variant="warning" className="px-1.5 py-0 text-2xs">{snapshot.plan.status}</Badge>
@@ -485,7 +485,7 @@ export function ProviderQuotaPage() {
     for (const item of overview?.items ?? []) {
       const status = accountStatus(item);
       if (status.label === '已耗尽') counts.exhausted += 1;
-      if (status.label === '凭据不可用') counts.credentialUnavailable += 1;
+      if (status.label === '凭据不可用，请重授权') counts.credentialUnavailable += 1;
       if (status.tone === 'warning') counts.warning += 1;
     }
     return counts;

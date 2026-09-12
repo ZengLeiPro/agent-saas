@@ -92,6 +92,21 @@ export function normalizeGrokBilling(raw: unknown): GrokNormalizedQuota {
     },
   };
 }
+/** 同一代理最多再试一次；不打开失败直连。401 走刷新，不按传输错误重试。 */
+export function isRetryableGrokBillingTransportError(error: unknown): boolean {
+  if (error instanceof GrokProtocolError || error instanceof GrokCredentialError) return false;
+  if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError'))
+    return true;
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError'))
+    return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|UND_ERR|socket|network/iu.test(message);
+}
+
+function shouldRetryGrokBillingResponse(response: Response): boolean {
+  return response.status === 429 || response.status >= 500;
+}
+
 export async function fetchGrokBilling(
   manager: GrokQuotaCredentialSource,
   ref: string,
@@ -106,13 +121,24 @@ export async function fetchGrokBilling(
       signal: AbortSignal.timeout(15_000),
     });
   };
+  const sendWithLimitedRetry = async (accessToken: string): Promise<Response> => {
+    try {
+      const first = await send(accessToken);
+      if (!shouldRetryGrokBillingResponse(first)) return first;
+      await first.body?.cancel().catch(() => undefined);
+      return await send(accessToken);
+    } catch (error) {
+      if (!isRetryableGrokBillingTransportError(error)) throw error;
+      return await send(accessToken);
+    }
+  };
   try {
     let token = await manager.getCredentialsForCredential(ref);
-    let response = await send(token.accessToken);
+    let response = await sendWithLimitedRetry(token.accessToken);
     if (response.status === 401) {
       await response.body?.cancel().catch(() => undefined);
       token = await manager.getCredentialsForCredential(ref, true, token.generation);
-      response = await send(token.accessToken);
+      response = await sendWithLimitedRetry(token.accessToken);
     }
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
@@ -121,7 +147,7 @@ export async function fetchGrokBilling(
     return normalizeGrokBilling(await readGrokJson(response));
   } catch (error) {
     if (error instanceof GrokProtocolError || error instanceof GrokCredentialError) throw error;
-    throw new GrokProtocolError('billing_request_failed');
+    throw new GrokProtocolError('billing_request_failed', undefined, true, { cause: error });
   }
 }
 function integerValue(value: unknown): number | undefined {

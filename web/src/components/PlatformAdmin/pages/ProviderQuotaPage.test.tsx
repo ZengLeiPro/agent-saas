@@ -528,8 +528,8 @@ describe('helpers', () => {
     expect(accountStatus({ ok: false, limitReached: false, windows: [] })).toEqual({ tone: 'ok', label: '正常' });
     expect(accountStatus({ ok: false, limitReached: false, windows: [{ ...okWindow, usedPercent: 20 }] })).toEqual({ tone: 'ok', label: '正常' });
     expect(accountStatus({ ok: false, limitReached: true, windows: [{ ...okWindow, usedPercent: 100 }] }).label).toBe('已耗尽');
-    expect(accountStatus({ ok: false, limitReached: false, windows: [okWindow], credential: { availability: 'auth_unavailable' } }).label).toBe('凭据不可用');
-    expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'auth_unavailable' } }).label).toBe('凭据不可用');
+    expect(accountStatus({ ok: false, limitReached: false, windows: [okWindow], credential: { availability: 'auth_unavailable' } }).label).toBe('凭据不可用，请重授权');
+    expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'auth_unavailable' } }).label).toBe('凭据不可用，请重授权');
     expect(accountStatus({ ok: true, limitReached: true, windows: [okWindow], credential: { availability: 'quota_cooldown' } }).label).toBe('已耗尽');
     expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'quota_cooldown' } })).toEqual({ tone: 'ok', label: '正常' });
     expect(accountStatus({ ok: true, limitReached: false, windows: [{ ...okWindow, usedPercent: 70 }], credential: { availability: 'quota_cooldown' } }).label).toBe('接近上限');

@@ -1122,6 +1122,51 @@ export class WebChannel implements BaseChannel {
     chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'ws', status })));
     this.wsSend(ws, { type: 'error', ...payload });
   }
+  /** Submission outcome is not a rejection: clients must verify the original idempotency key. */
+  private sendChatSubmissionUnknown(ws: WebSocket, clientMsgId: string): void {
+    const { failure, payload } = buildStructuredError({ source: 'ws', code: 'unknown' });
+    chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'ws' })));
+    this.wsSend(ws, {
+      type: 'error',
+      ...payload,
+      client_msg_id: clientMsgId,
+      submissionState: 'unknown',
+    });
+  }
+  /** Read-only durable lookup is bounded; timeout/error means unknown and must never enqueue again. */
+  private async findDurableSubmissionForReplay(
+    client: WsClient,
+    clientMsgId: string,
+  ): Promise<{ available: boolean; run: RunRecord | null }> {
+    const runStore = this.config.enqueueRuntime?.runStore;
+    if (!runStore) return { available: true, run: null };
+    const user = client.user;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const lookup = async (): Promise<RunRecord | null> => {
+      let run = await runStore.findByIdempotencyKey(
+        user?.tenantId ?? DEFAULT_TENANT_ID,
+        user?.sub,
+        clientMsgId,
+      );
+      if (!run && user && isPlatformAdminUser(user)) {
+        run = await runStore.findUniqueByIdempotencyKeyAcrossTenants?.(user.sub, clientMsgId) ?? null;
+      }
+      return run;
+    };
+    try {
+      const run = await Promise.race([
+        lookup(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('submission_lookup_timeout')), 5_000);
+        }),
+      ]);
+      return { available: true, run };
+    } catch {
+      return { available: false, run: null };
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
   // ── 消息处理器 ──────────────────────────────────────
   /** 处理 chat 消息（替代 POST /api/chat） */
   private handleChat(client: WsClient, msg: WsChatMessage): void {
@@ -1150,6 +1195,7 @@ export class WebChannel implements BaseChannel {
     };
     void next.then(cleanup, (error) => {
       chatLogger.error(`[chat] 消息接收入队失败: ${error instanceof Error ? error.message : String(error)}`);
+      if (clientMsgId) this.sendChatSubmissionUnknown(client.ws, clientMsgId);
       cleanup();
     });
   }
@@ -2135,7 +2181,13 @@ export class WebChannel implements BaseChannel {
 
     // 永久幂等事实必须先于 drain/载荷校验：重放一个已受理请求只回原权威结果，
     // 不能因本次传输载荷缺失或实例正在排水而改写为 rejected。
-    const replayStore=this.config.enqueueRuntime?.runStore;let durableRun=await replayStore?.findByIdempotencyKey(user?.tenantId??DEFAULT_TENANT_ID,user?.sub,clientMsgId);if(!durableRun&&user&&isPlatformAdminUser(user))durableRun=await replayStore?.findUniqueByIdempotencyKeyAcrossTenants?.(user.sub,clientMsgId)??null;
+    const durableReplay = await this.findDurableSubmissionForReplay(client, clientMsgId);
+    if (!durableReplay.available) {
+      chatLogger.warn(`[chat] durable replay lookup unavailable; client must verify client_msg_id=${clientMsgId}`);
+      this.sendChatSubmissionUnknown(ws, clientMsgId);
+      return;
+    }
+    const durableRun = durableReplay.run;
     if (durableRun) {
       if (durableRun.userId
         ? this.sensitiveActionAccessError(client, { tenantId: durableRun.tenantId, ownerUserId: durableRun.userId })
@@ -3215,10 +3267,9 @@ export class WebChannel implements BaseChannel {
         if (!durableAccepted) {
           // PostgreSQL 的 COMMIT 可能已生效但连接在回执前中断；先按永久幂等键反查，
           // 绝不能把“提交结果未知”直接改成 failed 并清掉 wakeMessage。
-          const committedRun = await enqueueRuntime.runStore.findByIdempotencyKey(user?.tenantId ?? DEFAULT_TENANT_ID, user?.sub, clientMsgId).catch(() => {
-            durableLookupAvailable = false;
-            return null;
-          });
+          const recoveryLookup = await this.findDurableSubmissionForReplay(client, clientMsgId);
+          durableLookupAvailable = recoveryLookup.available;
+          const committedRun = recoveryLookup.run;
           if (committedRun) {
             durableAccepted = true;
             durableAcceptedRunId = committedRun.runId;
@@ -3292,6 +3343,7 @@ export class WebChannel implements BaseChannel {
         }
         if (!durableLookupAvailable) {
           chatLogger.warn(`[chat] enqueue outcome unknown; client must verify client_msg_id=${clientMsgId}: ${errorMessage}`);
+          this.sendChatSubmissionUnknown(ws, clientMsgId);
           return;
         }
         chatLogger.error(`[chat] enqueue-only failed: ${errorMessage}`);

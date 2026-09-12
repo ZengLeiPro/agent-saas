@@ -44,6 +44,7 @@ export interface FileUploadState {
   removeFile: (index: number) => void;
   clearFiles: () => void;
   consumeFiles: () => UploadedFile[];
+  getUploadedFiles: () => UploadedFile[];
   /**
    * 注入已上传成功的 UploadedFile（不走本地 picker，例如系统级分享流程）。
    * share-target 页面已经把文件 POST 到 /api/upload 拿到结果，这里只负责把结果
@@ -232,6 +233,7 @@ export function useFileUpload(boundary?: { available: boolean; identityKey: stri
     removeFile: core.removeFile,
     clearFiles: core.clearFiles,
     consumeFiles: core.consumeFiles,
+    getUploadedFiles: () => core.uploadedFilesRef.current,
     addUploadedFiles,
   };
 }

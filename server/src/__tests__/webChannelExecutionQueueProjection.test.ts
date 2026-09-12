@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WebChannel, type WebChannelConfig } from '../channels/web/channel.js';
 import type { AgentRunDispatch, AgentRunOptions } from '../agent/types.js';
@@ -153,6 +153,110 @@ describe('WebChannel queued execution projection', () => {
     };
     return { channel, calls };
   }
+  it('returns a correlated unknown result when the durable replay lookup fails and releases the chat tail', async () => {
+    const runStore = new MemoryRunStore();
+    let lookups = 0;
+    runStore.findByIdempotencyKey = async () => {
+      lookups += 1;
+      throw new Error('durable lookup unavailable');
+    };
+    const { channel } = createChannel({
+      enqueueRuntime: {
+        scheduler: { enqueue: async () => { throw new Error('must not enqueue'); } } as any,
+        runStore,
+        sessionCatalog: new FileSessionCatalog({ agentCwd: '/tmp/web-unknown-replay' }),
+        enabled: true,
+      },
+    });
+    const ws = new FakeWebSocket();
+    const client = { ws: ws as any, user: PLATFORM_ADMIN_USER, alive: true, lastActivityAt: Date.now() };
+
+    (channel as any).handleChat(client, chatMessage({ message: 'first', client_msg_id: 'unknown-replay-1' }));
+    (channel as any).handleChat(client, chatMessage({ message: 'second', client_msg_id: 'unknown-replay-2' }));
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (ws.sent.filter((message) => message.data?.submissionState === 'unknown').length === 2) break;
+      await flushMicrotasks();
+    }
+
+    const unknowns = ws.sent.filter((message) => message.data?.submissionState === 'unknown');
+    expect(unknowns.map((message) => message.data?.client_msg_id)).toEqual(['unknown-replay-1', 'unknown-replay-2']);
+    expect(unknowns.every((message) => message.data?.type === 'error')).toBe(true);
+    expect(ws.sent.find((message) => message.data?.type === 'chat_rejected')).toBeUndefined();
+    expect(lookups).toBe(2);
+  });
+
+  it('bounds a hung durable replay lookup and does not enqueue while outcome is unknown', async () => {
+    vi.useFakeTimers();
+    try {
+      const runStore = new MemoryRunStore();
+      runStore.findByIdempotencyKey = async () => new Promise<RunRecord | null>(() => {});
+      let enqueueCalls = 0;
+      const { channel } = createChannel({
+        enqueueRuntime: {
+          scheduler: { enqueue: async () => { enqueueCalls += 1; throw new Error('must not enqueue'); } } as any,
+          runStore,
+          sessionCatalog: new FileSessionCatalog({ agentCwd: '/tmp/web-unknown-timeout' }),
+          enabled: true,
+        },
+      });
+      const ws = new FakeWebSocket();
+      const client = { ws: ws as any, user: PLATFORM_ADMIN_USER, alive: true, lastActivityAt: Date.now() };
+
+      (channel as any).handleChat(client, chatMessage({ message: 'timeout', client_msg_id: 'unknown-timeout-1' }));
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(5_001);
+      await flushMicrotasks();
+
+      expect(ws.sent.find((message) => message.data?.submissionState === 'unknown')?.data).toMatchObject({
+        type: 'error', client_msg_id: 'unknown-timeout-1', submissionState: 'unknown',
+      });
+      expect(enqueueCalls).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers the accepted run when enqueue commits durably and then throws', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'web-commit-then-throw-'));
+    try {
+      const runStore = new MemoryRunStore();
+      const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
+      let enqueueCalls = 0;
+      const { channel } = createChannel({
+        agentCwd: tmp,
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), PLATFORM_ADMIN_USER.tenantId),
+        enqueueRuntime: {
+          scheduler: {
+            enqueue: async (input: UpsertRunInput) => {
+              enqueueCalls += 1;
+              await runStore.upsertPending(input);
+              throw new Error('commit response lost');
+            },
+          } as any,
+          runStore,
+          sessionCatalog,
+          enabled: true,
+        },
+      });
+      const ws = new FakeWebSocket();
+      await (channel as any).processChatMessage(
+        { ws: ws as any, user: PLATFORM_ADMIN_USER, alive: true, lastActivityAt: Date.now() },
+        chatMessage({ sessionId: 'session-commit-then-throw', message: '只执行一次', client_msg_id: 'commit-then-throw-client' }),
+      );
+
+      const accepted = [...runStore.records.values()].find((run) => run.idempotencyKey === 'commit-then-throw-client');
+      expect(accepted).toBeDefined();
+      expect(enqueueCalls).toBe(1);
+      expect(ws.sent.find((message) => message.data?.type === 'chat_ack')?.data).toMatchObject({
+        client_msg_id: 'commit-then-throw-client', runId: accepted?.runId,
+      });
+      expect(ws.sent.find((message) => message.data?.submissionState === 'unknown')).toBeUndefined();
+      expect(ws.sent.find((message) => message.data?.type === 'chat_rejected')).toBeUndefined();
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
   it('keeps a durable run pending when post-accept queue projection fails', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'web-post-accept-failure-'));
     try {

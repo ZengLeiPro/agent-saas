@@ -267,6 +267,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
 
       const status = await fetch(`${baseUrl}/api/messages/client-queued-1/status`);
       expect(status.status).toBe(200);
+      expect(status.headers.get('cache-control')).toBe('no-store');
       await expect(status.json()).resolves.toMatchObject({
         clientMessageId: 'client-queued-1',
         runId: 'queued-run-1',
@@ -286,6 +287,28 @@ describe('sessions routes for meta-only runtime sessions', () => {
       });
     } finally {
       await stopServer(server);
+    }
+  });
+
+  it('marks message status 404 and 503 recovery responses as no-store', async () => {
+    const missing = await startServer(agentCwd, { findRunByClientMessageId: async () => null });
+    try {
+      const response = await fetch(`${missing.baseUrl}/api/messages/missing-client/status`);
+      expect(response.status).toBe(404);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    } finally {
+      await stopServer(missing.server);
+    }
+
+    const unavailable = await startServer(agentCwd, {
+      findRunByClientMessageId: async () => { throw new Error('lookup unavailable'); },
+    });
+    try {
+      const response = await fetch(`${unavailable.baseUrl}/api/messages/unavailable-client/status`);
+      expect(response.status).toBe(503);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    } finally {
+      await stopServer(unavailable.server);
     }
   });
 

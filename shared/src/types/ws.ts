@@ -151,7 +151,7 @@ type WsEventPayload =
     | { type: 'buffer_overflow' }
     /** quotaResetAt：配额窗口绝对重置时刻（ISO）；仅 failureKind='quota_exhausted' 且上游给了结构化字段时下发 */
     | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; quotaResetAt?: string; finalOutput?: boolean }
-    | { type: 'error'; message: string; code?: string; correlationId?: string; retryAfter?: number }
+    | { type: 'error'; message: string; code?: string; correlationId?: string; retryAfter?: number; client_msg_id?: string; submissionState?: 'unknown'; sessionId?: string }
     | { type: 'respond_error'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; version?: number; authEpoch?: number; generation?: number; status?: 'rejected' | 'not_found' | 'expired'; error: string; reason?: string; retryable?: boolean }
     | { type: 'respond_ok'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; version?: number; authEpoch?: number; generation?: number; status?: 'accepted' | 'duplicate' | 'resolved'; response?: Record<string, unknown> }
     | { type: 'abort_ok'; streamId?: string; runId?: string }

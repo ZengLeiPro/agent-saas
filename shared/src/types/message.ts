@@ -61,8 +61,11 @@ export interface MessageModerationMetadata {
   reasonCode?: string;
 }
 
+export type MessageDeliveryIssue = 'unknown' | 'rejected' | 'missing_payload';
+export type MessageDeliveryPhase = 'connecting' | 'awaiting_ack' | 'verifying';
+
 export type MessageItem =
-  | { id: string; type: "user"; content: string; displayContent?: string; attachments?: MessageAttachmentDisplay[]; isVoiceTranscript?: boolean; status?: 'pending' | 'queued' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string; moderation?: MessageModerationMetadata }
+  | { id: string; type: "user"; content: string; displayContent?: string; attachments?: MessageAttachmentDisplay[]; isVoiceTranscript?: boolean; status?: 'pending' | 'queued' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string; deliveryIssue?: MessageDeliveryIssue; deliveryPhase?: MessageDeliveryPhase; moderation?: MessageModerationMetadata }
   | { id: string; type: "text"; content: string; streaming?: boolean; draftId?: string; runId?: string; finalOutput?: boolean; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number; guardrailEventId?: string; display?: PresentationBlock[]; moderation?: MessageModerationMetadata }
   | { id: string; type: "system_event"; title: string; content: string; timestamp?: number }
   | { id: string; type: "thinking"; content: string; streaming?: boolean; draftId?: string; startedAt?: number; durationMs?: number }
@@ -192,6 +195,8 @@ export type MessageItem =
       timestamp?: number;
       clientMsgId?: string;
       failedReason?: string;
+      deliveryIssue?: MessageDeliveryIssue;
+      deliveryPhase?: MessageDeliveryPhase;
     }
   /**
    * 会话级终态提示。区别于 user/tool/AI 输出，用来表达运行异常、用户取消，

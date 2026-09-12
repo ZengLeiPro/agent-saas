@@ -134,9 +134,18 @@ export function isBackgroundTaskReady(record: Pick<RunRecord, 'metadata'>): bool
   return record.metadata?.backgroundTaskVersion !== 2 || record.metadata.backgroundTaskReady === true;
 }
 
-export const UNREADY_BACKGROUND_TASK_SQL =
-  "COALESCE(candidate.metadata->>'backgroundTaskVersion', '') = '2' AND "
-  + "COALESCE(candidate.metadata->>'backgroundTaskReady', 'false') <> 'true'";
+/** 直接子 Agent Run 由父 loop 驱动；后台任务协调 Run 仍归调度器。 */
+export function parentOwnedSubagentSql(alias: 'run' | 'candidate'): string {
+  return `COALESCE(${alias}.metadata->>'subagent', 'false') = 'true' AND `
+    + `${alias}.metadata->>'backgroundTask' IS DISTINCT FROM 'true'`;
+}
+
+export function unreadyBackgroundTaskSql(alias: 'run' | 'candidate'): string {
+  return `COALESCE(${alias}.metadata->>'backgroundTaskVersion', '') = '2' AND `
+    + `COALESCE(${alias}.metadata->>'backgroundTaskReady', 'false') <> 'true'`;
+}
+
+export const UNREADY_BACKGROUND_TASK_SQL = unreadyBackgroundTaskSql('candidate');
 
 export function isBackgroundTaskWakeRun(record: Pick<RunRecord, 'metadata'>): boolean {
   return record.metadata?.backgroundTaskWake === true;

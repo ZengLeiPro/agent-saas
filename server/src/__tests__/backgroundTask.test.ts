@@ -199,6 +199,41 @@ describe('DurableBackgroundTaskService', () => {
     })).toBeUndefined();
   });
 
+  it('session 记录已丢失时仍可通过共享 EventStore 形成 durable 终态', async () => {
+    const base = fixture();
+    base.config.eventStoreForMissingSession = base.eventStore;
+    const record = await base.runStore.upsertPending({
+      runId: 'shell-bg-missing-session',
+      sessionId: 'sub-shell-missing-session',
+      tenantId: 'tenant-1',
+      metadata: {
+        backgroundTask: true,
+        backgroundTaskType: 'command',
+        backgroundTaskVersion: 2,
+        backgroundTaskReady: false,
+      },
+    });
+
+    await expect(base.service.fail(
+      record,
+      '后台命令启动确认超时',
+      'background_command_start_timeout',
+    )).resolves.toBeUndefined();
+    await expect(base.runStore.get(record.runId)).resolves.toMatchObject({
+      status: 'failed',
+      statusReason: 'background_command_start_timeout',
+      metadata: { wakeState: 'pending' },
+    });
+    expect(base.eventStore.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'run_state_changed',
+        runId: record.runId,
+        sessionId: record.sessionId,
+        status: 'failed',
+      }),
+    ]));
+  });
+
   it('reserves background Shell with the effective tenant remote workspace', async () => {
     const invoke = vi.fn(async () => ({
       status: 'success' as const,

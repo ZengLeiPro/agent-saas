@@ -11,9 +11,7 @@
           "configPath": "runtimeEventStore",
           "description": "工具提示语快照表和审计表已创建",
           "sql": "SELECT to_regclass($1 || '_tool_descriptions') IS NOT NULL AND to_regclass($1 || '_tool_description_audit') IS NOT NULL AND (SELECT count(*) = 3 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 || '_tool_descriptions' AND column_name IN ('id', 'revision', 'overrides')) AND (SELECT count(*) = 6 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 || '_tool_description_audit' AND column_name IN ('revision', 'tool_id', 'previous_override', 'next_override', 'actor', 'created_at')) AS ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -27,9 +25,7 @@
           "configPath": "runtimeEventStore",
           "description": "额度快照及套餐到期表的完整列定义、自增序列、默认值、主键和可用索引满足读写契约",
           "sql": "WITH expected(suffix, column_name, data_type, required, default_kind) AS (VALUES ('_provider_quota_snapshots','id','int8',true,'sequence'), ('_provider_quota_snapshots','account_key','text',true,''), ('_provider_quota_snapshots','source_kind','text',true,''), ('_provider_quota_snapshots','collected_at','timestamptz',true,''), ('_provider_quota_snapshots','ok','bool',true,''), ('_provider_quota_snapshots','snapshot','jsonb',true,''), ('_provider_plan_expiry_edits','id','int8',true,'sequence'), ('_provider_plan_expiry_edits','identity_key','text',true,''), ('_provider_plan_expiry_edits','end_time','timestamptz',false,''), ('_provider_plan_expiry_edits','updated_by','text',true,''), ('_provider_plan_expiry_edits','updated_at','timestamptz',true,'now')), columns_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_class c ON c.oid=to_regclass($1 || e.suffix) LEFT JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname=e.column_name AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE c.relkind IS DISTINCT FROM 'r' OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.required OR (e.default_kind='now' AND COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT IN ('now()','CURRENT_TIMESTAMP')) OR (e.default_kind='sequence' AND (COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT LIKE 'nextval(%' OR pg_get_serial_sequence(format('%I.%I',n.nspname,c.relname),'id') IS NULL OR NOT EXISTS (SELECT 1 FROM pg_constraint p WHERE p.conrelid=c.oid AND p.contype='p' AND p.convalidated AND p.conkey=ARRAY[a.attnum])))) AS ok), expected_indexes(suffix, index_suffix, first_column, second_column) AS (VALUES ('_provider_quota_snapshots','_account_time_idx','account_key','collected_at'),('_provider_plan_expiry_edits','_identity_idx','identity_key','id')), indexes_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected_indexes e LEFT JOIN pg_index i ON i.indexrelid=to_regclass($1 || e.suffix || e.index_suffix) LEFT JOIN pg_attribute a ON a.attrelid=to_regclass($1 || e.suffix) AND a.attname=e.first_column AND NOT a.attisdropped LEFT JOIN pg_attribute b ON b.attrelid=to_regclass($1 || e.suffix) AND b.attname=e.second_column AND NOT b.attisdropped WHERE i.indrelid IS DISTINCT FROM to_regclass($1 || e.suffix) OR i.indisvalid IS DISTINCT FROM true OR i.indisready IS DISTINCT FROM true OR i.indnatts IS DISTINCT FROM 2 OR i.indnkeyatts IS DISTINCT FROM 2 OR i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indkey::text IS DISTINCT FROM format('%s %s',a.attnum,b.attnum) OR i.indoption::text IS DISTINCT FROM '0 3') AS ok) SELECT columns_ok.ok AND indexes_ok.ok AS ok FROM columns_ok,indexes_ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -43,9 +39,7 @@
           "configPath": "runtimeEventStore",
           "description": "额度快照及套餐到期表的完整列定义、自增序列、默认值、主键和可用索引满足读写契约",
           "sql": "WITH expected(suffix, column_name, data_type, required, default_kind) AS (VALUES ('_provider_quota_snapshots','id','int8',true,'sequence'), ('_provider_quota_snapshots','account_key','text',true,''), ('_provider_quota_snapshots','source_kind','text',true,''), ('_provider_quota_snapshots','collected_at','timestamptz',true,''), ('_provider_quota_snapshots','ok','bool',true,''), ('_provider_quota_snapshots','snapshot','jsonb',true,''), ('_provider_plan_expiry_edits','id','int8',true,'sequence'), ('_provider_plan_expiry_edits','identity_key','text',true,''), ('_provider_plan_expiry_edits','end_time','timestamptz',false,''), ('_provider_plan_expiry_edits','updated_by','text',true,''), ('_provider_plan_expiry_edits','updated_at','timestamptz',true,'now')), columns_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_class c ON c.oid=to_regclass($1 || e.suffix) LEFT JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname=e.column_name AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE c.relkind IS DISTINCT FROM 'r' OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.required OR (e.default_kind='now' AND COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT IN ('now()','CURRENT_TIMESTAMP')) OR (e.default_kind='sequence' AND (COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT LIKE 'nextval(%' OR pg_get_serial_sequence(format('%I.%I',n.nspname,c.relname),'id') IS NULL OR NOT EXISTS (SELECT 1 FROM pg_constraint p WHERE p.conrelid=c.oid AND p.contype='p' AND p.convalidated AND p.conkey=ARRAY[a.attnum])))) AS ok), expected_indexes(suffix, index_suffix, first_column, second_column) AS (VALUES ('_provider_quota_snapshots','_account_time_idx','account_key','collected_at'),('_provider_plan_expiry_edits','_identity_idx','identity_key','id')), indexes_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected_indexes e LEFT JOIN pg_index i ON i.indexrelid=to_regclass($1 || e.suffix || e.index_suffix) LEFT JOIN pg_attribute a ON a.attrelid=to_regclass($1 || e.suffix) AND a.attname=e.first_column AND NOT a.attisdropped LEFT JOIN pg_attribute b ON b.attrelid=to_regclass($1 || e.suffix) AND b.attname=e.second_column AND NOT b.attisdropped WHERE i.indrelid IS DISTINCT FROM to_regclass($1 || e.suffix) OR i.indisvalid IS DISTINCT FROM true OR i.indisready IS DISTINCT FROM true OR i.indnatts IS DISTINCT FROM 2 OR i.indnkeyatts IS DISTINCT FROM 2 OR i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indkey::text IS DISTINCT FROM format('%s %s',a.attnum,b.attnum) OR i.indoption::text IS DISTINCT FROM '0 3') AS ok) SELECT columns_ok.ok AND indexes_ok.ok AS ok FROM columns_ok,indexes_ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -59,9 +53,7 @@
           "configPath": "runtimeEventStore",
           "description": "额度快照及套餐到期表的完整列定义、自增序列、默认值、主键和可用索引满足读写契约",
           "sql": "WITH expected(suffix, column_name, data_type, required, default_kind) AS (VALUES ('_provider_quota_snapshots','id','int8',true,'sequence'), ('_provider_quota_snapshots','account_key','text',true,''), ('_provider_quota_snapshots','source_kind','text',true,''), ('_provider_quota_snapshots','collected_at','timestamptz',true,''), ('_provider_quota_snapshots','ok','bool',true,''), ('_provider_quota_snapshots','snapshot','jsonb',true,''), ('_provider_plan_expiry_edits','id','int8',true,'sequence'), ('_provider_plan_expiry_edits','identity_key','text',true,''), ('_provider_plan_expiry_edits','end_time','timestamptz',false,''), ('_provider_plan_expiry_edits','updated_by','text',true,''), ('_provider_plan_expiry_edits','updated_at','timestamptz',true,'now')), columns_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_class c ON c.oid=to_regclass($1 || e.suffix) LEFT JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname=e.column_name AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE c.relkind IS DISTINCT FROM 'r' OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.required OR (e.default_kind='now' AND COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT IN ('now()','CURRENT_TIMESTAMP')) OR (e.default_kind='sequence' AND (COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT LIKE 'nextval(%' OR pg_get_serial_sequence(format('%I.%I',n.nspname,c.relname),'id') IS NULL OR NOT EXISTS (SELECT 1 FROM pg_constraint p WHERE p.conrelid=c.oid AND p.contype='p' AND p.convalidated AND p.conkey=ARRAY[a.attnum])))) AS ok), expected_indexes(suffix, index_suffix, first_column, second_column) AS (VALUES ('_provider_quota_snapshots','_account_time_idx','account_key','collected_at'),('_provider_plan_expiry_edits','_identity_idx','identity_key','id')), indexes_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected_indexes e LEFT JOIN pg_index i ON i.indexrelid=to_regclass($1 || e.suffix || e.index_suffix) LEFT JOIN pg_attribute a ON a.attrelid=to_regclass($1 || e.suffix) AND a.attname=e.first_column AND NOT a.attisdropped LEFT JOIN pg_attribute b ON b.attrelid=to_regclass($1 || e.suffix) AND b.attname=e.second_column AND NOT b.attisdropped WHERE i.indrelid IS DISTINCT FROM to_regclass($1 || e.suffix) OR i.indisvalid IS DISTINCT FROM true OR i.indisready IS DISTINCT FROM true OR i.indnatts IS DISTINCT FROM 2 OR i.indnkeyatts IS DISTINCT FROM 2 OR i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indkey::text IS DISTINCT FROM format('%s %s',a.attnum,b.attnum) OR i.indoption::text IS DISTINCT FROM '0 3') AS ok) SELECT columns_ok.ok AND indexes_ok.ok AS ok FROM columns_ok,indexes_ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -75,9 +67,7 @@
           "configPath": "runtimeEventStore",
           "description": "系统默认接入配置表及五个必填字段、主键和外键已创建",
           "sql": "SELECT to_regclass($1 || '_ky_app_connection_settings') IS NOT NULL AND (SELECT count(*) = 5 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 || '_ky_app_connection_settings' AND is_nullable='NO' AND ((column_name IN ('system_id','updated_by') AND data_type='text') OR (column_name='settings_json' AND data_type='jsonb') OR (column_name='version' AND data_type='integer' AND column_default='1') OR (column_name='updated_at' AND data_type='timestamp with time zone'))) AND (SELECT count(*) = 2 FROM pg_constraint WHERE conrelid=to_regclass($1 || '_ky_app_connection_settings') AND contype IN ('p','f')) AS ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -91,9 +81,7 @@
           "configPath": "runtimeEventStore",
           "description": "binding 身份分代可空列、旧 writer 唯一约束和查询索引完整有效",
           "sql": "WITH b AS (SELECT to_regclass($1 || '_org_agent_channel_bindings') AS oid), cols AS (SELECT count(*)=2 AS ok FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 || '_org_agent_channel_bindings' AND column_name IN ('retired_at','logical_conversation_id') AND is_nullable='YES' AND ((column_name='retired_at' AND data_type='timestamp with time zone') OR (column_name='logical_conversation_id' AND data_type='text'))), old_unique AS (SELECT EXISTS (SELECT 1 FROM pg_constraint,b WHERE conrelid=b.oid AND contype='u' AND pg_get_constraintdef(pg_constraint.oid)='UNIQUE (account_id, conversation_id)') AS ok), generation_idx AS (SELECT EXISTS (SELECT 1 FROM pg_index,b WHERE indrelid=b.oid AND indexrelid=to_regclass($1 || '_org_agent_channel_bindings_identity_generation_idx') AND indisvalid AND indisready) AS ok) SELECT cols.ok AND old_unique.ok AND generation_idx.ok AS ok FROM cols,old_unique,generation_idx",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -107,9 +95,7 @@
           "configPath": "runtimeEventStore",
           "description": "DWS 持久接收 owner、原始 inbox、迁移账本及准入索引完整有效",
           "sql": "WITH expected(table_suffix,column_name,data_type,nullable) AS (VALUES ('_dws_receiver_owners','account_id','text',false),('_dws_receiver_owners','receiver_id','text',false),('_dws_receiver_owners','owner_epoch','bigint',false),('_dws_receiver_owners','received_cursor','bigint',false),('_dws_receiver_owners','acknowledged_cursor','bigint',false),('_dws_receiver_owners','bridge_evidence_json','jsonb',false),('_dws_receiver_inbox','account_id','text',false),('_dws_receiver_inbox','receiver_id','text',false),('_dws_receiver_inbox','sequence','bigint',false),('_dws_receiver_inbox','payload','bytea',false),('_dws_receiver_inbox','payload_sha256','text',false),('_dws_receiver_inbox','state','text',false),('_dws_receiver_migrations','migration_id','text',false),('_dws_receiver_migrations','account_id','text',false),('_dws_receiver_migrations','state','text',false),('_dws_receiver_migrations','evidence_json','jsonb',false)), columns_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN information_schema.columns c ON c.table_schema=current_schema() AND c.table_name=$1 || e.table_suffix AND c.column_name=e.column_name WHERE c.column_name IS NULL OR c.data_type<>e.data_type OR (c.is_nullable='YES')<>e.nullable) AS ok), owners_keys AS (SELECT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=to_regclass($1 || '_dws_receiver_owners') AND c.contype='p' AND pg_get_constraintdef(c.oid)='PRIMARY KEY (account_id)') AND EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=to_regclass($1 || '_dws_receiver_owners') AND c.contype='u' AND pg_get_constraintdef(c.oid)='UNIQUE (receiver_id)') AND EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=to_regclass($1 || '_dws_receiver_owners') AND c.contype='f' AND c.confrelid=to_regclass($1 || '_agent_dws_accounts')) AS ok), inbox_keys AS (SELECT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=to_regclass($1 || '_dws_receiver_inbox') AND c.contype='p' AND pg_get_constraintdef(c.oid)='PRIMARY KEY (account_id, receiver_id, sequence)') AND EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=to_regclass($1 || '_dws_receiver_inbox') AND c.contype='f' AND c.confrelid=to_regclass($1 || '_agent_dws_accounts')) AS ok), migration_keys AS (SELECT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=to_regclass($1 || '_dws_receiver_migrations') AND c.contype='p' AND pg_get_constraintdef(c.oid)='PRIMARY KEY (migration_id)') AND EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=to_regclass($1 || '_dws_receiver_migrations') AND c.contype='f' AND c.confrelid=to_regclass($1 || '_agent_dws_accounts')) AS ok), indexes_ok AS (SELECT COALESCE((SELECT i.indisvalid AND i.indisready AND NOT i.indisunique AND pg_get_indexdef(i.indexrelid) LIKE '% USING btree (account_id, receiver_id, sequence) WHERE (state = ''pending''::text)' FROM pg_index i WHERE i.indexrelid=to_regclass($1 || '_dws_receiver_inbox_pending_idx')),false) AND COALESCE((SELECT i.indisvalid AND i.indisready AND NOT i.indisunique AND pg_get_indexdef(i.indexrelid) LIKE '% USING btree (account_id, event_id) WHERE (event_id IS NOT NULL)' FROM pg_index i WHERE i.indexrelid=to_regclass($1 || '_dws_receiver_inbox_event_idx')),false) AND COALESCE((SELECT i.indisvalid AND i.indisready AND i.indisunique AND pg_get_indexdef(i.indexrelid) LIKE '% USING btree (account_id) WHERE %' AND pg_get_expr(i.indpred,i.indrelid) LIKE '%planned%' AND pg_get_expr(i.indpred,i.indrelid) LIKE '%handoff_pending%' AND pg_get_expr(i.indpred,i.indrelid) LIKE '%blocked%' FROM pg_index i WHERE i.indexrelid=to_regclass($1 || '_dws_receiver_migration_active_idx')),false) AS ok) SELECT columns_ok.ok AND owners_keys.ok AND inbox_keys.ok AND migration_keys.ok AND indexes_ok.ok AS ok FROM columns_ok,owners_keys,inbox_keys,migration_keys,indexes_ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -121,9 +107,7 @@
         {
           "id": "grok-schema-c44a7b0c30c4",
           "configPath": "runtimeEventStore",
-          "params": [
-            "$tablePrefix"
-          ],
+          "params": ["$tablePrefix"],
           "sql": "WITH suffixes(kind, suffix, column_count) AS (\n  VALUES ('state', '_grok_credential_runtime_state', 6),\n         ('journal', '_grok_credential_refresh_journal', 3)\n), names AS (\n  SELECT kind, column_count,\n    lower((CASE WHEN length($1::text) <= 44 - length(suffix) THEN $1::text\n      ELSE 'g' || left(encode(sha256(convert_to($1::text, 'UTF8')), 'hex'), 43 - length(suffix))\n    END) || suffix) AS table_name\n  FROM suffixes\n), relations AS (\n  SELECT n.*, c.oid FROM names n\n  LEFT JOIN pg_class c ON c.oid = to_regclass(format('%I.%I', current_schema(), n.table_name))\n    AND c.relkind = 'r' AND c.relpersistence = 'p'\n), expected(kind, column_name, data_type, not_null) AS (\n  VALUES ('state','credential_ref','text',true), ('state','availability','text',true),\n    ('state','credential_generation','int8',true), ('state','cooldown_until','timestamptz',false),\n    ('state','last_failure_code','text',false), ('state','updated_at','timestamptz',true),\n    ('journal','credential_ref','text',true), ('journal','credential_generation','int8',true),\n    ('journal','started_at','timestamptz',true)\n)\nSELECT\n  (SELECT count(*) = 2 AND bool_and(oid IS NOT NULL) FROM relations)\n  AND NOT EXISTS (\n    SELECT 1 FROM expected e JOIN relations r USING(kind)\n    LEFT JOIN pg_attribute a ON a.attrelid = r.oid AND a.attname = e.column_name\n      AND a.attnum > 0 AND NOT a.attisdropped\n    WHERE a.attname IS NULL OR a.atttypid <> e.data_type::regtype OR a.attnotnull <> e.not_null\n  )\n  AND NOT EXISTS (\n    SELECT 1 FROM relations r WHERE\n      (SELECT count(*) FROM pg_attribute a WHERE a.attrelid=r.oid AND a.attnum>0 AND NOT a.attisdropped) <> r.column_count\n      OR NOT EXISTS (\n        SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='credential_ref'\n        WHERE c.conrelid=r.oid AND c.contype='p' AND c.convalidated AND c.conkey=ARRAY[a.attnum]\n      )\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid\n    WHERE r.kind='state' AND c.contype='c' AND c.convalidated\n      AND regexp_replace(pg_get_constraintdef(c.oid), '\\s', '', 'g') =\n        'CHECK((availability=ANY(ARRAY[''available''::text,''quota_cooldown''::text,''auth_unavailable''::text])))'\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid\n    WHERE r.kind='journal' AND c.contype='c' AND c.convalidated\n      AND regexp_replace(pg_get_constraintdef(c.oid), '\\s', '', 'g') = 'CHECK((credential_generation>0))'\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname='credential_generation'\n    JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum\n    WHERE r.kind='state' AND pg_get_expr(d.adbin,d.adrelid)='0'\n  )\n  AND (SELECT count(*)=2 FROM relations r\n    JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname=CASE WHEN r.kind='state' THEN 'updated_at' ELSE 'started_at' END\n    JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum\n    WHERE pg_get_expr(d.adbin,d.adrelid)='now()')\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_index i ON i.indrelid=r.oid\n    JOIN pg_class idx ON idx.oid=i.indexrelid\n    JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname='cooldown_until'\n    WHERE r.kind='state' AND idx.relname=r.table_name||'_cooldown_idx'\n      AND i.indisvalid AND i.indisready AND NOT i.indisunique AND i.indnkeyatts=1\n      AND i.indkey::text=a.attnum::text AND i.indpred IS NULL AND i.indexprs IS NULL\n  ) AS ok\n",
           "description": "Grok state/journal columns, keys, validated checks, defaults and cooldown index; Codex compatibility is proven separately"
         }
@@ -137,9 +121,7 @@
         {
           "id": "grok-schema-65dc4c6a3b13",
           "configPath": "runtimeEventStore",
-          "params": [
-            "$tablePrefix"
-          ],
+          "params": ["$tablePrefix"],
           "sql": "WITH suffixes(kind, suffix, column_count) AS (\n  VALUES ('state', '_grok_credential_runtime_state', 6),\n         ('journal', '_grok_credential_refresh_journal', 3)\n), names AS (\n  SELECT kind, column_count,\n    lower((CASE WHEN length($1::text) <= 44 - length(suffix) THEN $1::text\n      ELSE 'g' || left(encode(sha256(convert_to($1::text, 'UTF8')), 'hex'), 43 - length(suffix))\n    END) || suffix) AS table_name\n  FROM suffixes\n), relations AS (\n  SELECT n.*, c.oid FROM names n\n  LEFT JOIN pg_class c ON c.oid = to_regclass(format('%I.%I', current_schema(), n.table_name))\n    AND c.relkind = 'r' AND c.relpersistence = 'p'\n), expected(kind, column_name, data_type, not_null) AS (\n  VALUES ('state','credential_ref','text',true), ('state','availability','text',true),\n    ('state','credential_generation','int8',true), ('state','cooldown_until','timestamptz',false),\n    ('state','last_failure_code','text',false), ('state','updated_at','timestamptz',true),\n    ('journal','credential_ref','text',true), ('journal','credential_generation','int8',true),\n    ('journal','started_at','timestamptz',true)\n)\nSELECT\n  (SELECT count(*) = 2 AND bool_and(oid IS NOT NULL) FROM relations)\n  AND NOT EXISTS (\n    SELECT 1 FROM expected e JOIN relations r USING(kind)\n    LEFT JOIN pg_attribute a ON a.attrelid = r.oid AND a.attname = e.column_name\n      AND a.attnum > 0 AND NOT a.attisdropped\n    WHERE a.attname IS NULL OR a.atttypid <> e.data_type::regtype OR a.attnotnull <> e.not_null\n  )\n  AND NOT EXISTS (\n    SELECT 1 FROM relations r WHERE\n      (SELECT count(*) FROM pg_attribute a WHERE a.attrelid=r.oid AND a.attnum>0 AND NOT a.attisdropped) <> r.column_count\n      OR NOT EXISTS (\n        SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='credential_ref'\n        WHERE c.conrelid=r.oid AND c.contype='p' AND c.convalidated AND c.conkey=ARRAY[a.attnum]\n      )\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid\n    WHERE r.kind='state' AND c.contype='c' AND c.convalidated\n      AND regexp_replace(pg_get_constraintdef(c.oid), '\\s', '', 'g') =\n        'CHECK((availability=ANY(ARRAY[''available''::text,''quota_cooldown''::text,''auth_unavailable''::text])))'\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid\n    WHERE r.kind='journal' AND c.contype='c' AND c.convalidated\n      AND regexp_replace(pg_get_constraintdef(c.oid), '\\s', '', 'g') = 'CHECK((credential_generation>0))'\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname='credential_generation'\n    JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum\n    WHERE r.kind='state' AND pg_get_expr(d.adbin,d.adrelid)='0'\n  )\n  AND (SELECT count(*)=2 FROM relations r\n    JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname=CASE WHEN r.kind='state' THEN 'updated_at' ELSE 'started_at' END\n    JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum\n    WHERE pg_get_expr(d.adbin,d.adrelid)='now()')\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_index i ON i.indrelid=r.oid\n    JOIN pg_class idx ON idx.oid=i.indexrelid\n    JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname='cooldown_until'\n    WHERE r.kind='state' AND idx.relname=r.table_name||'_cooldown_idx'\n      AND i.indisvalid AND i.indisready AND NOT i.indisunique AND i.indnkeyatts=1\n      AND i.indkey::text=a.attnum::text AND i.indpred IS NULL AND i.indexprs IS NULL\n  ) AS ok\n",
           "description": "Grok state/journal columns, keys, validated checks, defaults and cooldown index; Codex compatibility is proven separately"
         }
@@ -153,9 +135,7 @@
         {
           "id": "grok-schema-5e3eeea0941f",
           "configPath": "runtimeEventStore",
-          "params": [
-            "$tablePrefix"
-          ],
+          "params": ["$tablePrefix"],
           "sql": "WITH suffixes(kind, suffix, column_count) AS (\n  VALUES ('state', '_grok_credential_runtime_state', 6),\n         ('journal', '_grok_credential_refresh_journal', 3)\n), names AS (\n  SELECT kind, column_count,\n    lower((CASE WHEN length($1::text) <= 44 - length(suffix) THEN $1::text\n      ELSE 'g' || left(encode(sha256(convert_to($1::text, 'UTF8')), 'hex'), 43 - length(suffix))\n    END) || suffix) AS table_name\n  FROM suffixes\n), relations AS (\n  SELECT n.*, c.oid FROM names n\n  LEFT JOIN pg_class c ON c.oid = to_regclass(format('%I.%I', current_schema(), n.table_name))\n    AND c.relkind = 'r' AND c.relpersistence = 'p'\n), expected(kind, column_name, data_type, not_null) AS (\n  VALUES ('state','credential_ref','text',true), ('state','availability','text',true),\n    ('state','credential_generation','int8',true), ('state','cooldown_until','timestamptz',false),\n    ('state','last_failure_code','text',false), ('state','updated_at','timestamptz',true),\n    ('journal','credential_ref','text',true), ('journal','credential_generation','int8',true),\n    ('journal','started_at','timestamptz',true)\n)\nSELECT\n  (SELECT count(*) = 2 AND bool_and(oid IS NOT NULL) FROM relations)\n  AND NOT EXISTS (\n    SELECT 1 FROM expected e JOIN relations r USING(kind)\n    LEFT JOIN pg_attribute a ON a.attrelid = r.oid AND a.attname = e.column_name\n      AND a.attnum > 0 AND NOT a.attisdropped\n    WHERE a.attname IS NULL OR a.atttypid <> e.data_type::regtype OR a.attnotnull <> e.not_null\n  )\n  AND NOT EXISTS (\n    SELECT 1 FROM relations r WHERE\n      (SELECT count(*) FROM pg_attribute a WHERE a.attrelid=r.oid AND a.attnum>0 AND NOT a.attisdropped) <> r.column_count\n      OR NOT EXISTS (\n        SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='credential_ref'\n        WHERE c.conrelid=r.oid AND c.contype='p' AND c.convalidated AND c.conkey=ARRAY[a.attnum]\n      )\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid\n    WHERE r.kind='state' AND c.contype='c' AND c.convalidated\n      AND regexp_replace(pg_get_constraintdef(c.oid), '\\s', '', 'g') =\n        'CHECK((availability=ANY(ARRAY[''available''::text,''quota_cooldown''::text,''auth_unavailable''::text])))'\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid\n    WHERE r.kind='journal' AND c.contype='c' AND c.convalidated\n      AND regexp_replace(pg_get_constraintdef(c.oid), '\\s', '', 'g') = 'CHECK((credential_generation>0))'\n  )\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname='credential_generation'\n    JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum\n    WHERE r.kind='state' AND pg_get_expr(d.adbin,d.adrelid)='0'\n  )\n  AND (SELECT count(*)=2 FROM relations r\n    JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname=CASE WHEN r.kind='state' THEN 'updated_at' ELSE 'started_at' END\n    JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum\n    WHERE pg_get_expr(d.adbin,d.adrelid)='now()')\n  AND EXISTS (\n    SELECT 1 FROM relations r JOIN pg_index i ON i.indrelid=r.oid\n    JOIN pg_class idx ON idx.oid=i.indexrelid\n    JOIN pg_attribute a ON a.attrelid=r.oid AND a.attname='cooldown_until'\n    WHERE r.kind='state' AND idx.relname=r.table_name||'_cooldown_idx'\n      AND i.indisvalid AND i.indisready AND NOT i.indisunique AND i.indnkeyatts=1\n      AND i.indkey::text=a.attnum::text AND i.indpred IS NULL AND i.indexprs IS NULL\n  ) AS ok\n",
           "description": "Grok state/journal columns, keys, validated checks, defaults and cooldown index; Codex compatibility is proven separately"
         }
@@ -169,9 +149,7 @@
         {
           "id": "provider-plan-note-schema",
           "configPath": "runtimeEventStore",
-          "params": [
-            "$tablePrefix"
-          ],
+          "params": ["$tablePrefix"],
           "sql": "WITH expected(column_name, data_type, not_null) AS (VALUES ('id','int8',true), ('identity_key','text',true), ('end_time','timestamptz',false), ('note','text',false), ('edit_kind','text',true), ('updated_by','text',true), ('updated_at','timestamptz',true)), columns_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_class c ON c.oid = to_regclass($1 || '_provider_plan_expiry_edits') LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = e.column_name AND a.attnum > 0 AND NOT a.attisdropped WHERE c.relkind IS DISTINCT FROM 'r' OR a.attname IS NULL OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.not_null) AS ok), defaults_ok AS (SELECT COALESCE((SELECT pg_get_expr(d.adbin, d.adrelid) FROM pg_attribute a JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum WHERE a.attrelid = to_regclass($1 || '_provider_plan_expiry_edits') AND a.attname = 'edit_kind'), '') LIKE '%expiry%' AS ok), shape_ok AS (SELECT (SELECT count(*) = 7 FROM pg_attribute WHERE attrelid = to_regclass($1 || '_provider_plan_expiry_edits') AND attnum > 0 AND NOT attisdropped) AND EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = to_regclass($1 || '_provider_plan_expiry_edits') AND c.contype = 'p' AND c.convalidated) AND EXISTS (SELECT 1 FROM pg_index i JOIN pg_class idx ON idx.oid = i.indexrelid WHERE i.indrelid = to_regclass($1 || '_provider_plan_expiry_edits') AND idx.relname = left($1 || '_provider_plan_expiry_edits_identity_idx', 63) AND i.indisvalid AND i.indisready AND i.indnkeyatts = 2) AS ok) SELECT columns_ok.ok AND defaults_ok.ok AND shape_ok.ok AS ok FROM columns_ok, defaults_ok, shape_ok",
           "description": "套餐到期与备注共用追加式审计表，备注列、编辑类型默认值、主键及身份索引已满足持久化契约"
         }
@@ -187,9 +165,7 @@
           "configPath": "runtimeEventStore",
           "description": "额度快照及套餐到期表的完整列定义、自增序列、默认值、主键和可用索引满足读写契约",
           "sql": "WITH expected(suffix, column_name, data_type, required, default_kind) AS (VALUES ('_provider_quota_snapshots','id','int8',true,'sequence'), ('_provider_quota_snapshots','account_key','text',true,''), ('_provider_quota_snapshots','source_kind','text',true,''), ('_provider_quota_snapshots','collected_at','timestamptz',true,''), ('_provider_quota_snapshots','ok','bool',true,''), ('_provider_quota_snapshots','snapshot','jsonb',true,''), ('_provider_plan_expiry_edits','id','int8',true,'sequence'), ('_provider_plan_expiry_edits','identity_key','text',true,''), ('_provider_plan_expiry_edits','end_time','timestamptz',false,''), ('_provider_plan_expiry_edits','updated_by','text',true,''), ('_provider_plan_expiry_edits','updated_at','timestamptz',true,'now')), columns_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_class c ON c.oid=to_regclass($1 || e.suffix) LEFT JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname=e.column_name AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE c.relkind IS DISTINCT FROM 'r' OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.required OR (e.default_kind='now' AND COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT IN ('now()','CURRENT_TIMESTAMP')) OR (e.default_kind='sequence' AND (COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT LIKE 'nextval(%' OR pg_get_serial_sequence(format('%I.%I',n.nspname,c.relname),'id') IS NULL OR NOT EXISTS (SELECT 1 FROM pg_constraint p WHERE p.conrelid=c.oid AND p.contype='p' AND p.convalidated AND p.conkey=ARRAY[a.attnum])))) AS ok), expected_indexes(suffix, index_suffix, first_column, second_column) AS (VALUES ('_provider_quota_snapshots','_account_time_idx','account_key','collected_at'),('_provider_plan_expiry_edits','_identity_idx','identity_key','id')), indexes_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected_indexes e LEFT JOIN pg_index i ON i.indexrelid=to_regclass($1 || e.suffix || e.index_suffix) LEFT JOIN pg_attribute a ON a.attrelid=to_regclass($1 || e.suffix) AND a.attname=e.first_column AND NOT a.attisdropped LEFT JOIN pg_attribute b ON b.attrelid=to_regclass($1 || e.suffix) AND b.attname=e.second_column AND NOT b.attisdropped WHERE i.indrelid IS DISTINCT FROM to_regclass($1 || e.suffix) OR i.indisvalid IS DISTINCT FROM true OR i.indisready IS DISTINCT FROM true OR i.indnatts IS DISTINCT FROM 2 OR i.indnkeyatts IS DISTINCT FROM 2 OR i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indkey::text IS DISTINCT FROM format('%s %s',a.attnum,b.attnum) OR i.indoption::text IS DISTINCT FROM '0 3') AS ok) SELECT columns_ok.ok AND indexes_ok.ok AS ok FROM columns_ok,indexes_ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -203,9 +179,7 @@
           "configPath": "runtimeEventStore",
           "description": "额度快照及套餐到期表的完整列定义、自增序列、默认值、主键和可用索引满足读写契约",
           "sql": "WITH expected(suffix, column_name, data_type, required, default_kind) AS (VALUES ('_provider_quota_snapshots','id','int8',true,'sequence'), ('_provider_quota_snapshots','account_key','text',true,''), ('_provider_quota_snapshots','source_kind','text',true,''), ('_provider_quota_snapshots','collected_at','timestamptz',true,''), ('_provider_quota_snapshots','ok','bool',true,''), ('_provider_quota_snapshots','snapshot','jsonb',true,''), ('_provider_plan_expiry_edits','id','int8',true,'sequence'), ('_provider_plan_expiry_edits','identity_key','text',true,''), ('_provider_plan_expiry_edits','end_time','timestamptz',false,''), ('_provider_plan_expiry_edits','updated_by','text',true,''), ('_provider_plan_expiry_edits','updated_at','timestamptz',true,'now')), columns_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_class c ON c.oid=to_regclass($1 || e.suffix) LEFT JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname=e.column_name AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE c.relkind IS DISTINCT FROM 'r' OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.required OR (e.default_kind='now' AND COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT IN ('now()','CURRENT_TIMESTAMP')) OR (e.default_kind='sequence' AND (COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT LIKE 'nextval(%' OR pg_get_serial_sequence(format('%I.%I',n.nspname,c.relname),'id') IS NULL OR NOT EXISTS (SELECT 1 FROM pg_constraint p WHERE p.conrelid=c.oid AND p.contype='p' AND p.convalidated AND p.conkey=ARRAY[a.attnum])))) AS ok), expected_indexes(suffix, index_suffix, first_column, second_column) AS (VALUES ('_provider_quota_snapshots','_account_time_idx','account_key','collected_at'),('_provider_plan_expiry_edits','_identity_idx','identity_key','id')), indexes_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected_indexes e LEFT JOIN pg_index i ON i.indexrelid=to_regclass($1 || e.suffix || e.index_suffix) LEFT JOIN pg_attribute a ON a.attrelid=to_regclass($1 || e.suffix) AND a.attname=e.first_column AND NOT a.attisdropped LEFT JOIN pg_attribute b ON b.attrelid=to_regclass($1 || e.suffix) AND b.attname=e.second_column AND NOT b.attisdropped WHERE i.indrelid IS DISTINCT FROM to_regclass($1 || e.suffix) OR i.indisvalid IS DISTINCT FROM true OR i.indisready IS DISTINCT FROM true OR i.indnatts IS DISTINCT FROM 2 OR i.indnkeyatts IS DISTINCT FROM 2 OR i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indkey::text IS DISTINCT FROM format('%s %s',a.attnum,b.attnum) OR i.indoption::text IS DISTINCT FROM '0 3') AS ok) SELECT columns_ok.ok AND indexes_ok.ok AS ok FROM columns_ok,indexes_ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -219,9 +193,7 @@
           "configPath": "runtimeEventStore",
           "description": "额度快照及套餐到期表的完整列定义、自增序列、默认值、主键和可用索引满足读写契约",
           "sql": "WITH expected(suffix, column_name, data_type, required, default_kind) AS (VALUES ('_provider_quota_snapshots','id','int8',true,'sequence'), ('_provider_quota_snapshots','account_key','text',true,''), ('_provider_quota_snapshots','source_kind','text',true,''), ('_provider_quota_snapshots','collected_at','timestamptz',true,''), ('_provider_quota_snapshots','ok','bool',true,''), ('_provider_quota_snapshots','snapshot','jsonb',true,''), ('_provider_plan_expiry_edits','id','int8',true,'sequence'), ('_provider_plan_expiry_edits','identity_key','text',true,''), ('_provider_plan_expiry_edits','end_time','timestamptz',false,''), ('_provider_plan_expiry_edits','updated_by','text',true,''), ('_provider_plan_expiry_edits','updated_at','timestamptz',true,'now')), columns_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_class c ON c.oid=to_regclass($1 || e.suffix) LEFT JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname=e.column_name AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE c.relkind IS DISTINCT FROM 'r' OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.required OR (e.default_kind='now' AND COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT IN ('now()','CURRENT_TIMESTAMP')) OR (e.default_kind='sequence' AND (COALESCE(pg_get_expr(d.adbin,d.adrelid),'') NOT LIKE 'nextval(%' OR pg_get_serial_sequence(format('%I.%I',n.nspname,c.relname),'id') IS NULL OR NOT EXISTS (SELECT 1 FROM pg_constraint p WHERE p.conrelid=c.oid AND p.contype='p' AND p.convalidated AND p.conkey=ARRAY[a.attnum])))) AS ok), expected_indexes(suffix, index_suffix, first_column, second_column) AS (VALUES ('_provider_quota_snapshots','_account_time_idx','account_key','collected_at'),('_provider_plan_expiry_edits','_identity_idx','identity_key','id')), indexes_ok AS (SELECT NOT EXISTS (SELECT 1 FROM expected_indexes e LEFT JOIN pg_index i ON i.indexrelid=to_regclass($1 || e.suffix || e.index_suffix) LEFT JOIN pg_attribute a ON a.attrelid=to_regclass($1 || e.suffix) AND a.attname=e.first_column AND NOT a.attisdropped LEFT JOIN pg_attribute b ON b.attrelid=to_regclass($1 || e.suffix) AND b.attname=e.second_column AND NOT b.attisdropped WHERE i.indrelid IS DISTINCT FROM to_regclass($1 || e.suffix) OR i.indisvalid IS DISTINCT FROM true OR i.indisready IS DISTINCT FROM true OR i.indnatts IS DISTINCT FROM 2 OR i.indnkeyatts IS DISTINCT FROM 2 OR i.indpred IS NOT NULL OR i.indexprs IS NOT NULL OR i.indkey::text IS DISTINCT FROM format('%s %s',a.attnum,b.attnum) OR i.indoption::text IS DISTINCT FROM '0 3') AS ok) SELECT columns_ok.ok AND indexes_ok.ok AS ok FROM columns_ok,indexes_ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -235,9 +207,7 @@
           "configPath": "runtimeEventStore",
           "description": "稳定子 Agent 身份查询索引已建立且键、排序、部分条件和可用状态符合续接查询契约",
           "sql": "WITH candidate AS (SELECT i.* FROM pg_index i WHERE i.indexrelid=to_regclass($1 || '_runs_subagent_identity_idx')) SELECT COALESCE((SELECT i.indrelid=to_regclass($1 || '_runs') AND i.indisvalid AND i.indisready AND NOT i.indisunique AND pg_get_indexdef(i.indexrelid) LIKE '% USING btree (tenant_id, ((metadata ->> ''parentSessionId''::text)), ((metadata ->> ''subagentAgentId''::text)), requested_at DESC)%' AND pg_get_expr(i.indpred,i.indrelid) LIKE '%metadata ->> ''subagent''::text%' AND pg_get_expr(i.indpred,i.indrelid) LIKE '%metadata ? ''subagentAgentId''::text%' FROM candidate i),false) AS ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -251,9 +221,7 @@
           "configPath": "runtimeEventStore",
           "description": "稳定子 Agent 身份查询索引已建立且键、排序、部分条件和可用状态符合续接查询契约",
           "sql": "WITH candidate AS (SELECT i.* FROM pg_index i WHERE i.indexrelid=to_regclass($1 || '_runs_subagent_identity_idx')) SELECT COALESCE((SELECT i.indrelid=to_regclass($1 || '_runs') AND i.indisvalid AND i.indisready AND NOT i.indisunique AND pg_get_indexdef(i.indexrelid) LIKE '% USING btree (tenant_id, ((metadata ->> ''parentSessionId''::text)), ((metadata ->> ''subagentAgentId''::text)), requested_at DESC)%' AND pg_get_expr(i.indpred,i.indrelid) LIKE '%metadata ->> ''subagent''::text%' AND pg_get_expr(i.indpred,i.indrelid) LIKE '%metadata ? ''subagentAgentId''::text%' FROM candidate i),false) AS ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
         }
       ]
     },
@@ -267,9 +235,49 @@
           "configPath": "runtimeEventStore",
           "description": "稳定子 Agent 身份查询索引已建立且键、排序、部分条件和可用状态符合续接查询契约",
           "sql": "WITH candidate AS (SELECT i.* FROM pg_index i WHERE i.indexrelid=to_regclass($1 || '_runs_subagent_identity_idx')) SELECT COALESCE((SELECT i.indrelid=to_regclass($1 || '_runs') AND i.indisvalid AND i.indisready AND NOT i.indisunique AND pg_get_indexdef(i.indexrelid) LIKE '% USING btree (tenant_id, ((metadata ->> ''parentSessionId''::text)), ((metadata ->> ''subagentAgentId''::text)), requested_at DESC)%' AND pg_get_expr(i.indpred,i.indrelid) LIKE '%metadata ->> ''subagent''::text%' AND pg_get_expr(i.indpred,i.indrelid) LIKE '%metadata ? ''subagentAgentId''::text%' FROM candidate i),false) AS ok",
-          "params": [
-            "$tablePrefix"
-          ]
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/runtime/runLeaseEligibility.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+      "checks": [
+        {
+          "id": "run-queue-lease-eligibility-schema",
+          "configPath": "runtimeEventStore",
+          "description": "Run lease eligibility 查询依赖的 runs 与 steering_inputs 表及列保持完整",
+          "sql": "WITH runs AS (SELECT to_regclass($1 || '_runs') AS oid), steering AS (SELECT to_regclass($1 || '_steering_inputs') AS oid) SELECT runs.oid IS NOT NULL AND steering.oid IS NOT NULL AND (SELECT count(*) = 6 FROM pg_attribute WHERE attrelid = runs.oid AND attname IN ('tenant_id','session_id','run_id','status','enqueue_seq','metadata') AND NOT attisdropped) AND (SELECT count(*) = 5 FROM pg_attribute WHERE attrelid = steering.oid AND attname IN ('tenant_id','session_id','source_run_id','target_run_id','state') AND NOT attisdropped) AS ok FROM runs, steering",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+      "checks": [
+        {
+          "id": "run-queue-recovery-schema",
+          "configPath": "runtimeEventStore",
+          "description": "Run recovery 查询依赖的 runs 与 steering_inputs 表及列保持完整",
+          "sql": "WITH runs AS (SELECT to_regclass($1 || '_runs') AS oid), steering AS (SELECT to_regclass($1 || '_steering_inputs') AS oid) SELECT runs.oid IS NOT NULL AND steering.oid IS NOT NULL AND (SELECT count(*) = 6 FROM pg_attribute WHERE attrelid = runs.oid AND attname IN ('tenant_id','session_id','run_id','status','enqueue_seq','metadata') AND NOT attisdropped) AND (SELECT count(*) = 5 FROM pg_attribute WHERE attrelid = steering.oid AND attname IN ('tenant_id','session_id','source_run_id','target_run_id','state') AND NOT attisdropped) AS ok FROM runs, steering",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+      "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+      "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+      "checks": [
+        {
+          "id": "run-queue-recovery-schema",
+          "configPath": "runtimeEventStore",
+          "description": "Run recovery 查询依赖的 runs 与 steering_inputs 表及列保持完整",
+          "sql": "WITH runs AS (SELECT to_regclass($1 || '_runs') AS oid), steering AS (SELECT to_regclass($1 || '_steering_inputs') AS oid) SELECT runs.oid IS NOT NULL AND steering.oid IS NOT NULL AND (SELECT count(*) = 6 FROM pg_attribute WHERE attrelid = runs.oid AND attname IN ('tenant_id','session_id','run_id','status','enqueue_seq','metadata') AND NOT attisdropped) AND (SELECT count(*) = 5 FROM pg_attribute WHERE attrelid = steering.oid AND attname IN ('tenant_id','session_id','source_run_id','target_run_id','state') AND NOT attisdropped) AS ok FROM runs, steering",
+          "params": ["$tablePrefix"]
         }
       ]
     }

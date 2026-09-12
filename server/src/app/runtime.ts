@@ -1710,7 +1710,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     skills: skillsDispatchConfig,
     mcpClientManager,
     mcpProxy,
-    ...(pgEventStore ? { eventStoreFactory: () => pgEventStore } : {}),
+    ...(pgEventStore ? { eventStoreFactory: () => pgEventStore, eventStoreForMissingSession: pgEventStore } : {}),
     ...(pgRunStore ? { runStore: pgRunStore } : {}),
     ...(runPreflightService ? { runPreflightService } : {}),
     ...(runResolutionSnapshotStore ? { runResolutionSnapshotStore } : {}),
@@ -1868,7 +1868,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         await governanceProjectionReconciler?.reconcileBatch();
       },
       failInterruptedBackgroundTask: (record) => rawRuntimeConfig.backgroundTasks!.failInterrupted(record),
-      failBackgroundTask: (record, message) => rawRuntimeConfig.backgroundTasks!.fail(record, message),
+      failBackgroundTask: (record, message, reason) => rawRuntimeConfig.backgroundTasks!.fail(record, message, reason),
       handoffBackgroundCommand: (record) => rawRuntimeConfig.backgroundTasks!.handoffCommandMonitor(record),
       wake: async (record, lease) => {
         const tenantId = record.tenantId ?? (record.userId ? userStore?.findById(record.userId)?.tenantId : undefined);

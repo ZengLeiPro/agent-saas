@@ -961,7 +961,12 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     }
     return Boolean(updated);
   }
-  private async backgroundTaskEventStore(record: RunRecord) { const taskSession = await resolveSessionCatalog(this.config).get(record.sessionId); if (!taskSession) throw new Error(`后台任务 session 不存在：${record.sessionId}`); return createEventStoreForSession(this.config, taskSession); }
+  private async backgroundTaskEventStore(record: RunRecord) {
+    const taskSession = await resolveSessionCatalog(this.config).get(record.sessionId);
+    if (taskSession) return createEventStoreForSession(this.config, taskSession);
+    if (this.config.eventStoreForMissingSession) return this.config.eventStoreForMissingSession;
+    throw new Error(`后台任务 session 不存在：${record.sessionId}`);
+  }
 
   private async appendParentLifecycleEvent(
     parentSession: import('../sessionCatalog.js').RuntimeSessionRecord,

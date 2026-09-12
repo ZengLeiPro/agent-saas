@@ -101,10 +101,16 @@ describe('platformIncidentPolicy', () => {
     const query = vi.fn(async (_sql: string) => ({
       rows: [{ recent_total: '9', recent_failed: '5', failed_users: '2', stalled_pending: '0', stalled_users: '0' }],
     }));
-    const items = await buildRunSystemIncidents({ pool: { query }, runsTable: 'runtime_runs' } as any);
+    const items = await buildRunSystemIncidents({
+      pool: { query }, runsTable: 'runtime_runs', steeringInputsTable: 'runtime_steering_inputs',
+    } as any);
 
     expect(query).toHaveBeenCalledOnce();
     expect(String(query.mock.calls[0]![0])).toContain("status = 'pending'");
+    expect(String(query.mock.calls[0]![0])).toContain("metadata->>'backgroundTask' IS DISTINCT FROM 'true'");
+    expect(String(query.mock.calls[0]![0])).toContain("metadata->>'backgroundTaskReady'");
+    expect(String(query.mock.calls[0]![0])).toContain('runtime_steering_inputs');
+    expect(String(query.mock.calls[0]![0])).toContain('predecessor.enqueue_seq < candidate.enqueue_seq');
     expect(String(query.mock.calls[0]![0])).toContain('completed_at >=');
     expect(String(query.mock.calls[0]![0])).toContain('failed_at >=');
     expect(items).toEqual([

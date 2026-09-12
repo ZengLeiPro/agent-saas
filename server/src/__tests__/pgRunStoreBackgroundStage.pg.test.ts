@@ -40,7 +40,7 @@ describePg('PgRunStore v2 background task stage', () => {
       userId: 'user-1',
       idempotencyKey: 'staged-background-task-client',
       channel: 'web',
-      metadata: { backgroundTask: true, backgroundTaskVersion: 2, backgroundTaskReady: false },
+      metadata: { subagent: true, backgroundTask: true, backgroundTaskVersion: 2, backgroundTaskReady: false },
     });
 
     await expect(store.listRecoverable()).resolves.toEqual(
@@ -58,5 +58,30 @@ describePg('PgRunStore v2 background task stage', () => {
       runId,
       status: 'running',
     });
+  });
+
+  it('只排除父 loop 驱动的直接子 Agent，不排除 scheduler 驱动的后台任务协调 Run', async () => {
+    const directChildRunId = 'direct-subagent-child';
+    const coordinatorRunId = 'background-subagent-coordinator';
+    await store.createPending({
+      runId: directChildRunId,
+      sessionId: 'session-direct-subagent-child',
+      userId: 'user-1',
+      metadata: { subagent: true },
+    });
+    await store.createPending({
+      runId: coordinatorRunId,
+      sessionId: 'session-background-subagent-coordinator',
+      userId: 'user-1',
+      metadata: { subagent: true, backgroundTask: true, backgroundTaskVersion: 2, backgroundTaskReady: true },
+    });
+
+    const recoverable = await store.listRecoverable();
+    expect(recoverable).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: coordinatorRunId }),
+    ]));
+    expect(recoverable).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: directChildRunId }),
+    ]));
   });
 });

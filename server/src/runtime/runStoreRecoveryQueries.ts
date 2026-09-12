@@ -2,6 +2,7 @@ import type { RunRecord } from './runStoreTypes.js';
 import type { PgPool } from './runStoreTypes.js';
 import { normalizeRunRecord } from './runStoreRecordHelpers.js';
 import { recoverableRunHandoffSql } from './runLeaseHandoff.js';
+import { parentOwnedSubagentSql } from './background/backgroundTaskRuntime.js';
 
 export async function getActiveRunBySession(
   pool: PgPool, runsTable: string, steeringInputsTable: string, tenantId: string, sessionId: string,
@@ -28,7 +29,7 @@ export async function getActiveRunBySession(
   return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
 }
 
-/** Subagent children are parent-owned; legacy expired rows remain recoverable while versioned M40 rows belong to the two-phase reaper. */
+/** 直接子 Agent 由父 loop 驱动；后台任务协调 Run 仍归调度器。 */
 export async function listRecoverableRuns(
   pool: PgPool,
   runsTable: string,
@@ -48,7 +49,7 @@ export async function listRecoverableRuns(
       )
       OR ${recoverableRunHandoffSql('run', toolInvocationsTable)}
     )
-      AND run.metadata->>'subagent' IS DISTINCT FROM 'true'
+      AND NOT (${parentOwnedSubagentSql('run')})
       AND NOT (
         run.status = 'pending'
         AND COALESCE(run.metadata->>'schedulerState', '') = 'staged'

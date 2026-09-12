@@ -1,3 +1,4 @@
+// release-migration: expand
 import type pg from 'pg';
 import type { ProviderQuotaHistoryPoint, ProviderQuotaSnapshot } from '@agent/shared';
 

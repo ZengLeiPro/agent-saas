@@ -11,6 +11,7 @@ const quotaSchema = 'server/src/app/modelQuotaSourceSchema.ts';
 const quotaEvidence = 'docs/release/PR641-zhipu-quota-config-review-20260911.md';
 const scopeStore = 'server/src/data/entitlements/store.ts';
 const scopeEvidence = 'docs/release/PR642-integrated-system-scope-retirement-20260912.md';
+const providerStore = 'server/src/quota/providerQuotaSnapshotStore.ts';
 const grokNeutralPaths = [
   'server/src/runtime/egressRequestPolicy.ts',
   'server/src/runtime/responses/grokProtocol.ts',
@@ -32,7 +33,8 @@ const grokEvidencePaths = [
   'scripts/release/grok-subscription-postcondition.sql',
   'server/src/runtime/responses/grokSubscriptionTableNames.ts',
 ];
-const auditedPaths = [transport, quotaSchema, scopeStore, ...grokNeutralPaths, ...grokExpandPaths];
+const auditedPaths = [transport, quotaSchema, scopeStore, providerStore, ...grokNeutralPaths, ...grokExpandPaths];
+const expandPaths = [providerStore, ...grokExpandPaths];
 const evidencePaths = [evidence, quotaEvidence, scopeEvidence, ...grokEvidencePaths];
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
@@ -66,7 +68,7 @@ test('HTTP baseline retains exact byte-bound reviews across Zhipu, scope retirem
   for (const path of auditedPaths) {
     assert.equal(
       loaded.entries.get(path).classification,
-      grokExpandPaths.includes(path) ? 'expand' : 'no-schema-change',
+      expandPaths.includes(path) ? 'expand' : 'no-schema-change',
     );
   }
   const result = createMigrationPlan({ baseline, target, changedPaths: auditedPaths });

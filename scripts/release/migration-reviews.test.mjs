@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { withPostconditionFixtures } from './test-migration-postcondition-fixtures.mjs';
 import { createMigrationPlan } from './migration-plan.mjs';
@@ -175,6 +176,16 @@ test('两个独立兼容审核都能进入同一生产基线后的迁移计划',
     result.migrationPlan.postconditions.map((entry) => entry.sourcePath).sort(),
     [PATH, extraPath].sort(),
   );
+});
+
+test('把迁移规划器作为证据的历史审核都绑定当前实现', () => {
+  const document = JSON.parse(readFileSync(MIGRATION_REVIEWS_PATH, 'utf8'));
+  const evidence = document.reviews.flatMap((review) =>
+    review.evidence.filter((entry) => entry.path === 'scripts/release/migration-plan.mjs'),
+  );
+  assert.ok(evidence.length > 0);
+  const currentDigest = digest(readFileSync('scripts/release/migration-plan.mjs', 'utf8'));
+  assert.ok(evidence.every((entry) => entry.digest === currentDigest));
 });
 
 test('证据修改、重复路径、非法分类和缺失摘要均阻断', () => {

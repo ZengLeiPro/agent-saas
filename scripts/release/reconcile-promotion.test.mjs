@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   componentIdentityMatrix,
   reconcilePromotion,
+  summarizePrechangeRecoveryReceipts,
   summarizeRollbackReceipts,
 } from './reconcile-promotion.mjs';
 
@@ -148,4 +149,65 @@ test('requires an exact typed ACS/App/Web rollback receipt schema', () => {
       'needs_human',
     );
   }
+});
+
+test('accepts a run-bound ACS pre-change recovery only with unchanged production identities', () => {
+  const prechangeRecoveryReceipts = { acs: { recovered: true } };
+  assert.deepEqual(summarizePrechangeRecoveryReceipts(prechangeRecoveryReceipts), {
+    recovered: true,
+  });
+  const result = reconcilePromotion({
+    ...base,
+    observed: before,
+    externalSideEffects: 'unknown',
+    prechangeRecoveryReceipts,
+  });
+  assert.equal(result.outcome, 'failed_before_change');
+  assert.match(result.reason, /admission recovery is durably attested/u);
+
+  assert.equal(
+    reconcilePromotion({
+      ...base,
+      observed: target,
+      configIdentityConfirmed: true,
+      externalSideEffects: 'unknown',
+      prechangeRecoveryReceipts,
+    }).outcome,
+    'needs_human',
+  );
+});
+
+test('rejects malformed or contradictory pre-change recovery evidence', () => {
+  const rollbackReceipts = {
+    acs: { attempted: true, succeeded: true },
+    app: { attempted: false, succeeded: false },
+    web: { attempted: false, succeeded: false },
+  };
+  for (const prechangeRecoveryReceipts of [
+    {},
+    { app: { recovered: true } },
+    { acs: { recovered: 'true' } },
+    { acs: { recovered: true, detail: 'unchecked' } },
+  ]) {
+    assert.equal(summarizePrechangeRecoveryReceipts(prechangeRecoveryReceipts), null);
+    assert.equal(
+      reconcilePromotion({
+        ...base,
+        observed: before,
+        externalSideEffects: 'unknown',
+        prechangeRecoveryReceipts,
+      }).outcome,
+      'needs_human',
+    );
+  }
+  assert.equal(
+    reconcilePromotion({
+      ...base,
+      observed: before,
+      externalSideEffects: 'unknown',
+      rollbackReceipts,
+      prechangeRecoveryReceipts: { acs: { recovered: true } },
+    }).outcome,
+    'needs_human',
+  );
 });

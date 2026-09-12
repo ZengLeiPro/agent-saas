@@ -703,7 +703,7 @@ jobs:
           rm -f "$rollback_output" "$rollback_local_marker"
           set +e
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PRODUCTION_RECOVERY_MODE=$PRODUCTION_RECOVERY_MODE PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-acs' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            "sudo PRODUCTION_RECOVERY_MODE=$PRODUCTION_RECOVERY_MODE PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-acs' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.succeeded' PRECHANGE_RECOVERY_RECEIPT_PATH='$PROMOTION_REMOTE/prechange-acs.recovered' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
             2>&1 | tee "$rollback_output"
           pipeline_status=("${PIPESTATUS[@]}")
           set -e
@@ -1406,18 +1406,27 @@ jobs:
           acs_succeeded="$(remote_receipt_exists acs succeeded)"
           app_attempted="$(remote_receipt_exists app attempted)"
           app_succeeded="$(remote_receipt_exists app succeeded)"
+          mkdir -p "$RUNNER_TEMP/prechange-receipts"
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/prechange-acs.recovered' 'acs' 'prechange_recovered' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
+            > "$RUNNER_TEMP/prechange-receipts/acs-recovered.json"
+          acs_prechange_recovered="$(jq -r 'if .readState=="present" then true elif .readState=="absent" then false else error("unverified pre-change recovery receipt") end' \
+            "$RUNNER_TEMP/prechange-receipts/acs-recovered.json")"
           rollback_receipts="$(jq -nc \
             --argjson webAttempted "$web_attempted" --argjson webSucceeded "$web_succeeded" \
             --argjson acsAttempted "$acs_attempted" --argjson acsSucceeded "$acs_succeeded" \
             --argjson appAttempted "$app_attempted" --argjson appSucceeded "$app_succeeded" \
             '{web:{attempted:$webAttempted,succeeded:$webSucceeded},acs:{attempted:$acsAttempted,succeeded:$acsSucceeded},app:{attempted:$appAttempted,succeeded:$appSucceeded}}')"
+          prechange_recovery_receipts="$(jq -nc --argjson acsRecovered "$acs_prechange_recovered" \
+            '{acs:{recovered:$acsRecovered}}')"
           jq -n --arg releaseId "$RELEASE_ID" --argjson before "$before" --argjson target "$target" \
             --argjson observed "$observed" --argjson observationComplete "$observation_complete" \
             --argjson configIdentityConfirmed "$config_identity_confirmed" \
             --arg externalSideEffects "$external_side_effects" \
             --argjson rollbackReceipts "$rollback_receipts" \
+            --argjson prechangeRecoveryReceipts "$prechange_recovery_receipts" \
             --arg databaseChange "$MIGRATION_PHASE" \
-            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,configIdentityConfirmed:$configIdentityConfirmed,externalSideEffects:$externalSideEffects,rollbackReceipts:$rollbackReceipts,databaseChange:$databaseChange}' \
+            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,configIdentityConfirmed:$configIdentityConfirmed,externalSideEffects:$externalSideEffects,rollbackReceipts:$rollbackReceipts,prechangeRecoveryReceipts:$prechangeRecoveryReceipts,databaseChange:$databaseChange}' \
             > "$RUNNER_TEMP/reconcile-input.json"
           node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
 
@@ -1596,6 +1605,10 @@ jobs:
                 > "$RUNNER_TEMP/rollback-receipts/$component-$state.json" || true
             done
           done
+          mkdir -p "$RUNNER_TEMP/prechange-receipts"
+          timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/prechange-acs.recovered' 'acs' 'prechange_recovered' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
+            > "$RUNNER_TEMP/prechange-receipts/acs-recovered-final.json" || true
           for suffix in observation alert; do
             timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
               "sudo cat '/var/lib/agent-saas-release-recovery/retirements/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/app-retirement-$suffix.json'" \
@@ -1625,6 +1638,7 @@ jobs:
             ${{ runner.temp }}/promotion-diagnostics/
             ${{ runner.temp }}/operation-receipts/
             ${{ runner.temp }}/rollback-receipts/
+            ${{ runner.temp }}/prechange-receipts/
             ${{ runner.temp }}/web-recovery-state.json
             ${{ runner.temp }}/web-recovery-receipt.json
             ${{ runner.temp }}/web-recovery-readback.json

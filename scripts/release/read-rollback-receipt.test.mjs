@@ -40,3 +40,17 @@ test('T14: receipt absence, permission failure, malformed and stale identity are
   }
   assert.equal((await readRollbackReceipt('file', expected, io(null))).state, 'invalid');
 });
+
+test('ACS pre-change recovery remains bound to the exact run attempt', async () => {
+  const recoveryExpected = { ...expected, state: 'prechange_recovered' };
+  const recovery = { schemaVersion: 1, ...recoveryExpected };
+  assert.equal(
+    (await readRollbackReceipt('file', recoveryExpected, io(recovery))).state,
+    'present',
+  );
+  assert.equal(
+    (await readRollbackReceipt('file', { ...recoveryExpected, runAttempt: '3' }, io(recovery)))
+      .state,
+    'invalid',
+  );
+});

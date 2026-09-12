@@ -50,7 +50,7 @@ describePg('套餐到期持久化与审计', () => {
       '2027-01-01T00:00:00.000Z',
     );
     const result = await pool.query(
-      `SELECT end_time, updated_by, updated_at FROM ${store.planExpiryTable} WHERE identity_key=$1 ORDER BY id`,
+      `SELECT end_time, updated_by, updated_at FROM ${store.planExpiryTable} WHERE identity_key=$1 AND edit_kind='expiry' ORDER BY id`,
       [key],
     );
     expect(result.rows.map((row) => row.updated_by)).toEqual(['admin-1', 'admin-3']);

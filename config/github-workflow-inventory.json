@@ -52,6 +52,31 @@
       "id": 354197542,
       "path": ".github/workflows/prepare-unified-ci.yml",
       "name": "Prepare unified CI (branch-only)"
+    },
+    {
+      "id": 356008067,
+      "path": ".github/workflows/ios-delivery-workbench.yml",
+      "name": "iOS delivery isolated workbench"
+    },
+    {
+      "id": 356271579,
+      "path": ".github/workflows/subagent-source-export.yml",
+      "name": "Subagent source export"
+    },
+    {
+      "id": 356305649,
+      "path": ".github/workflows/ios-delivery-ratchet-workbench.yml",
+      "name": "iOS delivery ratchet workbench"
+    },
+    {
+      "id": 356333362,
+      "path": ".github/workflows/workbench-pr656-ratchet-repair.yml",
+      "name": "Workbench PR656 ratchet repair"
+    },
+    {
+      "id": 356336667,
+      "path": ".github/workflows/workbench-pr656-ratchet-repair-v2.yml",
+      "name": "Workbench PR656 ratchet repair v2"
     }
   ]
 }

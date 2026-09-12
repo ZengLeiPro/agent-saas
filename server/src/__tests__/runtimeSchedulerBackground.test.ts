@@ -343,8 +343,8 @@ describe('RuntimeScheduler background task recovery', () => {
       metadata: { backgroundTask: true, backgroundTaskType: 'agent', backgroundTaskVersion: 2, backgroundTaskReady: false },
     });
     runStore.records.set(agent.runId, { ...agent, requestedAt: new Date(Date.now() - 3 * 60_000).toISOString() });
-    const failBackgroundTask = vi.fn(async (candidate: RunRecord, message: string) => {
-      await runStore.markStatus(candidate.runId, 'failed', 'background_command_start_timeout', {
+    const failBackgroundTask = vi.fn(async (candidate: RunRecord, message: string, reason?: string) => {
+      await runStore.markStatus(candidate.runId, 'failed', reason, {
         wakeState: 'pending',
         error: message,
       });
@@ -364,10 +364,12 @@ describe('RuntimeScheduler background task recovery', () => {
     expect(failBackgroundTask).toHaveBeenCalledWith(
       expect.objectContaining({ runId: 'shell-bg-stale-start' }),
       expect.stringContaining('启动确认超时'),
+      'background_command_start_timeout',
     );
     expect(failBackgroundTask).toHaveBeenCalledWith(
       expect.objectContaining({ runId: 'bg-agent-stale-start' }),
       expect.stringContaining('启动确认超时'),
+      'background_agent_start_timeout',
     );
     await expect(runStore.get('shell-bg-stale-start')).resolves.toMatchObject({
       status: 'failed',
@@ -392,8 +394,8 @@ describe('RuntimeScheduler background task recovery', () => {
       ...record,
       requestedAt: new Date(Date.now() - 3 * 60_000).toISOString(),
     });
-    const failBackgroundTask = vi.fn(async (candidate: RunRecord, message: string) => {
-      await runStore.markStatus(candidate.runId, 'failed', 'background_agent_start_timeout', {
+    const failBackgroundTask = vi.fn(async (candidate: RunRecord, message: string, reason?: string) => {
+      await runStore.markStatus(candidate.runId, 'failed', reason, {
         wakeState: 'pending',
         error: message,
       });
@@ -414,12 +416,91 @@ describe('RuntimeScheduler background task recovery', () => {
     expect(failBackgroundTask).toHaveBeenCalledWith(
       expect.objectContaining({ runId: 'agent-bg-stale-start' }),
       expect.stringContaining('Agent 启动确认超时'),
+      'background_agent_start_timeout',
     );
     expect(wake).not.toHaveBeenCalled();
     await expect(runStore.get('agent-bg-stale-start')).resolves.toMatchObject({
       status: 'failed',
       metadata: { wakeState: 'pending' },
     });
+  });
+
+  it('终止超过队列时限但从未领取的 ready 后台任务，禁止迟到补跑', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const record = await runStore.upsertPending({
+      runId: 'agent-bg-stale-queue',
+      sessionId: 'sub-agent-stale-queue',
+      metadata: {
+        subagent: true,
+        backgroundTask: true,
+        backgroundTaskType: 'agent',
+        backgroundTaskVersion: 2,
+        backgroundTaskReady: true,
+      },
+    });
+    runStore.records.set(record.runId, {
+      ...record,
+      requestedAt: new Date(Date.now() - 11 * 60_000).toISOString(),
+    });
+    const failBackgroundTask = vi.fn(async (candidate: RunRecord, message: string, reason?: string) => {
+      await runStore.markStatus(candidate.runId, 'failed', reason, { wakeState: 'pending', error: message });
+    });
+    const wake = vi.fn();
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      autoWake: true,
+      wake,
+      failBackgroundTask,
+    });
+
+    await scheduler.tick();
+    await scheduler.stop();
+
+    expect(failBackgroundTask).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: record.runId }),
+      expect.stringContaining('排队超过 10 分钟'),
+      'background_task_queue_timeout',
+    );
+    expect(wake).not.toHaveBeenCalled();
+    await expect(runStore.get(record.runId)).resolves.toMatchObject({
+      status: 'failed',
+      statusReason: 'background_task_queue_timeout',
+    });
+  });
+
+  it('过期后台任务终态化暂时失败时保持 pending，但本轮仍禁止迟到补跑', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const record = await runStore.upsertPending({
+      runId: 'agent-bg-stale-freeze-failed',
+      sessionId: 'sub-agent-stale-freeze-failed',
+      metadata: { backgroundTask: true, backgroundTaskVersion: 2, backgroundTaskReady: true },
+    });
+    runStore.records.set(record.runId, {
+      ...record,
+      requestedAt: new Date(Date.now() - 11 * 60_000).toISOString(),
+    });
+    const wake = vi.fn();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      autoWake: true,
+      wake,
+      failBackgroundTask: vi.fn(async () => { throw new Error('event store unavailable'); }),
+      logger,
+    });
+
+    await scheduler.tick();
+    await scheduler.stop();
+
+    expect(wake).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('event store unavailable'));
+    await expect(runStore.get(record.runId)).resolves.toMatchObject({ status: 'pending' });
   });
 
   it('hands off an in-flight background command monitor during scheduler drain', async () => {

@@ -17,6 +17,7 @@ const STALE_APPROVAL_REASON = 'stale_waiting_approval_timeout';
 const STALE_APPROVAL_BATCH_SIZE = 50;
 const STAGED_INTERACTION_RECOVERY_BATCH_SIZE = 50;
 const BACKGROUND_TASK_START_TIMEOUT_MS = 2 * 60_000;
+const BACKGROUND_TASK_QUEUE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_CONCURRENT_RUNS = 16;
 export const SCHEDULER_STATE_METADATA_KEY = 'schedulerState';
 export const SCHEDULER_STATE_STAGED = 'staged';
@@ -67,7 +68,7 @@ export interface RuntimeSchedulerOptions {
   /** expired running 后台任务禁止重放，由调用方冻结失败并生成完成通知。 */
   failInterruptedBackgroundTask?: (record: RunRecord) => Promise<void>;
   /** 后台任务在 wake 前置闸门失败时冻结结果并生成完成通知。 */
-  failBackgroundTask?: (record: RunRecord, message: string) => Promise<void>;
+  failBackgroundTask?: (record: RunRecord, message: string, reason?: string) => Promise<void>;
   /** Server drain 时只交接后台命令监控，不终止 ACS 中的真实进程。 */
   handoffBackgroundCommand?: (record: RunRecord) => void | Promise<void>;
   logger?: {
@@ -348,21 +349,29 @@ export class RuntimeScheduler {
       const now = this.now();
       const recoverable = await this.options.runStore.listRecoverable(now);
       let backgroundStateChanged = false;
-      // Activation cleanup is maintenance, not execution admission. It must run while
-      // the kill switch is closed or capacity pressure would leak ready=false quota.
+      const staleBackgroundRunIds = new Set<string>();
+      // 后台任务的激活/排队超时属于维护动作，必须在执行开关关闭或容量紧张时仍可收口。
+      // ready 任务超过队列时限后绝不能再补跑，否则旧指令可能在数小时后突然产生外部副作用。
       for (const record of recoverable) {
-        if (record.status !== 'pending' || !isBackgroundTaskRun(record) || isBackgroundTaskReady(record)
-          || Date.parse(record.requestedAt) > now.getTime() - BACKGROUND_TASK_START_TIMEOUT_MS) continue;
+        if (record.status !== 'pending' || !isBackgroundTaskRun(record)) continue;
+        const ready = isBackgroundTaskReady(record);
+        const timeoutMs = ready ? BACKGROUND_TASK_QUEUE_TIMEOUT_MS : BACKGROUND_TASK_START_TIMEOUT_MS;
+        if (record.startedAt || Date.parse(record.requestedAt) > now.getTime() - timeoutMs) continue;
+        staleBackgroundRunIds.add(record.runId);
         const command = isBackgroundCommandTaskRun(record);
-        const message = command
-          ? '后台命令启动确认超时；已尝试终止可能存在的 ACS 进程'
-          : '后台 Agent 启动确认超时；任务尚未开始执行';
+        const message = ready
+          ? `${command ? '后台命令' : '后台 Agent'}排队超过 10 分钟，已取消过期执行`
+          : command
+            ? '后台命令启动确认超时；已尝试终止可能存在的 ACS 进程'
+            : '后台 Agent 启动确认超时；任务尚未开始执行';
+        const reason = ready ? 'background_task_queue_timeout'
+          : command ? 'background_command_start_timeout' : 'background_agent_start_timeout';
         try {
-          if (this.options.failBackgroundTask) await this.options.failBackgroundTask(record, message);
+          if (this.options.failBackgroundTask) await this.options.failBackgroundTask(record, message, reason);
           else await this.options.runStore.markStatus(
             record.runId,
             'failed',
-            command ? 'background_command_start_timeout' : 'background_agent_start_timeout',
+            reason,
             { wakeState: 'pending' },
           );
           backgroundStateChanged = true;
@@ -407,8 +416,9 @@ export class RuntimeScheduler {
 
       const availableSlots = this.maxConcurrentRuns - this.inFlightRuns.size;
       if (availableSlots <= 0) return;
-      const nowMs = Date.now();
+      const nowMs = now.getTime();
       const pendingRecoverable = recoverable.filter((record) => {
+        if (staleBackgroundRunIds.has(record.runId)) return false;
         const deferredUntil = this.deferredUntilByRun.get(record.runId);
         if (deferredUntil !== undefined) {
           if (deferredUntil > nowMs) return false;

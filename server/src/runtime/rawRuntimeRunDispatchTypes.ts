@@ -334,6 +334,8 @@ export interface RawRuntimeRunDispatchConfig {
   executionTransportRegistry?: ExecutionTransportRegistry;
   sessionCatalog?: SessionCatalog;
   eventStoreFactory?: (session: RuntimeSessionRecord) => EventStore;
+  /** Session 记录可能先于 durable Run 消失，终态事件与 outbox 仍需落到共享 EventStore。 */
+  eventStoreForMissingSession?: EventStore;
   approvalStoreFactory?: (session: RuntimeSessionRecord, eventStore: EventStore) => ApprovalStore;
   /** Durable run state backend；PG runtime 注入后同时作为父子 Run 的统一容量底座。 */
   runStore?: RunStore;

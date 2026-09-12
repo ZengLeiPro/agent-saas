@@ -36450,12 +36450,27 @@
           "targetDigest": "sha256:fc9f8ad50a7c6cc3d92632cb385c8273b120a9a788be1385fb6137792101e517",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：仅扩展 RunStore 的 TypeScript 续接接口，不执行 SQL、DDL 或回填。"
+        },
+        {
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。详见 PR662 套餐备注数据库持久化迁移审核。"
         }
       ],
       "evidence": [
         {
           "path": "docs/release/子Agent能力增强迁移审核-20260912.md",
           "digest": "sha256:3bc400152fe0e865b047fa55dd52f523bce4a85f3410c58fdcc1d98c4ab0ba2c"
+        },
+        {
+          "path": "docs/release/PR662-套餐备注数据库持久化迁移审核-20260912.md",
+          "digest": "sha256:3e00d8a35378becd91e709df86534624ba002fbc0790297594e0769ad9257f8c"
+        },
+        {
+          "path": "server/src/quota/providerPlanExpiry.pg.test.ts",
+          "digest": "sha256:b37b03260951326f77e87b11b38972ff1551bf3c84c6d40cc596343db9fc9d10"
         }
       ]
     }

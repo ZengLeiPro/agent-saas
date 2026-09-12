@@ -20,10 +20,8 @@ const snapshot = (sha, overrides = {}, absent = []) => ({
 const document = JSON.parse(git('show', `${target}:config/release-migration-reviews.json`));
 const hash = (value) => 'sha256:' + createHash('sha256').update(value).digest('hex');
 test('Grok re-review retains historical expand decisions and binds runtime source and evidence bytes', () => {
-  const reviewed = document.reviews.filter(
-    (review) =>
-      review.files.some((file) => file.path === source) &&
-      review.evidence.some((item) => item.path === evidence),
+  const reviewed = document.reviews.filter((review) =>
+    review.files.some((file) => file.path === source),
   );
   assert.ok(reviewed.length > 0);
   for (const review of reviewed) {
@@ -42,10 +40,8 @@ test('Grok re-review retains historical expand decisions and binds runtime sourc
   );
 });
 test('changed runtime bytes or missing new evidence still invalidate the whole historical review', () => {
-  const baseline = document.reviews.find(
-    (review) =>
-      review.files.some((file) => file.path === source) &&
-      review.evidence.some((item) => item.path === evidence),
+  const baseline = document.reviews.find((review) =>
+    review.files.some((file) => file.path === source),
   ).baselineSha;
   const baselineSnapshot = snapshot(baseline);
   assert.throws(

@@ -38453,6 +38453,63 @@
           "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
         }
       ]
+    },
+    {
+      "baselineSha": "51f96d2072b3f929de0a8f9a51bc463824cfd852",
+      "files": [
+        {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:660a2f109d2a4385b949d6bed404c410bfc9e2561e3afedcfc4c70f5146568e1",
+          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "classification": "no-schema-change",
+          "reason": "把已初始化的共享 PgEventStore 交给 session 缺失时的后台任务终态路径，并转发失败原因；无 SQL、DDL、启动迁移或回填。"
+        },
+        {
+          "path": "server/src/runtime/background/backgroundTaskRuntime.ts",
+          "baselineDigest": "sha256:48e01577030248862791874dcf4f6480cfe7673a1a49cb2275b37175d81220e5",
+          "targetDigest": "sha256:8f11ad1b381ad28e1569372bf1ecdbe2902073d59b4e11a3e31948c126fb63eb",
+          "classification": "no-schema-change",
+          "reason": "将直接子 Agent 与后台协调 Run 的 JSONB 谓词拆成可复用片段，并用 COALESCE 把缺失 subagent 显式视为 false；无 schema 或数据变更。"
+        },
+        {
+          "path": "server/src/runtime/platformIncidentPolicy.ts",
+          "baselineDigest": "sha256:bbe735f8a9d1223ca5f4b233f32cb3c4e5f2d7132e1decb88102c39688e7e1d4",
+          "targetDigest": "sha256:418b11eb7873d806cfbe18a6c809deb7089571b9c4cda96814f7e2e96432c4c3",
+          "classification": "no-schema-change",
+          "reason": "队列阻塞告警改为复用同一领取资格谓词，只读聚合既有 runs 表；无 DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runLeaseEligibility.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
+          "classification": "no-schema-change",
+          "reason": "队列告警与 acquireLease 共用同一段只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/runStoreQueries.ts",
+          "baselineDigest": "sha256:55c8a20cc4a769c03595b48eec59cfefdb0161faab84bb8dfb71dbb47e0b2237",
+          "targetDigest": "sha256:ae72e6d17802bdd797dde9e44370e1e4a402c6edad7d2cdf6583e43770013227",
+          "classification": "no-schema-change",
+          "reason": "acquireLease 的阻断谓词改为调用共享片段，表、列和写入形状不变；无 DDL、迁移、回填或破坏性操作。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
+          "classification": "no-schema-change",
+          "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/PR672-队列残留收口无结构变更审核-20260913.md",
+          "digest": "sha256:2005f5d772c65fd57ce98264b9cde1907d631e8306fc5e97b288bdb9223bfbb2"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
+        }
+      ]
     }
   ]
 }

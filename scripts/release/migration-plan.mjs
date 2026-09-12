@@ -4422,10 +4422,18 @@ function createMigrationPlanFromInput({
   const noLongerReachable = [...baselineClosure].filter((path) => !targetClosure.has(path));
   let reviews = { entries: new Map(), digest: null };
   try {
+    const relevantReviewPaths = new Set([
+      ...candidatePaths.filter(
+        (path) => isMigrationPath(path) || baselineClosure.has(path) || targetClosure.has(path),
+      ),
+      ...newlyReachable,
+      ...noLongerReachable,
+    ]);
     reviews = loadMigrationReviews({
       baseline,
       baselineSnapshot: snapshotFor(baseline),
       targetSnapshot: snapshotFor(target),
+      relevantPaths: relevantReviewPaths,
     });
   } catch (error) {
     blockingReasons.push(`Migration review validation failed: ${error.message}`);

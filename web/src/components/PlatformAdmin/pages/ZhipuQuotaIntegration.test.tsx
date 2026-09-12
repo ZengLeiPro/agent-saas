@@ -125,12 +125,16 @@ describe('Zhipu quota dashboard card', () => {
   it('shows a failed collection honestly while retaining last successful usage', async () => {
     mocks.api.providerQuota.mockResolvedValue({ ...overview, items: [{
       ...overview.items[0], ok: false, error: '智谱额度查询 HTTP 429',
+      collectedAt: '2026-09-11T08:00:00.000Z',
       extra: { lastSuccessAt: '2026-09-11T07:55:00.000Z' },
     }] });
     render(<ProviderQuotaPage />);
-    await waitFor(() => expect(screen.getByText('采集失败')).toBeTruthy());
-    expect(screen.getByText(/最后一次成功数据/u)).toBeTruthy();
-    expect(screen.getByText('25.0%')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('25.0%')).toBeTruthy());
+    expect(screen.queryByText('采集失败')).toBeNull();
+    expect(screen.queryByText(/最后一次成功数据/u)).toBeNull();
+    expect(screen.queryByText(/智谱额度查询 HTTP 429/u)).toBeNull();
+    expect(screen.queryByText(/个异常/u)).toBeNull();
+    expect(screen.getByText('接近上限')).toBeTruthy();
     expect(screen.queryByText('0.0%')).toBeNull();
   });
 });

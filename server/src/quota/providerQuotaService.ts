@@ -167,14 +167,14 @@ export class ProviderQuotaService {
     const items = latest
       .filter((snapshot) => activeKeys.has(snapshot.accountKey))
       .map((snapshot) => {
-        // 失败快照保留上一次成功的窗口数据，只覆盖错误与采集时间。
+        // 失败时保留上次成功窗口和采集时间，只覆盖 ok/error；看板时间不跟失败尝试走。
         const previous = snapshot.ok ? undefined : okByKey.get(snapshot.accountKey);
         const merged = previous
           ? {
               ...previous,
               ok: false,
               error: snapshot.error,
-              collectedAt: snapshot.collectedAt,
+              collectedAt: previous.collectedAt,
               extra: { ...previous.extra, lastSuccessAt: previous.collectedAt },
             }
           : snapshot;

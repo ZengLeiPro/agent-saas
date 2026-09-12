@@ -124,7 +124,7 @@ describe('Zhipu ProviderQuotaService integration', () => {
     expect(store.rows[1]).toMatchObject({ ok: false, windows: [] });
     const snapshot = (await service.overview()).items[0]!;
     expect(snapshot).toMatchObject({
-      ok: false, extra: { lastSuccessAt: successAt },
+      ok: false, collectedAt: successAt, extra: { lastSuccessAt: successAt },
       windows: [expect.objectContaining({ usedPercent: 30 })],
     });
     expect(snapshot.error).toContain('429');

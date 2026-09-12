@@ -69,7 +69,7 @@ export interface ProviderQuotaSnapshot {
   /** Codex：可用的额度重置券张数（rate_limit_reset_credits.available_count）。 */
   resetCredits?: number;
   credential?: ProviderQuotaCredentialState;
-  /** false 时采集失败；概览可附加上次成功的窗口，并标记 lastSuccessAt。 */
+  /** false 时采集失败；概览保留上次成功窗口，采集时间停留在 lastSuccessAt。 */
   ok: boolean;
   error?: string;
   collectedAt: string;

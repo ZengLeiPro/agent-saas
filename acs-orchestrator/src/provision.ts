@@ -275,8 +275,8 @@ export class Provisioner {
       '-c',
       this.config.sandboxContainerName,
       '--',
-      '/app/acs-orchestrator/node_modules/.bin/tsx',
-      '/app/acs-orchestrator/src/sandboxRunner.ts',
+      '/usr/local/bin/node',
+      '/app/acs-orchestrator/dist/sandboxRunner.mjs',
     ], { input, timeoutMs });
     const parsed = parseSandboxRunnerFinal(result.stdout);
     const response = parsed?.response;

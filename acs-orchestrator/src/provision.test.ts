@@ -176,7 +176,7 @@ describe('Provisioner runtime bootstrap', () => {
       step: 'provision_singleflight',
       status: 'skipped',
     });
-    expect(calls.filter((call) => call.args.includes('/app/acs-orchestrator/src/sandboxRunner.ts'))).toHaveLength(1);
+    expect(calls.filter((call) => call.args.includes('/app/acs-orchestrator/dist/sandboxRunner.mjs'))).toHaveLength(1);
   });
 });
 

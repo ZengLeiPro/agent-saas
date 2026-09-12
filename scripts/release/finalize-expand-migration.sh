@@ -149,6 +149,16 @@ if [ "$lock_ready" != true ]; then
 fi
 lock_ready_confirmed=true
 
+if [ "$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")":"$(jq -r .components.runtimeWorker.action "$RUNNER_TEMP/manifest.json")" != keep:keep ]; then
+  retirement_id="$(node scripts/release/promotion-finalization-mode.mjs \
+    "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" \
+    "$GITHUB_RUN_ID" --retirement-id)"
+  [[ "$retirement_id" =~ ^[1-9][0-9]*-[1-9][0-9]*$ ]]
+  retirement_root="/var/lib/agent-saas-release-recovery/retirements/$retirement_id"
+  run_locked_ssh \
+    "sudo install -m 0600 -- '$retirement_root/app-retirement-targets.json' '$remote/app-retirement-targets.json'"
+fi
+
 run_locked_ssh \
   "sudo bash '$remote/verify-app-retirement.sh' '$remote/manifest.json' > '$remote/app-retirement-initial.json'"
 run_guarded scp -i ~/.ssh/production_key \

@@ -106,7 +106,7 @@ function setup() {
     state,
     releaseId,
     manifestDigest: digest,
-    operationKey: state,
+    operationKey: state === 'awaiting_expand_confirmation' ? 'outcome:456:2' : state,
     actor: 'test',
     recordedAt,
     ...(state === 'promoting' ? { reason: JSON.stringify(binding) } : {}),
@@ -174,6 +174,7 @@ test(
     assert.equal(result.status, 0, result.stderr);
     assert.equal(state(root), 'completed');
     assert.deepEqual(events(root), [
+      'retirement-target',
       'retirement-initial',
       'read-initial',
       'database-initial',

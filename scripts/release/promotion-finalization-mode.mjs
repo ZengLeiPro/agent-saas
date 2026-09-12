@@ -34,6 +34,13 @@ export function finalizationDeploymentId(attestations) {
   return id;
 }
 
+export function finalizationRetirementId(attestations) {
+  const awaiting = attestations.findLast((entry) => entry.state === 'awaiting_expand_confirmation');
+  const match = /^outcome:([1-9][0-9]*):([1-9][0-9]*)$/u.exec(awaiting?.operationKey ?? '');
+  if (!match) throw new Error('Invalid App retirement operation in finalization attestation');
+  return `${match[1]}-${match[2]}`;
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [manifestPath, attestationsPath, runId, output] = process.argv.slice(2);
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -43,6 +50,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     .filter(Boolean)
     .map(JSON.parse);
   const mode = promotionFinalizationMode({ manifest, attestations, runId });
-  if (output && output !== '--deployment-id') throw new Error('Unknown finalization output');
-  process.stdout.write((output ? finalizationDeploymentId(attestations) : mode) + '\n');
+  if (output && !['--deployment-id', '--retirement-id'].includes(output)) {
+    throw new Error('Unknown finalization output');
+  }
+  const value =
+    output === '--deployment-id'
+      ? finalizationDeploymentId(attestations)
+      : output === '--retirement-id'
+        ? finalizationRetirementId(attestations)
+        : mode;
+  process.stdout.write(value + '\n');
 }

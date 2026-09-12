@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   promotionFinalizationMode,
   finalizationDeploymentId,
+  finalizationRetirementId,
 } from './promotion-finalization-mode.mjs';
 
 const manifest = {
@@ -15,6 +16,7 @@ const entry = {
   releaseId: manifest.releaseId,
   manifestDigest: manifest.digest,
   state: 'awaiting_expand_confirmation',
+  operationKey: 'outcome:456:2',
 };
 const mode = (latest, rc = manifest, runId = '123') =>
   promotionFinalizationMode({ manifest: rc, attestations: [latest], runId });
@@ -97,6 +99,24 @@ test('确认与镜像重跑恢复原 Production Deployment，成功后可更新�
           { ...entry, reason: JSON.stringify({ productionDeploymentId }) },
         ]),
       /Invalid Production Deployment ID/,
+    );
+  }
+});
+
+test('自动收尾只恢复等待凭证绑定的耐久 App 退役目标', () => {
+  assert.equal(finalizationRetirementId([entry]), '456-2');
+  assert.equal(
+    finalizationRetirementId([
+      entry,
+      { ...entry, operationKey: 'outcome:789:3' },
+      { ...entry, state: 'completed', operationKey: 'expand-confirmation:123:1' },
+    ]),
+    '789-3',
+  );
+  for (const operationKey of ['', 'outcome:0:1', 'outcome:1:0', 'outcome:1:2/../../x']) {
+    assert.throws(
+      () => finalizationRetirementId([{ ...entry, operationKey }]),
+      /Invalid App retirement operation/,
     );
   }
 });

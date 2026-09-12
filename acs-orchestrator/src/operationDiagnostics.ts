@@ -2,11 +2,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { OwnedOperations } from './ownedOperations.js';
 import type { OwnershipJournal } from './ownershipJournal.js';
 
-interface DiagnosticsOptions {
+export interface DiagnosticsOptions {
   authorize(req: IncomingMessage, res: ServerResponse): boolean;
   operations: OwnedOperations;
   journal: OwnershipJournal;
-  counts(): { requests: number; recovery: number; draining: boolean };
+  counts(): { requests: number; recovery: number; unresolvedInvocations: number; draining: boolean };
 }
 
 /** Snapshots only: this route never calls health, kubectl, a remote tool or a database. */

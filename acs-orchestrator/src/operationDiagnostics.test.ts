@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { handleOperationDiagnostics } from './operationDiagnostics.js';
+import { handleOperationDiagnostics, type DiagnosticsOptions } from './operationDiagnostics.js';
 
 function response() {
-  const result = { status: 0, value: undefined as unknown };
+  const result: { status: number; value: Record<string, unknown> | undefined } = { status: 0, value: undefined };
   return {
     result,
     res: {
@@ -10,13 +10,19 @@ function response() {
         result.status = status;
       },
       end(body: string) {
-        result.value = JSON.parse(body);
+        result.value = JSON.parse(body) as Record<string, unknown>;
       },
     },
   };
 }
 
-function options(journalAvailable = true) {
+function options(
+  journalAvailable = true,
+  extra?: {
+    counts?: DiagnosticsOptions['counts'];
+    drainBlockers?: number;
+  },
+): DiagnosticsOptions {
   const record = {
     protocolVersion: 1,
     operationId: 'operation-one',
@@ -36,12 +42,12 @@ function options(journalAvailable = true) {
     authorize: () => true,
     operations: {
       snapshot: () => [{ ...record, resource: 'unknown' }],
-      drainBlockers: () => [],
+      drainBlockers: () => extra?.drainBlockers ?? 0,
       get: () => undefined,
     },
     journal: { snapshot: () => ({ available: journalAvailable, records: [record] }) },
-    counts: () => ({ requests: 0, recovery: 0, unresolvedInvocations: 0, draining: false }),
-  } as never;
+    counts: extra?.counts ?? (() => ({ requests: 0, recovery: 0, unresolvedInvocations: 0, draining: false })),
+  } as unknown as DiagnosticsOptions;
 }
 
 describe('operation diagnostics exact invocation lookup', () => {
@@ -83,13 +89,13 @@ describe('operation diagnostics drain classification', () => {
     ];
     for (const counts of cases) {
       const { res, result } = response();
-      const current = options();
-      current.counts = () => ({ ...counts, draining: true });
-      current.operations.drainBlockers = () => counts.ownedWork;
       handleOperationDiagnostics(
         { method: 'GET', url: '/diagnostics/drain' } as never,
         res as never,
-        current,
+        options(true, {
+          counts: () => ({ ...counts, draining: true }),
+          drainBlockers: counts.ownedWork,
+        }),
       );
       expect(result.status).toBe(200);
       expect(result.value).toMatchObject({
@@ -97,23 +103,23 @@ describe('operation diagnostics drain classification', () => {
         ...counts,
         draining: true,
         journalAvailable: true,
-      });
-      expect(result.value.blockers[0]).toMatchObject({
-        operationId: 'operation-one',
-        invocationId: 'agent-dws-events-account-one',
+        blockers: [expect.objectContaining({
+          operationId: 'operation-one',
+          invocationId: 'agent-dws-events-account-one',
+        })],
       });
     }
   });
 
   it('keeps journal unavailability visible without dropping blockers', () => {
     const { res, result } = response();
-    const current = options(false);
-    current.counts = () => ({ requests: 0, recovery: 0, unresolvedInvocations: 0, draining: true });
-    current.operations.drainBlockers = () => 1;
     handleOperationDiagnostics(
       { method: 'GET', url: '/diagnostics/drain' } as never,
       res as never,
-      current,
+      options(false, {
+        counts: () => ({ requests: 0, recovery: 0, unresolvedInvocations: 0, draining: true }),
+        drainBlockers: 1,
+      }),
     );
     expect(result.status).toBe(200);
     expect(result.value).toMatchObject({
@@ -121,6 +127,6 @@ describe('operation diagnostics drain classification', () => {
       journalAvailable: false,
       persistedUnresolved: 0,
     });
-    expect(result.value.secret).toBeUndefined();
+    expect(result.value).not.toHaveProperty('secret');
   });
 });

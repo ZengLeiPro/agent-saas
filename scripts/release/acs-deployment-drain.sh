@@ -75,7 +75,14 @@ align_acs_drain_deadline() {
 }
 
 acs_drain_diagnostics_path() {
-  printf '%s' "$(dirname "${MANIFEST_PATH:?}")/acs-drain-diagnostics-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}.jsonl"
+  # ${VAR:?} inside command substitution does not fail this function, and a later
+  # unbound $release_id under `set -u` aborts the whole sourced script through `|| true`.
+  if [ -z "${MANIFEST_PATH:-}" ] || [ -z "${GITHUB_RUN_ID:-}" ] || [ -z "${GITHUB_RUN_ATTEMPT:-}" ] \
+    || [ -z "${release_id:-}" ] || [ -z "${manifest_digest:-}" ]; then
+    echo 'ACS drain diagnostics require MANIFEST_PATH, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, releaseId and manifestDigest' >&2
+    return 1
+  fi
+  printf '%s' "$(dirname "$MANIFEST_PATH")/acs-drain-diagnostics-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.jsonl"
 }
 
 acs_drain_diagnostics_url() {
@@ -134,10 +141,6 @@ _acs_diagnostics_summary() {
 _acs_write_drain_diagnostics_record() {
   local phase="$1" body="$2" path observed digest record
   path="$(acs_drain_diagnostics_path)" || return 1
-  [ -n "$release_id" ] && [ -n "$manifest_digest" ] || {
-    echo 'ACS drain diagnostics require releaseId and manifestDigest' >&2
-    return 1
-  }
   [[ "${ACS_DRAIN_PID:-0}" =~ ^[0-9]+$ ]] || {
     echo 'ACS drain diagnostics require a numeric old PID' >&2
     return 1

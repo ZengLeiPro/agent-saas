@@ -404,6 +404,7 @@ cancel_acs_deployment_drain`,
       },
     );
     assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /ACS drain diagnostics require MANIFEST_PATH, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, releaseId and manifestDigest/u);
     assert.match(await readFile(join(root, 'events'), 'utf8'), /systemctl start acs/u);
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -5,6 +5,8 @@ ACS_DRAIN_PID=''
 ACS_DRAIN_PROTOCOL=''
 ACS_DRAIN_DROPIN=''
 ACS_DRAIN_LAST_INFLIGHT=unknown
+ACS_DRAIN_DIAGNOSTICS_LAST_FINGERPRINT=''
+ACS_DRAIN_DIAGNOSTICS_FAILURES=0
 # 外层等待窗口。ACS 进程内部的 deadline 必须严格小于它：进程一旦自己把 drain
 # 判成 timed_out 就会恢复准入并放弃换代，此时外层再长的等待都没有意义。
 #
@@ -72,6 +74,186 @@ align_acs_drain_deadline() {
   printf 'Aligned ACS drain deadline with the promotion window: %sms -> %sms\n' "$current" "$applied" >&2
 }
 
+acs_drain_diagnostics_path() {
+  # ${VAR:?} inside command substitution does not fail this function, and a later
+  # unbound $release_id under `set -u` aborts the whole sourced script through `|| true`.
+  if [ -z "${MANIFEST_PATH:-}" ] || [ -z "${GITHUB_RUN_ID:-}" ] || [ -z "${GITHUB_RUN_ATTEMPT:-}" ] \
+    || [ -z "${release_id:-}" ] || [ -z "${manifest_digest:-}" ]; then
+    echo 'ACS drain diagnostics require MANIFEST_PATH, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, releaseId and manifestDigest' >&2
+    return 1
+  fi
+  printf '%s' "$(dirname "$MANIFEST_PATH")/acs-drain-diagnostics-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.jsonl"
+}
+
+acs_drain_diagnostics_url() {
+  local health="${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}"
+  printf '%s' "${health%/health}/diagnostics/drain"
+}
+
+acs_drain_observed_at() {
+  node -e 'process.stdout.write(new Date().toISOString())' 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+_acs_validate_drain_diagnostics() {
+  printf '%s' "$1" | jq -e '
+    .protocolVersion == 1
+    and (.requests | type=="number" and .>=0 and floor==.)
+    and (.recovery | type=="number" and .>=0 and floor==.)
+    and (.ownedWork | type=="number" and .>=0 and floor==.)
+    and (.draining | type=="boolean")
+    and (.journalAvailable | type=="boolean")
+    and (.blockers | type=="array")
+    and (
+      (.unresolvedInvocations | type=="number" and .>=0 and floor==.)
+      or (.unresolvedInvocations == null)
+    )
+  ' >/dev/null
+}
+
+_acs_diagnostics_fingerprint() {
+  printf '%s' "$1" | jq -c '{
+    requests,
+    recovery,
+    unresolvedInvocations: (.unresolvedInvocations // 0),
+    ownedWork,
+    journalAvailable,
+    persistedUnresolved,
+    ids: [.blockers[]? | [(.operationId // ""), (.invocationId // ""), (.phase // ""), (.resource // ""), (.kind // "")]]
+  }'
+}
+
+_acs_diagnostics_summary() {
+  printf '%s' "$1" | jq -c '{
+    requests,
+    recovery,
+    unresolvedInvocations: (.unresolvedInvocations // 0),
+    ownedWork,
+    draining,
+    journalAvailable,
+    persistedUnresolved,
+    blockerCount: (.blockers | length),
+    blockers: [.blockers[:8][] | {
+      kind, phase, resource, invocationId, sandboxName, workspaceId, elapsedMs, reasonCode, durable
+    }]
+  }'
+}
+
+_acs_write_drain_diagnostics_record() {
+  local phase="$1" body="$2" path observed digest record
+  path="$(acs_drain_diagnostics_path)" || return 1
+  [[ "${ACS_DRAIN_PID:-0}" =~ ^[0-9]+$ ]] || {
+    echo 'ACS drain diagnostics require a numeric old PID' >&2
+    return 1
+  }
+  observed="$(acs_drain_observed_at)"
+  digest="sha256:$(printf '%s' "$body" | openssl dgst -sha256 | awk '{print $NF}')"
+  [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+    echo 'ACS drain diagnostics snapshot digest failed' >&2
+    return 1
+  }
+  record="$(printf '%s' "$body" | jq -c \
+    --arg releaseId "$release_id" \
+    --arg manifestDigest "$manifest_digest" \
+    --arg runId "$GITHUB_RUN_ID" \
+    --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+    --argjson pid "$ACS_DRAIN_PID" \
+    --arg observedAt "$observed" \
+    --arg drainPhase "$phase" \
+    --arg snapshotDigest "$digest" \
+    '{
+      schemaVersion: 1,
+      releaseId: $releaseId,
+      manifestDigest: $manifestDigest,
+      runId: $runId,
+      runAttempt: $runAttempt,
+      oldAcsPid: $pid,
+      observedAt: $observedAt,
+      drainPhase: $drainPhase,
+      snapshotDigest: $snapshotDigest,
+      diagnostics: .
+    }')" || return 1
+  printf '%s\n' "$record" >> "$path" || return 1
+  ACS_DRAIN_DIAGNOSTICS_LAST_FINGERPRINT="$(_acs_diagnostics_fingerprint "$body")"
+  printf 'ACS drain diagnostics: phase=%s pid=%s %s\n' \
+    "$phase" "$ACS_DRAIN_PID" "$(_acs_diagnostics_summary "$body")" >&2
+}
+
+acs_record_legacy_drain_diagnostics() {
+  local path observed
+  path="$(acs_drain_diagnostics_path)" || return 1
+  observed="$(acs_drain_observed_at)"
+  jq -nc \
+    --arg releaseId "$release_id" \
+    --arg manifestDigest "$manifest_digest" \
+    --arg runId "$GITHUB_RUN_ID" \
+    --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+    --argjson pid "${ACS_DRAIN_PID:-0}" \
+    --arg observedAt "$observed" \
+    --arg drainPhase "$1" \
+    '{
+      schemaVersion: 1,
+      releaseId: $releaseId,
+      manifestDigest: $manifestDigest,
+      runId: $runId,
+      runAttempt: $runAttempt,
+      oldAcsPid: $pid,
+      observedAt: $observedAt,
+      drainPhase: $drainPhase,
+      snapshotDigest: null,
+      diagnostics: null,
+      legacyProtocol: true
+    }' >> "$path" || return 1
+}
+
+acs_snapshot_drain_diagnostics() {
+  local phase="$1" required="${2:-true}" attempt body
+  if [ "$ACS_DRAIN_PROTOCOL" != 1 ]; then
+    [ -s "$(acs_drain_diagnostics_path)" ] || acs_record_legacy_drain_diagnostics "$phase" || return 1
+    return 0
+  fi
+  body=''
+  for attempt in 1 2 3; do
+    if body="$(acs_runtime_config_request --max-time 5 --max-filesize 1048576 "$(acs_drain_diagnostics_url)")" \
+      && _acs_validate_drain_diagnostics "$body"; then
+      ACS_DRAIN_DIAGNOSTICS_FAILURES=0
+      _acs_write_drain_diagnostics_record "$phase" "$body"
+      return $?
+    fi
+    body=''
+    [ "$attempt" -eq 3 ] || sleep 1
+  done
+  ACS_DRAIN_DIAGNOSTICS_FAILURES=$((ACS_DRAIN_DIAGNOSTICS_FAILURES + 1))
+  echo "ACS drain diagnostics unavailable or invalid (phase=$phase)" >&2
+  [ "$required" = true ] && return 1
+  return 0
+}
+
+acs_poll_drain_diagnostics() {
+  local phase="$1" body fingerprint
+  if [ "$ACS_DRAIN_PROTOCOL" != 1 ]; then
+    return 0
+  fi
+  if ! body="$(acs_runtime_config_request --max-time 5 --max-filesize 1048576 "$(acs_drain_diagnostics_url)")"; then
+    ACS_DRAIN_DIAGNOSTICS_FAILURES=$((ACS_DRAIN_DIAGNOSTICS_FAILURES + 1))
+    if [ "$ACS_DRAIN_DIAGNOSTICS_FAILURES" -ge 3 ]; then
+      echo "ACS drain diagnostics unreachable (phase=$phase)" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if ! _acs_validate_drain_diagnostics "$body"; then
+    echo "ACS drain diagnostics schema invalid (phase=$phase)" >&2
+    return 1
+  fi
+  ACS_DRAIN_DIAGNOSTICS_FAILURES=0
+  fingerprint="$(_acs_diagnostics_fingerprint "$body")"
+  if [ "$fingerprint" != "$ACS_DRAIN_DIAGNOSTICS_LAST_FINGERPRINT" ]; then
+    _acs_write_drain_diagnostics_record changed "$body" || return 1
+  elif [ "$phase" = heartbeat ]; then
+    _acs_write_drain_diagnostics_record heartbeat "$body" || return 1
+  fi
+}
+
 release_acs_drain_guard() {
   [ -n "$ACS_DRAIN_DROPIN" ] || return 0
   rm -f "$ACS_DRAIN_DROPIN" || return 1
@@ -93,6 +275,7 @@ cancel_acs_deployment_drain() {
     for _ in $(seq 1 10); do
       if curl -fsS --max-time 3 "${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}" \
         | jq -e --argjson pid "$ACS_DRAIN_PID" '.deploymentDrain.pid==$pid and .draining==false' >/dev/null; then
+        acs_snapshot_drain_diagnostics recovered false || true
         return 0
       fi
       sleep 1
@@ -109,6 +292,7 @@ cancel_acs_deployment_drain() {
       --argjson pid "$restored_pid" \
       '.draining==false and (.inflight | type=="number" and .>=0 and floor==.) and
        ((.deploymentDrain.protocolVersion // 0)==0 or .deploymentDrain.pid==$pid)' >/dev/null; then
+      acs_snapshot_drain_diagnostics recovered false || true
       return 0
     fi
     sleep 1
@@ -154,7 +338,9 @@ drain_acs_before_cutover() {
   (set -o noclobber; printf '[Service]\nRestart=no\n' > "$ACS_DRAIN_DROPIN") || return 1
   systemctl daemon-reload || return 1
   [ "$ACS_DRAIN_PROTOCOL" != 1 ] || align_acs_drain_deadline || return 1
+  acs_snapshot_drain_diagnostics before_signal || return 1
   kill -USR2 "$ACS_DRAIN_PID" || return 1
+  acs_snapshot_drain_diagnostics after_signal || return 1
   deadline=$((SECONDS + ACS_DRAIN_WINDOW_SECONDS))
   next_progress=$SECONDS
   while [ "$SECONDS" -lt "$deadline" ]; do
@@ -163,6 +349,7 @@ drain_acs_before_cutover() {
       printf 'Waiting for ACS drain: pid=%s protocol=%s state=%s inflight=%s remainingSeconds=%s\n' \
         "$ACS_DRAIN_PID" "$ACS_DRAIN_PROTOCOL" "$state" "$ACS_DRAIN_LAST_INFLIGHT" \
         "$((deadline - SECONDS))" >&2
+      acs_poll_drain_diagnostics heartbeat || return 1
       next_progress=$((SECONDS + 15))
     fi
     if [ "$state" = inactive ] || [ "$state" = failed ]; then
@@ -187,6 +374,7 @@ drain_acs_before_cutover() {
         --arg releaseId "$release_id" --arg manifestDigest "$manifest_digest" \
         '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,pid:$pid,protocolVersion:$protocol,state:$proofState,exitStatus:$exitStatus}' > "$proof" || return 1
       chmod 0444 "$proof"
+      acs_snapshot_drain_diagnostics completed false || true
       return 0
     fi
     case "$state" in active|deactivating) ;; *) echo "Unexpected ACS drain state: $state" >&2; return 1 ;; esac
@@ -203,11 +391,14 @@ drain_acs_before_cutover() {
       if printf '%s' "$health" | jq -e '.deploymentDrain.state=="timed_out" or .deploymentDrain.state=="cancelled"' >/dev/null; then
         printf 'ACS drain was cancelled or reached its safe deadline; old work was preserved (inflight=%s)\n' \
           "$ACS_DRAIN_LAST_INFLIGHT" >&2
+        acs_snapshot_drain_diagnostics cancelled || true
         return 1
       fi
+      acs_poll_drain_diagnostics changed || return 1
     fi
     sleep 1
   done
   echo 'ACS drain deadline exceeded; refusing to terminate accepted work' >&2
+  acs_snapshot_drain_diagnostics deadline || true
   return 1
 }

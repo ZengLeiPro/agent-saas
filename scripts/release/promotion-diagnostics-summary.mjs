@@ -84,6 +84,61 @@ export function safeBudget(value) {
     ].map((key) => [key, count(value[key])]),
   );
 }
+const blockerId = (value) => valid(value, /^[A-Za-z0-9._:@-]{1,256}$/u);
+const drainPhase = (value) => valid(value, /^[a-z0-9_]{1,64}$/u);
+function safeDrainBlocker(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return {
+    operationId: blockerId(value.operationId),
+    attemptId: blockerId(value.attemptId),
+    invocationId: blockerId(value.invocationId),
+    kind: valid(value.kind, /^[A-Za-z0-9._-]{1,64}$/u),
+    phase: valid(value.phase, /^[A-Za-z0-9._-]{1,64}$/u),
+    resource: valid(value.resource, /^[A-Za-z0-9._-]{1,64}$/u),
+    sandboxName: valid(value.sandboxName, /^[A-Za-z0-9._:-]{1,180}$/u),
+    workspaceId: valid(value.workspaceId, /^[A-Za-z0-9._:-]{1,180}$/u),
+    elapsedMs: count(value.elapsedMs),
+    reasonCode: valid(value.reasonCode, /^[A-Za-z0-9._-]{1,64}$/u),
+    durable: value.durable === true,
+  };
+}
+export function safeAcsDrain(records) {
+  if (!Array.isArray(records) || records.length === 0) return null;
+  const truncated = records.length > 256;
+  const selected = records.slice(0, 256);
+  const projected = [];
+  for (const record of selected) {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) continue;
+    const diagnostics = record.diagnostics && typeof record.diagnostics === 'object' && !Array.isArray(record.diagnostics)
+      ? record.diagnostics
+      : null;
+    projected.push({
+      drainPhase: drainPhase(record.drainPhase),
+      observedAt: valid(record.observedAt, /^\d{4}-\d{2}-\d{2}T[0-9:.Z+-]{5,40}$/u),
+      oldAcsPid: count(record.oldAcsPid),
+      snapshotDigest: sha(record.snapshotDigest),
+      legacyProtocol: record.legacyProtocol === true,
+      requests: count(diagnostics?.requests),
+      recovery: count(diagnostics?.recovery),
+      unresolvedInvocations: count(diagnostics?.unresolvedInvocations),
+      ownedWork: count(diagnostics?.ownedWork),
+      journalAvailable: diagnostics?.journalAvailable === true,
+      persistedUnresolved: count(diagnostics?.persistedUnresolved),
+      blockers: Array.isArray(diagnostics?.blockers)
+        ? diagnostics.blockers.slice(0, 20).map(safeDrainBlocker).filter(Boolean)
+        : [],
+    });
+  }
+  if (!projected.length) return null;
+  return {
+    present: true,
+    recordCount: records.length,
+    truncated,
+    phases: projected.map((record) => record.drainPhase).filter(Boolean),
+    last: projected.at(-1),
+    records: projected.slice(0, 32),
+  };
+}
 export function safeNextAction(value) {
   return [
     'verify_failed_rollback_scope',

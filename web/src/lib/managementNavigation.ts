@@ -17,7 +17,7 @@ export interface ManagementPageDefinition {
   area: ManagementArea;
   group: string;
   label: string;
-  description: string;
+  description?: string;
   iconKey: string;
   routeId: string;
   layout?: ManagementPageLayout;
@@ -492,7 +492,6 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     area: 'platform',
     group: '平台分析',
     label: '套餐额度',
-    description: '查看 Codex、火山等模型套餐账号的实时用量、重置时间与撞限状态。',
     iconKey: 'quota',
     routeId: 'platform.runtime.provider-quota',
   },

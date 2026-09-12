@@ -39,9 +39,22 @@ read_metadata() {
   timeout --kill-after=5s 60s gh api \
     "repos/$GITHUB_REPOSITORY/actions/runs/$staging_run_id" > "$directory/staging-run.json"
 }
+download_attempt() {
+  timeout --kill-after=5s 180s gh run download "$staging_run_id" --repo "$GITHUB_REPOSITORY" \
+    --name "staging-evidence-$RELEASE_ID-$staging_run_attempt" \
+    --dir "$directory/attempt-evidence"
+}
+source_authority() {
+  if jq -e '.payload.automaticSource != null' "$directory/deployment.json" >/dev/null; then
+    preflight_check=staging_source_authority
+    if [ ! -d "$directory/attempt-evidence" ]; then download_attempt; fi
+    node "$script_dir/staging-source-authority.mjs" collect "$directory" "$manifest" "$GITHUB_REPOSITORY"
+  fi
+}
 # Explicit ERR inheritance keeps failed API calls inside the function observable and fatal.
 set -E
 read_metadata
+source_authority
 preflight_check=deployment_evidence
 node "$validator" verify "$directory" "$manifest" "$history" "$GITHUB_REPOSITORY"
 for name in deployment deployment-statuses staging-attempt staging-run; do
@@ -49,9 +62,7 @@ for name in deployment deployment-statuses staging-attempt staging-run; do
 done
 preflight_check=core_smoke_download
 # Do not derive this name from the latest run attempt or fall back to another artifact.
-timeout --kill-after=5s 180s gh run download "$staging_run_id" --repo "$GITHUB_REPOSITORY" \
-  --name "staging-evidence-$RELEASE_ID-$staging_run_attempt" \
-  --dir "$directory/attempt-evidence"
+if [ ! -d "$directory/attempt-evidence" ]; then download_attempt; fi
 cp "$directory/attempt-evidence/staging-core-smoke.json" "$directory/staging-core-smoke.json"
 preflight_check=core_smoke_validation
 node "$script_dir/staging-core-smoke-evidence.mjs" \
@@ -59,9 +70,11 @@ node "$script_dir/staging-core-smoke-evidence.mjs" \
 # Every phase requires a parseable, bound database readback. A none plan is not a bypass.
 preflight_check=database_readback_validation
 legacy_revalidation=false
+authority_args=()
+if [ -f "$directory/source-authority.json" ]; then authority_args+=("$directory/source-authority.json"); fi
 if ! node "$script_dir/verify-migration-readback.mjs" "$manifest" \
   "$directory/attempt-evidence/staging-database-readback.json" \
-  "$directory/staging-attempt.json" "$staging_run_id" "$staging_run_attempt" "$GITHUB_REPOSITORY" \
+  "$directory/staging-attempt.json" "$staging_run_id" "$staging_run_attempt" "$GITHUB_REPOSITORY" "${authority_args[@]}" \
   > "$directory/database-readback-validation.json"; then
   # Only a proven interrupted transaction and the pinned historical NONE producer qualify.
   # Preserve the invalid archive; append a separately hashed revalidation, never rewrite it.
@@ -73,6 +86,7 @@ if ! node "$script_dir/verify-migration-readback.mjs" "$manifest" \
 fi
 # Fail closed if a rerun/failure appeared while downloading the evidence.
 read_metadata
+source_authority
 preflight_check=final_staging_evidence
 node "$validator" complete "$directory" "$manifest" "$history" "$GITHUB_REPOSITORY"
 if [ "$legacy_revalidation" = true ]; then

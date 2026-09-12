@@ -1,3 +1,6 @@
+import { createModelAdapterForProtocol } from './modelAdapterFactory.js';
+export { createModelAdapterForProtocol } from './modelAdapterFactory.js';
+import { modelRequiresApiKey } from './subscriptionModelAuthentication.js';
 import { automationFenceFromMetadata } from './automationFence.js';
 import { randomUUID } from 'crypto';
 import { mkdir } from 'fs/promises';
@@ -86,7 +89,6 @@ import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
 import type { ModelAdapter } from './types.js';
 import { createApprovalStoreForSession, createEventStoreForSession, resolveEventTenantId } from './rawRuntimeEventStores.js';
 export { createApprovalStoreForSession, createEventStoreForSession, resolveEventTenantId } from './rawRuntimeEventStores.js';
-import { CodexSubscriptionResponsesTransport } from './responses/codexSubscriptionResponsesTransport.js';
 import type { CodexResponsesWebSocketPool } from './responses/codexResponsesWebSocketPool.js';
 import type { CodexCredentialManager } from './responses/codexCredentialManager.js';
 import {
@@ -226,48 +228,6 @@ const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
  *
  * 启动时静态决定，运行时不切换；config 改回 chat_completions 即回滚。
  */
-export function createModelAdapterForProtocol(
-  connection: { apiKey?: string; baseUrl?: string },
-  modelProviderOptions: ModelProviderOptions | undefined,
-  dependencies: ModelAdapterFactoryDependencies = {},
-): ModelAdapter {
-  if (modelProviderOptions?.protocol === 'responses') {
-    if (modelProviderOptions.responsesTransport === 'codex_subscription') {
-      if (!dependencies.codexCredentialManager) {
-        throw new Error('Codex subscription transport 缺少 CodexCredentialManager');
-      }
-      return new ResponsesApiAdapter(
-        {
-          apiKey: connection.apiKey ?? '',
-          baseUrl: connection.baseUrl ?? 'https://chatgpt.com/backend-api/codex',
-        },
-        {
-          ...modelProviderOptions,
-          disableResponseChaining: true,
-          disablePromptCacheKey: false,
-        },
-        new CodexSubscriptionResponsesTransport(
-          dependencies.codexCredentialManager,
-          dependencies.codexFetch,
-          dependencies.codexWebSocketPool,
-        ),
-      );
-    }
-    if (!connection.apiKey) throw new Error('Responses model 缺少 API Key');
-    return new ResponsesApiAdapter({
-      apiKey: connection.apiKey,
-      baseUrl: connection.baseUrl ?? DEFAULT_BASE_URL,
-    }, modelProviderOptions);
-  }
-  if (!connection.apiKey) throw new Error('Chat Completions model 缺少 API Key');
-  return new ChatCompletionsModelAdapter({
-    apiKey: connection.apiKey,
-    baseUrl: connection.baseUrl ?? DEFAULT_BASE_URL,
-  }, modelProviderOptions ?? {});
-}
-function modelRequiresApiKey(options: ModelProviderOptions | undefined): boolean {
-  return options?.responsesTransport !== 'codex_subscription';
-}
 /**
  * Skills wiring：dispatch 不知道 SkillConfigStore，只知道"给我 username/skill 名字，
  * 我返回有效 skill 集合或物理路径"。runtime.ts 在装配时把 SkillConfigStore + sharedDir

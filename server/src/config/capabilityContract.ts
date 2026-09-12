@@ -23,6 +23,7 @@ export type CapabilityState = (typeof CAPABILITY_STATES)[number];
 export const CAPABILITY_IDS = [
   'models',
   'codex',
+  'grok',
   'webTools',
   'imageGen',
   'stt',
@@ -90,6 +91,7 @@ export function resolveCapabilityVerification(
 export const CAPABILITY_TARGET_ROUTES: Readonly<Record<CapabilityId, string | null>> = {
   models: 'platform.resource-center.models',
   codex: 'platform.resource-center.models',
+  grok: 'platform.resource-center.models',
   webTools: 'platform.resource-center.tools',
   imageGen: 'platform.resource-center.tools',
   stt: 'platform.resource-center.tools',
@@ -114,6 +116,8 @@ export function capabilityConfigSlice(config: AppConfig, capability: CapabilityI
       return config.models;
     case 'codex':
       return config.codexSubscription;
+    case 'grok':
+      return config.grokSubscription;
     case 'webTools':
       return config.webTools;
     case 'imageGen':

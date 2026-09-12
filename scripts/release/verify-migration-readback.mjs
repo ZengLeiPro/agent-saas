@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
 import { readEvidenceJson } from './evidence-file.mjs';
+import { validateSourceAuthority } from './staging-source-authority.mjs';
 import { assertDatabaseEvidence } from './migration-postconditions.mjs';
 
 const repositoryPattern = /^[\w.-]+\/[\w.-]+$/u;
@@ -11,8 +12,11 @@ const repositoryPattern = /^[\w.-]+\/[\w.-]+$/u;
  * The live reader's five-minute default is deliberately not used as the archive lifetime.
  */
 export function assertArchivedDatabaseEvidence({
-  manifest, evidence, run, runId, runAttempt, repository, now = Date.now(),
+  manifest, evidence, run, runId, runAttempt, repository, sourceAuthority, now = Date.now(),
 }) {
+  const engineSha = sourceAuthority
+    ? validateSourceAuthority(sourceAuthority, { manifest, run, repository, deployment: sourceAuthority.deployment })
+    : manifest?.releaseSha;
   const start = Date.parse(run?.run_started_at);
   const end = Date.parse(run?.updated_at);
   const observed = Date.parse(evidence?.observedAt);
@@ -27,7 +31,7 @@ export function assertArchivedDatabaseEvidence({
     String(run?.id) !== String(runId) || String(run?.run_attempt) !== String(runAttempt) ||
     typeof repository !== 'string' || !repositoryPattern.test(repository) ||
     run?.repository?.full_name !== repository || run?.head_repository?.full_name !== repository ||
-    !SHA_PATTERN.test(manifest?.releaseSha ?? '') || run?.head_sha !== manifest.releaseSha ||
+    !SHA_PATTERN.test(manifest?.releaseSha ?? '') || run?.head_sha !== engineSha ||
     run?.head_branch !== 'main' || run?.event !== 'workflow_dispatch' ||
     run?.path !== '.github/workflows/deploy-staging.yml' ||
     run?.status !== 'completed' || run?.conclusion !== 'success' ||
@@ -57,14 +61,15 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     // The authenticated caller supplies the trust boundary explicitly. Never infer it
     // from an evidence file or an ambient environment variable.
     const args = process.argv.slice(2);
-    const [manifestPath, evidencePath, runPath, runId, runAttempt, repository] = args;
-    if (args.length !== 6 || args.some((arg) => !arg) || !repositoryPattern.test(repository))
+    const [manifestPath, evidencePath, runPath, runId, runAttempt, repository, authorityPath] = args;
+    if (![6, 7].includes(args.length) || args.some((arg) => !arg) || !repositoryPattern.test(repository))
       throw new Error('Expected manifest, readback, bound attempt, run ID, attempt and owner/repo');
     const result = assertArchivedDatabaseEvidence({
       manifest: await readEvidenceJson(manifestPath, 1048576),
       evidence: await readEvidenceJson(evidencePath),
       run: await readEvidenceJson(runPath),
       runId, runAttempt, repository,
+      sourceAuthority: authorityPath ? await readEvidenceJson(authorityPath, 4194304) : undefined,
     });
     console.log(JSON.stringify(result));
   } catch (error) {

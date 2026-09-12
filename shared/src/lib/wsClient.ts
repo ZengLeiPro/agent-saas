@@ -526,12 +526,28 @@ class WsClient {
         try { ws.send(JSON.stringify({ ...outbound, ...(this.activeAuthBinding ?? {}) })); return true; }
         catch { this.handleTransportFailure(ws); return false; }
     }
-    async ensureConnectedSend(msg: WsOutboundMessage): Promise<boolean> {
+    async ensureConnectedSend(msg: WsOutboundMessage, options: { signal?: AbortSignal } = {}): Promise<boolean> {
+        const signal = options.signal;
+        if (signal?.aborted) return false;
         const boundary = this.boundaryGeneration;
         if (!this.isConnected) {
-            try { await this.connect(); } catch { return false; }
+            try {
+                const flight = this.connect();
+                if (signal) {
+                    const connected = await new Promise<boolean>((resolve) => {
+                        const finish = (ok: boolean) => { signal.removeEventListener('abort', cancel); resolve(ok); };
+                        const cancel = () => finish(false);
+                        if (signal.aborted) cancel();
+                        else signal.addEventListener('abort', cancel);
+                        // Cancelling this waiter MUST NOT cancel the shared connection flight.
+                        flight.then(() => finish(true), () => finish(false));
+                    });
+                    if (!connected) return false;
+                } else await flight;
+            } catch { return false; }
         }
-        if (boundary !== this.boundaryGeneration) return false;
+        // Check at the actual write boundary, not after a late connect Promise has sent chat.
+        if (signal?.aborted || boundary !== this.boundaryGeneration) return false;
         return this.send(msg);
     }
     get isConnected(): boolean { return this.state === 'connected' && this.ws?.readyState === WebSocket.OPEN; }

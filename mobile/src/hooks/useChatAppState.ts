@@ -50,19 +50,21 @@ import { useAuth } from "../contexts/AuthContext";
 import { useLocalAppLock } from "../contexts/LocalAppLockContext";
 import { isCompactionStatusEvent } from "../lib/compaction";
 import type { MessageItemInput } from "@agent/shared";
-import { canonicalChatAttachmentToDisplay } from "@agent/shared";
 import { buildMobileChatSubmission, toMobileChatWireMessage, validateMobileUploadedFiles } from "../lib/chatSubmissionAdapter";
 import { getDraftSandboxProfile } from "../lib/sandboxProfileStore";
 import { markChatAck, markChatSubmit, observeChatEvent } from '../telemetry/chatTelemetry';
 import { telemetryClient } from '../telemetry/runtime';
 import { shouldProjectInteractionEvent } from '../lib/interactionProjectionFence';
-import { replaceRetryBubble } from '../lib/retryBubbleTransition';
-import { createMobileChatReceiptHandlers, armMobileChatAckDeadline, hasMobileChatBubble } from '../lib/chatDeliveryReceipt';
+import { useMobileChatDelivery } from './useMobileChatDelivery';
+import { MobileChatDeliveryController } from '../lib/mobileChatDeliveryController';
+import { mobileAcceptanceEvidence, canProjectMobileStreamEvent } from '../lib/mobileChatDeliveryEvidence';
+import { ownsDeliveryView, type MobileDeliveryView } from '../lib/mobileChatDeliveryState';
+import { submitMobileChat, retryMobileChat, type MobileSubmissionActions } from '../lib/mobileChatSubmissionActions';
 import { useAgentTargetCatalog } from "./useAgentTargetCatalog";
 import { useVoiceCapture } from "./useVoiceCapture";
 import { useInteractionResponses } from "./useInteractionResponses";
 import {
-  applyReplayedSessionMetadata, markMessageBubbleFailed, useAgentProfile, useForkFromMessage,
+  applyReplayedSessionMetadata, useAgentProfile, useForkFromMessage,
   useModelSelection, useSessionParticipants, useStreamWatchdog,
 } from "@agent/shared";
 
@@ -241,7 +243,12 @@ export function useChatAppStateCore(): ChatAppState {
     };
   }, [flushDraft]);
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoadingState] = useState(false);
+  const loadingRef = useRef(false);
+  const setLoading = useCallback((value: boolean) => {
+    loadingRef.current = value;
+    setLoadingState(value);
+  }, []);
   const [stopping, setStopping] = useState(false);
 
   // ─── /compact v2：服务端黑箱压缩状态（2026-07-03）───
@@ -292,21 +299,8 @@ export function useChatAppStateCore(): ChatAppState {
   }
   const sessionRuntimeRef = useRef<Map<string, SessionRuntimeState>>(new Map());
 
-  // ─── 消息可靠性：outbox 队列 + ACK 超时跟踪（2026-04-18）───
-  interface OutboxEntry {
-    clientMsgId: string;
-    input: string;
-    attachments: UploadedFile[];
-    voice?: CanonicalVoiceSubmission;
-    sessionId?: string;
-    state: "sending" | "verifying" | "acked";
-    createdAt: number;
-  }
-  const outboxRef = useRef<OutboxEntry[]>([]);
-  const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
-    new Map(),
-  );
-  const ACK_TIMEOUT_MS = 15_000;
+  const deliveryRef = useRef<MobileChatDeliveryController | null>(null);
+  const retryingDeliveryIdsRef = useRef(new Set<string>());
 
   /** 生成新的 clientMsgId（使用 globalThis.crypto，RN 0.72+ 支持；缺失时回退） */
   const genClientMsgId = useCallback((): string => {
@@ -314,6 +308,9 @@ export function useChatAppStateCore(): ChatAppState {
     if (c?.randomUUID) return c.randomUUID();
     return `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }, []);
+
+  const [initialDraftId] = useState(genClientMsgId);
+  const deliveryViewRef = useRef<MobileDeliveryView>({ draftId: initialDraftId, sessionId: null });
 
   const { modelList, selectedModel, setSelectedModel, modelListRef, selectedModelRef, fetchModelList } = useModelSelection({
     authFetch,
@@ -356,28 +353,27 @@ export function useChatAppStateCore(): ChatAppState {
   const chatClientStateRef = useRef(createChatClientState(identity));
   const [chatQueueItems, setChatQueueItems] = useState<ChatQueueItem[]>([]);
   const refreshSelectedQueue = useCallback(() => {
-    setChatQueueItems(selectChatClientQueueItems(chatClientStateRef.current, immediateSessionIdRef.current ?? sessionIdRef.current));
+    setChatQueueItems(selectChatClientQueueItems(chatClientStateRef.current, deliveryViewRef.current.sessionId));
   }, []);
-  const applyAuthoritativeWsEvent = useCallback((event: WsEvent, fallbackSessionId?: string) => {
+  const applyAuthoritativeWsEvent = useCallback((event: WsEvent, fallbackSessionId?: string, replay = false) => {
+    const controller = deliveryRef.current;
+    if (!controller?.isCurrent()) return;
+    const clientMsgId = 'client_msg_id' in event ? event.client_msg_id : 'clientMsgId' in event ? event.clientMsgId : undefined;
+    const owner = clientMsgId ? controller.get(clientMsgId) : undefined;
+    const fallback = owner ? owner.owner.sessionId : fallbackSessionId;
     chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, {
-      type: 'ws', event, fallbackSessionId, generation: chatClientStateRef.current.generation,
+      type: 'ws', event, fallbackSessionId: fallback, generation: chatClientStateRef.current.generation,
     });
-    const authoritativeIds = new Set(Object.values(chatClientStateRef.current.queues)
-      .flatMap((queue) => Object.keys(queue.items)));
-    if (authoritativeIds.size > 0) {
-      outboxRef.current = outboxRef.current.filter((entry) => !authoritativeIds.has(entry.clientMsgId));
-      for (const clientMsgId of authoritativeIds) {
-        const timer = ackTimersRef.current.get(clientMsgId);
-        if (timer) { clearTimeout(timer); ackTimersRef.current.delete(clientMsgId); }
-      }
-    }
+    for (const evidence of mobileAcceptanceEvidence(event, chatClientStateRef.current, fallback, replay)) controller.accept(evidence);
     refreshSelectedQueue();
   }, [refreshSelectedQueue]);
   const applyQueueSnapshot = useCallback((sessionId: string, snapshot: ChatQueueSnapshot) => {
-    if (snapshot.sessionId !== sessionId) return;
+    if (snapshot.sessionId !== sessionId || !deliveryRef.current?.isCurrent()) return;
     chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, {
       type: 'queue', sessionId, event: { type: 'snapshot', snapshot }, generation: chatClientStateRef.current.generation,
     });
+    // Normalize the same snapshot shape without replaying any stream/navigation side effects.
+    for (const evidence of mobileAcceptanceEvidence({ type: 'queue_snapshot', snapshot }, chatClientStateRef.current)) deliveryRef.current.accept(evidence);
     refreshSelectedQueue();
   }, [refreshSelectedQueue]);
   useEffect(() => {
@@ -395,8 +391,6 @@ export function useChatAppStateCore(): ChatAppState {
     identityKey: identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous',
   });
 
-  const loadingRef = useRef(loading);
-  loadingRef.current = loading;
   const stoppingRef = useRef(stopping);
   stoppingRef.current = stopping;
   const msgRef = useRef(msg);
@@ -529,9 +523,7 @@ export function useChatAppStateCore(): ChatAppState {
     setLoading(false);
     setStopping(false);
     setCompacting(false);
-    // 切会话：清 outbox 中 queued（未发）条目；清所有 ACK 超时定时器
-    for (const t of ackTimersRef.current.values()) clearTimeout(t);
-    ackTimersRef.current.clear();
+    // Delivery deadlines belong to their submissions, not this visible stream.
     // 立即通知服务端取消当前订阅，防止旧会话事件串流；服务端 run 不会被 abort
     wsClient.send({ action: "detach" });
   }, [saveRuntimeForSession]);
@@ -551,6 +543,12 @@ export function useChatAppStateCore(): ChatAppState {
       cancelActiveStream: detachFromStream,
       clearComposer,
       onQueueSnapshot: applyQueueSnapshot,
+      onPersistedMessages: (sid: string, messages: MessageItem[]) => deliveryRef.current?.observeHistory(messages, sid),
+      projectMessages: (messages: MessageItem[], sid: string) => {
+        const projected = deliveryRef.current?.project(messages, { ...deliveryViewRef.current, sessionId: sid }) ?? messages;
+        void Promise.resolve().then(() => deliveryRef.current?.recover());
+        return projected;
+      },
     }),
     [
       msg.resetMessages,
@@ -570,6 +568,71 @@ export function useChatAppStateCore(): ChatAppState {
   });
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  useEffect(() => {
+    if (deliveryViewRef.current.sessionId === session.sessionId) return;
+    deliveryViewRef.current = { ...deliveryViewRef.current, sessionId: session.sessionId };
+  }, [session.sessionId]);
+  const delivery = useMobileChatDelivery({
+    identity, unlocked: !localAppLock.locked && !localAppLock.offlineShell,
+    getView: () => deliveryViewRef.current,
+    getMessages: () => msgRef.current.messagesRef.current,
+    setMessages: messages => msgRef.current.setMessages(messages),
+    onAccepted: (record, evidence) => {
+      const view = deliveryViewRef.current;
+      if (!ownsDeliveryView(record, view)) return;
+      const sid = record.owner.sessionId;
+      if (sid && !view.sessionId && record.owner.draftId === view.draftId) {
+        deliveryViewRef.current = { ...view, sessionId: sid };
+        immediateSessionIdRef.current = sid;
+        sessionIdRef.current = sid;
+        wsLatestSessionIdRef.current = { value: sid };
+        sessionRef.current.setIsNewSession(false);
+        sessionRef.current.setSessionId(sid);
+        void sessionRef.current.loadSessions();
+      }
+      try { markChatAck(record.clientMsgId); } catch { /* best effort */ }
+      if (evidence.source !== 'status' || !sid) return;
+      if (runIdRef.current && evidence.runId !== runIdRef.current) return;
+      if (['completed', 'failed', 'cancelled'].includes(evidence.status)) {
+        clearWatchdog();
+        wsAttachedRef.current = false;
+        clearRuntimeForSession(sid);
+        setLoading(false);
+        setStopping(false);
+        void sessionRef.current.loadSessionDetail(sid, { silent: true, preserveTail: true });
+      } else if (evidence.status === 'running' && !runIdRef.current) {
+        runIdRef.current = evidence.runId ?? null;
+        wsLatestSessionIdRef.current = { value: sid };
+        wsAttachedRef.current = true;
+        setLoading(true);
+        resetWatchdog();
+        void wsClient.ensureConnectedSend(makeResumeMessage(sid, false)).catch(() => {});
+      }
+    },
+    onSettled: () => {
+      if (!runIdRef.current && !deliveryRef.current?.hasPending(deliveryViewRef.current)) {
+        wsAttachedRef.current = false;
+        setLoading(false);
+      }
+    },
+    mergeStatus: value => {
+      const state = chatClientStateRef.current;
+      const existing = state.queues[value.sessionId]?.items[value.clientMessageId];
+      const item: ChatQueueItem = {
+        ...existing, sessionId: value.sessionId, runId: value.runId, sourceRunId: value.runId,
+        clientMsgId: value.clientMessageId, status: value.status, deliveryMode: value.deliveryMode,
+        ...(value.queuePosition === undefined ? {} : { queuePosition: value.queuePosition }),
+      };
+      chatClientStateRef.current = reduceChatClientState(state, {
+        type: 'queue', sessionId: value.sessionId, event: { type: 'server_upsert', item }, generation: state.generation,
+      });
+      refreshSelectedQueue();
+      const settled = chatClientStateRef.current.queues[value.sessionId]?.items[value.clientMessageId];
+      return { clientMsgId: value.clientMessageId, sessionId: value.sessionId, runId: value.runId,
+        status: settled?.status === 'cancel_pending' ? value.status : settled?.status ?? value.status, source: 'status' };
+    },
+  });
+  deliveryRef.current = delivery;
   const {
     releaseAllInteractionResponses, settleInteractionResponse, resolveInteractionResponse,
     handlePermissionResponse, handleAskUserResponse, clearPendingInteractionResponses,
@@ -616,7 +679,15 @@ export function useChatAppStateCore(): ChatAppState {
   const { clearWatchdog, resetWatchdog, touchWatchdog } = useStreamWatchdog({
     authFetch,
     isLoading: () => loadingRef.current,
-    getSessionId: () => sessionIdRef.current,
+    getSessionId: () => deliveryViewRef.current.sessionId,
+    createStaleGuard: () => {
+      const owner = deliveryRef.current;
+      const view = deliveryViewRef.current;
+      const nonce = streamNonceRef.current;
+      const runId = runIdRef.current;
+      return () => !owner?.isCurrent() || owner !== deliveryRef.current
+        || view !== deliveryViewRef.current || nonce !== streamNonceRef.current || runId !== runIdRef.current;
+    },
     onExpired: () => {
       finalizeRunningSubagents(msgRef.current);
       wsAttachedRef.current = false;
@@ -734,198 +805,64 @@ export function useChatAppStateCore(): ChatAppState {
       unmounted = true;
       unsubState();
       releaseRef?.();
-      // 清 ACK 超时定时器
-      for (const t of ackTimersRef.current.values()) clearTimeout(t);
-      ackTimersRef.current.clear();
+
       clearPendingInteractionResponses();
     };
   }, [dispatchConnection, makeResumeMessage, releaseAllInteractionResponses]);
 
-  /** 按 clientMsgId 或 fallbackIndex 把 bubble 翻 failed（shared 实现） */
-  const markBubbleFailed = useCallback(
-    (clientMsgId: string | undefined, fallbackIndex: number, reason: string) => {
-      markMessageBubbleFailed(msgRef.current, clientMsgId, fallbackIndex, reason);
-    },
-    [],
-  );
-
-  /** ACK 超时只代表结果未知：保留原 intent/clientMsgId，人工 retry 必须复用。 */
-  const armAckTimeout = useCallback(
-    (clientMsgId: string) => {
-      armMobileChatAckDeadline(clientMsgId, {
-        timers: ackTimersRef.current,
-        getEntry: (id) => hasMobileChatBubble(msgRef.current.messagesRef.current, id)
-          ? outboxRef.current.find((item) => item.clientMsgId === id) : undefined,
-        timeoutMs: ACK_TIMEOUT_MS,
-        onExpired: () => {
-          console.warn(`[chat] ACK timeout for ${clientMsgId}`);
-          markBubbleFailed(clientMsgId, -1, "尚未收到发送确认，可重试");
-          if (
-            loadingRef.current &&
-            outboxRef.current.every((e) => e.state !== "acked")
-          ) {
-            wsAttachedRef.current = false;
-            clearRuntimeForSession();
-            setLoading(false);
-          }
-        },
-      });
-    },
-    [markBubbleFailed, clearRuntimeForSession],
-  );
-
-  // Send chat via WS
-  const sendChatViaWs = useCallback(
-    async (
-      inputText: string,
-      attachments: UploadedFile[],
-      showBubble: boolean,
-      voice?: CanonicalVoiceSubmission,
-      existingClientMsgId?: string,
-      retryMessageId?: string,
-    ): Promise<boolean> => {
-      if (localAppLock.locked || localAppLock.offlineShell || connectionState === 'disconnected') {
-        Alert.alert('无法发送', localAppLock.locked ? '请先解锁应用' : '当前离线，消息未发送');
-        return false;
-      }
-      const activeSessionId = sessionIdRef.current;
-      const agentTarget = activeSessionId
-        ? sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTarget
-          ?? pendingAgentTargetRef.current
-        : pendingAgentTargetRef.current;
-      const unavailableReason = activeSessionId
-        ? sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTargetUnavailableReason
-        : agentTargetCatalogReason;
-      if (!agentTarget || unavailableReason) {
-        Alert.alert('仅支持查看', unavailableReason?.message ?? '该会话缺少可证明的 Agent 目标，请联系组织管理员。');
-        return false;
-      }
-      const clientMsgId = existingClientMsgId || genClientMsgId();
-      const normalized = buildMobileChatSubmission({
-        text: inputText,
-        clientMsgId,
-        target: { ...(activeSessionId ? { sessionId: activeSessionId } : { sandboxProfile: getDraftSandboxProfile() }), agentTarget },
-        deliveryMode: 'queue',
-        model: selectedModelRef.current ?? undefined,
-        attachments,
-        ...(voice ? { voice } : {}),
-      });
-      if (!normalized.ok) {
-        fileUpload.reportUploadError(`附件不可发送：${normalized.issue.message}`);
-        return false;
-      }
-      const submission = normalized.value;
-      try { markChatSubmit(clientMsgId, activeSessionId ?? undefined); }
-      catch { /* Observability must never prevent the user's submission. */ }
-
-      wsLatestSessionIdRef.current = { value: activeSessionId };
-      wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
-      lastEventIdRef.current = null;
-      streamNonceRef.current += 1;
-      wsAttachedRef.current = true;
-
-      if (showBubble) {
-        msgRef.current.triggerScroll();
-        const nextBubble: MessageItemInput = {
-          type: "user",
-          content: inputText,
-          ...(submission.attachments.length > 0
-            ? { attachments: submission.attachments.map(canonicalChatAttachmentToDisplay) }
-            : {}),
-          status: "pending",
-          timestamp: Date.now(),
-          clientMsgId,
-        };
-        const retryTransition = retryMessageId
-          ? replaceRetryBubble(msgRef.current.messagesRef.current, retryMessageId, nextBubble)
-          : null;
-        if (retryTransition) {
-          wsUserMsgIndexRef.current = retryTransition.index;
-          msgRef.current.setMessages(retryTransition.messages);
-        } else {
-          wsUserMsgIndexRef.current = msgRef.current.addMessage(nextBubble);
+  const sendGateRef = useRef({ locked: localAppLock.locked, offline: localAppLock.offlineShell, disconnected: connectionState === 'disconnected' });
+  sendGateRef.current = { locked: localAppLock.locked, offline: localAppLock.offlineShell, disconnected: connectionState === 'disconnected' };
+  const submissionActions = useCallback((): MobileSubmissionActions | null => {
+    const controller = deliveryRef.current;
+    if (!controller) return null;
+    return {
+      delivery: controller, msg: msgRef.current, getView: () => deliveryViewRef.current,
+      gate: () => !controller.isCurrent() ? '身份已变化，请重新核验。' : sendGateRef.current.locked ? '请先解锁应用'
+        : sendGateRef.current.offline || sendGateRef.current.disconnected ? '当前离线，已保留输入和附件。' : null,
+      report: text => Alert.alert('消息发送', text),
+      write: (message, options) => wsClient.ensureConnectedSend(message, options),
+      onRegistered: (record, index) => {
+        try { markChatSubmit(record.clientMsgId, record.owner.sessionId); } catch { /* best effort */ }
+        // A queued second submission must not reset the first Run's stream/block/watchdog.
+        if (!runIdRef.current) {
+          wsLatestSessionIdRef.current = { value: deliveryViewRef.current.sessionId };
+          wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
+          lastEventIdRef.current = null;
+          lastEventCursorRef.current = null;
+          streamNonceRef.current += 1;
+          wsUserMsgIndexRef.current = index;
+          wsAttachedRef.current = true;
+          setLoading(true);
+          resetWatchdog();
+          dispatchConnection('connect');
         }
-        if (activeSessionId) {
-          sessionRef.current.updateSessionMeta(activeSessionId, {
-            preview: inputText.slice(0, 200),
-            updatedAtMs: Date.now(),
-          });
-        }
-      } else {
-        // 排队/语音消息：绑定 clientMsgId 到最近的 pending user/user-voice bubble
-        const msgs = msgRef.current.messagesRef.current;
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          const m = msgs[i];
-          if (
-            (m.type === "user" && m.status === "pending") ||
-            (m.type === "user-voice" &&
-              (m.status === "transcribing" || m.status === "uploading" || m.status === "ready"))
-          ) {
-            wsUserMsgIndexRef.current = i;
-            msgRef.current.updateMessageAt(i, (prev) => {
-              if (prev.type === "user") return { ...prev, clientMsgId };
-              if (prev.type === "user-voice") return { ...prev, clientMsgId };
-              return prev;
-            });
-            break;
-          }
-        }
-      }
+        if (record.owner.sessionId) sessionRef.current.updateSessionMeta(record.owner.sessionId, {
+          preview: record.canonical?.text.slice(0, 200) ?? '', updatedAtMs: Date.now(),
+        });
+      },
+    };
+  }, [dispatchConnection, resetWatchdog]);
 
-      const nextOutboxEntry: OutboxEntry = {
-        clientMsgId,
-        input: inputText,
-        sessionId: activeSessionId ?? undefined,
-        attachments: submission.attachments.map((attachment) => ({
-          attachmentId: attachment.attachmentId,
-          originalName: attachment.display.originalName,
-          relativePath: '',
-          size: attachment.display.size ?? 0,
-          mimeType: attachment.display.mimeType ?? 'application/octet-stream',
-          isImage: attachment.display.isImage ?? false,
-        })),
-        ...(submission.voice ? { voice: submission.voice } : {}),
-        state: "sending",
-        createdAt: Date.now(),
-      };
-      const existingOutboxIndex = outboxRef.current.findIndex((entry) => entry.clientMsgId === clientMsgId);
-      if (existingOutboxIndex >= 0) outboxRef.current[existingOutboxIndex] = nextOutboxEntry;
-      else outboxRef.current.push(nextOutboxEntry);
-
-      setLoading(true);
-      setCompacting(false); // 普通消息轮：清掉可能残留的压缩状态
-      resetWatchdog();
-      dispatchConnection("connect");
-
-      const ok = await wsClient.ensureConnectedSend({
-        ...toMobileChatWireMessage(submission),
-      });
-
-      // A late native completion must not fail another conversation's bubble or re-arm an acknowledged intent.
-      if (nextOutboxEntry.state === 'acked') return true;
-      if (!hasMobileChatBubble(msgRef.current.messagesRef.current, clientMsgId)) return ok;
-      if (!ok) {
-        outboxRef.current = outboxRef.current.filter(
-          (e) => e.clientMsgId !== clientMsgId,
-        );
-        markBubbleFailed(
-          clientMsgId,
-          -1,
-          "网络连接失败，请重试",
-        );
-        wsAttachedRef.current = false;
-        setLoading(false);
-        return false;
-      }
-      armAckTimeout(clientMsgId);
-      return true;
-    },
-    [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId, localAppLock.locked, localAppLock.offlineShell, connectionState, agentTargetCatalogReason],
-  );
-
+  const sendChatViaWs = useCallback((text: string, attachments: UploadedFile[], voice: CanonicalVoiceSubmission | undefined, consumeComposer: () => void): Promise<boolean> => {
+    const actions = submissionActions();
+    const sid = deliveryViewRef.current.sessionId;
+    const item = sid ? sessionRef.current.sessions.find(value => value.sessionId === sid) : undefined;
+    const agentTarget = item?.agentTarget ?? pendingAgentTargetRef.current;
+    const reason = item?.agentTargetUnavailableReason ?? (!sid ? agentTargetCatalogReason : null);
+    if (!actions || !agentTarget || reason) {
+      Alert.alert('无法发送', reason?.message ?? '缺少可证明的 Agent 目标，请联系组织管理员。');
+      return Promise.resolve(false);
+    }
+    return submitMobileChat({
+      ...actions, text, attachments, voice, consumeComposer, clientMsgId: genClientMsgId(),
+      target: { ...(sid ? { sessionId: sid } : { sandboxProfile: getDraftSandboxProfile() }), agentTarget },
+      ...(selectedModelRef.current ? { model: selectedModelRef.current } : {}),
+    });
+  }, [submissionActions, genClientMsgId, agentTargetCatalogReason]);
 
   // WS message handler (wsClient already fences old epochs, gaps, and duplicate callbacks)
   useEffect(() => {
+    const receiptOwner = delivery;
     const projectSessionListInteraction = (event: WsEvent) => {
       const detached = detachedStreamSessionRef.current;
       if (detached && detached.expiresAt < Date.now()) detachedStreamSessionRef.current = null;
@@ -968,7 +905,7 @@ export function useChatAppStateCore(): ChatAppState {
       }
     };
     const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
-      const selectedSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+      const selectedSessionId = deliveryViewRef.current.sessionId;
       const canonicalResolution = event.type === 'interaction_resolved'
         && Boolean(event.response || event.status);
       // Test harnesses and teardown may expose an empty stream ref; keep the fence fail closed.
@@ -996,7 +933,7 @@ export function useChatAppStateCore(): ChatAppState {
         ctx,
         wsBlockRef.current,
         wsLatestSessionIdRef.current,
-        immediateSessionIdRef.current ?? sessionIdRef.current,
+        deliveryViewRef.current.sessionId,
       );
       if (canonicalResolution) {
         rememberResolvedInteraction(resolvedInteractionIdsRef.current, event.sessionId, event.interactionId);
@@ -1004,16 +941,21 @@ export function useChatAppStateCore(): ChatAppState {
     };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
-      const selectedSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
-      if (!data || !data.type) return;
+      const selectedSessionId = deliveryViewRef.current.sessionId;
+      if (!data || !data.type || receiptOwner !== deliveryRef.current || !receiptOwner?.isCurrent()) return;
       try { observeChatEvent(data, selectedSessionId ?? undefined); }
       catch { /* A telemetry failure must not swallow an authoritative receipt. */ }
       if (data.type !== 'interaction_resolved') projectSessionListInteraction(data);
-      if (data.type === 'queue_snapshot' || data.type === 'queue_item_updated' || data.type === 'message_queued'
-        || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
-        || data.type === 'steering_cancelled' || data.type === 'cancel_queued_result') {
-        applyAuthoritativeWsEvent(data, selectedSessionId ?? undefined);
+      applyAuthoritativeWsEvent(data, selectedSessionId ?? undefined);
+      if (data.type === 'chat_rejected') {
+        receiptOwner.reject(data.client_msg_id, data.reason_code);
+        return;
       }
+      if (data.type === 'error' && data.submissionState === 'unknown' && data.client_msg_id) {
+        void receiptOwner.verify(data.client_msg_id, 'server');
+        return;
+      }
+      if (!canProjectMobileStreamEvent(data, deliveryViewRef.current, id => receiptOwner.get(id), runIdRef.current)) return;
 
       if (envelope.eventId != null) {
         lastEventIdRef.current = envelope.eventId;
@@ -1024,7 +966,9 @@ export function useChatAppStateCore(): ChatAppState {
       if (data.type === "stream_id") {
         streamIdRef.current = data.streamId;
         runIdRef.current = data.runId ?? null;
-      } else if (data.type === "session_status" && data.runId && data.sessionId === selectedSessionId) {
+      } else if (data.type === "session_status" && data.runId && data.sessionId === selectedSessionId
+        && !['idle', 'completed', 'failed', 'cancelled', 'orphaned'].includes(data.status)
+        && (!runIdRef.current || runIdRef.current === data.runId)) {
         runIdRef.current = data.runId;
       }
 
@@ -1043,8 +987,9 @@ export function useChatAppStateCore(): ChatAppState {
         for (const { event } of (data as any).events || []) {
           const e = event as WsEvent;
           if (e.type !== 'interaction_resolved') projectSessionListInteraction(e);
-          applyAuthoritativeWsEvent(e, selectedSessionId ?? undefined);
-          if (e.type === "session_status" && e.sessionId === selectedSessionId) {
+          applyAuthoritativeWsEvent(e, selectedSessionId ?? undefined, true);
+          if (e.type === "session_status" && e.sessionId === deliveryViewRef.current.sessionId && e.runId
+            && (!runIdRef.current || runIdRef.current === e.runId)) {
             runIdRef.current = e.runId ?? null;
             streamIdRef.current = e.streamId ?? null;
             const active = !["idle", "completed", "failed", "cancelled", "orphaned"].includes(e.status);
@@ -1106,7 +1051,7 @@ export function useChatAppStateCore(): ChatAppState {
         if (
           terminalStatuses.has(d.status) &&
           d.sessionId === selectedSessionId &&
-          loadingRef.current
+          loadingRef.current && !!d.runId && d.runId === runIdRef.current
         ) {
           clearWatchdog();
           finalizeRunningSubagents(msgRef.current);
@@ -1126,7 +1071,6 @@ export function useChatAppStateCore(): ChatAppState {
           setLoading(false);
           setStopping(false);
           setCompacting(false);
-          outboxRef.current = [];
           dispatchConnection("complete");
           sessionRef.current.refreshCurrentSession();
         }
@@ -1139,7 +1083,7 @@ export function useChatAppStateCore(): ChatAppState {
       // 其他设备发起的流
       if (data.type === "stream_started") {
         const currentSid =
-          immediateSessionIdRef.current ?? sessionIdRef.current;
+          deliveryViewRef.current.sessionId;
         if (data.sessionId === currentSid && !loadingRef.current) {
           detachedStreamSessionRef.current = null;
           streamIdRef.current = data.streamId;
@@ -1179,8 +1123,9 @@ export function useChatAppStateCore(): ChatAppState {
         // Delivery receipts are not stream content. A timeout must not hide a later ACK/rejection,
         // but a receipt for a different conversation must not affect the current screen.
         const isDeliveryReceipt =
-          (data.type === 'chat_ack' || data.type === 'chat_rejected')
-          && hasMobileChatBubble(msgRef.current.messagesRef.current, data.client_msg_id);
+          data.type === 'chat_ack'
+          && !!receiptOwner.get(data.client_msg_id)
+          && ownsDeliveryView(receiptOwner.get(data.client_msg_id)!, deliveryViewRef.current);
         if (!isMetadata && !isDeliveryReceipt) return;
       }
 
@@ -1268,25 +1213,8 @@ export function useChatAppStateCore(): ChatAppState {
           setLoading(true);
           dispatchConnection("connect");
         },
-        ...createMobileChatReceiptHandlers({
-          target: msgRef.current,
-          outbox: outboxRef,
-          timers: ackTimersRef.current,
-          sourceEvent: data,
-          getSelectedSessionId: () => immediateSessionIdRef.current ?? sessionIdRef.current,
-          confirmSession: (sid) => {
-            immediateSessionIdRef.current = sid;
-            wsLatestSessionIdRef.current = { value: sid };
-            sessionRef.current.setIsNewSession(false);
-            sessionRef.current.setSessionId(sid);
-            void sessionRef.current.loadSessions();
-          },
-          onAllRejected: () => {
-            wsAttachedRef.current = false;
-            setLoading(false);
-          },
-          observeAck: markChatAck,
-        }),
+        // Acceptance was already committed above; do not replay unrelated stream side effects.
+        onChatAck: () => {},
       };
 
       if (
@@ -1294,7 +1222,7 @@ export function useChatAppStateCore(): ChatAppState {
           || data.type === 'ask_user' || data.type === 'interaction_resolved')
         && !shouldProjectInteractionEvent(
           data,
-          immediateSessionIdRef.current ?? sessionIdRef.current,
+          deliveryViewRef.current.sessionId,
           wsLatestSessionIdRef.current?.value,
         )
       ) {
@@ -1310,7 +1238,7 @@ export function useChatAppStateCore(): ChatAppState {
         ctx,
         wsBlockRef.current,
         wsLatestSessionIdRef.current,
-        immediateSessionIdRef.current ?? sessionIdRef.current,
+        deliveryViewRef.current.sessionId,
       );
       if (data.type === 'interaction_resolved') projectSessionListInteraction(data);
 
@@ -1318,9 +1246,10 @@ export function useChatAppStateCore(): ChatAppState {
         rememberResolvedInteraction(resolvedInteractionIdsRef.current, data.sessionId, data.interactionId);
       }
 
-      if (data.type === "session" && "sessionId" in data) {
+      if (data.type === "session" && data.sessionId === deliveryViewRef.current.sessionId) {
         immediateSessionIdRef.current = data.sessionId;
       }
+      msgRef.current.setMessages(receiptOwner.project(msgRef.current.messagesRef.current, deliveryViewRef.current));
 
       if (result === "buffer_overflow") {
         telemetryClient()?.capture('sync_overflow', { correlationId: 'ws-sync-overflow', ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}) });
@@ -1350,7 +1279,6 @@ export function useChatAppStateCore(): ChatAppState {
         // 已 detach（切换会话后）或 loading 已被其他路径清掉：
         // 仍需清理本轮 acked/sending，并推进排队消息。
         if (!loadingRef.current) {
-          outboxRef.current = outboxRef.current.filter((e) => e.state !== "sending" && e.state !== "acked");
           return;
         }
         clearWatchdog();
@@ -1390,6 +1318,7 @@ export function useChatAppStateCore(): ChatAppState {
     return unsub;
   }, [
     dispatchConnection,
+    delivery,
     sendChatViaWs,
     makeResumeMessage,
     clearRuntimeForSession,
@@ -1584,99 +1513,54 @@ export function useChatAppStateCore(): ChatAppState {
     }
   }, [dispatchConnection, genClientMsgId]);
 
-  // Send message (text + files)
+  // Consume only after registration. Refs prevent one composer operation from being double-submitted.
   const sendMessage = useCallback(async () => {
     if (!activeAgentTarget || activeAgentTargetUnavailableReason) {
-      Alert.alert('无法发送', activeAgentTargetUnavailableReason?.message ?? '没有可用的 Agent 目标，请联系组织管理员。');
+      Alert.alert('无法发送', activeAgentTargetUnavailableReason?.message ?? '没有可用的 Agent 目标。');
       return;
     }
-    const trimmedInput = input.trim();
-    const pendingFiles = fileUpload.uploadedFiles;
-    if (!trimmedInput && pendingFiles.length === 0) return;
-    const attachmentValidation = validateMobileUploadedFiles(pendingFiles);
-    if (!attachmentValidation.ok) {
-      fileUpload.reportUploadError(`附件不可发送：${attachmentValidation.issue.message}`);
-      // Fail closed before consuming attachments or clearing the text draft.
-      return;
-    }
-    const capturedFiles = fileUpload.consumeFiles();
-    const pendingVoice = pendingVoiceRef.current;
-    const voice = pendingVoice && capturedFiles.some((file) => file.attachmentId === pendingVoice.base.attachmentId)
-      ? { ...pendingVoice.base, transcript: { ...pendingVoice.base.transcript, text: trimmedInput, edited: trimmedInput !== pendingVoice.serverText } }
-      : undefined;
-    pendingVoiceRef.current = null;
-    if (voice) {
-      const voiceIndex = msg.messagesRef.current.findIndex((message) => message.type === 'user-voice' && message.attachmentId === voice.attachmentId);
-      if (voiceIndex >= 0) msg.updateMessageAt(voiceIndex, (message) => message.type === 'user-voice'
-        ? { ...message, transcribedText: voice.transcript.text }
-        : message);
-    }
-    setInput("");
+    const text = draftLatestRef.current.trim();
+    const files = fileUpload.getUploadedFiles();
+    if (!text && files.length === 0) return;
+    const validation = validateMobileUploadedFiles(files);
+    if (!validation.ok) { fileUpload.reportUploadError(`附件不可发送：${validation.issue.message}`); return; }
+    const pending = pendingVoiceRef.current;
+    const voice = pending && files.some(file => file.attachmentId === pending.base.attachmentId)
+      ? { ...pending.base, transcript: { ...pending.base.transcript, text, edited: text !== pending.serverText } } : undefined;
+    await sendChatViaWs(text, files, voice, () => {
+      fileUpload.consumeFiles(); pendingVoiceRef.current = null; setInput('');
+    });
+  }, [activeAgentTarget, activeAgentTargetUnavailableReason, fileUpload, sendChatViaWs, setInput]);
 
-    // Voice reaches chat only after the user reviews/edits the authoritative transcript and presses Send.
-    void sendChatViaWs(trimmedInput, capturedFiles, !voice, voice);
-  }, [activeAgentTarget, activeAgentTargetUnavailableReason, input, fileUpload, msg, sendChatViaWs]);
-
-  const retryMessage = useCallback(
-    (message: MessageItem) => {
-      if (message.type !== "user" || message.status !== "failed") return;
-      const retryFiles: UploadedFile[] = (message.attachments ?? []).flatMap((attachment) => (
-        attachment.attachmentId
-          ? [{
-              attachmentId: attachment.attachmentId,
-              originalName: attachment.name,
-              relativePath: '',
-              size: attachment.size ?? 0,
-              mimeType: attachment.mimeType ?? 'application/octet-stream',
-              isImage: attachment.isImage ?? false,
-            }]
-          : []
-      ));
-      const retryValidation = validateMobileUploadedFiles(retryFiles);
-      if ((message.attachments?.length ?? 0) !== retryFiles.length || !retryValidation.ok) {
-        fileUpload.reportUploadError('附件标识已失效，请保留文字并重新上传附件');
-        setInput(typeof message.content === 'string' ? message.content : '');
-        return;
-      }
-      const retryOutboxEntry = message.clientMsgId
-        ? outboxRef.current.find((entry) => entry.clientMsgId === message.clientMsgId)
-        : undefined;
-      if (retryOutboxEntry?.sessionId && retryOutboxEntry.sessionId !== sessionIdRef.current) {
-        Alert.alert('无法重试', '该消息属于另一个会话，请返回原会话后重试。');
-        return;
-      }
-      if (message.clientMsgId) {
-        const t = ackTimersRef.current.get(message.clientMsgId);
-        if (t) {
-          clearTimeout(t);
-          ackTimersRef.current.delete(message.clientMsgId);
-        }
-      }
-      const text = retryOutboxEntry?.input ?? (typeof message.content === "string" ? message.content : "");
-      if (!text && retryFiles.length === 0) {
+  const retryMessage = useCallback((message: MessageItem) => {
+    const actions = submissionActions();
+    if (!actions) return;
+    const key = message.id;
+    if (retryingDeliveryIdsRef.current.has(key)) return;
+    retryingDeliveryIdsRef.current.add(key);
+    void retryMobileChat({
+      ...actions, message,
+      edit: (original, canonical) => {
+        const text = canonical?.text ?? (original.type === 'user' ? original.content : original.type === 'user-voice' ? original.transcribedText ?? '' : '');
         setInput(text);
-        return;
-      }
-      // 结果未知时复用原 clientMsgId，服务端幂等键保持不变；只有进入发送 attempt 后才原位替换气泡。
-      setInput("");
-      void sendChatViaWs(
-        text,
-        retryOutboxEntry?.attachments ?? retryFiles,
-        true,
-        retryOutboxEntry?.voice,
-        message.clientMsgId,
-        message.id,
-      );
-    },
-    [msg, sendChatViaWs, fileUpload],
-  );
+        if (canonical?.attachments.length) fileUpload.addUploadedFiles(canonical.attachments.map(attachment => ({
+          attachmentId: attachment.attachmentId, originalName: attachment.display.originalName,
+          relativePath: '', mimeType: attachment.display.mimeType ?? 'application/octet-stream',
+          size: attachment.display.size ?? 0, isImage: attachment.display.isImage ?? false,
+        })));
+      },
+    }).catch(() => Alert.alert('消息发送', '暂时无法核验，已保留原消息。'))
+      .finally(() => retryingDeliveryIdsRef.current.delete(key));
+  }, [submissionActions, fileUpload, setInput]);
 
   // 包装 selectSession/newSession 以同步更新 immediateSessionIdRef
   const selectSessionWrapped = useCallback(
     (id: string) => {
-      immediateSessionIdRef.current = id;
-      setPendingAgentTarget(null);
       session.selectSession(id);
+      immediateSessionIdRef.current = id;
+      sessionIdRef.current = id;
+      deliveryViewRef.current = { draftId: genClientMsgId(), sessionId: id };
+      setPendingAgentTarget(null);
     },
     [session.selectSession, setPendingAgentTarget],
   );
@@ -1686,9 +1570,11 @@ export function useChatAppStateCore(): ChatAppState {
       Alert.alert('无法新建会话', 'Agent 目标与当前组织不一致。');
       return;
     }
-    immediateSessionIdRef.current = null;
-    setPendingAgentTarget(target);
     session.newSession({ preserveComposer: true });
+    immediateSessionIdRef.current = null;
+    sessionIdRef.current = null;
+    deliveryViewRef.current = { draftId: genClientMsgId(), sessionId: null };
+    setPendingAgentTarget(target);
   }, [session.newSession, setPendingAgentTarget, user]);
 
   const cancelAgentSwitchQueue = useCallback(async (): Promise<boolean> => {

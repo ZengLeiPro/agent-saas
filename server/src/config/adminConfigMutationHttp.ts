@@ -106,33 +106,33 @@ export function sendCapabilityEnableError(res: Response, error: unknown): void {
   });
 }
 
-export function sendConfigMutationError(res: Response, error: unknown): void {
+export function sendConfigMutationError(res: Response, error: unknown, details: { warning?: string } = {}): void {
   if (error instanceof AdminConfigOperationConflictError) {
-    res.status(409).json({ code: error.code, error: error.message });
+    res.status(409).json({ ...details, code: error.code, error: error.message });
     return;
   }
   if (error instanceof AdminConfigOperationPendingError) {
-    res.status(409).json({ code: error.code, error: error.message, operationState: error.state });
+    res.status(409).json({ ...details, code: error.code, error: error.message, operationState: error.state });
     return;
   }
   if (error instanceof ConfigMutationCommittedError) {
-    res.status(500).json({ code: error.code, error: error.message });
+    res.status(500).json({ ...details, code: error.code, error: error.message });
     return;
   }
   if (error instanceof RuntimeRestoreFailedError) {
-    res.status(500).json({ code: error.code, error: error.message });
+    res.status(500).json({ ...details, code: error.code, error: error.message });
     return;
   }
   if (error instanceof ProductionConfigPublishRequiredError) {
-    res.status(409).json({ error: error.message, code: error.code, writePolicy: error.writePolicy });
+    res.status(409).json({ ...details, error: error.message, code: error.code, writePolicy: error.writePolicy });
     return;
   }
   if (error instanceof ProductionConfirmationError) {
-    res.status(409).json({ error: error.message, code: error.code });
+    res.status(409).json({ ...details, error: error.message, code: error.code });
     return;
   }
   if (error instanceof ConfigConflictError) {
-    res.status(409).json({
+    res.status(409).json({ ...details,
       error: error.message,
       code: error.code,
       effectiveConfigFingerprint: error.currentFingerprint,
@@ -140,5 +140,5 @@ export function sendConfigMutationError(res: Response, error: unknown): void {
     });
     return;
   }
-  res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  res.status(500).json({ ...details, error: error instanceof Error ? error.message : String(error) });
 }

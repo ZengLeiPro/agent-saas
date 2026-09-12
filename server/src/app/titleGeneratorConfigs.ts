@@ -1,3 +1,4 @@
+import type { ModelAdapterFactoryDependencies } from '../runtime/rawRuntimeRunDispatchTypes.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { TitleGeneratorAppConfig } from './config.js';
 import type { ModelsConfig } from '../types/index.js';
@@ -14,11 +15,12 @@ interface TitleConfigLogger {
 export function createTitleModelAdapterFactory(
   codexCredentialManager: CodexCredentialManager,
   codexFetch: typeof fetch,
+  subscriptionDependencies: Pick<ModelAdapterFactoryDependencies, 'grokCredentialManager' | 'grokFetch' | 'grokModelCatalog'> = {},
 ): ModelAdapterFactory {
   return (connection, providerOptions) => createModelAdapterForProtocol(
     connection,
     providerOptions,
-    { codexCredentialManager, codexFetch },
+    { codexCredentialManager, codexFetch, ...subscriptionDependencies },
   );
 }
 

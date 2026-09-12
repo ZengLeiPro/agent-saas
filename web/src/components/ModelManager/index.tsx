@@ -1,3 +1,8 @@
+import { GrokModelCatalogPicker } from './GrokModelCatalogPicker';
+import { importGrokCatalogModels } from './grokCatalogImport';
+import { changeGroupTransport, changeModelTransport, isSubscriptionTransport, subscriptionTransportNotice } from './subscriptionModelForm';
+import { DEFAULT_PROTOCOL, INHERIT_PROTOCOL, moveItem, nextCopyValue, nextCopyId, emptyModel, emptyGroup, emptyPricing, defaultMemoryIndex, stringifyJson, parseOptionalJsonObject, parseOptionalJson, normalizePricing, resolveModelProtocol, resolveGroupReasoningEffort, resolveModelReasoningEffort, resolveModelImageInput, resolveResponsesTransport, formatEffectiveValue } from "./modelManagerEditing";
+import { GrokSubscriptionCard } from "./GrokSubscriptionCard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CircleAlert, CircleCheck, Copy, Database, GripVertical, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { authFetch } from "@/lib/authFetch";
@@ -21,8 +26,6 @@ import type {
 } from "./modelConfigTypes";
 import { useModelWritePolicy } from "./useModelWritePolicy";
 
-const DEFAULT_PROTOCOL: ModelProtocol = "chat_completions";
-const INHERIT_PROTOCOL = "__inherit__";
 
 type SelectedPanel =
   | { type: "general" }
@@ -33,124 +36,6 @@ type DraggingItem =
   | { type: "group"; groupId: string }
   | { type: "model"; groupId: string; modelId: string }
   | null;
-
-function moveItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
-  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= items.length || toIndex >= items.length) {
-    return items;
-  }
-  const next = [...items];
-  const [moved] = next.splice(fromIndex, 1);
-  next.splice(toIndex, 0, moved!);
-  return next;
-}
-
-function nextCopyValue(base: string, existingValues: string[]): string {
-  const existing = new Set(existingValues);
-  if (!existing.has(base)) return base;
-  let suffix = 2;
-  while (existing.has(`${base} ${suffix}`)) suffix += 1;
-  return `${base} ${suffix}`;
-}
-
-function nextCopyId(modelId: string, models: EditableModel[]): string {
-  const base = `${modelId.trim() || "model"}-copy`;
-  const existing = new Set(models.map((model) => model.id));
-  if (!existing.has(base)) return base;
-  let suffix = 2;
-  while (existing.has(`${base}-${suffix}`)) suffix += 1;
-  return `${base}-${suffix}`;
-}
-
-const emptyModel = (): EditableModel => ({ id: "", name: "", value: "" });
-const emptyGroup = (): EditableGroup => ({ id: "", name: "", protocol: DEFAULT_PROTOCOL, models: [emptyModel()] });
-
-const emptyPricing = () => ({ input: 0, output: 0, cacheCreation: 0, cacheRead: 0 });
-
-const defaultMemoryIndex = (): EditableMemoryIndexConfig => ({
-  enabled: false,
-  dbDir: "data/memory-index",
-  embedding: {
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode",
-    apiKey: "",
-    model: "text-embedding-v3",
-    dimensions: 1024,
-  },
-  chunking: {
-    tokens: 200,
-    overlap: 40,
-  },
-  search: {
-    vectorWeight: 0.7,
-    textWeight: 0.3,
-    maxResults: 10,
-    minScore: 0.3,
-  },
-  temporalDecay: {
-    enabled: false,
-    halfLifeDays: 30,
-  },
-  sync: {
-    debounceMs: 1500,
-  },
-});
-
-function stringifyJson(value: unknown): string {
-  return JSON.stringify(value ?? {}, null, 2);
-}
-
-function parseOptionalJsonObject(text: string, label: string): Record<string, unknown> | undefined {
-  const trimmed = text.trim();
-  if (!trimmed) return undefined;
-  const parsed = JSON.parse(trimmed) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${label} 必须是 JSON object`);
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function parseOptionalJson(text: string): unknown | undefined {
-  const trimmed = text.trim();
-  if (!trimmed) return undefined;
-  return JSON.parse(trimmed) as unknown;
-}
-
-function normalizePricing(pricing: EditableModel["pricing"]): EditableModel["pricing"] {
-  if (!pricing) return undefined;
-  return {
-    input: Number(pricing.input) || 0,
-    output: Number(pricing.output) || 0,
-    cacheCreation: Number(pricing.cacheCreation) || 0,
-    cacheRead: Number(pricing.cacheRead) || 0,
-  };
-}
-
-function resolveGroupProtocol(group: EditableGroup): ModelProtocol {
-  return group.protocol ?? DEFAULT_PROTOCOL;
-}
-
-function resolveModelProtocol(group: EditableGroup, model: EditableModel): ModelProtocol {
-  return model.protocol ?? resolveGroupProtocol(group);
-}
-
-function resolveGroupReasoningEffort(group: EditableGroup): string | undefined {
-  return group.reasoning_effort ?? group.reasoningEffort;
-}
-
-function resolveModelReasoningEffort(group: EditableGroup, model: EditableModel): string | undefined {
-  return model.reasoning_effort ?? model.reasoningEffort ?? resolveGroupReasoningEffort(group);
-}
-
-function resolveModelImageInput(group: EditableGroup, model: EditableModel): boolean {
-  return (model.input_modalities ?? group.input_modalities)?.includes("image") === true;
-}
-
-function resolveResponsesTransport(group: EditableGroup, model?: EditableModel): ResponsesTransport {
-  return model?.responses_transport ?? group.responses_transport ?? "openai_compatible";
-}
-
-function formatEffectiveValue(value: string | undefined): string {
-  return value || "未指定";
-}
 
 export function ModelManager() {
   // 只读平台 admin：保存并生效与分组/模型的增删等 draft 写操作全部 disabled
@@ -179,7 +64,7 @@ export function ModelManager() {
     const model = group?.models.find((item) => item.id === selectedPanel.modelId);
     return group && model ? { group, model } : null;
   }, [models, selectedPanel]);
-  const selectedGroupDefaultIsCodex = selectedGroup?.responses_transport === "codex_subscription";
+  const selectedGroupDefaultIsSubscription = isSubscriptionTransport(selectedGroup?.responses_transport);
   const selectedGroupHasOpenAiCompatible = selectedGroup?.models.some(
     (model) => resolveResponsesTransport(selectedGroup, model) === "openai_compatible",
   ) ?? false;
@@ -225,6 +110,14 @@ export function ModelManager() {
     }
   }, [acceptResponse, hydrateAdvancedText, titleSettings.applyResponse]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (loading) return;
+    const capability = new URLSearchParams(window.location.search).get('capability');
+    if (capability !== 'grok' && capability !== 'codex') return;
+    setSelectedPanel({ type: 'general' });
+    const timer = setTimeout(() => document.getElementById(`${capability}-subscription`)?.scrollIntoView?.({ block: 'start' }), 0);
+    return () => clearTimeout(timer);
+  }, [loading]);
   const updateModels = useCallback((updater: (current: EditableModelsConfig) => EditableModelsConfig) => {
     setModels((current) => current ? updater(current) : current);
     setSavedAt(null);
@@ -252,31 +145,8 @@ export function ModelManager() {
     }));
   }, [updateModels]);
 
-  const updateGroupResponsesTransport = useCallback((
-    groupId: string,
-    responsesTransport: ResponsesTransport,
-  ) => {
-    updateModels((current) => ({
-      ...current,
-      groups: current.groups.map((group) => {
-        if (group.id !== groupId) return group;
-        if (responsesTransport !== "codex_subscription") {
-          return { ...group, responses_transport: responsesTransport };
-        }
-        return {
-          ...group,
-          protocol: "responses",
-          responses_transport: responsesTransport,
-          disable_response_chaining: true,
-          disable_prompt_cache_key: undefined,
-          models: group.models.map((model) => (
-            model.responses_transport === "openai_compatible"
-              ? model
-              : { ...model, protocol: undefined }
-          )),
-        };
-      }),
-    }));
+  const updateGroupResponsesTransport = useCallback((groupId: string, transport: ResponsesTransport) => {
+    updateModels((current) => ({ ...current, groups: current.groups.map((group) => group.id === groupId ? changeGroupTransport(group, transport) : group) }));
   }, [updateModels]);
 
   const reorderGroup = useCallback((groupId: string, targetGroupId: string) => {
@@ -325,38 +195,9 @@ export function ModelManager() {
     }));
   }, [updateModels]);
 
-  const updateModelResponsesTransport = useCallback((
-    groupId: string,
-    modelId: string,
-    value: "inherit" | ResponsesTransport,
-  ) => {
-    updateModels((current) => ({
-      ...current,
-      groups: current.groups.map((group) => {
-        if (group.id !== groupId) return group;
-        return {
-          ...group,
-          models: group.models.map((model) => {
-            if (model.id !== modelId) return model;
-            if (value === "codex_subscription") {
-              return {
-                ...model,
-                protocol: "responses",
-                responses_transport: "codex_subscription",
-              };
-            }
-            if (value === "inherit") {
-              return {
-                ...model,
-                responses_transport: undefined,
-                protocol: undefined,
-              };
-            }
-            return { ...model, responses_transport: "openai_compatible" };
-          }),
-        };
-      }),
-    }));
+  const updateModelResponsesTransport = useCallback((groupId: string, modelId: string, transport: ResponsesTransport | "inherit") => {
+    updateModels((current) => ({ ...current, groups: current.groups.map((group) => group.id === groupId
+      ? { ...group, models: group.models.map((model) => model.id === modelId ? changeModelTransport(model, transport) : model) } : group) }));
   }, [updateModels]);
 
   const reorderModel = useCallback((groupId: string, modelId: string, targetModelId: string) => {
@@ -834,11 +675,11 @@ export function ModelManager() {
                       }))}
                     >
                       <option value="">未配置（text-only 模型只收到明确占位）</option>
-                      {models.groups.flatMap((group) => group.models.map((model) => (
+                      {models.groups.flatMap((group) => group.models.filter((model) => resolveResponsesTransport(group, model) !== "grok_subscription").map((model) => (
                         <option key={`${group.id}/${model.id}`} value={`${group.id}/${model.id}`}>{group.name}/{model.name}</option>
                       )))}
                     </select>
-                    <p className="text-xs text-muted-foreground">主模型未声明 image 输入时，由该模型先看图并生成带来源标记的视觉摘要。</p>
+                    <p className="text-xs text-muted-foreground">主模型未声明 image 输入时，由该模型先看图并生成带来源标记的视觉摘要。Grok 订阅暂不支持该独立辅助路径；主对话图片能力按订阅目录校验。</p>
                   </div>
                   {models.imageUnderstanding && (
                     <>
@@ -860,7 +701,7 @@ export function ModelManager() {
                               : undefined,
                           }))}
                         />
-                        <p className="text-xs text-muted-foreground">可选；主图片理解模型失败后按顺序尝试，使用 group/model 引用并以逗号分隔。</p>
+                        <p className="text-xs text-muted-foreground">可选；主图片理解模型失败后按顺序尝试，使用 group/model 引用并以逗号分隔；不能填写 Grok 订阅模型。</p>
                       </div>
                       <div className="space-y-1.5">
                         <Label>图片理解超时（ms）</Label>
@@ -891,6 +732,14 @@ export function ModelManager() {
               <UtilityModelSettings groups={models.groups} readOnly={platformReadOnly} settings={titleSettings} onDirty={() => setSavedAt(null)} />
 
               <CodexSubscriptionCard readOnly={accountReadOnly} />
+              <GrokSubscriptionCard readOnly={accountReadOnly}>{(subscriptionState) => (
+                <GrokModelCatalogPicker state={subscriptionState} groups={models.groups} readOnly={platformReadOnly || saving}
+                  modelRevision={revision} onRefreshModels={refresh} onImport={(target, entries) => {
+                    if (platformReadOnly || saving) throw new Error("当前模型配置不可写");
+                    const result = importGrokCatalogModels(models, target, entries);
+                    updateModels(() => result.models); return result.imported;
+                  }} />
+              )}</GrokSubscriptionCard>
 
               <Card className="h-fit">
                 <CardHeader className="pb-3">
@@ -982,8 +831,8 @@ export function ModelManager() {
                   <Label>协议类型 protocol</Label>
                   <select
                     className="h-9 w-full rounded-md border bg-card px-3 text-sm"
-                    value={selectedGroupDefaultIsCodex ? "responses" : (selectedGroup.protocol ?? DEFAULT_PROTOCOL)}
-                    disabled={selectedGroupDefaultIsCodex}
+                    value={selectedGroupDefaultIsSubscription ? "responses" : (selectedGroup.protocol ?? DEFAULT_PROTOCOL)}
+                    disabled={selectedGroupDefaultIsSubscription}
                     onChange={(e) => updateGroup(selectedGroup.id, { protocol: e.target.value as ModelProtocol })}
                   >
                     <option value="chat_completions">chat_completions</option>
@@ -1003,9 +852,10 @@ export function ModelManager() {
                   >
                     <option value="openai_compatible">OpenAI-compatible API Key</option>
                     <option value="codex_subscription">Codex subscription OAuth</option>
+                    <option value="grok_subscription">Grok 订阅 OAuth</option>
                   </select>
                   <p className="text-xs text-muted-foreground">
-                    选择 Codex 后自动锁定 Responses、完整历史、稳定 cache key 与无状态调用。
+                    订阅 transport 自动锁定 Responses 与完整历史。Grok 不使用 Codex 的 WebSocket 或 cache key。
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -1026,7 +876,7 @@ export function ModelManager() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>MCP 加载模式</Label>
-                  <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedGroup.mcp_loading_mode ?? "auto"} onChange={(e) => updateGroup(selectedGroup.id, { mcp_loading_mode: e.target.value as McpLoadingMode })}>
+                  <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" disabled={selectedGroup.responses_transport === "grok_subscription"} value={selectedGroup.responses_transport === "grok_subscription" ? "eager" : (selectedGroup.mcp_loading_mode ?? "auto")} onChange={(e) => updateGroup(selectedGroup.id, { mcp_loading_mode: e.target.value as McpLoadingMode })}>
                     <option value="auto">auto（能力通过才渐进加载）</option>
                     <option value="eager">eager（完整工具列表）</option>
                     <option value="deferred">deferred（能力不匹配时报错）</option>
@@ -1034,7 +884,7 @@ export function ModelManager() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Tool Search 协议能力</Label>
-                  <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedGroup.tool_search_protocol ?? "none"} onChange={(e) => updateGroup(selectedGroup.id, { tool_search_protocol: e.target.value as ToolSearchProtocol })}>
+                  <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" disabled={selectedGroup.responses_transport === "grok_subscription"} value={selectedGroup.responses_transport === "grok_subscription" ? "none" : (selectedGroup.tool_search_protocol ?? "none")} onChange={(e) => updateGroup(selectedGroup.id, { tool_search_protocol: e.target.value as ToolSearchProtocol })}>
                     <option value="none">未验证 / 不支持</option>
                     <option value="openai_responses_hosted">OpenAI Responses hosted tool_search</option>
                   </select>
@@ -1047,7 +897,7 @@ export function ModelManager() {
                   </>
                 ) : (
                   <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
-                    Codex 固定逻辑协议：`store:false`、每轮保留完整历史、禁止标准 HTTP `previous_response_id`、稳定 session cache key、encrypted reasoning replay。启用上方 WebSocket 接力后，只压缩线上发送内容；PostgreSQL 完整历史仍是事实源，异常会自动回退全量 HTTP/SSE。
+                    {subscriptionTransportNotice(selectedGroup.responses_transport)}
                   </div>
                 )}
                 <label className="flex items-start gap-2 text-sm md:col-span-2"><input type="checkbox" className="mt-0.5" checked={selectedGroup.input_modalities?.includes("image") === true} onChange={(e) => updateGroup(selectedGroup.id, { input_modalities: e.target.checked ? ["text", "image"] : ["text"] })} /><span>分组模型支持图片输入<span className="block text-xs text-muted-foreground">只在已验证 provider 协议确实支持视觉时开启；模型可单独覆盖。</span></span></label>
@@ -1093,10 +943,10 @@ export function ModelManager() {
                     <Label>协议类型 protocol</Label>
                     <select
                       className="h-9 w-full rounded-md border bg-card px-3 text-sm"
-                      value={selectedModelTransport === "codex_subscription"
+                      value={isSubscriptionTransport(selectedModelTransport)
                         ? "responses"
                         : (selectedModelContext.model.protocol ?? INHERIT_PROTOCOL)}
-                      disabled={selectedModelTransport === "codex_subscription"}
+                      disabled={isSubscriptionTransport(selectedModelTransport)}
                       onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, {
                         protocol: e.target.value === INHERIT_PROTOCOL ? undefined : e.target.value as ModelProtocol,
                       })}
@@ -1121,10 +971,12 @@ export function ModelManager() {
                       <option value="inherit">继承分组</option>
                       <option value="openai_compatible">OpenAI-compatible API Key</option>
                       <option value="codex_subscription">Codex subscription OAuth</option>
+                    <option value="grok_subscription">Grok 订阅 OAuth</option>
                     </select>
                     <p className="text-xs text-muted-foreground">
                       当前生效：{selectedModelTransport}
-                      {selectedModelTransport === "codex_subscription"
+                      {selectedModelTransport === "grok_subscription" ? "；HTTP/SSE，全量平台工具；思考深度与图像能力需订阅目录确认" : ""}
+                      {isSubscriptionTransport(selectedModelTransport)
                         ? "；协议与缓存语义已锁定"
                         : ""}
                     </p>
@@ -1147,7 +999,7 @@ export function ModelManager() {
                   </div>
                   <div className="space-y-1.5">
                     <Label>MCP 加载模式</Label>
-                    <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedModelContext.model.mcp_loading_mode ?? "inherit"} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { mcp_loading_mode: e.target.value === "inherit" ? undefined : e.target.value as McpLoadingMode })}>
+                    <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" disabled={selectedModelTransport === "grok_subscription"} value={selectedModelTransport === "grok_subscription" ? "eager" : (selectedModelContext.model.mcp_loading_mode ?? "inherit")} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { mcp_loading_mode: e.target.value === "inherit" ? undefined : e.target.value as McpLoadingMode })}>
                       <option value="inherit">继承分组</option>
                       <option value="auto">auto</option>
                       <option value="eager">eager</option>
@@ -1156,7 +1008,7 @@ export function ModelManager() {
                   </div>
                   <div className="space-y-1.5">
                     <Label>Tool Search 协议能力</Label>
-                    <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" value={selectedModelContext.model.tool_search_protocol ?? "inherit"} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { tool_search_protocol: e.target.value === "inherit" ? undefined : e.target.value as ToolSearchProtocol })}>
+                    <select className="h-9 w-full rounded-md border bg-card px-3 text-sm" disabled={selectedModelTransport === "grok_subscription"} value={selectedModelTransport === "grok_subscription" ? "none" : (selectedModelContext.model.tool_search_protocol ?? "inherit")} onChange={(e) => updateModel(selectedModelContext.group.id, selectedModelContext.model.id, { tool_search_protocol: e.target.value === "inherit" ? undefined : e.target.value as ToolSearchProtocol })}>
                       <option value="inherit">继承分组</option>
                       <option value="none">本模型不支持</option>
                       <option value="openai_responses_hosted">OpenAI Responses hosted tool_search</option>
@@ -1222,7 +1074,7 @@ export function ModelManager() {
                     <div>
                       <Label>平台模型成本价（USD / 1M tokens）</Label>
                       <p className="text-xs text-muted-foreground">
-                        仅用于平台成本统计，不是客户售价或积分倍率。留空表示继续使用内置成本价，未知模型 cost=0。
+                        仅用于平台成本统计，不是客户售价或积分倍率。未知模型的账面 cost=0 仅表示未登记成本，不代表订阅免费，也不是上游实际扣款。
                       </p>
                     </div>
                     <label className="flex items-center gap-2 text-xs text-muted-foreground">

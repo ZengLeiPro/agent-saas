@@ -38,7 +38,7 @@ test('image recovery is single-flight per SHA and outside the Staging mutation s
   );
   const prepare = source.split('  prepare-acs:')[1].split('  build-deploy-verify:')[0];
   const deploy = source.split('  build-deploy-verify:')[1];
-  assert.match(prepare, /group: acr-image-\$\{\{ github.sha \}\}/u);
+  assert.match(prepare, /group: acr-image-\$\{\{ needs.prepare-evidence.outputs.source_sha \}\}/u);
   assert.doesNotMatch(
     prepare,
     /group: staging-runtime|environment: production|deploy-staging-release.sh/u,

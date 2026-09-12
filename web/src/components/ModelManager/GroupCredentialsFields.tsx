@@ -128,7 +128,7 @@ export function GroupCredentialsFields({
   if (!hasOpenAiCompatible) {
     return (
       <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
-        Codex 使用已授权账号，自动采集套餐额度。API Key 与 Base URL 保留，但仅用于 API Key transport。
+        Codex / Grok 订阅使用各自的平台授权池，套餐额度按账号采集。API Key 与 Base URL 保留，但仅用于 API Key transport，Grok 不会回退到该计费路径。
       </div>
     );
   }

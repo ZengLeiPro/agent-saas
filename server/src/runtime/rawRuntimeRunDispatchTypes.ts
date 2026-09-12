@@ -1,3 +1,5 @@
+import type { GrokCredentialManager } from './responses/grokCredentialManager.js';
+import type { GrokModelCatalogService } from './responses/grokModelCatalog.js';
 import type { AgentRunHooks, InteractionResponse, RuntimeDrainHandoffState, ToolApprovalPolicyOptions } from '../agent/types.js';
 import type { AgentRuntimeProfileResolver } from './agentProfiles.js';
 import type { AgentStore } from '../data/agents/store.js';
@@ -76,6 +78,9 @@ export interface SessionLockAcquirer {
 
 
 export interface ModelAdapterFactoryDependencies {
+  grokCredentialManager?: GrokCredentialManager;
+  grokFetch?: typeof fetch;
+  grokModelCatalog?: GrokModelCatalogService;
   codexCredentialManager?: CodexCredentialManager;
   codexFetch?: typeof fetch;
   codexWebSocketPool?: CodexResponsesWebSocketPool;

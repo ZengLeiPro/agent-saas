@@ -4,7 +4,7 @@ import type { EditableQuotaSource } from './GroupCredentialsFields';
 import type { UtilityModelAdminFields } from './UtilityModelSettings';
 
 export type ModelProtocol = 'chat_completions' | 'responses';
-export type ResponsesTransport = 'openai_compatible' | 'codex_subscription';
+export type ResponsesTransport = 'openai_compatible' | 'codex_subscription' | 'grok_subscription';
 export type McpLoadingMode = 'auto' | 'eager' | 'deferred';
 export type ToolSearchProtocol = 'none' | 'openai_responses_hosted';
 

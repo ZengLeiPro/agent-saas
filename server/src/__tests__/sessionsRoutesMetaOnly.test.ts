@@ -1,12 +1,10 @@
-import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
-import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionsRouter, type SessionsRouterOptions } from '../routes/sessions.js';
+import { createSessionsRouteTestServerHarness } from './sessionsRouteTestServer.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import { writeSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
@@ -35,59 +33,7 @@ type SessionListResponse = {
   hasMore: boolean;
 };
 
-function stopServer(server: Server): Promise<void> {
-  return new Promise((resolve) => server.close(() => resolve()));
-}
-
-async function startServer(
-  agentCwd: string,
-  options: {
-    user?: WorkspaceUser;
-    resolveContextAccounting?: (modelRef?: string) => {
-      exact: boolean;
-      kind: 'exact_current' | 'stateful_response_exact' | 'unknown';
-      source: 'provider_usage' | 'unknown';
-      label: string;
-      reason?: string;
-    };
-    orgAgentStore?: OrgAgentStore;
-    sessionProjectionStore?: SessionsRouterOptions['sessionProjectionStore'];
-    runtimeEventStoreFor?: SessionsRouterOptions['runtimeEventStoreFor'];
-    listPendingUserMessagesBySession?: SessionsRouterOptions['listPendingUserMessagesBySession'];
-    findRunByClientMessageId?: SessionsRouterOptions['findRunByClientMessageId'];
-  } = {},
-): Promise<{ server: Server; baseUrl: string }> {
-  const app = express();
-  app.use(express.json());
-  app.use((req, _res, next) => {
-    const user = options.user ?? TEST_USER;
-    req.user = {
-      sub: user.id,
-      username: user.username,
-      role: user.role,
-      tenantId: user.tenantId ?? TEST_USER.tenantId,
-    };
-    next();
-  });
-  app.use('/api', createSessionsRouter({
-    agentCwd,
-    runtimeEventStoreFor: options.runtimeEventStoreFor
-      ?? ((transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), TEST_USER.tenantId)),
-    resolveContextAccounting: options.resolveContextAccounting,
-    orgAgentStore: options.orgAgentStore,
-    sessionProjectionStore: options.sessionProjectionStore,
-    listPendingUserMessagesBySession: options.listPendingUserMessagesBySession,
-    findRunByClientMessageId: options.findRunByClientMessageId,
-  }));
-
-  return new Promise((resolve) => {
-    const server = app.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      const port = typeof addr === 'object' && addr ? addr.port : 0;
-      resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
-    });
-  });
-}
+const { startServer, stopServer } = createSessionsRouteTestServerHarness(TEST_USER);
 
 describe('sessions routes for meta-only runtime sessions', () => {
   let agentCwd = '';
@@ -267,6 +213,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
 
       const status = await fetch(`${baseUrl}/api/messages/client-queued-1/status`);
       expect(status.status).toBe(200);
+      expect(status.headers.get('cache-control')).toBe('no-store');
       await expect(status.json()).resolves.toMatchObject({
         clientMessageId: 'client-queued-1',
         runId: 'queued-run-1',
@@ -286,6 +233,28 @@ describe('sessions routes for meta-only runtime sessions', () => {
       });
     } finally {
       await stopServer(server);
+    }
+  });
+
+  it('marks message status 404 and 503 recovery responses as no-store', async () => {
+    const missing = await startServer(agentCwd, { findRunByClientMessageId: async () => null });
+    try {
+      const response = await fetch(`${missing.baseUrl}/api/messages/missing-client/status`);
+      expect(response.status).toBe(404);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    } finally {
+      await stopServer(missing.server);
+    }
+
+    const unavailable = await startServer(agentCwd, {
+      findRunByClientMessageId: async () => { throw new Error('lookup unavailable'); },
+    });
+    try {
+      const response = await fetch(`${unavailable.baseUrl}/api/messages/unavailable-client/status`);
+      expect(response.status).toBe(503);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    } finally {
+      await stopServer(unavailable.server);
     }
   });
 

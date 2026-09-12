@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reason": "Staging memory admission: register the existing AGENT_SAAS_ENVIRONMENT in the server inventory because MemoryPressureGuard now directly reads it to select Staging-only reserves. Deployed units and runtime identity already require this variable; no new operator setting is introduced. Preserve all other domain budgets and prior CI/CD hardening entries. PR636 recovery: register the existing TEST_DATABASE_URL for the explicitly invoked local PostgreSQL retirement verifier; no production setting or other domain budget changes.",
+  "reason": "Staging memory admission: register the existing AGENT_SAAS_ENVIRONMENT in the server inventory because MemoryPressureGuard now directly reads it to select Staging-only reserves. Deployed units and runtime identity already require this variable; no new operator setting is introduced. Preserve all other domain budgets and prior CI/CD hardening entries. PR636 recovery: register the existing TEST_DATABASE_URL for the explicitly invoked local PostgreSQL retirement verifier; no production setting or other domain budget changes. Automatic production requests: register GitHub Actions built-in RUNNER_TEMP in deployment/scripts for run-local request, child receipt, cancellation and early-failure evidence, matching the existing workflow artifact path. This is supplied by the runner, not a new secret or operator configuration. Only this domain increases by one name; all other inventories and budgets remain unchanged.",
   "updatedAt": "2026-09-11",
   "domains": {
     "server": {
@@ -153,7 +153,7 @@
       "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
     },
     "deployment/scripts": {
-      "budget": 49,
+      "budget": 50,
       "names": [
         "ACS_ORCH_AUTH_TOKEN",
         "AGENT_SAAS_ADMIN_LAUNCH_NONCE",
@@ -196,6 +196,7 @@
         "RELEASE_EVIDENCE_ROOT",
         "RELEASE_EVIDENCE_WRITE_TOKEN",
         "RELEASE_EVIDENCE_WRITE_TOKEN_FILE",
+        "RUNNER_TEMP",
         "STAGING_API_URL",
         "STAGING_E2E_PASSWORD",
         "STAGING_E2E_USERNAME",

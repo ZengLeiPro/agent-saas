@@ -1,5 +1,8 @@
+import type { SubscriptionRuntimeStatus as CodexRuntimeStatus, SubscriptionCredentialState as CodexCredentialState } from './subscriptionTypes';
+import { SubscriptionAccounts } from './SubscriptionAccounts';
+export { formatCooldownRemaining } from './SubscriptionAccounts';
 import { useCallback, useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, ExternalLink, KeyRound, Loader2, Plus, RefreshCw, Save, Trash2, Unplug } from "lucide-react";
+import { ExternalLink, KeyRound, Loader2, Plus, RefreshCw, Save, Unplug } from "lucide-react";
 
 import { authFetch } from "@/lib/authFetch";
 import { Badge } from "@/components/ui/badge";
@@ -8,60 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAdminConfigWritePolicy, type AdminConfigResponseMetadata } from "@/hooks/useAdminConfigWritePolicy";
-
-type CodexRuntimeStatus = {
-  requestWindow: {
-    limit: number;
-    sampleCount: number;
-    eligibleRequestCount: number;
-    cacheHitRequestCount: number;
-    eligibleInputTokens: number;
-    cachedInputTokens: number;
-    cacheHitRequestRate?: number;
-    cachedInputTokenRate?: number;
-  };
-  wireWindow?: {
-    limit: number;
-    sampleCount: number;
-    websocketRequestCount: number;
-    relayRequestCount: number;
-    fallbackFullRequestCount: number;
-    httpFallbackRequestCount: number;
-    logicalRequestBodyBytes: number;
-    wireRequestBodyBytes: number;
-    savedRequestBodyBytes: number;
-    savedRequestBodyRate?: number;
-    lastFallbackReason?: string;
-  };
-  lastRequestAt?: string;
-  lastSuccessAt?: string;
-  lastErrorAt?: string;
-  lastError?: string;
-  lastModel?: string;
-  oauth: {
-    lastRefreshAt?: string;
-    lastRefreshGeneration?: number;
-    lastRefreshErrorAt?: string;
-    lastRefreshError?: string;
-  };
-};
-
-type CodexCredentialState = {
-  id?: string;
-  priority?: number;
-  configured: boolean;
-  connected: boolean;
-  accountBindingHash?: string;
-  accountIdHint?: string;
-  email?: string;
-  expiresAt?: string;
-  accessTokenExpired?: boolean;
-  generation?: number;
-  availability?: "available" | "quota_cooldown" | "auth_unavailable";
-  cooldownUntil?: string;
-  lastFailureCode?: string;
-  error?: string;
-};
 
 type CodexSubscriptionState = AdminConfigResponseMetadata & {
   config: {
@@ -91,13 +40,6 @@ type DeviceSession = {
 
 async function readJson<T>(response: Response): Promise<T & { error?: string }> {
   return (await response.json().catch(() => ({}))) as T & { error?: string };
-}
-
-export function formatCooldownRemaining(cooldownUntil: string): string {
-  const remainingSeconds = Math.max(0, Math.ceil((Date.parse(cooldownUntil) - Date.now()) / 1000));
-  const minutes = Math.floor(remainingSeconds / 60);
-  const seconds = remainingSeconds % 60;
-  return `${minutes} 分 ${seconds} 秒`;
 }
 
 function accountList(state: CodexSubscriptionState | null): CodexCredentialState[] {
@@ -345,7 +287,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     && quotaCooldownMinutes <= 10_080;
 
   return (
-    <Card className="h-fit">
+    <Card id="codex-subscription" className="h-fit">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center justify-between gap-3 text-base">
           <span className="flex items-center gap-1.5">
@@ -418,94 +360,8 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
               </label>
             </div>
 
-            {accounts.length > 0 && (
-              <div className="space-y-2">
-                <div>
-                  <div className="text-sm font-medium">授权账号优先级</div>
-                  <div className="text-xs text-muted-foreground">新顺序作用于后续模型请求，不改变已发出的请求。</div>
-                </div>
-                {accounts.map((account, index) => (
-                  <div key={account.id ?? `${account.email ?? "account"}-${index}`} className="rounded-md border bg-muted/20 p-3 text-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="outline">优先级 {index + 1}</Badge>
-                        <span>{account.email ?? `尾号 ${account.accountIdHint ?? "未知"}`}</span>
-                        {account.availability === "quota_cooldown"
-                          ? <Badge variant="outline">额度冷却</Badge>
-                          : account.availability === "auth_unavailable"
-                            ? <Badge variant="destructive">需重授权</Badge>
-                            : account.connected
-                              ? <Badge variant="secondary">可用</Badge>
-                              : <Badge variant="outline">异常</Badge>}
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2"
-                          disabled={effectiveReadOnly || working || index === 0}
-                          onClick={() => void reorder(index, index - 1)}
-                          title="上移优先级"
-                        >
-                          <ArrowUp className="size-3.5" />
-                          上移
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2"
-                          disabled={effectiveReadOnly || working || index === accounts.length - 1}
-                          onClick={() => void reorder(index, index + 1)}
-                          title="下移优先级"
-                        >
-                          <ArrowDown className="size-3.5" />
-                          下移
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2"
-                          disabled={effectiveReadOnly || working || !account.id}
-                          onClick={() => void startAuthorization(account.id)}
-                        >
-                          <KeyRound className="size-3.5" />
-                          重授权
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2 text-destructive hover:text-destructive"
-                          disabled={effectiveReadOnly || working || !account.id}
-                          onClick={() => void removeCredential(account)}
-                        >
-                          <Trash2 className="size-3.5" />
-                          删除
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="mt-1 text-muted-foreground">
-                      绑定指纹：{account.accountBindingHash ?? "未知"}
-                      {account.expiresAt
-                        ? ` · access token ${account.accessTokenExpired ? "已到期，将自动刷新" : `到期 ${new Date(account.expiresAt).toLocaleString()}`}`
-                        : ""}
-                    </div>
-                    {account.availability === "quota_cooldown" && account.cooldownUntil && (
-                      <div className="mt-1 text-amber-700 dark:text-amber-400">
-                        冷却至 {new Date(account.cooldownUntil).toLocaleString()}
-                        {` · 剩余 ${formatCooldownRemaining(account.cooldownUntil)}`}
-                        {account.lastFailureCode ? ` · ${account.lastFailureCode}` : ""}
-                      </div>
-                    )}
-                    {account.availability === "auth_unavailable" && (
-                      <div className="mt-1 text-destructive">
-                        授权不可用，请重授权{account.lastFailureCode ? ` · ${account.lastFailureCode}` : ""}
-                      </div>
-                    )}
-                    {account.error && <div className="mt-1 text-destructive">{account.error}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
+            <SubscriptionAccounts accounts={accounts} readOnly={effectiveReadOnly} working={working}
+              reorder={reorder} startAuthorization={startAuthorization} removeCredential={removeCredential} />
 
             {state?.runtime && (
               <div className="rounded-md border bg-muted/20 p-3 text-xs">

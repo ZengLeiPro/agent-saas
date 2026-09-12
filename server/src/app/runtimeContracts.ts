@@ -1,3 +1,6 @@
+import type { GrokCredentialManager } from '../runtime/responses/grokCredentialManager.js';
+import type { GrokDeviceAuthService } from '../runtime/responses/grokOAuth.js';
+import type { GrokModelCatalogService } from '../runtime/responses/grokModelCatalog.js';
 import type { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
 import type { AppConfig } from '../types/index.js';
 import type { AuthEpochAuthority } from '../auth/authEpochAuthority.js';
@@ -175,6 +178,7 @@ export interface AppRuntime {
   refreshConfigIdentitySummary?: () => Promise<import('@agent/shared').ConfigIdentitySummary>;
   /** 当前私有 ConfigIdentity snapshot 必须与内存 summary 逐字一致。 */
   isPrivateConfigIdentitySummaryCurrent: () => boolean;
+  getConfigIdentityRefreshFailure?: () => 'config_refresh_timeout' | 'config_refresh_failed' | undefined;
   /** Runtime、refresher 与管理端 mutation 共享的唯一恢复门及 permit 所有者。 */
   configRuntimeRecoveryGate: ConfigRuntimeRecoveryGate;
   memoryIndexShutdown?: () => Promise<void>;
@@ -192,6 +196,9 @@ export interface AppRuntime {
   secretVault?: SecretVault;
   codexCredentialManager: CodexCredentialManager;
   codexDeviceAuthService: CodexDeviceAuthService;
+  grokCredentialManager: GrokCredentialManager;
+  grokDeviceAuthService: GrokDeviceAuthService;
+  grokModelCatalog: GrokModelCatalogService;
   /** 套餐额度采集/读取（仅 PG runtime 装配；ws-only 只读+按需刷新，Worker 跑周期采集）。 */
   providerQuotaService?: ProviderQuotaService;
   codexWebSocketShutdown?: () => void;

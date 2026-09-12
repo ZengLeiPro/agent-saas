@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   productionObservationUrl,
+  isRuntimeAdmissionOnlyNotReady,
   validateConfigIdentitySummary,
   validateExpectedConfigIdentityObservers,
   validateProductionObservations,
@@ -209,4 +210,28 @@ test('cache-busts remote observers without changing the local ACS health route',
     productionObservationUrl('http://127.0.0.1:3400/health', 123).href,
     'http://127.0.0.1:3400/health',
   );
+});
+
+test('baseline observation accepts only a runtime-worker admission pause, not unrelated API 503 states', () => {
+  const paused = observations();
+  paused.api.status = 'not_ready';
+  paused.api.draining = false;
+  paused.api.runtimeAdmission = {
+    state: 'paused', admitting: false, reason: 'runtime_worker_not_ready',
+  };
+  assert.equal(isRuntimeAdmissionOnlyNotReady(paused.api), true);
+  assert.doesNotThrow(() => validateProductionObservations(paused));
+
+  for (const mutate of [
+    (value) => { value.api.draining = true; },
+    (value) => { value.api.error = 'config_identity_unavailable'; },
+    (value) => { value.api.runtimeAdmission = { state: 'healthy', admitting: true }; },
+    (value) => { value.api.integrationV3 = { releaseReady: false }; },
+    (value) => { value.api.release.safetyAttested = false; },
+  ]) {
+    const unsafe = structuredClone(paused);
+    mutate(unsafe);
+    assert.equal(isRuntimeAdmissionOnlyNotReady(unsafe.api), false);
+    assert.throws(() => validateProductionObservations(unsafe), /safely observable/u);
+  }
 });

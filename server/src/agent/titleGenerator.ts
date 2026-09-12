@@ -1,3 +1,4 @@
+import { isSubscriptionTransport } from '../runtime/subscriptionModelAuthentication.js';
 /**
  * AI Title Generator
  *
@@ -103,7 +104,7 @@ export interface TitleGeneratorConfig {
   modelRef?: string;
   connection?: { apiKey?: string; baseUrl?: string };
   protocol?: 'chat_completions' | 'responses';
-  responsesTransport?: 'openai_compatible' | 'codex_subscription';
+  responsesTransport?: 'openai_compatible' | 'codex_subscription' | 'grok_subscription';
   providerOptions?: ModelProviderOptions;
 }
 
@@ -213,7 +214,7 @@ interface TitleModelAdapterInput {
   maxOutputTokens?: number;
 }
 
-const codexTitleInFlight = new WeakMap<TitleModelAdapterFactory, Set<string>>();
+const subscriptionTitleInFlight = new WeakMap<TitleModelAdapterFactory, Set<string>>();
 
 function withTitleTimeout<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(new Error('Title generation timed out'));
@@ -224,16 +225,16 @@ function withTitleTimeout<T>(operation: Promise<T>, signal: AbortSignal): Promis
   });
 }
 
-function runCodexTitleOperation(input: TitleModelAdapterInput): Promise<TitleProviderResult> {
-  const key = input.config.model;
-  const active = codexTitleInFlight.get(input.factory) ?? new Set<string>();
-  if (active.has(key)) return Promise.reject(new Error('Codex title generation is still in flight'));
+function runSubscriptionTitleOperation(input: TitleModelAdapterInput): Promise<TitleProviderResult> {
+  const key = JSON.stringify([input.config.responsesTransport, input.config.model]);
+  const active = subscriptionTitleInFlight.get(input.factory) ?? new Set<string>();
+  if (active.has(key)) return Promise.reject(new Error(`${input.config.responsesTransport} title generation is still in flight`));
   active.add(key);
-  codexTitleInFlight.set(input.factory, active);
+  subscriptionTitleInFlight.set(input.factory, active);
   const operation = generateTitleViaModelAdapter(input);
   const release = () => {
     active.delete(key);
-    if (active.size === 0) codexTitleInFlight.delete(input.factory);
+    if (active.size === 0) subscriptionTitleInFlight.delete(input.factory);
   };
   operation.then(release, release);
   return withTitleTimeout(operation, input.signal);
@@ -243,7 +244,7 @@ async function generateTitleViaModelAdapter(input: TitleModelAdapterInput): Prom
   const adapter = input.factory(input.config.connection ?? {}, {
     ...input.config.providerOptions,
     protocol: 'responses',
-    responsesTransport: 'codex_subscription',
+    responsesTransport: input.config.responsesTransport,
     disableResponseChaining: true,
     preStreamRetryDelaysMs: [],
   });
@@ -283,10 +284,10 @@ async function generateTitleViaModelAdapter(input: TitleModelAdapterInput): Prom
     responseId = event.responseId ?? 'n/a';
     usage = event.usage;
     if (event.terminalStatus && event.terminalStatus !== 'completed') {
-      errorMessage = event.errorMessage || `Codex title generation ${event.terminalStatus}`;
+      errorMessage = event.errorMessage || `${input.config.responsesTransport} title generation ${event.terminalStatus}`;
     }
   }
-  if (!completed) errorMessage = 'Codex title generation ended without terminal event';
+  if (!completed) errorMessage = `${input.config.responsesTransport} title generation ended without terminal event`;
   return {
     raw,
     finishReason,
@@ -308,27 +309,27 @@ export async function generateTitle(
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 30_000);
   const apiKey = config.connection?.apiKey || process.env.OPENAI_API_KEY;
   const baseURL = config.connection?.baseUrl || process.env.OPENAI_BASE_URL;
-  const isCodexSubscription = config.protocol === 'responses'
-    && config.responsesTransport === 'codex_subscription';
+  const isSubscription = config.protocol === 'responses'
+    && isSubscriptionTransport(config.responsesTransport);
 
-  if (isCodexSubscription && (!options.modelAdapterFactory || !options.runtimeContext)) {
-    titleLogger.warn(`Title generation skipped (model=${config.model}): codex_subscription runtime is unavailable`);
+  if (isSubscription && (!options.modelAdapterFactory || !options.runtimeContext)) {
+    titleLogger.warn(`Title generation skipped (model=${config.model}): ${config.responsesTransport} runtime is unavailable`);
     clearTimeout(timeout);
     return null;
   }
-  if (!isCodexSubscription && !apiKey) {
+  if (!isSubscription && !apiKey) {
     titleLogger.warn(`Title generation skipped (model=${config.model}): missing OPENAI_API_KEY`);
     clearTimeout(timeout);
     return null;
   }
-  if (config.protocol === 'responses' && !isCodexSubscription && !baseURL) {
+  if (config.protocol === 'responses' && !isSubscription && !baseURL) {
     titleLogger.warn(`Title generation skipped (model=${config.model}): missing Responses baseUrl`);
     clearTimeout(timeout);
     return null;
   }
 
   // Codex 由 ResponsesApiAdapter 在真实 transport attempt 前授权；其他协议维持单次外层授权。
-  if (!isCodexSubscription) await options.beforeModelCall?.(config.model);
+  if (!isSubscription) await options.beforeModelCall?.(config.model);
   let authorizationCallbackFailed = false;
   let usageCallbackFailed = false;
 
@@ -349,8 +350,8 @@ export async function generateTitle(
     }
 
     let providerResult: TitleProviderResult;
-    if (isCodexSubscription) {
-      providerResult = await runCodexTitleOperation({
+    if (isSubscription) {
+      providerResult = await runSubscriptionTitleOperation({
         config,
         factory: options.modelAdapterFactory!,
         runtimeContext: options.runtimeContext!,
@@ -465,22 +466,22 @@ export async function generateUtilityTextWithFallback(
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 45_000);
     const apiKey = config.connection?.apiKey || process.env.OPENAI_API_KEY;
     const baseURL = config.connection?.baseUrl || process.env.OPENAI_BASE_URL;
-    const isCodexSubscription = config.protocol === 'responses'
-      && config.responsesTransport === 'codex_subscription';
+    const isSubscription = config.protocol === 'responses'
+      && isSubscriptionTransport(config.responsesTransport);
     let authorizationCallbackFailed = false;
     let usageCallbackFailed = false;
     try {
-      if (isCodexSubscription && (!options.modelAdapterFactory || !options.runtimeContext)) continue;
-      if (!isCodexSubscription && !apiKey) continue;
-      if (config.protocol === 'responses' && !isCodexSubscription && !baseURL) continue;
-      if (!isCodexSubscription && options.beforeModelCall) {
+      if (isSubscription && (!options.modelAdapterFactory || !options.runtimeContext)) continue;
+      if (!isSubscription && !apiKey) continue;
+      if (config.protocol === 'responses' && !isSubscription && !baseURL) continue;
+      if (!isSubscription && options.beforeModelCall) {
         try { await options.beforeModelCall(config.model); }
         catch (error) { authorizationCallbackFailed = true; throw error; }
       }
 
       let result: TitleProviderResult;
-      if (isCodexSubscription) {
-        result = await runCodexTitleOperation({
+      if (isSubscription) {
+        result = await runSubscriptionTitleOperation({
           config,
           factory: options.modelAdapterFactory!,
           runtimeContext: options.runtimeContext!,

@@ -65,6 +65,7 @@ type ConfigChanges = {
   systemPrompts: boolean;
   toolControls: boolean;
   codexSubscription: boolean;
+  grokSubscription: boolean;
   stt: boolean;
   sessionAutomation: boolean;
   webTools: boolean;
@@ -98,6 +99,7 @@ const CHANGE_LABELS: Record<ConfigChangeKey, string> = {
   systemPrompts: 'systemPrompt',
   toolControls: 'toolControls',
   codexSubscription: 'codexSubscription',
+  grokSubscription: 'grokSubscription',
   stt: 'STT',
   sessionAutomation: 'Session Automation',
   webTools: 'WebTools',
@@ -231,6 +233,7 @@ export function createSharedConfigRefresher(params: {
   validateConfigReload?: (next: AppConfig) => void | Promise<void>;
   /** Codex 配置变化后，undefined 表示关闭全池，否则只关闭指定 credential refs。 */
   onCodexSubscriptionUpdated?: (credentialRefs?: readonly string[]) => void;
+  onGrokSubscriptionUpdated?: () => void;
   tenantStore?: TenantStore;
   tenantsFilePath?: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
@@ -304,6 +307,7 @@ export function createSharedConfigRefresher(params: {
       codexSubscription:
         JSON.stringify(config.codexSubscription ?? null) !==
         JSON.stringify(nextConfig.codexSubscription ?? null),
+      grokSubscription: JSON.stringify(config.grokSubscription ?? null) !== JSON.stringify(nextConfig.grokSubscription ?? null),
       stt: JSON.stringify(config.stt ?? null) !== JSON.stringify(nextConfig.stt ?? null),
       sessionAutomation:
         JSON.stringify(config.sessionAutomation ?? null) !==
@@ -370,6 +374,10 @@ export function createSharedConfigRefresher(params: {
       if (source.codexSubscription) config.codexSubscription = source.codexSubscription;
       else delete config.codexSubscription;
     }
+    if (changes.grokSubscription) {
+      if (source.grokSubscription) config.grokSubscription = source.grokSubscription;
+      else delete config.grokSubscription;
+    }
     if (changes.stt) {
       if (source.stt) config.stt = source.stt;
       else delete config.stt;
@@ -413,6 +421,10 @@ export function createSharedConfigRefresher(params: {
     }
     if (changes.systemPrompts) logger?.info('[SharedConfig] 已从磁盘热更新系统提示语配置');
     if (changes.toolControls) logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
+    if (changes.grokSubscription) {
+      params.onGrokSubscriptionUpdated?.();
+      logger?.info(`[SharedConfig] 已从磁盘热更新 Grok 订阅配置：enabled=${nextConfig.grokSubscription?.enabled === true}`);
+    }
     if (changes.codexSubscription) {
       const previousRefs = codexCredentialRefs(previousConfig.codexSubscription);
       const refs = codexCredentialRefs(nextConfig.codexSubscription);
@@ -588,6 +600,7 @@ export function createSharedConfigRefresher(params: {
           changes.imageGenTools && !prepareImageGenUpdate ? 'imageGenTools' : undefined,
           changes.tenantRemoteHands && !prepareTenantRemoteHandsUpdate ? 'tenantRemoteHands' : undefined,
           changes.codexSubscription && !params.onCodexSubscriptionUpdated ? 'codexSubscription' : undefined,
+      changes.grokSubscription && !params.onGrokSubscriptionUpdated ? 'grokSubscription' : undefined,
         ].filter((value): value is string => Boolean(value));
         if (missing.length > 0) throw new Error(`共享配置缺少运行时消费者：${missing.join(', ')}`);
       }

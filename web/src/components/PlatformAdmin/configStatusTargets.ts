@@ -15,6 +15,7 @@ export const TARGETS: Record<Exclude<ConfigTarget, null>, { label: string; route
 export const CAPABILITY_LABELS: Record<string, string> = {
   models: '模型',
   codex: 'Codex',
+  grok: 'Grok',
   webTools: 'WebTools',
   imageGen: 'ImageGen',
   stt: '语音转写',
@@ -33,6 +34,7 @@ export const CAPABILITY_LABELS: Record<string, string> = {
 export const CAPABILITY_SOURCES: Record<string, string> = {
   models: 'models.groups',
   codex: 'codexSubscription.enabled',
+  grok: 'grokSubscription.enabled',
   webTools: 'webTools.enabled',
   imageGen: 'imageGenTools.enabled',
   stt: 'stt.enabled',
@@ -50,6 +52,7 @@ export const CAPABILITY_SOURCES: Record<string, string> = {
 export function secretAreaLabel(path: string): string {
   if (path.startsWith('models.')) return '模型';
   if (path.startsWith('codexSubscription.')) return 'Codex';
+  if (path.startsWith('grokSubscription.')) return 'Grok';
   if (path.startsWith('webTools.')) return 'WebTools';
   if (path.startsWith('imageGenTools.')) return 'ImageGen';
   if (path.startsWith('stt.')) return '语音转写';

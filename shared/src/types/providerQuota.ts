@@ -9,6 +9,7 @@
  */
 export type ProviderQuotaSourceKind =
   | 'codex_subscription'
+  | 'grok_subscription'
   | 'volcengine_ark_plan'
   | 'claude_subscription'
   | 'zhipu_coding_plan';

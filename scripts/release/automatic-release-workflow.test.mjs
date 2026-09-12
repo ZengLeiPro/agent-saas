@@ -58,7 +58,7 @@ test('automatic is the UI default without removing any manual advanced operation
 });
 test('automatic child authorization is retained as a durable diagnostic in every mutating workflow', () => {
   for (const workflow of [production, staging]) {
-    assert.match(workflow, /AUTOMATIC_CHILD_EVIDENCE_PATH: \$\{\{ runner\.temp \}\}\/automatic-child-authorization\.jsonl/u);
+    assert.match(workflow, /AUTOMATIC_CHILD_EVIDENCE_PATH: \$\{\{ github\.workspace \}\}\/automatic-child-authorization\.jsonl/u);
     assert.match(workflow, /automatic-child-authorization\.jsonl/u);
   }
 });

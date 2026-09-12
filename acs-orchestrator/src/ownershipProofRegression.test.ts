@@ -50,4 +50,28 @@ describe('actual ownership proof boundary', () => {
     expect(operation.record.outcome).toBe('cancelled');
     expect(operations.drainBlockers()).toBe(0);
   });
+
+  it('never-dispatched proof still settles after a local unknown without a remote fence', async () => {
+    const operations = new OwnedOperations(journalFixture());
+    const operation = await operations.begin({ kind: 'ensure', invocationId: 'ensure:sandbox', attemptId: 'ensure:attempt', scope });
+    await operation.unknown('shared_work_unconfirmed');
+    expect(operation.record.resource).toBe('unknown');
+    expect(operations.drainBlockers()).toBeGreaterThan(0);
+    await operation.complete('failed', { kind: 'never_dispatched', attemptId: 'ensure:attempt' }, 'not_started');
+    expect(operation.record.resource).toBe('not_started');
+    expect(operation.record.outcome).toBe('failed');
+    expect(operations.drainBlockers()).toBe(0);
+  });
+
+  it('never-dispatched proof cannot erase a dispatched owner', async () => {
+    const operations = new OwnedOperations(journalFixture());
+    const operation = await operations.begin({ kind: 'ensure', invocationId: 'ensure:dispatched', attemptId: 'ensure:dispatched-attempt', scope });
+    await operation.dispatch('sandbox-uid-dispatched');
+    await operation.unknown('shared_work_unconfirmed');
+    await expect(operation.complete('failed', {
+      kind: 'never_dispatched', attemptId: 'ensure:dispatched-attempt', sandboxUid: 'sandbox-uid-dispatched',
+    }, 'not_started')).rejects.toMatchObject({ code: 'ownership_unresolved' });
+    expect(operation.record.resource).toBe('unknown');
+    expect(operations.drainBlockers()).toBeGreaterThan(0);
+  });
 });

@@ -33168,6 +33168,45 @@
           "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
+    },
+    {
+      "baselineSha": "b1d9b02743ac18c32dcc432b801d86600ce854e0",
+      "files": [
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:de23d3fe4c8a1a5b1984b066933966eb01ada196c82c93f645dcd41280ad5943",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
+          "classification": "no-schema-change",
+          "reason": "增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "classification": "no-schema-change",
+          "reason": "Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        }
+      ]
     }
   ]
 }

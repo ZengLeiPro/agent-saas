@@ -9,6 +9,7 @@ import { EgressConfigStore } from '../data/egressConfig.js';
 import { createEgressConfigAdminRouter } from '../routes/egressConfigAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { EncryptedFileSecretVault } from '../security/secretVault.js';
+import { EgressDispatcherRegistry } from '../runtime/egressDispatcher.js';
 import type { EgressConfig } from '../runtime/egressPolicy.js';
 
 const servers: Array<{ close: () => void }> = [];
@@ -158,6 +159,39 @@ describe('staging egress config store', () => {
     const store = new EgressConfigStore('/unused', safe(), 'staging');
     await expect(store.update(fullConfig(), { actor: 'admin' })).rejects.toThrow(/staging egress/u);
     expect(store.getConfig().server.enabled).toBe(true);
+  });
+});
+
+describe('egress config cross-process refresh', () => {
+  it('reader process observes another process atomic update without restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'egress-cross-process-'));
+    roots.push(root);
+    const storePath = join(root, 'egress-config.json');
+    const writer = new EgressConfigStore(storePath);
+    const reader = new EgressConfigStore(storePath);
+
+    await writer.update(
+      fullConfig({
+        server: {
+          enabled: true,
+          proxyUrl: 'http://127.0.0.1:7890',
+          matchDomains: ['x.ai', 'grok.com'],
+          bypassDomains: [],
+          timeoutMs: 20_000,
+          failOpen: true,
+        },
+      }),
+      { actor: 'writer' },
+    );
+
+    const registry = new EgressDispatcherRegistry(reader);
+    expect(reader.getConfigVersion()).toBe(1);
+    expect(reader.getConfig().server.matchDomains).toEqual(['x.ai', 'grok.com']);
+    expect(
+      registry.resolve('https://cli-chat-proxy.grok.com/v1/responses').dispatcher,
+    ).not.toBeNull();
+    expect(reader.refreshIfChanged(true)).toBe(false);
+    await registry.close();
   });
 });
 

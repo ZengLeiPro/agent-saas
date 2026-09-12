@@ -1,5 +1,5 @@
 import type { ProviderQuotaPlanInfo, ProviderQuotaWindow } from '@agent/shared';
-import { singleAttemptEgressFetch } from '../runtime/egressRequestPolicy.js';
+import { proxyRequiredSingleAttemptEgressFetch } from '../runtime/egressRequestPolicy.js';
 import {
   GrokCredentialError,
   type GrokCredentialManager,
@@ -100,7 +100,7 @@ export async function fetchGrokBilling(
   const send = async (accessToken: string): Promise<Response> => {
     if (!manager.getConfiguration().enabled || !manager.getCredentialRefs().includes(ref))
       throw new GrokProtocolError('subscription_disabled_or_removed');
-    return singleAttemptEgressFetch(fetchImpl)(GROK_BILLING_ENDPOINT, {
+    return proxyRequiredSingleAttemptEgressFetch(fetchImpl)(GROK_BILLING_ENDPOINT, {
       headers: subscriptionHeaders(accessToken),
       redirect: 'error',
       signal: AbortSignal.timeout(15_000),

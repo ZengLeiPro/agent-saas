@@ -1,5 +1,5 @@
 import type { ModelChatMessage, ModelToolDefinition, RunContext } from '../types.js';
-import { singleAttemptEgressFetch } from '../egressRequestPolicy.js';
+import { proxyRequiredSingleAttemptEgressFetch } from '../egressRequestPolicy.js';
 import { hashAccountBinding } from './subscriptionAccountBinding.js';
 import { executeOrderedSubscriptionFailover } from './orderedSubscriptionFailover.js';
 import {
@@ -44,7 +44,7 @@ export class GrokSubscriptionResponsesTransport implements ResponsesTransport {
     fetchImpl: typeof fetch = fetch,
     private readonly catalog?: GrokModelCatalogService,
   ) {
-    this.fetchImpl = singleAttemptEgressFetch(fetchImpl);
+    this.fetchImpl = proxyRequiredSingleAttemptEgressFetch(fetchImpl);
   }
   computePromptCacheKey(_input: {
     model: string;

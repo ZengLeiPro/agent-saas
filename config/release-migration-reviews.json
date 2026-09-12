@@ -455,16 +455,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -481,12 +481,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -604,6 +618,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -1558,16 +1576,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -1575,6 +1593,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -1829,6 +1861,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -2566,16 +2602,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -2583,6 +2619,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -2817,6 +2867,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -3533,16 +3587,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -3550,6 +3604,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -3768,6 +3836,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -4484,16 +4556,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -4501,6 +4573,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -4719,6 +4805,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -5421,16 +5511,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -5438,6 +5528,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -5648,6 +5752,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -6350,16 +6458,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -6367,6 +6475,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -6577,6 +6699,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -7279,16 +7405,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -7296,6 +7422,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -7506,6 +7646,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -8488,16 +8632,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -8505,6 +8649,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -8727,6 +8885,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -9436,16 +9598,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -9453,6 +9615,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -9683,6 +9859,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -10406,16 +10586,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -10423,6 +10603,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -10645,6 +10839,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -11368,16 +11566,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -11385,6 +11583,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -11607,6 +11819,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -12281,16 +12497,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -12298,6 +12514,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -12504,6 +12734,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -13178,16 +13412,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -13195,6 +13429,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -13401,6 +13649,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -14075,16 +14327,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -14092,6 +14344,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -14298,6 +14564,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -14972,16 +15242,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -14989,6 +15259,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -15195,6 +15479,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -15855,16 +16143,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -15872,6 +16160,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -16074,6 +16376,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -16734,16 +17040,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -16751,6 +17057,20 @@
           "targetDigest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d",
           "classification": "no-schema-change",
           "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -16953,6 +17273,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -17557,16 +17881,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -17581,6 +17905,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -17763,6 +18101,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -18360,16 +18702,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -18384,6 +18726,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -18562,6 +18918,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -19159,16 +19519,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -19183,6 +19543,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -19353,6 +19727,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -19950,16 +20328,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -19974,6 +20352,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -20144,6 +20536,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -20741,16 +21137,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -20765,6 +21161,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -20935,6 +21345,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -21504,16 +21918,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -21528,6 +21942,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -21690,6 +22118,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -22245,16 +22677,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -22269,6 +22701,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -22439,6 +22885,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -22966,16 +23416,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -22990,6 +23440,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -23144,6 +23608,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -23671,16 +24139,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -23695,6 +24163,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -23849,6 +24331,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -24334,16 +24820,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -24358,6 +24844,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -24496,6 +24996,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -24981,16 +25485,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -25005,6 +25509,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -25135,6 +25653,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -25606,16 +26128,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -25630,6 +26152,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -25748,6 +26284,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -26219,16 +26759,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -26243,6 +26783,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -26357,6 +26911,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -26828,16 +27386,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -26852,6 +27410,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -26970,6 +27542,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -27434,16 +28010,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -27458,6 +28034,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -27568,6 +28158,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -28032,16 +28626,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -28056,6 +28650,20 @@
           "targetDigest": "sha256:d0dd587354bd1d4e6ce9e3d259087f6656ab119720c12e4d62a66661e9712748",
           "classification": "no-schema-change",
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -28166,6 +28774,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -28623,16 +29235,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -28649,12 +29261,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -28760,6 +29386,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -29217,16 +29847,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -29243,12 +29873,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -29366,6 +30010,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -29823,16 +30471,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -29849,12 +30497,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -29972,6 +30634,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -30429,16 +31095,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -30455,12 +31121,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -30578,6 +31258,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -31000,16 +31684,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -31026,12 +31710,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -31085,6 +31783,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -31542,16 +32244,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -31568,12 +32270,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -31675,6 +32391,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -31747,16 +32467,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -31773,12 +32493,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -31832,6 +32566,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -31897,16 +32635,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -31923,12 +32661,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -31966,6 +32718,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -32024,16 +32780,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -32050,12 +32806,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -32089,6 +32859,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -32140,16 +32914,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -32166,12 +32940,26 @@
           "reason": "PR642 独立复审：仅停止生成 integrated_system 默认范围并从六类默认 Map 回填；SQL、DDL、事务与迁移入口不变，历史范围原样保留。"
         },
         {
-            "path": "server/src/quota/providerQuotaSnapshotStore.ts",
-            "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
-            "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
-            "classification": "expand",
-            "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
-          }
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4ecfac6ffe03ac50b5ad987d8e38ea9fd1757a5e0b92d1c3a1926552853aa5b4",
+          "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
+          "classification": "expand",
+          "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        }
       ],
       "evidence": [
         {
@@ -32201,6 +32989,10 @@
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
           "digest": "sha256:458cd12c095a09b58c48e8436e40aca2d26fc3c8aa15576be7b6622d7a44d18c"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -32252,16 +33044,16 @@
         {
           "path": "server/src/runtime/egressRequestPolicy.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
         },
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
           "classification": "no-schema-change",
-          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions."
+          "reason": "Exact Grok import-closure helper reviewed in full: HTTP single-attempt policy, trusted protocol validation, or deterministic table naming; no database operations. Additive DDL and derived names have separate executable postconditions. Grok 出站修复复审：Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         },
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
@@ -32276,6 +33068,20 @@
           "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:22479481013210eca1c6100d4ad5bf4ba3fbc18b5b1a0cd7225ea9fc220d416b",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
         }
       ],
       "evidence": [
@@ -32302,6 +33108,10 @@
         {
           "path": "server/src/runtime/responses/grokSubscriptionTableNames.ts",
           "digest": "sha256:09276c718819ee5726a5d361fda3e56ba2207835de182b620491478e1c6ef02d"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     },
@@ -32314,6 +33124,34 @@
           "targetDigest": "sha256:dbfab6c6b53f942017d3dda315f2d468cca3f80d6129f089a0a2a13b664f7287",
           "classification": "expand",
           "reason": "PR662：在既有套餐到期追加式审计表上新增可空 note 与带 expiry 默认值的 edit_kind，并用编辑类型隔离备注和到期时间的读写；仅执行幂等 ADD COLUMN/CREATE TABLE/INDEX，无删列、回填或 contract 操作。详见 PR662 套餐备注数据库持久化迁移审核。"
+        },
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:de23d3fe4c8a1a5b1984b066933966eb01ada196c82c93f645dcd41280ad5943",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
+          "classification": "no-schema-change",
+          "reason": "增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "classification": "no-schema-change",
+          "reason": "Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
         }
       ],
       "evidence": [
@@ -32323,7 +33161,50 @@
         },
         {
           "path": "server/src/quota/providerPlanExpiry.pg.test.ts",
-      "digest": "sha256:b37b03260951326f77e87b11b38972ff1551bf3c84c6d40cc596343db9fc9d10"
+          "digest": "sha256:b37b03260951326f77e87b11b38972ff1551bf3c84c6d40cc596343db9fc9d10"
+        },
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
+        }
+      ]
+    },
+    {
+      "baselineSha": "b1d9b02743ac18c32dcc432b801d86600ce854e0",
+      "files": [
+        {
+          "path": "server/src/data/egressConfig.ts",
+          "baselineDigest": "sha256:f4cdeaf9205bc979dfcf93e8976e22453eba9db46893c41c46d7ce0dbe54d533",
+          "targetDigest": "sha256:c7b3361ec349ce4a9720177516ff09bab24dba2135388bbb656d41f1c43c875d",
+          "classification": "no-schema-change",
+          "reason": "共享 JSON 出站配置增加内容摘要与有界跨进程刷新；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressDispatcher.ts",
+          "baselineDigest": "sha256:de23d3fe4c8a1a5b1984b066933966eb01ada196c82c93f645dcd41280ad5943",
+          "targetDigest": "sha256:033070e6bf3f4e7e982724d247000d3ccfd5821fe51c13e094ff825997c8ff27",
+          "classification": "no-schema-change",
+          "reason": "HTTP/WebSocket 路由前刷新共享配置，并对代理必选请求 fail closed；不连接数据库或执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/egressRequestPolicy.ts",
+          "baselineDigest": "sha256:f37057a7a2fac86b526077f4020082c879f0bfccc3c086293be14f8629d402c4",
+          "targetDigest": "sha256:0c2398649d8f2cd8de5940ab9bbad46a216a692c010c70377196bcb49e480aff",
+          "classification": "no-schema-change",
+          "reason": "增加本地 Symbol 形式的代理必选单次请求策略；不序列化、不持久化、不执行 SQL。"
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
+          "targetDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "classification": "no-schema-change",
+          "reason": "Grok 协议请求改用代理必选单次请求包装器；协议校验和数据库结构不变。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/Grok出站与推理强度无结构变更审核-20260912.md",
+          "digest": "sha256:be3b6e1ce683cda42e6090ee83713fabdf5197bc8dde63c945500731ec4eb2fb"
         }
       ]
     }

@@ -53,6 +53,8 @@ interface QuotaSource {
   expiryIdentity?: string;
   /** 推送型来源：账号由外部采集端直接写快照表，平台不主动取数，`collect` 缺省。 */
   pushOnly?: true;
+  /** 凭据已判定不可用：周期采集跳过，不写新失败快照。 */
+  skipCollect?: 'auth_unavailable';
   collect?: () => Promise<ProviderQuotaSnapshot>;
 }
 
@@ -271,6 +273,9 @@ export class ProviderQuotaService {
     // 推送型账号没有可取数的管控面：全量刷新时静默跳过，显式点名时明确拒绝而不是假装采过。
     if (accountKey && matched.every((source) => source.pushOnly)) {
       throw new Error(`该账号由采集端主动上报，平台无法触发刷新：${accountKey}`);
+    }
+    if (accountKey && matched.every((source) => source.skipCollect === 'auth_unavailable')) {
+      throw new Error(`该账号凭据不可用，请先重授权：${accountKey}`);
     }
     const sources = matched.filter(
       (source): source is QuotaSource & { collect: () => Promise<ProviderQuotaSnapshot> } =>

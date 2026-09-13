@@ -8,6 +8,7 @@ import type { ToolInvocationResponse } from 'server/runtime/handProtocol.js';
 import { localProcessResult } from './localProcessSupervisor.js';
 import { summarizeRunnerStderr } from './runnerLog.js';
 import { OWNED_WAIT_BUDGETS } from './ownedWait.js';
+import { pythonRunnerDaemonExecArgs } from './ownedPodIdentity.js';
 
 type RunnerOutput = SandboxRunnerOutput | SandboxRunnerFinalOutput;
 
@@ -39,17 +40,14 @@ export function spawnOneShotRunner(
   controller: AbortController,
   logger: { warn(message: string): void },
 ): ChildProcessWithoutNullStreams {
-  const args = [
-    'exec', '-i', ref.name, '-c', config.sandboxContainerName, '--',
-    // 2026-08-10（A 方案批次 3）：优先跑镜像内预编译的单文件 ESM。
-    // pod 内实测 tsx 实时转译 480~730ms vs 预编译 68ms（快 7~9 倍），
-    // 这是每一次工具调用都要付的固定底噪。
-    //
-    // 用 sh -c 做运行期存在性判断而非直接指向 .mjs：蓝绿/回滚期间可能短暂
-    // 跑到不含该产物的旧镜像，此时静默退回 tsx 保持可用（宁可慢，不可不可用）。
-    // 镜像构建侧已对产物做 fail-fast 校验，正常路径不会走到 fallback。
-    '/usr/local/bin/python3', '-I', '/app/acs-orchestrator/dist/remote/runner_daemon.py', '--oneshot',
-  ];
+  const fenced = input as SandboxRunnerInput & { executionFence?: { podUid?: string } };
+  const args = pythonRunnerDaemonExecArgs({
+    sandboxName: ref.name,
+    containerName: config.sandboxContainerName,
+    interactive: true,
+    oneshot: true,
+    ownedPodUid: fenced.executionFence?.podUid,
+  });
   const child = kubectl.spawn(args, { input: JSON.stringify(input), signal: controller.signal, timeoutMs: invocationTransportBudget(input) });
   void localProcessResult(child, { signal: controller.signal, timeoutMs: invocationTransportBudget(input), collectOutput: false });
   child.stderr.on('data', (chunk: Buffer) => {

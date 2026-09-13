@@ -11,12 +11,53 @@ import json
 import os
 from pathlib import Path
 import signal
+import sys
 import time
 import uuid
 from typing import Any
 
 POD_IDENTITY_PATH = "/var/run/acs-identity/pod-uid"
+OWNED_POD_UID_ENV = "ACS_OWNED_POD_UID"
+OWNED_POD_UID_FLAG = "--owned-pod-uid="
 MAX_CONTROL_BYTES = 16 * 1024
+# ACS Agent Sandbox Downward API currently projects fieldPath metadata.uid as the
+# literal "uid". That is not a generation identity and must never be accepted.
+_UNUSABLE_POD_UIDS = frozenset({"uid"})
+
+
+def usable_pod_uid(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > 128 or text in _UNUSABLE_POD_UIDS or any(ord(char) < 32 or ord(char) == 127 for char in text):
+        return None
+    return text
+
+
+def owned_pod_uid_from_argv(argv: list[str] | None = None) -> str | None:
+    for item in argv if argv is not None else sys.argv:
+        if item.startswith(OWNED_POD_UID_FLAG):
+            return usable_pod_uid(item[len(OWNED_POD_UID_FLAG):])
+    return None
+
+
+def resolve_pod_uid(identity_path: str = POD_IDENTITY_PATH, argv: list[str] | None = None) -> str:
+    """Prefer orchestrator-injected UID; only trust Downward API when it is a real identity."""
+    owned = owned_pod_uid_from_argv(argv) or usable_pod_uid(os.environ.get(OWNED_POD_UID_ENV))
+    projected = None
+    try:
+        projected = usable_pod_uid(Path(identity_path).read_text(encoding="utf8"))
+    except OSError:
+        projected = None
+    if owned:
+        if projected and projected != owned:
+            raise RuntimeError("pod UID projection does not match owned identity")
+        os.environ[OWNED_POD_UID_ENV] = owned
+        return owned
+    if projected:
+        os.environ[OWNED_POD_UID_ENV] = projected
+        return projected
+    raise RuntimeError("read-only Pod identity is required")
 
 
 def enable_subreaper() -> None:
@@ -159,8 +200,11 @@ def validate_fence(value: Any, identity_path: str = POD_IDENTITY_PATH) -> dict[s
     fields = ("operationId", "attemptId", "ownerId", "sandboxUid", "podUid")
     if any(not isinstance(value.get(key), str) or not value[key] or len(value[key]) > 512 for key in fields):
         raise ValueError("incomplete execution fence")
-    actual_uid = Path(identity_path).read_text(encoding="utf-8").strip()
-    if not actual_uid or actual_uid != value["podUid"]:
+    try:
+        actual_uid = resolve_pod_uid(identity_path)
+    except RuntimeError as error:
+        raise ValueError("pod UID fence mismatch") from error
+    if actual_uid != value["podUid"]:
         raise ValueError("pod UID fence mismatch")
     deadline = value.get("startBeforeMs")
     if not isinstance(deadline, int) or isinstance(deadline, bool) or deadline <= 0:

@@ -21,7 +21,7 @@ import {
 import { establishInvocationCompletionFence, recoverHousekeepingLeaseClear, recoverInvocationCompletion } from './invocationCompletionRecovery.js';
 import { reconcileInvocationRestartRecovery } from './invocationRestartRecovery.js';
 import { isBackgroundShellRequest, toolNameForSandboxRunner, OriginalSandboxGoneError, errorMessage, unrefDelay, protectionStateHasObservation, addRunnerMetadata, type InvocationProtectionState } from './executorSupport.js';
-import { prepareFencedRunnerInput, validateFencedResponse } from './remoteOwnership.js';
+import { prepareFencedRunnerInput, readOwnedPodIdentity, validateFencedResponse } from './remoteOwnership.js';
 import { reconcileLateRunnerTerminal } from './lateRunnerTerminal.js';
 export { toolNameForSandboxRunner } from './executorSupport.js';
 interface InvocationEntry {
@@ -191,12 +191,20 @@ export class AcsExecutor {
         ...(wireEnv && Object.keys(wireEnv).length > 0 ? { env: wireEnv } : {}),
       };
       let runner: PersistentSandboxRunner | undefined;
+      let ownedPodUid: string | undefined;
+      try {
+        ownedPodUid = await readOwnedPodIdentity({
+          kubectl: this.kubectl, sandboxName: ref.name, sandboxUid, signal: controller.signal,
+        });
+      } catch (err) {
+        this.logger.warn(`owned_pod_identity_unavailable sandbox=${ref.name}: ${errorMessage(err)}`);
+      }
       if (
         this.options.persistentRunner !== false
         && Date.now() >= (this.persistentRunnerBackoffUntil.get(ref.name) ?? 0)
       ) {
         try {
-          runner = await this.getPersistentRunner(ref);
+          runner = await this.getPersistentRunner(ref, ownedPodUid);
         } catch (err) {
           if (this.persistentRunners.get(ref.name)?.hasOwnedAttempts()) throw err;
           this.persistentRunnerBackoffUntil.set(ref.name, Date.now() + 5 * 60_000);
@@ -216,6 +224,7 @@ export class AcsExecutor {
           sandboxUid,
           runnerInput,
           ...(runner ? { control: runner.controlIdentity() } : {}),
+          ...(ownedPodUid ? { knownPodUid: ownedPodUid } : {}),
         });
       }
       await operation?.dispatch(sandboxUid);
@@ -855,22 +864,22 @@ export class AcsExecutor {
     await ensure;
   }
 
-  private async getPersistentRunner(ref: SandboxRef): Promise<PersistentSandboxRunner> {
+  private async getPersistentRunner(ref: SandboxRef, ownedPodUid?: string): Promise<PersistentSandboxRunner> {
     const existing = this.persistentRunners.get(ref.name);
-    if (existing?.isHealthy()) return existing;
+    if (existing?.isHealthy() && (!ownedPodUid || existing.controlIdentity().podUid === ownedPodUid)) return existing;
     const pending = this.persistentRunnerPromises.get(ref.name);
     if (pending) return await pending;
     if (existing?.hasOwnedAttempts()) throw new Error('ACS runner still owns unresolved attempts; replacement is blocked');
     existing?.close('runner_replaced');
     this.persistentRunners.delete(ref.name);
-    const connect = this.connectPersistentRunner(ref).finally(() => {
+    const connect = this.connectPersistentRunner(ref, ownedPodUid).finally(() => {
       this.persistentRunnerPromises.delete(ref.name);
     });
     this.persistentRunnerPromises.set(ref.name, connect);
     return await connect;
   }
 
-  private async connectPersistentRunner(ref: SandboxRef): Promise<PersistentSandboxRunner> {
+  private async connectPersistentRunner(ref: SandboxRef, ownedPodUid?: string): Promise<PersistentSandboxRunner> {
     const runner = new PersistentSandboxRunner(this.config, this.kubectl, ref, this.logger, {
       unresolved: key => {
         const entry = [...this.invocations.values()].find(candidate => candidate.leaseKey === key);
@@ -900,7 +909,7 @@ export class AcsExecutor {
           this.logger.warn(`runner_late_terminal_reconciliation_failed sandbox=${ref.name} attempt=${key}: ${errorMessage(error)}`);
         });
       },
-    });
+    }, ownedPodUid);
     try {
       await runner.start();
       this.persistentRunners.set(ref.name, runner);

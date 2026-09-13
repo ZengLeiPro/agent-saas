@@ -7,6 +7,7 @@ import { StringDecoder } from 'node:string_decoder';
 import type { SandboxRunnerInput, SandboxRunnerFinalOutput, SandboxRunnerOutput } from './protocol.js';
 import { invocationTransportBudget, remoteUnknownResponse } from './runnerTransport.js';
 import { REMOTE_CONTROL_FRAME_BYTES, type RemoteAttemptFence } from './remoteAttemptProtocol.js';
+import { ACS_OWNED_POD_UID_ENV, isUsablePodUid } from './ownedPodIdentity.js';
 
 type Output = SandboxRunnerOutput | SandboxRunnerFinalOutput;
 const POD_IDENTITY_PATH = '/var/run/acs-identity/pod-uid';
@@ -29,8 +30,11 @@ function workerCommand(): string[] {
 }
 
 export function readRunnerPodUid(): string | undefined {
-  try { return readFileSync(POD_IDENTITY_PATH, 'utf8').trim() || undefined; }
-  catch { return undefined; }
+  if (isUsablePodUid(process.env[ACS_OWNED_POD_UID_ENV])) return process.env[ACS_OWNED_POD_UID_ENV]!.trim();
+  try {
+    const projected = readFileSync(POD_IDENTITY_PATH, 'utf8').trim();
+    return isUsablePodUid(projected) ? projected : undefined;
+  } catch { return undefined; }
 }
 
 export async function runRemoteAttempt(

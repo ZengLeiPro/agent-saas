@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ACS_OWNED_POD_UID_ENV, ownedPodUidArg } from './ownedPodIdentity.js';
 
 export type SandboxControlMode = 'daemon' | 'oneshot';
 type Execve = (file: string, args: string[], env: Record<string, string>) => never;
@@ -23,7 +24,8 @@ export function handoverSandboxControl(mode: SandboxControlMode, options: {
   const script = join(dirname(fileURLToPath(options.moduleUrl ?? import.meta.url)), 'remote', 'runner_daemon.py');
   if (!(options.exists ?? existsSync)(script)) throw new Error('Isolated sandbox control bundle is missing');
   const executable = '/usr/local/bin/python3';
-  const args = [executable, '-I', script, ...(mode === 'oneshot' ? ['--oneshot'] : [])];
+  const owned = ownedPodUidArg(process.env[ACS_OWNED_POD_UID_ENV]);
+  const args = [executable, '-I', script, ...(owned ? [owned] : []), ...(mode === 'oneshot' ? ['--oneshot'] : [])];
   // These are the existing Pod environment values, not caller-supplied tool env.
   // No additional environment variable or persisted secret is introduced.
   const environment = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));

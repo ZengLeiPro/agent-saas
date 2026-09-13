@@ -11,6 +11,7 @@ import {
   type RemoteAttemptFence, type RemoteAttemptReceipt,
 } from './remoteAttemptProtocol.js';
 import { OWNED_WAIT_BUDGETS, waitForOwned } from './ownedWait.js';
+import { pythonRunnerDaemonExecArgs } from './ownedPodIdentity.js';
 import { remoteUnknownResponse } from './runnerTransport.js';
 
 export interface RunnerControlIdentity {
@@ -51,11 +52,10 @@ export async function readOwnedPodIdentity(input: {
 
 /** This probe never starts a daemon, invokes a tool or creates a remote attempt. */
 export async function readRunnerControlIdentity(config: AcsOrchestratorConfig, kubectl: Kubectl,
-  sandboxName: string, signal?: AbortSignal): Promise<RunnerControlIdentity> {
-  const result = await waitForOwned(kubectl.run([
-    'exec', sandboxName, '-c', config.sandboxContainerName, '--', '/usr/local/bin/python3', '-I',
-    '/app/acs-orchestrator/dist/remote/runner_daemon.py', '--capabilities',
-  ], { signal, timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs }), {
+  sandboxName: string, signal?: AbortSignal, ownedPodUid?: string): Promise<RunnerControlIdentity> {
+  const result = await waitForOwned(kubectl.run(pythonRunnerDaemonExecArgs({
+    sandboxName, containerName: config.sandboxContainerName, capabilities: true, ownedPodUid,
+  }), { signal, timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs }), {
     phase: 'runner_capability_probe', timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs, signal,
   });
   if (result.exitCode !== 0 || result.remoteState === 'unknown') throw new OwnershipUnavailableError('Signed attempt control is unavailable');
@@ -77,6 +77,7 @@ export async function prepareFencedRunnerInput(input: {
   sandboxUid: string;
   runnerInput: SandboxRunnerInput;
   control?: RunnerControlIdentity;
+  knownPodUid?: string;
 }): Promise<FencedRunnerInput> {
   const { operation, config } = input;
   if (operation.dispatched || operation.record.remoteFence || operation.controller.signal.aborted
@@ -84,9 +85,9 @@ export async function prepareFencedRunnerInput(input: {
     throw new OwnershipBlockedError(operation.record.operationId);
   }
   const signal = operation.controller.signal;
-  const podUid = await readOwnedPodIdentity({ kubectl: input.kubectl, sandboxName: input.ref.name,
+  const podUid = input.knownPodUid ?? await readOwnedPodIdentity({ kubectl: input.kubectl, sandboxName: input.ref.name,
     sandboxUid: input.sandboxUid, signal });
-  const control = input.control ?? await readRunnerControlIdentity(config, input.kubectl, input.ref.name, signal);
+  const control = input.control ?? await readRunnerControlIdentity(config, input.kubectl, input.ref.name, signal, podUid);
   if (control.podUid !== podUid || !REMOTE_ATTEMPT_CAPABILITIES.every((capability) => control.capabilities.includes(capability))) {
     throw new OwnershipUnavailableError('The runner cannot provide an authenticated exact-attempt stop receipt');
   }

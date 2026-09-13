@@ -38825,6 +38825,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
+          "classification": "no-schema-change",
+          "reason": "OAuth 请求连接级失败同代理重试与永久拒绝/瞬态失败错误码集合；协议 URL、校验和出站包装器不变，GRANT 为 OAuth 术语，无 SQL/DDL。"
         }
       ],
       "evidence": [
@@ -38886,6 +38893,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
+          "classification": "no-schema-change",
+          "reason": "OAuth 请求连接级失败同代理重试与永久拒绝/瞬态失败错误码集合；协议 URL、校验和出站包装器不变，GRANT 为 OAuth 术语，无 SQL/DDL。"
         }
       ],
       "evidence": [

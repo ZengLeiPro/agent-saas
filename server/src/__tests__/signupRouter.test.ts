@@ -188,15 +188,22 @@ async function makeTestRig(options?: {
       }),
     close: async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      // 注册成功后的审计日志是 fire-and-forget；满套并行测试下可能仍在收尾写入。
-      // rmSync 的 ENOTEMPTY 重试只在 recursive 模式下生效，避免 teardown 偶发竞态。
-      rmSync(tmpRoot, {
-        recursive: true,
-        force: true,
-        maxRetries: 5,
-        retryDelay: 20,
-      });
+      // 审计日志 fire-and-forget 可能在 close 后仍写入 tmpRoot。
+      // Node rmSync maxRetries 对持续写入的目录不够，这里等到空或超时再抛。
+      const deadline = Date.now() + 2_000;
+      while (true) {
+        try {
+          rmSync(tmpRoot, { recursive: true, force: true });
+          return;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOTEMPTY" || Date.now() >= deadline) {
+            throw error;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
     },
+
   };
 }
 

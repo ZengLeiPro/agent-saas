@@ -66,6 +66,10 @@ describe('claimIntegrationDispatchCandidates Agent-first routing', () => {
     expect(dispatchSql).toContain("t.status IN ('todo','in_progress')");
     expect(dispatchSql).toContain("agent.status='active'");
     expect(dispatchSql).toContain("t.kind='delivery' AND t.status='todo' AND t.next_action='work'");
+    expect(dispatchSql).toContain("t.kind='delivery' AND t.status='in_review'");
+    expect(dispatchSql).toContain("existing_review.purpose='review'");
+    expect(dispatchSql).toContain("retry_review.status='failed'");
+    expect(dispatchSql).toContain("operator_cancelled");
     expect(dispatchSql).not.toContain('agent.verdict');
     expect(dispatchSql).not.toContain('review_execution_id');
     expect(dispatchSql).not.toContain('JOIN lanes');

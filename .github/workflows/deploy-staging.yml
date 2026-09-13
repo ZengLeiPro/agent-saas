@@ -9,17 +9,17 @@ on:
         required: false
         type: string
       promote_to_production:
-        description: '测试环境部署与确定性门禁通过后，自动触发「生产环境发布」发布本次 RC'
+        description: '通过后同步发布到生产'
         type: boolean
         default: false
         required: false
 
       automation_id:
-        description: '内部自动调度登记；人工操作留空'
+        description: '内部 ID，人工留空'
         type: string
         required: false
       automation_key:
-        description: '内部关联键；人工操作留空'
+        description: '内部键，人工留空'
         type: string
         required: false
 

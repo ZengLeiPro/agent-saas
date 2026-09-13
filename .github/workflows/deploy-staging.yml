@@ -864,7 +864,8 @@ jobs:
           [[ "$RELEASE_ID" =~ ^rc-[0-9]{8}-[0-9]{2,}$ ]]
           reason="测试环境部署 #$GITHUB_RUN_NUMBER 通过后自动发布：$DISPATCH_REASON"
           for attempt in 1 2 3; do
-            if gh workflow run promote-release.yml --ref main \
+            # 本 job 无 checkout。gh 默认用 git remote 认仓，必须显式 --repo。
+            if gh workflow run promote-release.yml --repo "$GITHUB_REPOSITORY" --ref main \
               -f operation=promote -f release_id="$RELEASE_ID" -f reason="$reason"; then
               echo "已触发「生产环境发布」：$RELEASE_ID" >> "$GITHUB_STEP_SUMMARY"
               exit 0

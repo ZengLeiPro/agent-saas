@@ -88,6 +88,18 @@ export function scopesOverlap(left: WritableScope, right: WritableScope): boolea
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
+/**
+ * Admission exclusivity is per sandbox, not per shared workspace directory.
+ * Every sandbox of one user mounts the same NAS sub-path, and sibling sandboxes
+ * already run invocations side by side; a sibling's in-flight provision, ensure,
+ * warmup or invocation therefore must not reject a new session. A receiver
+ * handoff keeps claiming the whole overlapping scope.
+ */
+export function admissionScopeConflicts(record: OwnershipRecord, scope: WritableScope): boolean {
+  if (!scopesOverlap(record.scope, scope)) return false;
+  return record.kind === 'receiver' || record.scope.sandboxName === scope.sandboxName;
+}
+
 export function ownershipIsTerminal(record: OwnershipRecord): boolean {
   return record.resource === 'stopped' || record.resource === 'not_started';
 }

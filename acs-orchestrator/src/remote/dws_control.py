@@ -12,7 +12,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from dws_spool import DwsSpool, SpoolError, positive_integer, validate_owner
-from process_control import POD_IDENTITY_PATH, process_identity
+from process_control import POD_IDENTITY_PATH, process_identity, resolve_pod_uid
 
 
 def validate_source(value):
@@ -37,8 +37,11 @@ def handle(request):
         raise SpoolError("unsupported_receiver_protocol")
     owner = validate_owner(request.get("owner"))
     source = validate_source(request.get("source"))
-    uid = Path(POD_IDENTITY_PATH).read_text(encoding="utf8").strip()
-    if not uid or request.get("podUid") != uid:
+    try:
+        uid = resolve_pod_uid()
+    except RuntimeError as error:
+        raise SpoolError("pod_uid_mismatch") from error
+    if request.get("podUid") != uid:
         raise SpoolError("pod_uid_mismatch")
     if source["accountId"] != owner["accountId"] or source["receiverId"] != owner["receiverId"]:
         raise SpoolError("source_owner_mismatch")

@@ -11,6 +11,7 @@ import type { Kubectl } from './kubectl.js';
 import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput } from './protocol.js';
 import { parseRunnerDaemonResponse, RUNNER_DAEMON_PROTOCOL_VERSION, type RunnerDaemonRequest } from './runnerDaemonProtocol.js';
 import type { SandboxRef } from './sandboxManager.js';
+import { pythonRunnerDaemonExecArgs } from './ownedPodIdentity.js';
 import { summarizeRunnerStderr } from './runnerLog.js';
 
 const READY_TIMEOUT_MS = 3_000;
@@ -41,6 +42,7 @@ export class PersistentSandboxRunner {
     readonly ref: SandboxRef,
     private readonly logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void },
     private readonly hooks: { unresolved?(key: string): void; lateTerminal?(key: string, output: RunnerOutput): void } = {},
+    private readonly ownedPodUid?: string,
   ) {
     this.readyPromise = new Promise<void>((resolve, reject) => { this.readyResolve = resolve; this.readyReject = reject; });
     void this.readyPromise.catch(() => undefined);
@@ -120,10 +122,12 @@ export class PersistentSandboxRunner {
   private spawn(): void {
     // The Python control process becomes non-dumpable before reading an attempt
     // key. No Node/shell proxy retains the control pipe beside same-UID tools.
-    const child = this.kubectl.spawn([
-      'exec', '-i', this.ref.name, '-c', this.config.sandboxContainerName, '--',
-      '/usr/local/bin/python3', '-I', '/app/acs-orchestrator/dist/remote/runner_daemon.py',
-    ], { signal: this.transportController.signal });
+    const child = this.kubectl.spawn(pythonRunnerDaemonExecArgs({
+      sandboxName: this.ref.name,
+      containerName: this.config.sandboxContainerName,
+      interactive: true,
+      ownedPodUid: this.ownedPodUid,
+    }), { signal: this.transportController.signal });
     this.child = child;
     void localProcessResult(child, { signal: this.transportController.signal, collectOutput: false }).then((result) => {
       if (result.remoteState === 'unknown') this.onClose('runner_transport_unknown');

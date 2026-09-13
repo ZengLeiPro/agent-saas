@@ -20,7 +20,7 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from process_control import POD_IDENTITY_PATH, utc_ms, validate_fence  # noqa: E402
+from process_control import POD_IDENTITY_PATH, resolve_pod_uid, utc_ms, validate_fence  # noqa: E402
 from signed_receipts import receipt_key, secure_control_process, verify_document  # noqa: E402
 
 MAX_FRAME = 4 * 1024 * 1024
@@ -44,10 +44,7 @@ def unknown(reason: str) -> dict[str, Any]:
 
 def print_capabilities() -> None:
     secure_control_process()
-    pod_uid = Path(POD_IDENTITY_PATH).read_text(encoding="utf8").strip()
-    if not pod_uid:
-        raise RuntimeError("read-only Pod identity is required")
-    print(json.dumps({"protocolVersion": 1, "podUid": pod_uid, "capabilities": CAPABILITIES},
+    print(json.dumps({"protocolVersion": 1, "podUid": resolve_pod_uid(), "capabilities": CAPABILITIES},
                      separators=(",", ":")), flush=True)
 
 
@@ -56,9 +53,7 @@ class RunnerDaemon:
         secure_control_process()
         self.oneshot = oneshot
         self.runner_id = str(uuid.uuid4())
-        self.pod_uid = Path(POD_IDENTITY_PATH).read_text(encoding="utf8").strip()
-        if not self.pod_uid:
-            raise RuntimeError("read-only Pod identity is required")
+        self.pod_uid = resolve_pod_uid()
         self.selector = selectors.DefaultSelector()
         self.requests = bytearray()
         self.jobs: dict[str, dict[str, Any]] = {}

@@ -13,7 +13,8 @@ from dws_control import validate_source
 from dws_receive_stream import DurableRawFrames
 from dws_spool import DwsSpool, SpoolError
 from process_control import (POD_IDENTITY_PATH, child_parent_death, direct_children,
-                             enable_subreaper, process_identity, reap_children, signal_child, utc_ms)
+                             enable_subreaper, process_identity, reap_children, resolve_pod_uid,
+                             signal_child, utc_ms)
 
 
 class Receiver:
@@ -21,8 +22,11 @@ class Receiver:
         if spec.get("protocolVersion") != 1:
             raise SpoolError("unsupported_receiver_protocol")
         self.source = validate_source(spec.get("source"))
-        uid = Path(spec.get("identityPath", POD_IDENTITY_PATH)).read_text().strip()
-        if not uid or uid != spec.get("podUid"):
+        try:
+            uid = resolve_pod_uid(spec.get("identityPath", POD_IDENTITY_PATH))
+        except RuntimeError as error:
+            raise SpoolError("pod_uid_mismatch") from error
+        if uid != spec.get("podUid"):
             raise SpoolError("pod_uid_mismatch")
         self.spool = DwsSpool(spec["workspaceRoot"], self.source, uid)
         self.lock_fd = spec["lockFd"]

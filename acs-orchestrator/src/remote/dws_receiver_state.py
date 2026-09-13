@@ -3,12 +3,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import os
-from pathlib import Path
 from typing import Any
 
 from dws_control import validate_source
 from dws_spool import DwsSpool, SpoolError, validate_owner
-from process_control import POD_IDENTITY_PATH, process_identity
+from process_control import process_identity, resolve_pod_uid
 
 
 def verified_receiver_handoff(workspace_root: str, value: Any, children: list[int]) -> dict[str, Any]:
@@ -16,7 +15,10 @@ def verified_receiver_handoff(workspace_root: str, value: Any, children: list[in
         raise SpoolError("invalid_receiver_handoff")
     source = validate_source(value.get("source"))
     owner = validate_owner(value.get("owner"))
-    pod_uid = Path(POD_IDENTITY_PATH).read_text(encoding="utf8").strip()
+    try:
+        pod_uid = resolve_pod_uid()
+    except RuntimeError as error:
+        raise SpoolError("pod_uid_mismatch") from error
     spool = DwsSpool(workspace_root, source, pod_uid)
     with spool.locked():
         meta = spool.load()

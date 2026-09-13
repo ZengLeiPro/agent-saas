@@ -45,23 +45,24 @@ export class SandboxOwnershipReaders {
     const records = await this.records();
     const sandboxes = await this.inventory();
     const target = sandboxes.find((sandbox) => sandbox.name === name);
-    const scope = target ? this.scopeForSandbox(target) : undefined;
     const current = this.operations.current();
     const blocked = records.find((record) => {
       if (ownershipIsTerminal(record)) return false;
       // A reserved ensure owner may exclude itself before dispatch, never afterwards.
       if (current?.record.operationId === record.operationId && !current.dispatched
         && record.resource === 'reserved') return false;
-      return record.scope.sandboxName === name || Boolean(scope && scopesOverlap(record.scope, scope));
+      // 删除一个 sandbox 只销毁它自己的 Pod 与网络资源，不动共享 workspace 目录数据。
+      // 因此互斥对象是该 sandbox 本身，而非整个目录：同一用户目录下的兄弟 sandbox
+      // owner（并发会话的 provision/ensure）不得阻断它，否则 deleteResourceDrift、
+      // 镜像/挂载重建在多会话并发时会被判为 conflicting ownership。删除 workspace
+      // 目录数据是另一条路径（assertArchive），仍按整个目录 fail-closed。
+      return record.scope.sandboxName === name;
     });
     if (blocked) throw new OwnershipBlockedError(blocked.operationId);
     if (!target) return; // The original UID/resourceVersion gate independently rereads it.
-    if (!scope) throw new OwnershipUnavailableError('Mutation target has no usable writable scope');
-    for (const sandbox of sandboxes) {
-      if (!sandbox.activeInvocationLeases?.length) continue;
-      const other = this.scopeForSandbox(sandbox);
-      if (!other) throw new OwnershipUnavailableError();
-      if (scopesOverlap(scope, other)) throw new OwnershipBlockedError(sandbox.activeInvocationLeases[0]?.invocationKey);
+    // 仅当被删 sandbox 自身仍有活跃 invocation lease 才阻断（不能删正在执行的 Pod）。
+    if (target.activeInvocationLeases?.length) {
+      throw new OwnershipBlockedError(target.activeInvocationLeases[0]?.invocationKey);
     }
   }
 

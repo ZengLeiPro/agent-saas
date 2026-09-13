@@ -33,8 +33,13 @@ describe('runtime drain outcome', () => {
     expect(drain.complete(0, 0)).toBe(true);
     expect(drain.snapshot().drainState).toBe('completed');
     drain.fail('shutdown_cleanup_failed');
-    expect(drain.snapshot().drainState).toBe('failed');
-    expect(drain.runtimeQuiesced).toBe(false);
+    expect(drain.snapshot()).toMatchObject({
+      drainState: 'completed',
+      runtimeQuiesced: true,
+      cleanupStatus: 'failed',
+      cleanupReason: 'shutdown_cleanup_failed',
+    });
+    expect(drain.runtimeQuiesced).toBe(true);
   });
   it('does not turn late quiescence or cleanup failure into normal completion', async () => {
     let resolve!: () => void;
@@ -54,5 +59,13 @@ describe('runtime drain outcome', () => {
     expect(drain.snapshot().drainState).toBe('timed_out');
     drain.fail('shutdown_cleanup_failed');
     expect(drain.snapshot().drainState).toBe('failed');
+  });
+  it('ignores timeout after the drain already completed', async () => {
+    const drain = new RuntimeDrainState();
+    await drain.quiesce(async () => {}, () => {});
+    expect(drain.complete(0, 0)).toBe(true);
+    drain.timeout();
+    expect(drain.snapshot().drainState).toBe('completed');
+    expect(drain.runtimeQuiesced).toBe(true);
   });
 });

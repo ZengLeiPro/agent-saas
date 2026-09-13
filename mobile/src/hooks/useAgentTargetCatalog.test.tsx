@@ -70,4 +70,29 @@ describe('mobile useAgentTargetCatalog', () => {
     expect(result.current.pendingAgentTarget).toBeNull();
     expect(result.current.pendingAgentTargetRef.current).toBeNull();
   });
+
+  it('同一身份换新 user 对象时保留挂起目标，且不重拉目录', async () => {
+    h.authFetch.mockResolvedValue({ ok: false, json: async () => null });
+    const { result, rerender } = renderHook(
+      ({ current }: { current: typeof user }) => useAgentTargetCatalog(current),
+      { initialProps: { current: user } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const target = { kind: 'personal' as const, tenantId: 't1' };
+    act(() => {
+      result.current.setPendingAgentTarget(target);
+    });
+    h.authFetch.mockClear();
+
+    rerender({ current: { id: 'u1', tenantId: 't1' } });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.pendingAgentTarget).toEqual(target);
+    expect(result.current.pendingAgentTargetRef.current).toEqual(target);
+    expect(h.authFetch).not.toHaveBeenCalled();
+  });
 });

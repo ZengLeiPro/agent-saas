@@ -341,6 +341,30 @@ describe('wsClient - 发送', () => {
     expect(ws.closeCalls.some((call) => call.reason === 'Client disconnect')).toBe(true);
   });
 
+  it('send() 不读原生 socket.url：缺失或伪造路径不得把已认证连接判成不可信', async () => {
+    const platform = makePlatform();
+    platform.platformConfig.assertTrustedUrl = vi.fn((url: string, kind?: string) => {
+      if (kind === 'websocket' && !url.endsWith('/ws')) throw new Error('WS_ENDPOINT_INVALID');
+    });
+    initPlatform(platform);
+
+    const connection = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = latestWs();
+    ws.simulateOpen();
+    await connection;
+    const sentBefore = ws.sent.length;
+
+    (ws as { url: string }).url = 'wss://api.example.com/not-ws';
+    expect(wsClient.send({ action: 'abort', runId: 'r1' })).toBe(true);
+    expect(ws.sent.length).toBe(sentBefore + 1);
+    expect(ws.closeCalls).toEqual([]);
+
+    delete (ws as { url?: string }).url;
+    expect(wsClient.send({ action: 'abort', runId: 'r2' })).toBe(true);
+    expect(ws.closeCalls).toEqual([]);
+  });
+
   it('ensureConnectedSend() 未连接时先建连再发送', async () => {
     const p = wsClient.ensureConnectedSend({ action: 'detach' });
     await vi.advanceTimersByTimeAsync(0);

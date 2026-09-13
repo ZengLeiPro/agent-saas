@@ -329,7 +329,8 @@ esac
       assert.equal(await exists(join(root, 'writes')), false);
       assert.equal(await exists(join(root, 'github-env')), false);
       if (unknown) assert.match(value.stderr, /Unknown or split/u);
-      else assert.match(value.stderr, /生产未收敛到 rc-20260911-117/u);
+      // ::error 注解由 echo 写到 stdout。
+      else assert.match(`${value.stdout}\n${value.stderr}`, /生产未收敛到 rc-20260911-117/u);
     },
   );
 }

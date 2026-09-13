@@ -241,7 +241,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       [delivery.id],
     );
 
-    // 卡在 in_review 且已绑定 PR 的 delivery 会被持续重新调度。
+    // 从未派过 review 的 in_review+PR delivery 仍会补派一次（work 交接漏 enqueue 的兜底）。
     expect((await store.claimIntegrationDispatchCandidatesV2(10))
       .filter((candidate) => candidate.task.id === delivery.id)).toHaveLength(1);
 
@@ -251,5 +251,88 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
 
     expect((await store.claimIntegrationDispatchCandidatesV2(10))
       .filter((candidate) => candidate.task.id === delivery.id)).toHaveLength(0);
+  });
+
+  async function putDeliveryInReview(title: string, repoName: string, pr: string) {
+    const board = await store.createBoard(identity, {
+      name: title,
+      repository: {
+        provider: 'github', repositoryId: `github:acme/${repoName}`, owner: 'acme', name: repoName,
+        baseBranch: 'main', allowForkPullRequest: false,
+      },
+    });
+    const created = await store.createTask(identity, board.id, { title, status: 'todo' });
+    await pool.query(
+      `UPDATE ${store.tasksTable}
+          SET status='in_review',next_action='review',provider_pull_request_id=$2,pull_request_number=$3,
+              head_oid=$4,base_oid=$5,version=version+1
+        WHERE id=$1`,
+      [created.id, pr, Number(pr), `head-${pr}`, `base-${pr}`],
+    );
+    return store.getTask(identity, created.id);
+  }
+
+  async function claimReview(taskId: string, version: number, suffix: string) {
+    const executionId = randomUUID();
+    return store.claimExecution(
+      identity,
+      taskId,
+      executionClaim(taskId, version, executionId, `run-${suffix}-${executionId}`, 'review'),
+    );
+  }
+
+  it('operator_cancelled 的复核不再被自动重派', async () => {
+    const delivery = await putDeliveryInReview('Cancelled review stays parked', 'review-cancel', '401');
+    const claimed = await claimReview(delivery.id, delivery.version, 'cancel');
+    await store.cancelExecution(identity, delivery.id, claimed.execution.id, {
+      expectedVersion: claimed.task.version,
+      reason: '看板维护者从任务详情终止执行',
+    });
+
+    expect((await store.claimIntegrationDispatchCandidatesV2(10))
+      .filter((candidate) => candidate.task.id === delivery.id)).toHaveLength(0);
+  });
+
+  it('finish(in_review) 成功停车后不再自动重派', async () => {
+    const delivery = await putDeliveryInReview('Successful review stays parked', 'review-park', '402');
+    const claimed = await claimReview(delivery.id, delivery.version, 'park');
+    await store.finishExecutionV2(identity, claimed.execution.runId, {
+      targetStatus: 'in_review',
+      body: '证据暂不足，保持 in_review',
+    });
+
+    expect((await store.claimIntegrationDispatchCandidatesV2(10))
+      .filter((candidate) => candidate.task.id === delivery.id)).toHaveLength(0);
+  });
+
+  it('最近一次复核失败且未超 transient 上限时才自动重试', async () => {
+    const delivery = await putDeliveryInReview('Failed review retries once', 'review-retry', '403');
+    const claimed = await claimReview(delivery.id, delivery.version, 'retry');
+    await store.completeExecution(claimed.execution.runId, {
+      status: 'failed',
+      error: 'fetch failed',
+      commentBody: 'Agent 执行失败\n\nfetch failed',
+    });
+
+    const retry = (await store.claimIntegrationDispatchCandidatesV2(10))
+      .filter((candidate) => candidate.task.id === delivery.id);
+    expect(retry).toHaveLength(1);
+    expect(retry[0]?.purpose).toBe('review');
+  });
+
+  it('复核失败次数超过 maxTransientRetries 后停止自动重派', async () => {
+    let current = await putDeliveryInReview('Failed review exhausts retries', 'review-exhaust', '404');
+    for (let index = 0; index < 4; index += 1) {
+      const claimed = await claimReview(current.id, current.version, `exhaust-${index}`);
+      await store.completeExecution(claimed.execution.runId, {
+        status: 'failed',
+        error: 'fetch failed',
+        commentBody: `Agent 执行失败 ${index + 1}`,
+      });
+      current = await store.getTask(identity, current.id);
+    }
+
+    expect((await store.claimIntegrationDispatchCandidatesV2(10))
+      .filter((candidate) => candidate.task.id === current.id)).toHaveLength(0);
   });
 });

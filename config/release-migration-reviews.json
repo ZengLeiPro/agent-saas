@@ -612,6 +612,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -1784,6 +1791,13 @@
           "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
           "classification": "no-schema-change",
           "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -2910,6 +2924,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -3995,6 +4016,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -5064,6 +5092,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -6119,6 +6154,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -7166,6 +7208,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -8213,6 +8262,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -9505,6 +9561,13 @@
           "targetDigest": "sha256:9fd9a86bb7df6bc8e42a9a27157dc7ce80e679e855a7e00429faabee15a2d975",
           "classification": "no-schema-change",
           "reason": "队列告警复用 acquireLease 的只读阻断谓词；仅拼接 SELECT/NOT EXISTS 条件，不新增表列、DDL、迁移、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -10571,6 +10634,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -11659,6 +11729,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -12739,6 +12816,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -13777,6 +13861,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -14799,6 +14890,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -15821,6 +15919,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -16843,6 +16948,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -17851,6 +17963,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -18855,6 +18974,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -19810,6 +19936,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -20745,6 +20878,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -21676,6 +21816,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -22599,6 +22746,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -23522,6 +23676,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -24417,6 +24578,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -25290,6 +25458,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -26143,6 +26318,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -26980,6 +27162,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -27789,6 +27978,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -28582,6 +28778,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -29353,6 +29556,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -30112,6 +30322,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -30867,6 +31084,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -31619,6 +31843,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -32363,6 +32594,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -33107,6 +33345,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -33847,6 +34092,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -34599,6 +34851,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -35351,6 +35610,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -36075,6 +36341,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -36767,6 +37040,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -37125,6 +37405,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -37432,6 +37719,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -37716,6 +38010,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -37989,6 +38290,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -38251,6 +38559,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -38467,6 +38782,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -38667,6 +38989,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -38860,6 +39189,13 @@
           "targetDigest": "sha256:425d3bfb0dc14d8a8c3e15b191eb32a963a04fcccfefa784bcc3f180b1114b83",
           "classification": "no-schema-change",
           "reason": "恢复扫描仅将后台协调 Run 从直接子 Agent 排除条件中放行；读取既有 runs.metadata/steering_inputs，不新增表列、DDL、回填或数据删除。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -39024,6 +39360,13 @@
           "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "OAuth 请求连接级失败同代理重试与永久拒绝/瞬态失败错误码集合；协议 URL、校验和出站包装器不变，GRANT 为 OAuth 术语，无 SQL/DDL。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -39096,6 +39439,13 @@
           "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "OAuth 请求连接级失败同代理重试与永久拒绝/瞬态失败错误码集合；协议 URL、校验和出站包装器不变，GRANT 为 OAuth 术语，无 SQL/DDL。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -39147,6 +39497,13 @@
           "targetDigest": "sha256:c85649f19f83b1d08832d09a26606312db237a91dea7d671f3fceab7680c95b1",
           "classification": "no-schema-change",
           "reason": "skipCollect 账号周期采集不写失败快照；点名刷新要求重授权。不改表结构。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -39215,6 +39572,13 @@
           "targetDigest": "sha256:922655a0ada05652d957a9de7465830aba96c4b9381c719f8e7597968aa05cf4",
           "classification": "no-schema-change",
           "reason": "采集阻断只针对明确拒绝，瞬态失败继续采集；快照表结构与写入路径不变，无 SQL/DDL。"
+        },
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
         }
       ],
       "evidence": [
@@ -39245,6 +39609,24 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        }
+      ]
+    },
+    {
+      "baselineSha": "5a47ada58e366450668e8ff415f5cda2fc8be1c4",
+      "files": [
+        {
+          "path": "server/src/taskboard/integrationTriggers.ts",
+          "baselineDigest": "sha256:ded766a21de538f5f79a5717cbe01547bd9e8e1c6586d2dd2c5c934e522d2033",
+          "targetDigest": "sha256:388cd03f346d0ba992b2f6af1ff659f21bf0d76465547670850c65c37c0e806e",
+          "classification": "no-schema-change",
+          "reason": "只收窄 loadUnstartedIntegrationTasks 对 delivery+in_review 的只读领取谓词；operator_cancelled 与成功停车不再自动重派。无 DDL、建表、回填或删数据。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/TASKBOARD复核自动重派无结构变更审核-20260914.md",
+          "digest": "sha256:ccfc3916c7283e8c96b35b2dfed462427a9d066bdeb88bd4d1eb8dbe5e9ea8a6"
         }
       ]
     }

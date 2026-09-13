@@ -354,7 +354,29 @@ async function loadUnstartedIntegrationTasks(
                    WHERE agent.integration_task_id=t.id AND agent.status='active'
                 ))
             OR (t.kind='delivery' AND t.status='in_review'
-                AND t.provider_pull_request_id IS NOT NULL)
+                AND t.provider_pull_request_id IS NOT NULL
+                AND (
+                  NOT EXISTS (
+                    SELECT 1 FROM ${host.executionsTable} existing_review
+                     WHERE existing_review.task_id=t.id AND existing_review.purpose='review'
+                  )
+                  OR (
+                    EXISTS (
+                      SELECT 1 FROM ${host.executionsTable} retry_review
+                       WHERE retry_review.task_id=t.id AND retry_review.purpose='review'
+                         AND retry_review.protocol_version=2 AND retry_review.status='failed'
+                         AND retry_review.terminal_reason_code IS DISTINCT FROM 'operator_cancelled'
+                         AND retry_review.finished_at=(
+                           SELECT MAX(latest_review.finished_at) FROM ${host.executionsTable} latest_review
+                            WHERE latest_review.task_id=t.id AND latest_review.purpose='review'
+                         )
+                    )
+                    AND (SELECT count(*) FROM ${host.executionsTable} review_fail_count
+                          WHERE review_fail_count.task_id=t.id AND review_fail_count.purpose='review'
+                            AND review_fail_count.protocol_version=2 AND review_fail_count.status='failed')
+                        <= COALESCE((b.integration_policy->'execution'->>'maxTransientRetries')::int,3)
+                  )
+                ))
             OR (t.kind='delivery' AND t.status='todo' AND t.next_action='work'
                 AND (
                   (EXISTS (
@@ -383,8 +405,9 @@ async function loadUnstartedIntegrationTasks(
                   )
                 ))
           )
-          -- 归档/删除是 in_review 任务唯一的人工出口（moveTask 对该状态硬拒），
-          -- 这里漏掉过滤会让已归档任务被无限重新调度，人工无从叫停。
+          -- in_review 自动复核只补「从未派过 review」或「最近一次 review 失败且未超 transient 上限」。
+          -- operator_cancelled 与 finish(in_review) 成功停车后不再重派。
+          -- 归档/删除仍是 moveTask 硬拒下的人工出口，漏过滤会让已归档任务被无限重捞。
           AND t.archived_at IS NULL
           AND t.deleted_at IS NULL
           AND NOT EXISTS (

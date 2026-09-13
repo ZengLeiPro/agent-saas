@@ -59,6 +59,7 @@ const grokEgressReviewPaths = [
   'server/src/runtime/egressDispatcher.ts',
 ];
 const grokEgressEvidence = 'docs/release/Grok出站与推理强度无结构变更审核-20260912.md';
+const taskboardReviewDispatch = 'server/src/taskboard/integrationTriggers.ts';
 const auditedPaths = [
   ...new Set([
     transport,
@@ -69,6 +70,7 @@ const auditedPaths = [
     ...grokExpandPaths,
     ...subagentReviewedPaths,
     ...grokEgressReviewPaths,
+    taskboardReviewDispatch,
   ]),
 ];
 const evidencePaths = [
@@ -180,6 +182,7 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
         ...grokExpandPaths,
         ...subagentReviewedPaths,
         ...grokEgressReviewPaths,
+        taskboardReviewDispatch,
       ]),
     ].sort(),
   );
@@ -203,6 +206,7 @@ test('PR642 baseline retains scope retirement plus the independently reviewed Gr
       ...grokExpandPaths,
       ...subagentReviewedPaths,
       ...grokEgressReviewPaths,
+      taskboardReviewDispatch,
     ]),
   ];
   const loaded = loadMigrationReviews({

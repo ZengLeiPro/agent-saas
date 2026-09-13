@@ -33,21 +33,104 @@ describe('effective config status', () => {
     });
     expect(status.effectiveConfigFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(status.capabilityFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
-    expect(status.secretReadiness).toBe('missing');
+    expect(status.secretReadiness).toBe('legacy_inline');
     expect(status.secrets).toEqual({
       references: 1,
       inlineLegacy: 2,
-      missing: 1,
+      missing: 0,
       items: [
         { path: 'dingtalk.robots[0].appSecret', status: 'legacy_inline', target: null },
         { path: 'models.groups[0].apiKey', status: 'legacy_inline', target: 'models' },
-        { path: 'stt.apiKeyRef', status: 'missing', target: 'tools' },
         { path: 'webTools.search.apiKeyRef', status: 'reference', target: 'tools' },
       ],
     });
     expect(JSON.stringify(status)).not.toContain('must-not-leak');
     expect(JSON.stringify(status)).not.toContain('must-also-not-leak');
     expect(JSON.stringify(status)).not.toContain('vault/secret-ref');
+  });
+
+  it('禁用的 dingtalkSendMessage 空 appSecret 不把总状态打成 missing', () => {
+    const status = buildEffectiveConfigStatus({
+      config: {
+        agent: { cwd: '/tmp/workspace' },
+        server: { port: 3000 },
+        dingtalkSendMessage: { enabled: false, appKey: '', appSecret: '', endpoint: '' },
+        webTools: { enabled: true, search: { provider: 'brave', apiKeyRef: 'vault/secret-ref' } },
+        dingtalk: { robots: [{ appSecret: 'must-also-not-leak' }] },
+      } as never,
+      environment: 'staging',
+      processRole: 'ws-only',
+      appliedAt: '2026-09-01T00:00:00.000Z',
+    });
+
+    expect(status.secretReadiness).toBe('legacy_inline');
+    expect(status.secrets.missing).toBe(0);
+    expect(status.secrets.items.map((item) => item.path)).not.toContain(
+      'dingtalkSendMessage.appSecret',
+    );
+    expect(JSON.stringify(status)).not.toContain('must-also-not-leak');
+    expect(JSON.stringify(status)).not.toContain('vault/secret-ref');
+  });
+
+  it('已启用的 dingtalkSendMessage 缺 appSecret 仍记为 missing', () => {
+    const status = buildEffectiveConfigStatus({
+      config: {
+        agent: { cwd: '/tmp/workspace' },
+        server: { port: 3000 },
+        dingtalkSendMessage: {
+          enabled: true,
+          appKey: 'placeholder-key',
+          appSecret: '',
+          endpoint: 'https://example.internal',
+        },
+        dingtalk: { robots: [{ appSecret: 'must-also-not-leak' }] },
+      } as never,
+      environment: 'staging',
+      processRole: 'ws-only',
+      appliedAt: '2026-09-01T00:00:00.000Z',
+    });
+
+    expect(status.secretReadiness).toBe('missing');
+    expect(status.secrets.items).toEqual(
+      expect.arrayContaining([
+        { path: 'dingtalkSendMessage.appSecret', status: 'missing', target: null },
+      ]),
+    );
+    expect(JSON.stringify(status)).not.toContain('must-also-not-leak');
+    expect(JSON.stringify(status)).not.toContain('placeholder-key');
+  });
+
+  it('未声明 enabled 的空 secret 仍 missing；禁用但有值仍记 legacy_inline', () => {
+    const emptyAuth = buildEffectiveConfigStatus({
+      config: {
+        agent: { cwd: '/tmp/workspace' },
+        server: { port: 3000 },
+        auth: { jwtSecret: '' },
+      } as never,
+      environment: 'staging',
+      processRole: 'ws-only',
+      appliedAt: '2026-09-01T00:00:00.000Z',
+    });
+    expect(emptyAuth.secretReadiness).toBe('missing');
+    expect(emptyAuth.secrets.items).toEqual([
+      { path: 'auth.jwtSecret', status: 'missing', target: null },
+    ]);
+
+    const disabledInline = buildEffectiveConfigStatus({
+      config: {
+        agent: { cwd: '/tmp/workspace' },
+        server: { port: 3000 },
+        dingtalkSendMessage: { enabled: false, appSecret: 'must-not-leak' },
+      } as never,
+      environment: 'staging',
+      processRole: 'ws-only',
+      appliedAt: '2026-09-01T00:00:00.000Z',
+    });
+    expect(disabledInline.secretReadiness).toBe('legacy_inline');
+    expect(disabledInline.secrets.items).toEqual([
+      { path: 'dingtalkSendMessage.appSecret', status: 'legacy_inline', target: null },
+    ]);
+    expect(JSON.stringify(disabledInline)).not.toContain('must-not-leak');
   });
 
   it('在兼容布尔能力表之外给出逐能力就绪状态', () => {

@@ -79,6 +79,15 @@ function targetForSecret(path: string): EffectiveConfigTarget | null {
   return null;
 }
 
+function isEmptySecretValue(value: unknown): boolean {
+  return value === undefined || value === null || value === '';
+}
+
+/** 对象显式声明了 enabled，且不是 true：可选能力未启用。无 enabled 字段的对象不算禁用。 */
+function isExplicitlyDisabled(record: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(record, 'enabled') && record.enabled !== true;
+}
+
 function secretSummary(value: unknown): EffectiveConfigStatus['secrets'] {
   const summary: EffectiveConfigStatus['secrets'] = {
     references: 0,
@@ -89,16 +98,20 @@ function secretSummary(value: unknown): EffectiveConfigStatus['secrets'] {
   const addItem = (path: string, status: EffectiveConfigSecretItem['status']): void => {
     summary.items.push({ path, status, target: targetForSecret(path) });
   };
-  const visit = (current: unknown, parentPath = ''): void => {
+  const visit = (current: unknown, parentPath = '', ancestorDisabled = false): void => {
     if (Array.isArray(current)) {
-      current.forEach((child, index) => visit(child, `${parentPath}[${index}]`));
+      current.forEach((child, index) => visit(child, `${parentPath}[${index}]`, ancestorDisabled));
       return;
     }
     if (!current || typeof current !== 'object') return;
-    for (const [key, child] of Object.entries(current as Record<string, unknown>)) {
+    const record = current as Record<string, unknown>;
+    const disabled = ancestorDisabled || isExplicitlyDisabled(record);
+    for (const [key, child] of Object.entries(record)) {
       const path = parentPath ? `${parentPath}.${key}` : key;
       if (!SAFE_SECRET_METADATA.has(key) && SECRET_REF_KEY.test(key)) {
-        if (child === undefined || child === null || child === '') {
+        if (isEmptySecretValue(child)) {
+          // 未启用的可选能力留下的空 secret/ref 不是缺口；启用中的空值仍 missing。
+          if (disabled) continue;
           summary.missing++;
           addItem(path, 'missing');
         } else {
@@ -106,7 +119,8 @@ function secretSummary(value: unknown): EffectiveConfigStatus['secrets'] {
           addItem(path, 'reference');
         }
       } else if (!SAFE_SECRET_METADATA.has(key) && SECRET_KEY.test(key)) {
-        if (child === undefined || child === null || child === '') {
+        if (isEmptySecretValue(child)) {
+          if (disabled) continue;
           summary.missing++;
           addItem(path, 'missing');
         } else {
@@ -114,7 +128,7 @@ function secretSummary(value: unknown): EffectiveConfigStatus['secrets'] {
           addItem(path, 'legacy_inline');
         }
       } else {
-        visit(child, path);
+        visit(child, path, disabled);
       }
     }
   };

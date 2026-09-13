@@ -266,14 +266,28 @@ function domainMatches(host: string, pattern: string): boolean {
 }
 
 /**
+ * 本机回环地址永远不该经出站代理：Squid 会拒绝代理 loopback/内网目标（返回 403），
+ * 而同机控制面（如本机 ACS orchestrator http://127.0.0.1:3410）必须直连。覆盖
+ * IPv4 127.0.0.0/8、IPv6 ::1（含 URL.hostname 的 [::1] 形式）与 localhost。
+ */
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized === 'localhost' || normalized === '::1' || normalized === '[::1]') return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(normalized);
+}
+
+/**
  * server 侧判断某个 host 是否该走代理。
- * bypass 优先于 match；matchDomains 为空表示「全部走代理」。
+ * loopback 永不代理；bypass 优先于 match；matchDomains 为空表示「全部走代理」。
  */
 export function shouldProxyHost(host: string, config: EgressServerProxyConfig): boolean {
   if (!config.enabled) return false;
   if (!parseProxyUrl(config.proxyUrl)) return false;
   const normalizedHost = host.trim().toLowerCase();
   if (!normalizedHost) return false;
+  // 本机回环恒直连：代理 loopback 无意义且会被 Squid 拒为 403。
+  if (isLoopbackHost(normalizedHost)) return false;
   if (config.bypassDomains.some((pattern) => domainMatches(normalizedHost, pattern))) return false;
   if (config.matchDomains.length === 0) return true;
   return config.matchDomains.some((pattern) => domainMatches(normalizedHost, pattern));

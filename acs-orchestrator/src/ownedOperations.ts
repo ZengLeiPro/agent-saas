@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import type { OwnershipJournal } from './ownershipJournal.js';
 import {
-  OWNERSHIP_LIMITS, OwnershipBlockedError, OwnershipUnavailableError, ownershipIsTerminal, scopesOverlap,
+  OWNERSHIP_LIMITS, OwnershipBlockedError, OwnershipUnavailableError, admissionScopeConflicts, ownershipIsTerminal,
   type OperationKind, type OperationOutcome, type OwnershipRecord, type ResourceOwnership, type WritableScope,
 } from './ownershipState.js';
 import { parseRemoteFence, parseRemoteReceipt, sameRemoteFence, type RemoteAttemptFence } from './remoteAttemptProtocol.js';
@@ -264,7 +264,7 @@ export class OwnedOperations {
   }
 
   blocksAdmission(record: OwnershipRecord, scope: WritableScope, invocationId?: string, ignoreOperationId?: string): boolean {
-    if (record.operationId === ignoreOperationId || ownershipIsTerminal(record) || !scopesOverlap(record.scope, scope)) return false;
+    if (record.operationId === ignoreOperationId || ownershipIsTerminal(record) || !admissionScopeConflicts(record, scope)) return false;
     if (record.resource === 'unknown' || record.resource === 'stop_requested') return true;
     if (record.resource === 'background_owned') return false;
     if (ignoreOperationId && record.ownerId === this.ownerId && this.isAncestor(record.operationId, ignoreOperationId)) return false;

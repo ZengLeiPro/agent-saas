@@ -55,6 +55,37 @@ describe('owned execution runtime', () => {
     expect(ensure).toHaveBeenCalledOnce();
     expect(provision).toHaveBeenCalledOnce();
   });
+
+  it('two sessions of one workspace provision concurrently instead of rejecting the later one', async () => {
+    let releaseFirst!: () => void;
+    const firstPending = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const ensure = vi
+      .spyOn(SandboxManager.prototype, 'ensureRunning')
+      .mockImplementation(async function (this: SandboxManager, input) {
+        if (input.sessionId === 'taskboard-first') await firstPending;
+        return this.ref(input);
+      });
+    const provision = vi.spyOn(Provisioner.prototype, 'provision').mockResolvedValue({ status: 'ok', logs: [], metadata: {} });
+    vi.spyOn(OwnershipJournal.prototype, 'reserve').mockImplementation(async (record) => record);
+    vi.spyOn(OwnershipJournal.prototype, 'update').mockImplementation(async (record) => record);
+
+    const runtime = createOwnedExecutionRuntime(config(), { info() {}, warn() {}, error() {} });
+    // Per-session sandboxes: distinct scope ids, one shared NAS directory (the production layout).
+    const shared = { workspaceId: 'workspace-test', mountSubPath: 'workspaces/kaiyan/user', workload: { class: 'interactive' as const } };
+    const first: WorkspaceRecipe = { ...shared, sessionId: 'taskboard-first', sandboxScopeId: 'scope-test__s_taskboard-first' };
+    const second: WorkspaceRecipe = { ...shared, sessionId: 'sub-second', sandboxScopeId: 'scope-test__s_sub-second' };
+
+    const slow = runtime.provisioner.provision(first);
+    await vi.waitFor(() => expect(ensure).toHaveBeenCalledOnce());
+    // The first session is still inside its ensure/provision window when the second arrives.
+    await expect(runtime.provisioner.provision(second)).resolves.toMatchObject({ status: 'ok' });
+    releaseFirst();
+    await expect(slow).resolves.toMatchObject({ status: 'ok' });
+    expect(ensure).toHaveBeenCalledTimes(2);
+    expect(provision).toHaveBeenCalledTimes(2);
+  });
 });
 
 function config(): AcsOrchestratorConfig {

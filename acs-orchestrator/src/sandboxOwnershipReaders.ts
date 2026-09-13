@@ -30,10 +30,8 @@ export class SandboxOwnershipReaders {
     ));
     if (blocked) throw new OwnershipBlockedError(blocked.operationId);
     for (const sandbox of await this.inventory()) {
-      if (!sandbox.activeInvocationLeases?.length) continue;
-      const existing = this.scopeForSandbox(sandbox);
-      if (!existing) throw new OwnershipUnavailableError('Persisted lease has no usable writable scope');
-      if (!scopesOverlap(scope, existing)) continue;
+      // Sibling sandboxes share the directory by design; only this sandbox's leases gate it.
+      if (sandbox.name !== ref.name || !sandbox.activeInvocationLeases?.length) continue;
       for (const lease of sandbox.activeInvocationLeases) {
         if (!lease.malformed && lease.state === 'completion_pending') continue;
         if (lease.invocationKey && this.operations.isKnownLease(lease.invocationKey)) continue;

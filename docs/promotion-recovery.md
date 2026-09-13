@@ -1,59 +1,49 @@
-# Production Promotion 恢复语义
+# 生产发布的失败与恢复
 
-Promotion 的事实记录是组件身份矩阵，不是 Workflow 的红绿状态。失败处理先重新运行
-`read-production-state.mjs`，再由 `reconcile-promotion.mjs` 比较冻结的 before、Manifest target
-和 observed：
+生产发布（`.github/workflows/promote-release.yml`）分两层：
 
-- `failed_before_change`：没有真实 rollback-attempted marker，且观察矩阵仍等于 before；若此前已有 `promoting`，重试仍属于 post-mutation；
-- `partial_failed`：至少一个组件已变更、至少一个未变更；禁止写 completed；
-- `rolled_back`：真实专用恢复已经开始，且四组件重新权威读回为 before；该 Release 仍保留“曾进入生产写入”的事实；
-- `needs_human`：观察不完整，或当前矩阵仍有未知、不可逆外部副作用；
-- `completed`：四组件都等于 Manifest target，之后仍须通过观察窗口。
+- **主干**：解析 RC → 校验测试环境证据 → 读取在线生产 → ACS → API/Worker → Web → 回读全部组件 → 保存
+  checkpoint → 写 OSS 发布记录。每一步都是普通步骤：失败即失败，不猜、不补偿、不进状态机。
+- **旁证**：GitHub 永久 tag、GitHub Release 与资产、GitHub Deployment 记录。带重试、失败只告警，
+  不改变发布结论。
 
-Workflow 不再根据 deploy step 的 `failure` outcome 猜测是否回滚。ACS/App 的 cleanup trap 真正
-进入恢复分支时，才在 `/tmp/agent-saas-promotion-<run-id>-<run-attempt>/` 写入 root 创建、0444 的
-`rollback-attempted-acs|app` marker，并输出绑定 phase/run/attempt 的严格 sentinel；Workflow 捕获
-sentinel 后在 Runner 写同一 run-attempt 的 fallback marker，避免远端证据落盘失败时把真实恢复
-降格成 `failed_before_change`。trap 未 arm 或未执行时两种回执都不存在。Web 只有
-`restore_web_entry` 真正被调用时才写 Runner marker。任一 attempted 回执都只证明恢复已开始，
-不证明恢复成功；必须与新的权威 `observed == before` 同时成立，才能记录 `rolled_back`。不需要
-也不得用单独的 success marker 替代权威读回。
+生产的事实只来自主干末尾的回读：在线组件矩阵必须逐项等于 Manifest 目标且 ConfigIdentity 一致，
+否则该次运行失败，生产不会被记为已发布。
 
-API、Worker、Web 和 ACS 每一步都写独立 operation key。Web 失败只恢复上一版 entry；immutable
-hash assets 可以保留。数据库迁移只允许 expand → confirm → contract；Promotion 只执行 expand，
-contract 必须在兼容窗口和独立确认后执行。
+## 失败了怎么办
 
-部分失败后先在生产主机执行 `read-live-production-components.mjs`，不得先改写
-`runtime-identity.json`。恢复完成后再次读回，并以原 Promotion 的 `production-before.json`、
-Manifest target、新 observed 和真实 attempted 回执生成 reconcile 输入；只有四组件完全回到
-before 且 `rollbackAttempted=true` 才能得到 `rolled_back`。随后使用新的 operation key 追加记录：
+**重新运行同一 RC 的「生产环境发布」。** 主干是幂等的：
 
-```bash
-node scripts/release/reconcile-promotion.mjs recovery-input.json recovery-result.json
-test "$(jq -r .outcome recovery-result.json)" = rolled_back
-pnpm exec tsx server/src/release/releaseAttestationCli.ts \
-  --root <attestation-dir> --release-id <rc-id> --digest <manifest-digest> \
-  --state rolled_back --operation "recovery:<独立操作号>" --actor <operator> \
-  --reason "$(jq -c . recovery-result.json)"
-```
+1. 写入前读取的是真实在线组件（`read-live-production-components.mjs`），不是上次写下的身份文件。
+2. `promotionGateCli` 只要求当前生产矩阵是「基线 → ACS → App → Web」的某个前缀；首次发布和中断后重跑走同一条规则。
+3. 已经等于目标的组件（`ACS_ALREADY_TARGET` / `APP_ALREADY_TARGET` / `WEB_ALREADY_TARGET`）自动跳过，
+   只部署剩下的。
+4. 回读收敛后才写 checkpoint、OSS 记录和 GitHub 旁证。
 
-权威人工恢复允许从本轮 `promoting` 的直接失败结果追加：
-`promoting → partial_failed → rolled_back` 或 `promoting → needs_human → rolled_back`；原有受控
-`needs_human → approved` 模式仍保留。`partial_failed` 最新状态不得直接重试。任何包含
-`completed`、`rejected`、`revoked`、`superseded`，或没有本轮 active `promoting` 的尾部都不得
-追加/消费 `rolled_back`。
+RC 记录尾部状态决定运行模式：
 
-一旦已记录 `promoting`，即使 reconcile 在没有 rollback-attempted marker 时权威读回
-`observed == before` 并记录 `failed_before_change`，也不会抹除已进入生产流程的事实。该历史允许重新审批，
-但 retry gate 必须返回 `retry_after_change`，重新校验绑定的 Staging evidence，并经过新的 production
-environment 人工审批后才能追加 `approved → promoting`。
+| 尾部状态                                                                       | 模式      | 行为                                                    |
+| ------------------------------------------------------------------------------ | --------- | ------------------------------------------------------- |
+| `verified` / `approved` / `promoting` / `needs_human` / `failed_before_change` | `promote` | 完整主干；`promoting` 尾部先落 `needs_human` 再重新批准 |
+| `awaiting_expand_confirmation`                                                 | `confirm` | 只回读并自动核验 expand 迁移，然后 `completed`          |
+| `completed`                                                                    | `verify`  | 只回读校验并补写旁证，不部署                            |
 
-`rolled_back` 不会把同一 immutable Release 降级为 fresh 或 `retry_before_change`。它之后严格只允许
-追加新的 `approved`；不得追加 `needs_human`、`failed_before_change`、`partial_failed`、`rejected`、
-`superseded` 或 `revoked`。下一轮必须重新校验该 Release 绑定的 Staging evidence，经过新的 production
-environment 人工审批，追加新的 `approved`，并始终以 `retry_after_change` 重新读取生产基线；不得自动
-跳过人审。合法多轮历史例如：
-`verified → approved → promoting → partial_failed → rolled_back → approved → promoting → needs_human → rolled_back`。
+`release_id` 留空时发布 OSS 记录中 ID 最新的 RC。
 
-若读回不完整或矩阵混合，状态保持 `partial_failed` 或 `needs_human`；不得仅因 trap 已执行、
-systemd/镜像已回切或 marker 存在就记录 `rolled_back`。
+## 什么情况必须人工介入
+
+- 回读显示某个组件既不等于发布前、也不等于目标（`verify-promotion-observation.mjs` 报「Unknown or split identity」）：
+  先在生产主机核对该组件，再决定重跑还是回滚。
+- 生产矩阵不是任何前缀（例如有人手工改过某个组件）：先把生产恢复到某个一致状态，或运行「测试环境部署」用当前生产为基线重新生成 RC。
+- 数据库只允许 expand → confirm → contract；主干只执行 expand，contract 必须在兼容窗口和独立确认后单独执行。
+
+## 旁证没写上
+
+运行会绿，但带 `发布成功，但 GitHub 记录未完整写入` 告警，`evidence-status.json` 列出未写入项。
+再次运行同一 RC 的发布（`verify` 模式）会幂等补写 tag / Release / Deployment，不会重新部署。
+
+## 排查「什么时候切到这个版本」
+
+- 现在跑的是什么：`https://api.agent.kaiyan.net/api/healthz/ready` 的 `release` 块。
+- 什么时候切的：OSS `records/<rc>/attestations/` 里最后一个 `completed` 快照（主干写入、带重试），
+  以及 GitHub Actions 运行历史；GitHub Release / tag 是旁证。

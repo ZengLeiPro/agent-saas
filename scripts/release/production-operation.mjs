@@ -1,9 +1,12 @@
 #!/usr/bin/env node
-// Select one production operation before any job receives production credentials.
+// 在任何 job 拿到生产凭据之前，先把一次生产操作的参数校验清楚。
 import assert from 'node:assert/strict';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+const OPERATIONS = ['promote', 'web-recovery-audit', 'web-recovery-repair'];
+const RC_PATTERN = /^rc-[0-9]{8}-[0-9]{2,}$/u;
 
 function text(value, name, fallback = '') {
   if (value === undefined || value === null) return fallback;
@@ -24,39 +27,19 @@ export function validateProductionOperation(inputs, { eventName, ref }) {
     inputs && typeof inputs === 'object' && !Array.isArray(inputs),
     'Missing operation inputs',
   );
-  // Omission preserves existing API callers. An explicitly empty/unknown value is invalid.
   const operation = text(inputs.operation, 'operation', 'promote');
   const releaseId = text(inputs.release_id, 'release_id');
-  const recoveryMode = text(inputs.recovery_mode, 'recovery_mode', 'normal');
   const digest = text(inputs.expected_plan_digest, 'expected_plan_digest');
   const confirmed = boolean(inputs.confirm_recovery_only);
-  assert(
-    ['auto', 'promote', 'checkpoint-repair', 'web-recovery-audit', 'web-recovery-repair'].includes(operation),
-    'Unknown production operation',
-  );
+  assert(OPERATIONS.includes(operation), 'Unknown production operation');
   assert(text(inputs.reason, 'reason').trim(), 'An operation reason is required');
-  assert(['normal', 'repair'].includes(recoveryMode), 'Invalid RC recovery_mode');
-  const automationId = text(inputs.automation_id, 'automation_id');
-  const automationKey = text(inputs.automation_key, 'automation_key');
-  if (automationId || automationKey) {
-    assert(/^[1-9][0-9]*$/u.test(automationId), 'Invalid automatic reservation');
-    assert(/^auto:[1-9][0-9]*:(recover|publish|recover-checkpoint-[1-9][0-9]*|verify-[1-9][0-9]*)$/u.test(automationKey));
-    assert(['promote', 'checkpoint-repair'].includes(operation));
-    assert.equal(recoveryMode, 'normal');
-  }
-  if (operation === 'auto') {
-    assert(!releaseId && !digest && !confirmed && !automationId && !automationKey,
-      'Automatic release does not accept manual version or recovery overrides');
-    assert.equal(recoveryMode, 'normal');
-    return { operation, recoveryMode: '' };
-  }
-  if (operation === 'promote' || operation === 'checkpoint-repair') {
-    assert(/^rc-[0-9]{8}-[0-9]{2,}$/u.test(releaseId), 'promote requires a valid release_id');
+  if (operation === 'promote') {
+    // release_id 留空表示发布 OSS 记录中最新的 RC；填写时必须是合法 RC ID。
+    assert(releaseId === '' || RC_PATTERN.test(releaseId), 'promote requires a valid release_id');
     assert(!digest && !confirmed, 'Cold-standby confirmation cannot be used for RC promotion');
     return { operation, recoveryMode: '' };
   }
   assert.equal(releaseId, '', 'Cold-standby operations must not specify release_id');
-  assert.equal(recoveryMode, 'normal', 'RC recovery_mode=repair is not cold-standby repair');
   if (operation === 'web-recovery-audit') {
     assert(!digest && !confirmed, 'Audit must not contain repair authorization');
     return { operation, recoveryMode: 'audit' };
@@ -75,7 +58,7 @@ export function main(env = process.env) {
     eventName: env.GITHUB_EVENT_NAME,
     ref: env.GITHUB_REF,
   });
-  // Only enumerated constants are written to outputs; no untrusted multiline input is emitted.
+  // 只输出枚举常量，不把任何多行的不可信输入写进 outputs。
   const output = `operation=${plan.operation}\nrecovery_mode=${plan.recoveryMode}\n`;
   appendFileSync(env.GITHUB_OUTPUT, output);
   process.stdout.write(output);

@@ -8,7 +8,6 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { verifyPromotionObservation } from './verify-promotion-observation.mjs';
 import { assertPromotionPhaseState } from './verify-promotion-phase-state.mjs';
-import { reconcilePromotion } from './reconcile-promotion.mjs';
 
 const deploy = await readFile(new URL('./deploy-production-release.sh', import.meta.url), 'utf8');
 const route = deploy.slice(
@@ -165,22 +164,6 @@ test('observation permits compensated matrices without weakening forward Web gat
     app: 'before',
     web: 'before',
   });
-  const outcome = reconcilePromotion({
-    releaseId: 'rc-20260911-117',
-    before: f.before.components,
-    target: f.target,
-    observed: f.live.components,
-    observationComplete: true,
-    externalSideEffects: 'unknown',
-    rollbackReceipts: {
-      acs: { attempted: false, succeeded: false },
-      app: { attempted: true, succeeded: true },
-      web: { attempted: false, succeeded: false },
-    },
-  });
-  assert.equal(outcome.outcome, 'needs_human');
-  assert.equal(outcome.componentResults.app.rollbackVerified, true);
-  assert.equal(outcome.componentResults.acs.state, 'target');
 });
 
 test('every component-level before/target combination is observable; unknown and split identities cannot be committed', () => {
@@ -266,7 +249,7 @@ for (const mode of ['release', 'cancel', 'deadline']) {
 
 for (const unknown of [false, true]) {
   test(
-    `actual workflow readback survives App rollback; unknown=${unknown}`,
+    `actual workflow readback refuses a partially converged matrix; unknown=${unknown}`,
     { timeout: 15000 },
     async (t) => {
       const { root, env } = await lockFixture(t);
@@ -276,6 +259,7 @@ for (const unknown of [false, true]) {
       for (const [name, data] of Object.entries({
         'manifest.json': f.manifest,
         'production-before.json': f.before,
+        'production-target.json': f.target,
         'live.json': f.live,
       }))
         await writeFile(join(root, name), JSON.stringify(data));
@@ -284,8 +268,8 @@ for (const unknown of [false, true]) {
         'utf8',
       );
       const block = workflow
-        .split('- name: 读取全部在线组件并仅在完全收敛后提交可信身份')[1]
-        .split('- name: 核对组件结果')[0];
+        .split('- name: 回读全部在线组件并在完全收敛后提交可信身份')[1]
+        .split('- name: 记录发布终态')[0];
       const commands = block
         .slice(block.indexOf('run: |') + 'run: |'.length)
         .split('\n')
@@ -297,15 +281,12 @@ for (const unknown of [false, true]) {
 set -euo pipefail
 cmd="\${!#}"
 case "$cmd" in
-  *"PHASE=web "*)
-    exec node "$FIXTURE_REPO/scripts/release/verify-promotion-phase-state.mjs" "$FIXTURE_ROOT/manifest.json" "$FIXTURE_ROOT/live.json" web ;;
   *hold-production-observation-lock.sh*)
     cmd="\${cmd/ sudo / env }"
     exec bash -c "$cmd" ;;
   *"sudo test -f "*) exec bash -c "\${cmd#sudo }" ;;
   *"sudo touch "*) exec bash -c "\${cmd#sudo }" ;;
   *read-live-production-components.mjs*) cat "$FIXTURE_ROOT/live.json" ;;
-  *write-live-production-identity.mjs*) echo partial >> "$FIXTURE_ROOT/writes" ;;
   *write-production-identity.mjs*) echo target >> "$FIXTURE_ROOT/writes" ;;
   *read-production-state.mjs*) cat "$FIXTURE_ROOT/live.json" ;;
   *) echo 'unexpected SSH command' >&2; exit 99 ;;
@@ -323,17 +304,19 @@ esac
           FIXTURE_REPO: resolve('.'),
           RUNNER_TEMP: root,
           PROMOTION_REMOTE: root,
+          PROMOTION_MODE: 'promote',
           ECS_USER: 'fixture',
           ECS_HOST: 'unused',
           RELEASE_ID: 'rc-20260911-117',
-          PRODUCTION_DEPLOYMENT_ID: '123',
           MANIFEST_DIGEST: `sha256:${'d'.repeat(64)}`,
+          GITHUB_ENV: join(root, 'github-env'),
           GITHUB_OUTPUT: join(root, 'output'),
           PATH: `${join(root, 'bin')}:${process.env.PATH}`,
         },
         resolve('.'),
       ).result;
-      assert.equal(value.code === 0, !unknown, value.stderr);
+      // 主干模型：在线矩阵不等于目标就是失败，生产不会被记为已发布，也不写任何身份。
+      assert.notEqual(value.code, 0, value.stderr);
       assert.deepEqual(
         JSON.parse(await readFile(join(root, 'production-after.json'), 'utf8')),
         f.live,
@@ -343,11 +326,11 @@ esac
         false,
         'lease cleaned up on either outcome',
       );
-      if (unknown) assert.equal(await exists(join(root, 'writes')), false);
-      else {
-        assert.equal(await readFile(join(root, 'writes'), 'utf8'), 'partial\n');
-        assert.match(await readFile(join(root, 'output'), 'utf8'), /target_match=false/);
-      }
+      assert.equal(await exists(join(root, 'writes')), false);
+      assert.equal(await exists(join(root, 'github-env')), false);
+      if (unknown) assert.match(value.stderr, /Unknown or split/u);
+      // ::error 注解由 echo 写到 stdout。
+      else assert.match(`${value.stdout}\n${value.stderr}`, /生产未收敛到 rc-20260911-117/u);
     },
   );
 }

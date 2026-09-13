@@ -35,15 +35,15 @@
 （手动、可选 E2E）       │
         └───────┬────────┘
                 │
-       发布到生产环境（手动）
+  发布到生产环境（手动，或由测试环境部署勾选后自动触发）
                 │
- ACS → API/Worker → Web → 全组件现场回读
+ 主干：ACS → API/Worker → Web → 全组件现场回读（不收敛即失败）
                 │
- none：completed；expand：自动核验并落盘
+ none：completed；expand：同一次运行内自动核验后 completed
                 │
- 同一次 Promotion 自动收尾 → completed
+ checkpoint + OSS 发布记录（主干） → GitHub tag/Release（旁证，失败只告警）
                 │
-       生产 identity 与物理运行态一致
+       生产 identity 与物理运行态一致；重跑同一 RC 即恢复
 ```
 
 这套流程把五件事分开了：
@@ -56,13 +56,13 @@
 
 ## 二、GitHub 上五个 Workflow 分别做什么
 
-| Workflow         | 触发方式            | 核心职责                                             | 生产边界                                 |
-| ---------------- | ------------------- | ---------------------------------------------------- | ---------------------------------------- |
-| `CI`             | PR、push main、手动 | App/ACS 检查与制品；保留手动 Web-only 兼容发布       | 仅显式确认的 main dispatch 可发布 Web    |
-| `iOS 构建与发布` | 手动                | 校验 main CI，构建签名 IPA，提交 App Review          | 仅使用 iOS 专属环境；审核通过后自动发布  |
-| `测试环境部署`   | 手动                | 同 SHA 证据、镜像准备、不可变 RC、Staging 确定性门禁 | 前置阶段只读生产基线，实际部署在 staging |
-| `测试环境验收`   | 手动、可选          | 浏览器和 Agent 验收                                  | 不改生产                                 |
-| `生产环境发布`   | 手动                | 晋级 RC；独立模式审计或修复 Web 冷备                 | production Environment 与共享生产锁      |
+| Workflow         | 触发方式              | 核心职责                                             | 生产边界                                 |
+| ---------------- | --------------------- | ---------------------------------------------------- | ---------------------------------------- |
+| `CI`             | PR、push main、手动   | App/ACS 检查与制品；保留手动 Web-only 兼容发布       | 仅显式确认的 main dispatch 可发布 Web    |
+| `iOS 构建与发布` | 手动                  | 校验 main CI，构建签名 IPA，提交 App Review          | 仅使用 iOS 专属环境；审核通过后自动发布  |
+| `测试环境部署`   | 手动                  | 同 SHA 证据、镜像准备、不可变 RC、Staging 确定性门禁 | 前置阶段只读生产基线，实际部署在 staging |
+| `测试环境验收`   | 手动、可选            | 浏览器和 Agent 验收                                  | 不改生产                                 |
+| `生产环境发布`   | 手动/测试环境部署触发 | 晋级 RC（留空取最新）；独立模式审计或修复 Web 冷备   | production Environment 与共享生产锁      |
 
 CI 的 Web-only 兼容入口按维护者要求保留；独立 ACS 直发退役，正常发布继续走 RC 主链。
 
@@ -257,11 +257,11 @@ Promotion 的生产顺序固定为：
 3. Web assets，最后切换入口文件。
 4. 重新读取所有组件的真实物理运行态。
 5. 只有全部收敛后，才原子提交可信 production runtime identity。
-6. 再次读回 identity 并与物理运行态逐组件比较；只有 readback step 成功且 `target_match=true` 才允许记录 `completed` 或 `awaiting_expand_confirmation`，否则记为 `needs_human`。
+6. 再次读回 identity 并与物理运行态逐组件比较；不一致则本次运行失败，生产不会被记为已发布。收敛后记录 `completed`（`expand` 先记 `awaiting_expand_confirmation`，同一次运行内自动核验后 `completed`），保存 checkpoint，并把发布记录写入 OSS（主干、带重试）。
 
-每个组件在动作开始和结束时都写 durable operation receipt。Workflow 会记录 GitHub Production Deployment、最终 attestation，并上传生产前、生产后、生产确认和 reconcile 证据；Actions artifact 保留 90 天。
+GitHub 永久 tag、GitHub Release 与 Deployment 记录是旁证：带重试、失败只告警，不改变发布结论；再次运行同一 RC（`verify` 模式）会幂等补写。Workflow 上传生产前、生产后、生产确认与诊断证据；Actions artifact 保留 90 天。
 
-如果生产本来已经等于目标 Manifest，Workflow 会验证后跳过重启或重复上传。重跑边界按 attestation 尾状态收紧：`failed_before_change` 可重新批准，包括完整闭合的 `approved → promoting → failed_before_change`，但该 `promoting` 必须绑定原 RC/Manifest、migration plan 和生产 before/target digest；悬空 `promoting` 或缺绑定失败证明均拒绝。尚未写生产的 `approved` 可重跑；`awaiting_expand_confirmation` 是自动收尾的耐久中间态；重跑同一生产发布入口时只重新核验和落盘，跳过批准记录、制品上传与组件部署，且确认窗口一旦过期即 fail closed，不能由同一次确认自动续期或追加自迁移；此时必须基于当前 main 和当前生产基线重新创建 RC。`needs_human`、`partial_failed`、`rolled_back` 和 `completed` 均不能直接重新 Promotion。`rolled_back` 只能由 ACS/App 部署脚本或 Web 恢复 trap 的真实 rollback 证据与完整生产读回共同证明，不能从 deploy step failure 推断；rollback receipt 必须包含且仅包含 `acs/app/web` 三项，每项的 `attempted/succeeded` 都必须是布尔值；缺项、多项、非法组合或旧 aggregate flag 均为 `needs_human`。Web 会先记录 attempted，只有 `release-identity.json` 与 `index.html` 都恢复成功并从 OSS 按字节回读一致后才记录 succeeded，任一恢复或入口核验失败均进入 `needs_human`，不能仅凭 identity 回到 before 就宣称回滚完成。GitHub 已完成而 OSS 镜像上传失败时，仅允许同一 GitHub run 的重跑修复镜像，不再次追加 completed。自动收尾全部通过才记录 Deployment success，等待状态不算发布成功。例如 Web 在安装 trap 前读取旧 OSS entry 失败、且现场仍为 before 时，只能记 `failed_before_change`。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt，重跑不得复用上一 attempt 的恢复证据。仓库不声称自动恢复 `partial_failed`；这类状态必须先人工核对和另行处置。
+如果生产本来已经等于目标 Manifest，Workflow 会验证后跳过重启或重复上传。主干幂等：写入前读取真实在线组件；生产矩阵只要是「基线 → ACS → App → Web」的某个前缀就放行；已在目标的组件跳过。因此任何失败后的处理都是重新运行同一 RC 的「生产环境发布」。RC 记录尾部为 `completed` 时只回读校验并补写旁证（`verify`），为 `awaiting_expand_confirmation` 时只做 expand 自动核验（`confirm`），其余可发布状态走完整主干（`promote`）；不再有 `checkpoint-repair`、`recovery_mode` 或自动父编排。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt。恢复细节见 `docs/promotion-recovery.md`。
 
 ### 8.4 数据库变更的特殊处理与静态白名单
 
@@ -328,7 +328,7 @@ RC 多次 Promotion 重试会追加新的 attestation 和 operation receipt。Gi
 - ACS 发布只能使用 `生产环境发布` 的不可变 RC 主链，不恢复旧独立 dispatch。
 - CI compatibility 不创建不可变 RC、不部署 Staging、不产生完整 Promotion receipts 与跨组件收敛证据。
 - CI Web-only、RC 晋级和 Web 冷备恢复共享 `production-runtime` concurrency group；生产实际 mutation 仍受主机锁约束。
-- 冷备操作从 `生产环境发布` 选择 `web-recovery-audit` 或 `web-recovery-repair`，不是 `recovery_mode=repair`。
+- 冷备操作从 `生产环境发布` 选择 `web-recovery-audit` 或 `web-recovery-repair`。
   必须提供操作原因；audit 不带修复确认，repair 要有审阅摘要及明确确认，不接受 RC ID。
 
 最重要的混用风险是：如果先创建了 RC，随后又用 compatibility 通道改变生产基线，旧 RC 的 rollback target 会漂移，Promotion 应当被阻断。此时正确动作是重新生成 Evidence 和 RC，不是强行绕过门禁。任何 Server/API/Worker 变更都直接走正式 RC 流程，不要把 Web-only 入口当成“少一步的 Promotion”。

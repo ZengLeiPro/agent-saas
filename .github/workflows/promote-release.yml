@@ -486,23 +486,21 @@ jobs:
             scripts/release/artifact-lib.mjs scripts/release/reuse-promotion-artifacts.mjs \
             "$upload_root/"
           if [ "$PRODUCTION_ALREADY_TARGET" != true ]; then
-            reusable_list="$RUNNER_TEMP/reusable-artifacts.txt"
-            : > "$reusable_list"
-            node scripts/release/reuse-promotion-artifacts.mjs plan "$RUNNER_TEMP/manifest.json" \
-              > "$RUNNER_TEMP/reusable-artifact-plan.tsv"
-            while IFS=$'\t' read -r filename digest source; do
-              if ssh -n -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-                "sudo test -f '$source' && sudo test ! -L '$source' && test \"\$(sudo sha256sum '$source' | cut -d' ' -f1)\" = '$digest'"; then
-                printf '%s\n' "$filename" >> "$reusable_list"
-              fi
-            done < "$RUNNER_TEMP/reusable-artifact-plan.tsv"
-            for archive in "$RUNNER_TEMP/selected/"*.tgz; do
-              if grep -Fx "$(basename "$archive")" "$reusable_list" >/dev/null; then
-                echo "Reusing digest-verified production archive: $(basename "$archive")"
-              else
-                cp "$archive" "$upload_root/artifacts/"
-              fi
-            done
+            # 制品留在深圳 OSS。runner 只传脚本/清单/预签名拉取计划，ECS 内网直拉并校验摘要。
+            # 签名凭据只写 runner 私有文件，不进 env 扫描、不进 ECS 载荷。
+            : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing production secret ALIYUN_ACCESS_KEY_ID}"
+            : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing production secret ALIYUN_ACCESS_KEY_SECRET}"
+            oss_sign_credentials="$RUNNER_TEMP/promotion-oss-sign-credentials.json"
+            (
+              umask 077
+              jq -n --arg accessKeyId "$ALIBABACLOUD_ACCESS_KEY_ID" \
+                --arg accessKeySecret "$ALIBABACLOUD_ACCESS_KEY_SECRET" \
+                '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$oss_sign_credentials"
+            )
+            node scripts/release/sign-promotion-artifact-urls.mjs \
+              "$RUNNER_TEMP/manifest.json" "$RELEASE_RECORD_OSS_REGION" \
+              "$upload_root/promotion-artifact-fetch-plan.json" \
+              "$oss_sign_credentials"
             unit_files=("$RUNNER_TEMP/selected-units/"*)
             if [ -e "${unit_files[0]}" ]; then
               cp "${unit_files[@]}" "$upload_root/"
@@ -520,7 +518,7 @@ jobs:
              test \"\$(sudo sha256sum '$root_archive' | cut -d' ' -f1)\" = '$archive_digest' && \
              sudo rm -rf '$remote' && sudo install -d -m 0700 '$remote' && \
              sudo tar --no-same-owner --no-same-permissions -xzf '$root_archive' -C '$remote' && \
-             { [ '$PRODUCTION_ALREADY_TARGET' = true ] || sudo node '$remote/reuse-promotion-artifacts.mjs' hydrate '$remote/manifest.json' '$remote'; } && \
+             { [ '$PRODUCTION_ALREADY_TARGET' = true ] || sudo node '$remote/reuse-promotion-artifacts.mjs' hydrate '$remote/promotion-artifact-fetch-plan.json' '$remote'; } && \
              sudo chown -R root:root '$remote' && sudo chmod -R a-w '$remote' && \
              sudo test -f '$remote/deploy-production-release.sh' && \
              sudo test ! -L '$remote/deploy-production-release.sh' && \

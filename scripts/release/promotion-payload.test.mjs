@@ -31,6 +31,10 @@ function fixture({ existingLockDirectory = false, wrongDigest = false } = {}) {
     JSON.stringify({ components: { api: { action: 'keep' }, acs: { action: 'keep' } } }),
   );
   writeFileSync(
+    join(source, 'promotion-artifact-fetch-plan.json'),
+    JSON.stringify({ schemaVersion: 1, artifacts: [] }),
+  );
+  writeFileSync(
     join(source, 'reuse-promotion-artifacts.mjs'),
     readFileSync(new URL('./reuse-promotion-artifacts.mjs', import.meta.url)),
   );

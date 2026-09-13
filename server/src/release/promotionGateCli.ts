@@ -175,9 +175,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const latest = attestations.list().at(-1);
   if (latest?.state !== 'approved') throw new Error('Latest release attestation is not approved');
   const approval = validateApprovalReason(latest.reason, manifest);
-  const recoveryMode = options['recovery-mode'] === 'retry_after_change';
-  if (recoveryMode !== (approval.recoveryMode === 'retry_after_change'))
-    throw new Error('Promotion recovery mode does not match the human approval');
   const gitOk = (args: string[]) => {
     try {
       execFileSync('git', args, { stdio: 'pipe' });
@@ -197,10 +194,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       manifest.promotionPolicy.minimumPromotableSha,
       manifest.releaseSha,
     ]),
-    productionStateIsResumable:
-      (!recoveryMode &&
-        canonicalJson(baselineFromState(state)) === canonicalJson(manifest.productionBaseline)) ||
-      (recoveryMode && productionStateMatchesManifestPrefix(manifest, state)),
+    // 生产矩阵必须是 基线 → ACS → App → Web 的某个前缀：首次发布与中断后原样重跑走同一条规则。
+    productionStateIsResumable: productionStateMatchesManifestPrefix(manifest, state),
     expiresAt: manifest.promotionPolicy.expiresAt,
   });
   if (!eligibility.promotable) throw new Error(eligibility.blockingReasons.join(' '));

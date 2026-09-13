@@ -1,29 +1,24 @@
 name: 生产环境发布
-run-name: ${{ inputs.automation_key || format('生产环境发布 · {0}', inputs.operation) }}
+run-name: ${{ format('生产环境发布 · {0}{1}', inputs.operation, inputs.release_id && format(' · {0}', inputs.release_id) || '') }}
 
-# 与 CI Web-only 兼容发布共享互斥组；RC 晋级与冷备恢复是互斥操作，不共享部署逻辑。
+# 主干（必须成功、幂等、可原样重跑）：解析 RC → 校验证据 → 读生产 → ACS → API/Worker → Web → 回读收敛 → checkpoint。
+# 旁证（失败只告警、可单独补写）：GitHub tag / Release / Deployment 记录。生产真相只来自回读，不来自任何日志。
 
 on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'auto 自动发布最新已验收版本；其余为高级人工操作'
+        description: 'promote 发布 RC（release_id 留空则发布 OSS 记录中最新的 RC）；其余为 Web 冷备维护'
         type: choice
-        default: auto
+        default: promote
         required: true
-        options: [auto, promote, checkpoint-repair, web-recovery-audit, web-recovery-repair]
+        options: [promote, web-recovery-audit, web-recovery-repair]
       release_id:
-        description: '日常 auto 留空；仅高级 promote/checkpoint-repair 填 RC ID'
+        description: '要发布的 RC ID；留空自动选择最新 RC'
         required: false
         type: string
-      recovery_mode:
-        description: 'normal 正常晋级；repair 允许旧 App 未就绪但安装字节与配置必须可验证'
-        required: true
-        type: choice
-        default: normal
-        options: [normal, repair]
       reason:
-        description: '操作原因；RC 晋级时包含人工验收结论并写入 approval attestation'
+        description: '操作原因；会写入发布记录'
         required: true
         type: string
       expected_plan_digest:
@@ -37,25 +32,13 @@ on:
         default: false
         required: false
 
-      automation_id:
-        description: '内部自动调度登记；人工操作留空'
-        type: string
-        required: false
-      automation_key:
-        description: '内部关联键；人工操作留空'
-        type: string
-        required: false
-
 permissions:
   contents: write
   actions: read
   deployments: write
 
-# 锁在执行 job 上获取：协调器不占用子发布的 production-runtime 锁，避免父子互等。
-
 env:
   NODE_VERSION: '22.23.1'
-  AUTOMATIC_CHILD_EVIDENCE_PATH: ${{ github.workspace }}/automatic-child-authorization.jsonl
   PRODUCTION_WEB_OSS_URI: oss://agent-saas-web
   ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
   ACR_REPO_ID: crr-csx99pbexlsw5qqv
@@ -70,8 +53,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      actions: read
-      deployments: read
     outputs:
       operation: ${{ steps.validate.outputs.operation }}
       recovery_mode: ${{ steps.validate.outputs.recovery_mode }}
@@ -82,56 +63,15 @@ jobs:
       - name: 在读取生产凭据前拒绝无效或混用的参数
         id: validate
         run: node scripts/release/production-operation.mjs
-      - name: 验证自动子任务的不可变委派
-        if: inputs.automation_id != '' || inputs.automation_key != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/automatic-release-child.mjs promote-release.yml
-
-  automatic:
-    concurrency:
-      group: production-auto-requests
-      cancel-in-progress: false
-      queue: max
-    name: 自动恢复未完成事务并发布固定目标
-    needs: dispatch
-    if: needs.dispatch.outputs.operation == 'auto'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
-    permissions:
-      contents: read
-      actions: write
-      deployments: write
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          package-manager-cache: false
-      - name: 固定目标、恢复、重新验收并发布（不直接持有云端凭据）
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/automatic-release.mjs
-      - name: 保存请求、子运行及最终目标证据
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: automatic-release-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/automatic-release/
-          if-no-files-found: warn
-          retention-days: 90
 
   promote:
     concurrency:
       group: production-runtime
       cancel-in-progress: false
       queue: max
-    name: 晋级已批准的不可变产物
+    name: 发布不可变 RC 到生产
     needs: dispatch
-    if: github.ref == 'refs/heads/main' && (needs.dispatch.outputs.operation == 'promote' || needs.dispatch.outputs.operation == 'checkpoint-repair')
+    if: github.ref == 'refs/heads/main' && needs.dispatch.outputs.operation == 'promote'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: production
@@ -146,27 +86,24 @@ jobs:
       RELEASE_RECORD_OSS_REGION: cn-shenzhen
       RELEASE_ID_INPUT: ${{ inputs.release_id }}
       PROMOTION_REASON: ${{ inputs.reason }}
-      PRODUCTION_RECOVERY_MODE: ${{ inputs.recovery_mode || 'normal' }}
+      # deploy-production-release.sh 的恢复开关固定为 normal；主机异常由人工修复后重跑主干。
+      PRODUCTION_RECOVERY_MODE: normal
 
     steps:
+
       - name: 校验生产发布触发参数
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
-          case "$PRODUCTION_RECOVERY_MODE" in normal|repair) ;; *) exit 1 ;; esac
-          [[ "$RELEASE_ID_INPUT" =~ ^rc-[0-9]{8}-[0-9]{2,}$ ]]
+          if [ -n "$RELEASE_ID_INPUT" ]; then
+            [[ "$RELEASE_ID_INPUT" =~ ^rc-[0-9]{8}-[0-9]{2,}$ ]]
+          fi
           test -n "$(printf '%s' "$PROMOTION_REASON" | tr -d '[:space:]')"
-          printf 'RELEASE_ID=%s\n' "$RELEASE_ID_INPUT" >> "$GITHUB_ENV"
 
       - name: 检出代码
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: 排队或审批后重新验证自动委派
-        if: inputs.automation_id != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/automatic-release-child.mjs promote-release.yml
       - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
       - name: 配置 Node.js
@@ -193,12 +130,24 @@ jobs:
           grep -Eq -- '(^|[[:space:],])--region([=[:space:],]|$)' "$RUNNER_TEMP/ossutil-stat-help.txt"
           node scripts/release/put-web-asset-create-only.mjs --self-check
 
-      - name: 下载不可变 RC 证据
-        id: release_evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: 解析发布目标并下载不可变 RC 证据
         run: |
           set -euo pipefail
+          : "${RELEASE_RECORD_OSS_URI:?Missing production variable RELEASE_RECORD_OSS_URI}"
+          case "$RELEASE_RECORD_OSS_URI" in oss://*) ;; *) exit 1 ;; esac
+          release_id="$RELEASE_ID_INPUT"
+          if [ -z "$release_id" ]; then
+            # RC ID 形如 rc-YYYYMMDD-NN，按日期与序号数值排序取最新；不看任何状态机。
+            release_id="$(aliyun --secure oss ls "$RELEASE_RECORD_OSS_URI/records/" -d -s --region "$RELEASE_RECORD_OSS_REGION" \
+              | grep -oE 'rc-[0-9]{8}-[0-9]{2,}' | sort -u -t- -k2,2n -k3,3n | tail -n1)"
+            if [ -z "$release_id" ]; then
+              echo '::error title=没有可发布的 RC::OSS 记录中没有任何 RC；请先运行「测试环境部署」。'
+              exit 1
+            fi
+            echo "自动选择最新 RC：$release_id"
+          fi
+          echo "RELEASE_ID=$release_id" >> "$GITHUB_ENV"
+          export RELEASE_ID="$release_id"
           mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/attestations"
           bash scripts/release/fetch-rc-evidence.sh "$RELEASE_ID" "$RUNNER_TEMP/release"
           mv "$RUNNER_TEMP/release/manifest.json" "$RUNNER_TEMP/manifest.json"
@@ -224,29 +173,27 @@ jobs:
             none:not_required|expand:required_after_observation) ;;
             *) echo 'Invalid expand/confirm/contract migration plan' >&2; exit 1 ;;
           esac
-          node scripts/release/deployment-engine.mjs .github/workflows/promote-release.yml \
-            "$RUNNER_TEMP/deployment-engine.json" "$RUNNER_TEMP/manifest.json"
-          if [ "${{ needs.dispatch.outputs.operation }}" = checkpoint-repair ]; then
-            finalization_mode="$(node scripts/release/assert-checkpoint-repair.mjs \
-              "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl")"
-          else
-            finalization_mode="$(node scripts/release/promotion-finalization-mode.mjs \
-              "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$GITHUB_RUN_ID")"
-          fi
-          if [ "$finalization_mode" = confirm ] || [ "$finalization_mode" = repair ]; then
-            deployment_id="$(node scripts/release/promotion-finalization-mode.mjs \
-              "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$GITHUB_RUN_ID" --deployment-id)"
-            echo "PRODUCTION_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
-          fi
+          # 发布模式由 RC 记录的尾部状态决定：
+          #   promote = 走完整主干（幂等：已在目标的组件自动跳过）
+          #   confirm = 组件已收敛、只差 expand 迁移自动核验
+          #   verify  = 已 completed，仅回读校验并补写旁证
+          latest_state="$(tail -n1 "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" | jq -r .state)"
+          case "$latest_state" in
+            completed) mode=verify ;;
+            awaiting_expand_confirmation) mode=confirm ;;
+            verified|approved|promoting|needs_human|failed_before_change) mode=promote ;;
+            *) echo "::error title=RC 不可发布::$RELEASE_ID 当前状态为 $latest_state"; exit 1 ;;
+          esac
+          echo "发布模式：$mode（RC 尾部状态 $latest_state，迁移阶段 $migration_phase）"
           {
             echo "RELEASE_SHA=$release_sha"
             echo "MANIFEST_DIGEST=$manifest_digest"
-            echo "PROMOTION_FINALIZATION_MODE=$finalization_mode"
             echo "MIGRATION_PHASE=$migration_phase"
+            echo "PROMOTION_MODE=$mode"
           } >> "$GITHUB_ENV"
 
-      - name: 以失败关闭方式复核确定性测试环境证据并记录人工批准
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
+      - name: 复核测试环境证据并记录批准
+        if: env.PROMOTION_MODE == 'promote'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -264,26 +211,17 @@ jobs:
           }
           trap preflight_failure ERR
           log="$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
-          # 上一次 runner 若在 durable promoting marker 与最终 outcome 之间中断，
-          # 生产可能未写入、部分写入或已写入；统一先形成可审计 needs_human 尾部，
-          # 再由本次受保护的 production environment 审核进入 retry_after_change。
+          # 上一次运行若在部署中途中断，记录里会留下 promoting；先落 needs_human 才能重新批准。
+          # 主干本身幂等，真正的恢复动作就是下面的重新部署与回读。
           latest_state="$(tail -n1 "$log" | jq -r .state)"
           if [ "$latest_state" = promoting ]; then
             marker_reason="$(jq -nc --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
-              '{summary:"previous promotion ended after the durable promoting marker without a final outcome; production mutation may have started",runId:$runId,runAttempt:$runAttempt,recoveryMode:"retry_after_change"}')"
+              '{summary:"previous promotion run ended without a final outcome; the idempotent trunk re-converges production",runId:$runId,runAttempt:$runAttempt,recoveryMode:"retry_after_change"}')"
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
               --state needs_human --operation "recover-promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
               --actor "$GITHUB_ACTOR" --reason "$marker_reason"
-            marker_snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
-              "$log" "$RUNNER_TEMP/attestation-snapshots")"
-            marker_snapshot_path="$(printf '%s' "$marker_snapshot_json" | jq -r .path)"
-            bash scripts/release/upload-github-release-asset-immutable.sh \
-              "$RELEASE_ID" "$marker_snapshot_path"
-            bash scripts/release/upload-oss-object-immutable.sh "$marker_snapshot_path" \
-              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$marker_snapshot_path")"
           fi
-          # 允许 verified 首次晋级、已证明未写入的重试，或人工审核后的精确前缀恢复。
           retry_evidence="$(node scripts/release/assert-promotion-retry.mjs "$log")"
           retry_mode="$(printf '%s' "$retry_evidence" | jq -r .mode)"
           latest_state="$(tail -n1 "$log" | jq -r .state)"
@@ -317,7 +255,6 @@ jobs:
           printf '%s' "$deployment_id" | grep -Eq '^[1-9][0-9]*$'
           printf '%s' "$staging_run_id" | grep -Eq '^[1-9][0-9]*$'
           test "$(printf '%s' "$staging_reason" | jq -r .manifestDigest)" = "$MANIFEST_DIGEST"
-          # 仅 #349 之后的 RC 拥有独立 Staging runtime evidence；旧 RC 沿用既有 verified 证据。
           preflight_check=staging_runtime_summary
           if [ -n "$staging_runtime_path" ]; then
             runtime_summary="$(printf '%s' "$staging_reason" | jq -ce \
@@ -353,11 +290,6 @@ jobs:
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state approved --operation "approval:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR" \
             --reason "$approval_reason"
-          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
-            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
-          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
-          echo 'APPROVAL_RECORDED=true' >> "$GITHUB_ENV"
           echo "PROMOTION_RETRY_MODE=$retry_mode" >> "$GITHUB_ENV"
 
       - name: 配置生产环境 SSH
@@ -386,8 +318,7 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
-      - name: 写入前读取权威在线生产前缀
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
+      - name: 读取在线生产现状并校验可发布
         run: |
           set -euo pipefail
           remote="/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -397,64 +328,52 @@ jobs:
             scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \
             scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
-            scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
+            scripts/release/production-checkpoint.mjs \
             "$RUNNER_TEMP/manifest.json" "$ECS_USER@$ECS_HOST:$remote/"
           api_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
           worker_action="$(jq -r .components.runtimeWorker.action "$RUNNER_TEMP/manifest.json")"
+          # 主干可原样重跑：写入前一律读取真实在线组件，而不是上次写下的可信身份文件。
           baseline_plan="$(node scripts/release/promotion-config-identity-state.mjs plan \
-            --retry-mode "$PROMOTION_RETRY_MODE" --api-action "$api_action" \
+            --retry-mode retry_after_change --api-action "$api_action" \
             --runtime-worker-action "$worker_action")"
           reader="$(printf '%s' "$baseline_plan" | jq -r .reader)"
           reader_stage="$(printf '%s' "$baseline_plan" | jq -r .configIdentityStage)"
-          if ! bash scripts/release/run-production-preflight.sh "$remote" ~/.ssh/production_key \
-            "$reader" "$reader_stage" production-before.json "$PROMOTION_RETRY_MODE"; then
-            test "$PRODUCTION_RECOVERY_MODE" = repair
-            ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-              "sudo node '$remote/read-production-recovery-state.mjs' --manifest '$remote/manifest.json' --output '$remote/production-before.json' >/dev/null"
-          fi
+          bash scripts/release/run-production-preflight.sh "$remote" ~/.ssh/production_key \
+            "$reader" "$reader_stage" production-before.json "${PROMOTION_RETRY_MODE:-fresh}"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "sudo cat '$remote/production-before.json'" > "$RUNNER_TEMP/production-before.json"
-          # This gate is deliberately before promotionGate, payload prefetch, the durable promoting
-          # marker, receipts, and every production mutation.
-          node scripts/release/promotion-config-identity-state.mjs assert-write-gate \
-            --manifest "$RUNNER_TEMP/manifest.json" \
-            --production-state "$RUNNER_TEMP/production-before.json" \
-            --recovery-mode "$PRODUCTION_RECOVERY_MODE"
-          pnpm exec tsx server/src/release/promotionGateCli.ts \
-            --manifest "$RUNNER_TEMP/manifest.json" --attestation-root "$RUNNER_TEMP/attestations" \
-            --production-state "$RUNNER_TEMP/production-before.json" \
-            --recovery-mode "$PROMOTION_RETRY_MODE"
-          production_already_target=false
-          acs_already_target=false
-          app_already_target=false
-          web_already_target=false
-          if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
-            jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
-              "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
-            if diff -q <(jq -S '.components.acs' "$RUNNER_TEMP/production-before.json") \
-                <(jq -S '.acs' "$RUNNER_TEMP/production-target.json") >/dev/null; then
-              acs_already_target=true
-            fi
-            if diff -q <(jq -S '.components | {api,runtimeWorker}' "$RUNNER_TEMP/production-before.json") \
-                <(jq -S '{api,runtimeWorker}' "$RUNNER_TEMP/production-target.json") >/dev/null; then
-              app_already_target=true
-            fi
-            if diff -q <(jq -S '.components.web' "$RUNNER_TEMP/production-before.json") \
-                <(jq -S '.web' "$RUNNER_TEMP/production-target.json") >/dev/null; then
-              web_already_target=true
-            fi
-            if diff -q <(jq -S .components "$RUNNER_TEMP/production-before.json") \
-                <(jq -S . "$RUNNER_TEMP/production-target.json") >/dev/null; then
-              production_already_target=true
+          jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
+            "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
+          same() { diff -q <(jq -S "$1" "$RUNNER_TEMP/production-before.json") <(jq -S "$2" "$RUNNER_TEMP/production-target.json") >/dev/null; }
+          acs_already_target=false; app_already_target=false; web_already_target=false; production_already_target=false
+          same '.components.acs' '.acs' && acs_already_target=true
+          same '.components | {api,runtimeWorker}' '{api,runtimeWorker}' && app_already_target=true
+          same '.components.web' '.web' && web_already_target=true
+          same '.components' '.' && production_already_target=true
+          if [ "$PROMOTION_MODE" = promote ]; then
+            node scripts/release/promotion-config-identity-state.mjs assert-write-gate \
+              --manifest "$RUNNER_TEMP/manifest.json" \
+              --production-state "$RUNNER_TEMP/production-before.json"
+            # 生产矩阵必须是 基线 → ACS → App → Web 的某个前缀：既允许首次发布，也允许中断后原样重跑。
+            pnpm exec tsx server/src/release/promotionGateCli.ts \
+              --manifest "$RUNNER_TEMP/manifest.json" --attestation-root "$RUNNER_TEMP/attestations" \
+              --production-state "$RUNNER_TEMP/production-before.json"
+          else
+            # verify/confirm：组件必须已经全部等于目标，否则该 RC 的记录与生产不符。
+            if [ "$production_already_target" != true ]; then
+              echo "::error title=生产与 RC 记录不符::$RELEASE_ID 记录为已收敛，但在线组件不等于目标；请核对生产后再发布。"
+              exit 1
             fi
           fi
-          echo "PRODUCTION_ALREADY_TARGET=$production_already_target" >> "$GITHUB_ENV"
-          echo "ACS_ALREADY_TARGET=$acs_already_target" >> "$GITHUB_ENV"
-          echo "APP_ALREADY_TARGET=$app_already_target" >> "$GITHUB_ENV"
-          echo "WEB_ALREADY_TARGET=$web_already_target" >> "$GITHUB_ENV"
+          echo "组件是否已在目标：acs=$acs_already_target app=$app_already_target web=$web_already_target all=$production_already_target"
+          {
+            echo "PRODUCTION_ALREADY_TARGET=$production_already_target"
+            echo "ACS_ALREADY_TARGET=$acs_already_target"
+            echo "APP_ALREADY_TARGET=$app_already_target"
+            echo "WEB_ALREADY_TARGET=$web_already_target"
+          } >> "$GITHUB_ENV"
 
       - name: 校验 OSS 中的不可变清单、产物索引与 Release 记录
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
           : "${RELEASE_RECORD_OSS_URI:?Missing production variable RELEASE_RECORD_OSS_URI}"
@@ -483,7 +402,7 @@ jobs:
             "$(jq -r .aggregateDigest "$RUNNER_TEMP/release/artifact-index.json")"
 
       - name: 预取、校验并安全解压清单选定产物与 ACS 身份
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
+        if: env.PROMOTION_MODE == 'promote'
         run: |
           set -euo pipefail
           node scripts/release/prefetch-promotion-artifacts.mjs \
@@ -529,7 +448,7 @@ jobs:
             "$expected_repository"
 
       - name: 在组件变更前预检生产 Web 冷备
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
+        if: env.PROMOTION_MODE == 'promote'
         run: |
           set -euo pipefail
           if [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ]; then exit 0; fi
@@ -542,59 +461,7 @@ jobs:
             "https://agent.kaiyan.net/?preflight=$GITHUB_RUN_ID"
           grep -Eqi '^x-agent-saas-recovery:[[:space:]]*true' "$RUNNER_TEMP/recovery-preflight.headers"
 
-      - name: 自动请求开始生产变更前再次验证父请求
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && inputs.automation_id != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/automatic-release-child.mjs promote-release.yml
-
-      - name: 生产写入前标记并持久化发布已开始状态
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          before_json="$(jq -cS .components "$RUNNER_TEMP/production-before.json")"
-          target_json="$(jq -cS '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' "$RUNNER_TEMP/manifest.json")"
-          before_digest="sha256:$(printf '%s' "$before_json" | sha256sum | cut -d' ' -f1)"
-          target_digest="sha256:$(printf '%s' "$target_json" | sha256sum | cut -d' ' -f1)"
-          promoting_reason="$(jq -nc --arg releaseId "$RELEASE_ID" --arg releaseSha "$RELEASE_SHA" \
-            --arg manifestDigest "$MANIFEST_DIGEST" --arg migrationPhase "$MIGRATION_PHASE" \
-            --arg migrationPlanDigest "$(jq -r .migrationPlan.planDigest "$RUNNER_TEMP/manifest.json")" \
-            --arg productionBeforeDigest "$before_digest" --arg productionTargetDigest "$target_digest" \
-            --argjson deploymentEngine "$(jq -c '{sourceSha,implementationDigest,contract}' "$RUNNER_TEMP/deployment-engine.json")" \
-            '{releaseId:$releaseId,releaseSha:$releaseSha,manifestDigest:$manifestDigest,migrationPhase:$migrationPhase,migrationPlanDigest:$migrationPlanDigest,productionBeforeDigest:$productionBeforeDigest,productionTargetDigest:$productionTargetDigest,deploymentEngine:$deploymentEngine}')"
-          pnpm exec tsx server/src/release/releaseAttestationCli.ts \
-            --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-            --state promoting --operation "promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
-            --actor "$GITHUB_ACTOR" --reason "$promoting_reason"
-          # 该标志必须先于任一 snapshot 上传落盘；上传失败时最终 outcome 仍会
-          # 追加 needs_human，runner 硬中断则由下一次 dispatch 收敛悬空 promoting。
-          echo 'PROMOTION_STARTED=true' >> "$GITHUB_ENV"
-          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
-            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
-          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
-          bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
-            || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
-
-      - name: 创建 GitHub 生产部署记录
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          id="$(jq -n --arg ref "$RELEASE_SHA" --arg releaseId "$RELEASE_ID" \
-            '{ref:$ref,environment:"production",auto_merge:false,required_contexts:[],payload:{releaseId:$releaseId}}' \
-            | gh api --method POST "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)"
-          test "$id" -gt 0
-          echo "PRODUCTION_DEPLOYMENT_ID=$id" >> "$GITHUB_ENV"
-          gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" \
-            -f state=in_progress -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
-
       - name: 上传不可变部署载荷与 RC 绑定的托管单元
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
           remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -609,7 +476,7 @@ jobs:
             scripts/release/write-production-identity.mjs \
             scripts/release/write-live-production-identity.mjs \
             scripts/release/hold-production-observation-lock.sh \
-            scripts/release/acs-deployment-drain.sh scripts/release/read-rollback-receipt.mjs \
+            scripts/release/acs-deployment-drain.sh \
             scripts/release/verify-installed-release.mjs \
             scripts/release/read-live-production-components.mjs scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs scripts/release/verify-promotion-phase-state.mjs scripts/release/verify-app-retirement.sh scripts/release/app-retirement-verify-gate.mjs scripts/release/observe-app-retirement.sh \
@@ -665,30 +532,28 @@ jobs:
                exit 1; \
              }"
 
-      - name: 持久化 ACS 操作开始回执
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
-        id: start_acs
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: 记录发布已开始
+        if: env.PROMOTION_MODE == 'promote'
         run: |
           set -euo pipefail
-          outcome=started
-          [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-          [ "$ACS_ALREADY_TARGET" = true ] && outcome=skipped
-          receipt_json="$(node scripts/release/write-operation-receipt.mjs \
-            --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component acs \
-            --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-acs-start" \
-            --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
-          receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
-          bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
-            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
+          before_json="$(jq -cS .components "$RUNNER_TEMP/production-before.json")"
+          target_json="$(jq -cS . "$RUNNER_TEMP/production-target.json")"
+          before_digest="sha256:$(printf '%s' "$before_json" | sha256sum | cut -d' ' -f1)"
+          target_digest="sha256:$(printf '%s' "$target_json" | sha256sum | cut -d' ' -f1)"
+          promoting_reason="$(jq -nc --arg releaseId "$RELEASE_ID" --arg releaseSha "$RELEASE_SHA" \
+            --arg manifestDigest "$MANIFEST_DIGEST" --arg migrationPhase "$MIGRATION_PHASE" \
+            --arg migrationPlanDigest "$(jq -r .migrationPlan.planDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg productionBeforeDigest "$before_digest" --arg productionTargetDigest "$target_digest" \
+            '{releaseId:$releaseId,releaseSha:$releaseSha,manifestDigest:$manifestDigest,migrationPhase:$migrationPhase,migrationPlanDigest:$migrationPlanDigest,productionBeforeDigest:$productionBeforeDigest,productionTargetDigest:$productionTargetDigest}')"
+          pnpm exec tsx server/src/release/releaseAttestationCli.ts \
+            --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
+            --state promoting --operation "promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
+            --actor "$GITHUB_ACTOR" --reason "$promoting_reason"
+          echo 'PROMOTION_STARTED=true' >> "$GITHUB_ENV"
 
-      - name: 优先部署精确的 ACS 编排器与沙箱摘要
+      - name: 部署 ACS 编排器与沙箱镜像
         id: deploy_acs
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.start_acs.outcome == 'success')
-        continue-on-error: true
+        if: env.PROMOTION_MODE == 'promote'
         run: |
           set -euo pipefail
           if [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ]; then
@@ -699,73 +564,13 @@ jobs:
             echo 'ACS already equals the immutable target; keep without restart'
             exit 0
           fi
-          rollback_output="$RUNNER_TEMP/deploy-acs-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
-          rollback_local_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-acs"
-          rollback_sentinel="AGENT_SAAS_ROLLBACK_ATTEMPTED PHASE=acs GITHUB_RUN_ID=$GITHUB_RUN_ID GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
-          rm -f "$rollback_output" "$rollback_local_marker"
-          set +e
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "sudo PRODUCTION_RECOVERY_MODE=$PRODUCTION_RECOVERY_MODE PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-acs' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.succeeded' PRECHANGE_RECOVERY_RECEIPT_PATH='$PROMOTION_REMOTE/prechange-acs.recovered' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
-            2>&1 | tee "$rollback_output"
-          pipeline_status=("${PIPESTATUS[@]}")
-          set -e
-          if grep -Fx -- "$rollback_sentinel" "$rollback_output" >/dev/null; then
-            if ! install -m 0600 /dev/null "$rollback_local_marker"; then
-              echo 'WARN: failed to persist ACS runner rollback-attempted fallback marker' >&2
-            fi
-          fi
-          if [ "${pipeline_status[0]}" -ne 0 ]; then exit "${pipeline_status[0]}"; fi
-          exit "${pipeline_status[1]}"
-
-      - name: 持久化 ACS 操作回执
-        id: receipt_acs
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STEP_OUTCOME: ${{ steps.deploy_acs.outcome }}
-        run: |
-          set -euo pipefail
-          outcome=failed
-          [ "$STEP_OUTCOME" = success ] && outcome=succeeded
-          [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-          [ "$ACS_ALREADY_TARGET" = true ] && outcome=skipped
-          [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
-          receipt_json="$(node scripts/release/write-operation-receipt.mjs \
-            --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component acs \
-            --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-acs" \
-            --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
-          receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
-          bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
-            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
-
-      - name: 持久化 API 与 Worker 操作开始回执
-        id: start_app
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.deploy_acs.outcome == 'success' && steps.receipt_acs.outcome == 'success')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for component in api runtimeWorker; do
-            outcome=started
-            [ "$(jq -r ".components.$component.action" "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-            [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
-            receipt_json="$(node scripts/release/write-operation-receipt.mjs \
-              --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component "$component" \
-              --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$component-start" \
-              --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
-            receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
-            bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
-            bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
-            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
-          done
+            2>&1 | tee "$RUNNER_TEMP/deploy-acs.log"
 
       - name: 蓝绿部署 API 并交接运行时 Worker
         id: deploy_app
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.start_app.outcome == 'success')
-        continue-on-error: true
+        if: env.PROMOTION_MODE == 'promote'
         run: |
           set -euo pipefail
           verify_only=false
@@ -782,23 +587,9 @@ jobs:
             fi
             echo 'App target already committed; verify it and complete any retired-generation handoff'
           fi
-          rollback_output="$RUNNER_TEMP/deploy-app-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
-          rollback_local_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-app"
-          rollback_sentinel="AGENT_SAAS_ROLLBACK_ATTEMPTED PHASE=app GITHUB_RUN_ID=$GITHUB_RUN_ID GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
-          rm -f "$rollback_output" "$rollback_local_marker"
-          set +e
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "sudo PRODUCTION_RECOVERY_MODE=$PRODUCTION_RECOVERY_MODE PHASE=app VERIFY_ONLY='$verify_only' RESUME_HANDOFF='$resume_handoff' RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-app' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
-            2>&1 | tee "$rollback_output"
-          pipeline_status=("${PIPESTATUS[@]}")
-          set -e
-          if grep -Fx -- "$rollback_sentinel" "$rollback_output" >/dev/null; then
-            if ! install -m 0600 /dev/null "$rollback_local_marker"; then
-              echo 'WARN: failed to persist App runner rollback-attempted fallback marker' >&2
-            fi
-          fi
-          if [ "${pipeline_status[0]}" -ne 0 ]; then exit "${pipeline_status[0]}"; fi
-          if [ "${pipeline_status[1]}" -ne 0 ]; then exit "${pipeline_status[1]}"; fi
+            2>&1 | tee "$RUNNER_TEMP/deploy-app.log"
           if [ "$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")" = deploy ]; then
             ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
               "sudo cat '$PROMOTION_REMOTE/app-handoff-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json'" \
@@ -812,62 +603,9 @@ jobs:
               "sudo cat '$PROMOTION_REMOTE/app-retirement-targets.json'" > "$RUNNER_TEMP/app-retirement-targets.json"
           fi
 
-      - name: 持久化 API 与 Worker 操作回执
-        id: receipt_app
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STEP_OUTCOME: ${{ steps.deploy_app.outcome }}
-        run: |
-          set -euo pipefail
-          for component in api runtimeWorker; do
-            outcome=failed
-            if [ "$STEP_OUTCOME" = success ]; then
-              outcome=succeeded
-              [ "$(jq -r ".components.$component.action" "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-            fi
-            [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
-            receipt_json="$(node scripts/release/write-operation-receipt.mjs \
-              --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component "$component" \
-              --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$component" \
-              --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
-            receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
-            bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
-            bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
-            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
-          done
-
-      - name: 持久化 Web 操作开始回执
-        id: start_web
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.deploy_app.outcome == 'success' && steps.receipt_app.outcome == 'success')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo node '$PROMOTION_REMOTE/web-recovery-journal.mjs' check '$RELEASE_ID' '$MANIFEST_DIGEST'" > "$RUNNER_TEMP/web-recovery-state.json"
-          if [ "$(jq -r .pending "$RUNNER_TEMP/web-recovery-state.json")" = true ]; then
-            WEB_ALREADY_TARGET=false
-            echo 'WEB_ALREADY_TARGET=false' >> "$GITHUB_ENV"
-          fi
-          outcome=started
-          [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-          [ "$WEB_ALREADY_TARGET" = true ] && outcome=skipped
-          receipt_json="$(node scripts/release/write-operation-receipt.mjs \
-            --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component web \
-            --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web-start" \
-            --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
-          receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
-          bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
-            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
-
-      - name: 最后发布 Web 入口并保留旧版哈希资源
+      - name: 发布 Web 入口并保留旧版哈希资源
         id: deploy_web
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.start_web.outcome == 'success')
-        continue-on-error: true
+        if: env.PROMOTION_MODE == 'promote'
         run: |
           set -euo pipefail
           if [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ]; then
@@ -1187,42 +925,16 @@ jobs:
           release_web_lock
           trap - EXIT
 
-      - name: 持久化 Web 操作回执
-        id: receipt_web
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STEP_OUTCOME: ${{ steps.deploy_web.outcome }}
-        run: |
-          set -euo pipefail
-          outcome=failed
-          [ "$STEP_OUTCOME" = success ] && outcome=succeeded
-          [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
-          [ "$WEB_ALREADY_TARGET" = true ] && outcome=skipped
-          [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
-          receipt_json="$(node scripts/release/write-operation-receipt.mjs \
-            --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component web \
-            --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web" \
-            --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
-          receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
-          bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
-            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
-
-      - name: 读取全部在线组件并仅在完全收敛后提交可信身份
+      - name: 回读全部在线组件并在完全收敛后提交可信身份
         id: readback
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
-        continue-on-error: true
         run: |
           set -euo pipefail
-          # Observation has its own shared-lock lease: App rollback must not be
-          # rejected by Web's forward-deployment predecessor gate. All writes still
-          # require validated live bytes/config identity and a known component matrix.
           remote="$PROMOTION_REMOTE"
           api_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
           config_identity_readback_stage=steady-state
-          [ "$api_action" = deploy ] && config_identity_readback_stage=candidate-readback
+          if [ "$PROMOTION_MODE" = promote ] && [ "$api_action" = deploy ]; then
+            config_identity_readback_stage=candidate-readback
+          fi
           identity_lock_ready="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-identity-lock.ready"
           identity_lock_release="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-identity-lock.release"
           identity_lock_log="$RUNNER_TEMP/identity-lock.log"
@@ -1315,30 +1027,13 @@ jobs:
 
           run_identity_ssh "sudo node '$remote/read-live-production-components.mjs' --config-identity-stage '$config_identity_readback_stage' --output '$remote/production-after.json'" \
             > "$RUNNER_TEMP/production-after.json"
-          # Persist the observation before deciding whether it is safe to update identity.
           node scripts/release/verify-promotion-observation.mjs \
             "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/production-before.json" \
             "$RUNNER_TEMP/production-after.json" > "$RUNNER_TEMP/promotion-observation.json"
-          jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
-            "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
           if ! diff -u <(jq -S .components "$RUNNER_TEMP/production-after.json") \
               <(jq -S . "$RUNNER_TEMP/production-target.json"); then
-            # 某个已提交组件成功、后续组件失败时，在线矩阵可以合法地部分收敛。
-            # 先把独立回读的真实矩阵固化为可信基线，避免下一次 RC 回退到旧 checkpoint，
-            # 再保留 target_match=false 让本次发布按 partial_failed 收口。
-            if [ -n "${PRODUCTION_DEPLOYMENT_ID:-}" ]; then
-              run_identity_ssh \
-                "sudo node '$remote/write-live-production-identity.mjs' --input '$remote/production-after.json'"
-            fi
-            run_identity_ssh \
-              "sudo node '$remote/read-production-state.mjs' --config-identity-stage steady-state" \
-              > "$RUNNER_TEMP/production-partial-confirmed.json"
-            test "$(jq -r .configIdentity.status "$RUNNER_TEMP/production-partial-confirmed.json")" = consistent
-            identity_projection='{web:{gitSha:.components.web.gitSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.gitSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.gitSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.gitSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}'
-            diff -u <(jq -S "$identity_projection" "$RUNNER_TEMP/production-partial-confirmed.json") \
-              <(jq -S "$identity_projection" "$RUNNER_TEMP/production-after.json")
-            echo 'target_match=false' >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error title=生产未收敛到 $RELEASE_ID::在线组件矩阵与 Manifest 目标不一致（见上方 diff）。生产未被记为已发布；修复后重新运行同一 RC 的发布即可续跑。"
+            exit 1
           fi
           test "$(jq -r .configIdentity.status "$RUNNER_TEMP/production-after.json")" = consistent
           expected_config_release_id="$RELEASE_ID"
@@ -1347,7 +1042,7 @@ jobs:
           fi
           test "$expected_config_release_id" != null
           test "$(jq -r .configIdentity.releaseId "$RUNNER_TEMP/production-after.json")" = "$expected_config_release_id"
-          if [ -n "${PRODUCTION_DEPLOYMENT_ID:-}" ]; then
+          if [ "$PROMOTION_MODE" != verify ]; then
             run_identity_ssh \
               "sudo node '$PROMOTION_REMOTE/write-production-identity.mjs' '$PROMOTION_REMOTE/manifest.json'"
           fi
@@ -1364,205 +1059,43 @@ jobs:
           identity_projection='{web:{gitSha:.components.web.gitSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.gitSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.gitSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.gitSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}'
           diff -u <(jq -S "$identity_projection" "$RUNNER_TEMP/production-confirmed.json") \
             <(jq -S "$identity_projection" "$RUNNER_TEMP/production-after.json")
-          echo 'target_match=true' >> "$GITHUB_OUTPUT"
+          echo "PRODUCTION_CONVERGED=true" >> "$GITHUB_ENV"
           release_identity_lock
           trap - EXIT
 
-      - name: 核对组件结果
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
+      - name: 记录发布终态
         run: |
           set -euo pipefail
-          observation_complete=false
-          observed=null
-          if [ -s "$RUNNER_TEMP/production-after.json" ]; then
-            observation_complete=true
-            observed="$(jq -c .components "$RUNNER_TEMP/production-after.json")"
+          if [ "$PROMOTION_MODE" != promote ]; then
+            echo "模式 $PROMOTION_MODE：RC 记录已有终态，不再追加"
+            exit 0
           fi
-          config_identity_confirmed=false
-          if [ "${{ steps.readback.outcome }}" = success ] && \
-             [ "${{ steps.readback.outputs.target_match }}" = true ]; then
-            config_identity_confirmed=true
-          fi
-          target="$(jq -c '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' "$RUNNER_TEMP/manifest.json")"
-          before="$(jq -c .components "$RUNNER_TEMP/production-before.json")"
-          external_side_effects=none_observed
-          if [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = deploy ] && \
-             [ "${{ steps.deploy_acs.outcome }}" != skipped ]; then
-            external_side_effects=unknown
-          fi
-          web_attempted=false
-          web_succeeded=false
-          [ ! -s "$RUNNER_TEMP/rollback-web.attempted" ] || web_attempted=true
-          [ ! -s "$RUNNER_TEMP/rollback-web.succeeded" ] || web_succeeded=true
-          remote_receipt_exists() {
-            local component="$1" state="$2"
-            # The reader runs as root inside a sealed 0700 directory. Only ENOENT means absent.
-            mkdir -p "$RUNNER_TEMP/rollback-receipts"
-            ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-              "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/rollback-$component.$state' '$component' '$state' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
-              > "$RUNNER_TEMP/rollback-receipts/$component-$state.json" || return 1
-            jq -r 'if .readState=="present" then true elif .readState=="absent" then false else error("unverified rollback receipt") end' \
-              "$RUNNER_TEMP/rollback-receipts/$component-$state.json"
-          }
-          acs_attempted="$(remote_receipt_exists acs attempted)"
-          acs_succeeded="$(remote_receipt_exists acs succeeded)"
-          app_attempted="$(remote_receipt_exists app attempted)"
-          app_succeeded="$(remote_receipt_exists app succeeded)"
-          mkdir -p "$RUNNER_TEMP/prechange-receipts"
-          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/prechange-acs.recovered' 'acs' 'prechange_recovered' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
-            > "$RUNNER_TEMP/prechange-receipts/acs-recovered.json"
-          acs_prechange_recovered="$(jq -r 'if .readState=="present" then true elif .readState=="absent" then false else error("unverified pre-change recovery receipt") end' \
-            "$RUNNER_TEMP/prechange-receipts/acs-recovered.json")"
-          rollback_receipts="$(jq -nc \
-            --argjson webAttempted "$web_attempted" --argjson webSucceeded "$web_succeeded" \
-            --argjson acsAttempted "$acs_attempted" --argjson acsSucceeded "$acs_succeeded" \
-            --argjson appAttempted "$app_attempted" --argjson appSucceeded "$app_succeeded" \
-            '{web:{attempted:$webAttempted,succeeded:$webSucceeded},acs:{attempted:$acsAttempted,succeeded:$acsSucceeded},app:{attempted:$appAttempted,succeeded:$appSucceeded}}')"
-          prechange_recovery_receipts="$(jq -nc --argjson acsRecovered "$acs_prechange_recovered" \
-            '{acs:{recovered:$acsRecovered}}')"
-          jq -n --arg releaseId "$RELEASE_ID" --argjson before "$before" --argjson target "$target" \
-            --argjson observed "$observed" --argjson observationComplete "$observation_complete" \
-            --argjson configIdentityConfirmed "$config_identity_confirmed" \
-            --arg externalSideEffects "$external_side_effects" \
-            --argjson rollbackReceipts "$rollback_receipts" \
-            --argjson prechangeRecoveryReceipts "$prechange_recovery_receipts" \
-            --arg databaseChange "$MIGRATION_PHASE" \
-            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,configIdentityConfirmed:$configIdentityConfirmed,externalSideEffects:$externalSideEffects,rollbackReceipts:$rollbackReceipts,prechangeRecoveryReceipts:$prechangeRecoveryReceipts,databaseChange:$databaseChange}' \
-            > "$RUNNER_TEMP/reconcile-input.json"
-          node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
-
-      - name: 记录真实最终结果
-        id: final_outcome
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          outcome=needs_human
-          reason='promotion did not produce complete reconciliation evidence'
-          if [ -s "$RUNNER_TEMP/reconcile.json" ]; then
-            outcome="$(jq -r .outcome "$RUNNER_TEMP/reconcile.json")"
-            reason="$(jq -r .reason "$RUNNER_TEMP/reconcile.json")"
-          fi
-          if [ "$outcome" = completed ] && { \
-            [ "${{ steps.receipt_acs.outcome }}" != success ] || \
-            [ "${{ steps.receipt_app.outcome }}" != success ] || \
-            [ "${{ steps.receipt_web.outcome }}" != success ]; \
-          }; then
-            outcome=needs_human
-            reason='component convergence lacks one or more durable operation receipts'
-          fi
-          if [ "$outcome" = completed ] && { \
-            [ "${{ steps.deploy_acs.outcome }}" != success ] || \
-            [ "${{ steps.deploy_app.outcome }}" != success ] || \
-            [ "${{ steps.deploy_web.outcome }}" != success ]; \
-          }; then
-            outcome=needs_human
-            reason='component identity convergence does not prove successful deployment and generation handoff'
-          fi
-          if [ "$outcome" = completed ] && { \
-            [ "${{ steps.readback.outcome }}" != success ] || \
-            [ "${{ steps.readback.outputs.target_match }}" != true ]; \
-          }; then
-            outcome=needs_human
-            reason='component convergence lacks a confirmed trusted production identity'
-          fi
-          migration_confirmation=not_required
+          outcome=completed
+          summary='all components match the Manifest target with confirmed ConfigIdentity'
           if [ "$MIGRATION_PHASE" = expand ]; then
-            migration_confirmation=automatic_readback_required
-            if [ "$outcome" = completed ]; then
-              outcome=awaiting_expand_confirmation
-              reason='expand migration is physically converged; automatic finalization follows'
-            fi
+            outcome=awaiting_expand_confirmation
+            summary='expand migration is physically converged; automatic confirmation follows'
           fi
-          reason="$(jq -nc --arg summary "$reason" --arg migrationPhase "$MIGRATION_PHASE" \
-            --arg migrationConfirmation "$migration_confirmation" \
-            --arg productionDeploymentId "${PRODUCTION_DEPLOYMENT_ID:-}" \
-            --argjson deploymentEngine "$(jq -c '{sourceSha,implementationDigest,contract}' "$RUNNER_TEMP/deployment-engine.json")" \
-            '{deploymentEngine:$deploymentEngine,summary:$summary,productionDeploymentId:$productionDeploymentId,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},acceptance:{mode:"optional_staging_acceptance",blocking:false,workflow:"测试环境验收"}}')"
+          reason="$(jq -nc --arg summary "$summary" --arg migrationPhase "$MIGRATION_PHASE" \
+            '{summary:$summary,migration:{phase:$migrationPhase,contractExecuted:false}}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state "$outcome" --operation "outcome:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
             --actor "$GITHUB_ACTOR" --reason "$reason"
-          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
-            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
-          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
-          bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
-            || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
-          state=failure
-          case "$outcome" in completed) state=success ;; awaiting_expand_confirmation) state=in_progress ;; esac
-          if printf '%s' "${PRODUCTION_DEPLOYMENT_ID:-}" | grep -Eq '^[0-9]+$'; then
-            gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$PRODUCTION_DEPLOYMENT_ID/statuses" \
-              -f state="$state" -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
-          fi
-          echo "PROMOTION_OUTCOME=$outcome" >> "$GITHUB_ENV"
-          if [ "$outcome" = awaiting_expand_confirmation ]; then echo "expand=true" >> "$GITHUB_OUTPUT"; fi
-          case "$outcome" in completed|awaiting_expand_confirmation) ;; *) exit 1 ;; esac
 
       - name: 自动核验扩展迁移并完成发布
-        id: finalize_expand
-        if: >-
-          always() && !cancelled() && steps.release_evidence.outcome == 'success' &&
-          (steps.final_outcome.outputs.expand == 'true' ||
-           env.PROMOTION_FINALIZATION_MODE == 'confirm' || env.PROMOTION_FINALIZATION_MODE == 'repair')
+        if: env.MIGRATION_PHASE == 'expand' && env.PROMOTION_MODE != 'verify'
         env:
-          GH_TOKEN: ${{ github.token }}
           CONFIRMATION_REASON: ${{ env.PROMOTION_REASON }}
         run: |
           set -euo pipefail
           timeout --signal=TERM --kill-after=10 1800 bash scripts/release/finalize-expand-migration.sh
-          echo 'PROMOTION_OUTCOME=completed' >> "$GITHUB_ENV"
 
-      - name: 记录扩展迁移自动收尾结果
-        if: always() && steps.finalize_expand.outcome != 'skipped'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          state=failure
-          if [ "${{ steps.finalize_expand.outcome }}" = success ]; then state=success; fi
-          if printf '%s' "${PRODUCTION_DEPLOYMENT_ID:-}" | grep -Eq '^[0-9]+$'; then
-            gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$PRODUCTION_DEPLOYMENT_ID/statuses" \
-              -f state="$state" -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
-          fi
-          test "$state" = success
-
-      - name: 写入永久 RC 标签与正式 Release
-        if: success() && env.PROMOTION_OUTCOME == 'completed'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git fetch --no-tags origin main
-          if git ls-remote --tags origin "refs/tags/$RELEASE_ID" | grep -q .; then
-            git fetch --no-tags origin "refs/tags/$RELEASE_ID:refs/tags/$RELEASE_ID"
-            test "$(git rev-parse "$RELEASE_ID^{commit}")" = "$RELEASE_SHA"
-            tag_object="$(git rev-parse "$RELEASE_ID^{tag}")"
-            git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $MANIFEST_DIGEST"
-          else
-            git tag -a "$RELEASE_ID" "$RELEASE_SHA" \
-              -m "Agent SaaS $RELEASE_ID" -m "manifest-digest: $MANIFEST_DIGEST"
-            git push origin "refs/tags/$RELEASE_ID"
-          fi
-          if gh release view "$RELEASE_ID" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_ID" --prerelease=false --latest
-          else
-            gh release create "$RELEASE_ID" --verify-tag --latest \
-              --title "$RELEASE_ID" --notes "Production $RELEASE_ID" \
-              "$RUNNER_TEMP/manifest.json"
-          fi
-
-      - name: 保存可恢复的最近成功生产基线
+      - name: 保存最近成功的生产基线
         id: checkpoint
-        continue-on-error: true
-        if: success() && (env.PROMOTION_OUTCOME == 'completed' || env.PROMOTION_FINALIZATION_MODE == 'checkpoint')
         run: |
           set -euo pipefail
+          test "$(tail -n1 "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" | jq -r .state)" = completed
           checkpoint_remote="/tmp/release-checkpoint-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$checkpoint_remote'"
           scp -i ~/.ssh/production_key scripts/release/read-production-state.mjs \
@@ -1575,120 +1108,171 @@ jobs:
             "sudo bash '$checkpoint_remote/save-production-checkpoint.sh' '$checkpoint_remote' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT'"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "sudo cat '$checkpoint_remote/checkpoint.json'" > "$RUNNER_TEMP/production-checkpoint.json"
+          jq -n --arg releaseId "$RELEASE_ID" '{schemaVersion:1,releaseId:$releaseId,checkpoint:"success"}' \
+            > "$RUNNER_TEMP/checkpoint-maintenance.json"
 
-      - name: 记录派生基线维护状态
-        if: always() && (env.PROMOTION_OUTCOME == 'completed' || env.PROMOTION_FINALIZATION_MODE == 'checkpoint')
-        env:
-          CHECKPOINT_OUTCOME: ${{ steps.checkpoint.outcome }}
+      - name: 写入 OSS 发布记录
         run: |
           set -euo pipefail
-          jq -n --arg outcome "$CHECKPOINT_OUTCOME" --arg releaseId "$RELEASE_ID" \
-            '{schemaVersion:1,releaseId:$releaseId,checkpoint:$outcome,authoritativeReleaseState:"completed",repairOperation:"checkpoint-repair"}' \
-            > "$RUNNER_TEMP/checkpoint-maintenance.json"
-          if [ "$CHECKPOINT_OUTCOME" != success ]; then
-            echo '::warning title=Checkpoint maintenance required::Release is committed. Run checkpoint-repair for this RC; do not repeat runtime promotion.'
-            echo 'Checkpoint maintenance required; committed runtime and authoritative attestation are unchanged.' >> "$GITHUB_STEP_SUMMARY"
-            [ "$PROMOTION_FINALIZATION_MODE" != checkpoint ] || exit 1
-          fi
+          # 生产已收敛。这一行是排查「什么时候切到这个版本」的权威历史，放主干并重试；OSS 比 GitHub API 稳定得多。
+          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
+            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
+          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
+          echo "ATTESTATION_SNAPSHOT_PATH=$snapshot_path" >> "$GITHUB_ENV"
+          for attempt in 1 2 3; do
+            if bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
+              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"; then
+              exit 0
+            fi
+            echo "OSS 发布记录写入失败（第 $attempt 次）"
+            sleep $((attempt * 10))
+          done
+          exit 1
 
-      - name: 在生产变更前记录失败关闭结果
-        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (failure() && env.APPROVAL_RECORDED == 'true' && env.PROMOTION_STARTED != 'true')
+      - name: 写入 GitHub 标签、Release 与部署记录
+        id: evidence
+        if: env.PRODUCTION_CONVERGED == 'true'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          node scripts/release/production-preflight-report.mjs prechange-failure \
-            "$RUNNER_TEMP/promotion-prechange-failure.json" "$PROMOTION_RETRY_MODE" \
-            || echo "::warning title=Production preflight diagnostics::Could not persist prechange diagnostic; recording authoritative attestation next"
-          summary='promotion failed before the durable promoting marker and before production mutation'
-          if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
-            summary='recovery attempt failed before a new promoting marker; prior post-mutation recovery remains required'
+          # 旁证层：生产已经发布成功。这里任何失败都不改变发布结论，只在下一步告警；
+          # 重新运行同一 RC 的发布（verify 模式）会幂等地补写这些记录。
+          status_file="$RUNNER_TEMP/evidence-status.json"
+          failed=()
+          retry() {
+            local label="$1"; shift
+            for attempt in 1 2 3; do
+              if "$@"; then return 0; fi
+              echo "$label 失败（第 $attempt 次）"
+              sleep $((attempt * 10))
+            done
+            failed+=("$label")
+            return 1
+          }
+          finish() {
+            local ok=true
+            [ "${#failed[@]}" -eq 0 ] || ok=false
+            jq -n --argjson ok "$ok" --arg releaseId "$RELEASE_ID" \
+              --argjson failed "$(printf '%s\n' "${failed[@]:-}" | jq -R . | jq -sc 'map(select(length > 0))')" \
+              '{schemaVersion:1,releaseId:$releaseId,ok:$ok,failed:$failed}' > "$status_file"
+            [ "$ok" = true ]
+          }
+          trap finish EXIT
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          ensure_tag() {
+            if git ls-remote --tags origin "refs/tags/$RELEASE_ID" | grep -q .; then
+              git fetch --no-tags origin "refs/tags/$RELEASE_ID:refs/tags/$RELEASE_ID"
+              test "$(git rev-parse "$RELEASE_ID^{commit}")" = "$RELEASE_SHA"
+              git cat-file -p "$(git rev-parse "$RELEASE_ID^{tag}")" | grep -Fx "manifest-digest: $MANIFEST_DIGEST"
+              return 0
+            fi
+            git tag -f -a "$RELEASE_ID" "$RELEASE_SHA" -m "Agent SaaS $RELEASE_ID" -m "manifest-digest: $MANIFEST_DIGEST"
+            git push origin "refs/tags/$RELEASE_ID"
+          }
+          ensure_release() {
+            if gh release view "$RELEASE_ID" >/dev/null 2>&1; then
+              gh release edit "$RELEASE_ID" --prerelease=false --latest
+            else
+              gh release create "$RELEASE_ID" --verify-tag --latest \
+                --title "$RELEASE_ID" --notes "Production $RELEASE_ID" "$RUNNER_TEMP/manifest.json"
+            fi
+          }
+          record_deployment() {
+            local id
+            id="$(jq -n --arg ref "$RELEASE_SHA" --arg releaseId "$RELEASE_ID" \
+              '{ref:$ref,environment:"production",auto_merge:false,required_contexts:[],payload:{releaseId:$releaseId}}' \
+              | gh api --method POST "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)"
+            [[ "$id" =~ ^[1-9][0-9]*$ ]]
+            gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" \
+              -f state=success -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
+          }
+          retry '永久 RC 标签' ensure_tag || true
+          if git ls-remote --tags origin "refs/tags/$RELEASE_ID" | grep -q .; then
+            retry 'GitHub Release' ensure_release || true
+            retry 'Release 发布记录资产' bash scripts/release/upload-github-release-asset-immutable.sh \
+              "$RELEASE_ID" "$ATTESTATION_SNAPSHOT_PATH" || true
           fi
-          reason="$(jq -nc --arg summary "$summary" --arg runId "$GITHUB_RUN_ID" \
-            --arg runAttempt "$GITHUB_RUN_ATTEMPT" --arg recoveryMode "$PROMOTION_RETRY_MODE" \
-            '{summary:$summary,runId:$runId,runAttempt:$runAttempt,recoveryMode:$recoveryMode}')"
-          pnpm exec tsx server/src/release/releaseAttestationCli.ts \
-            --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-            --state failed_before_change --operation "failed-before-change:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
-            --actor "$GITHUB_ACTOR" --reason "$reason"
-          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
-            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
-          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
-          bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
-            || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
+          retry 'GitHub Deployment 记录' record_deployment || true
 
-      - name: 收集持久化恢复与退役观察回执
-        if: always() && env.PROMOTION_REMOTE != ''
+      - name: 旁证未完整写入时告警
+        if: always() && steps.evidence.outcome == 'failure'
         run: |
           set -euo pipefail
-          timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo node '$PROMOTION_REMOTE/web-recovery-journal.mjs' check '$RELEASE_ID' '$MANIFEST_DIGEST'" \
-            > "$RUNNER_TEMP/web-recovery-last.json" || true
-          mkdir -p "$RUNNER_TEMP/rollback-receipts"
-          for component in acs app web; do
-            for state in attempted succeeded; do
-              timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-                "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/rollback-$component.$state' '$component' '$state' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
-                > "$RUNNER_TEMP/rollback-receipts/$component-$state.json" || true
-            done
-          done
-          mkdir -p "$RUNNER_TEMP/prechange-receipts"
-          timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo node '$PROMOTION_REMOTE/read-rollback-receipt.mjs' '$PROMOTION_REMOTE/prechange-acs.recovered' 'acs' 'prechange_recovered' '$RELEASE_ID' '$MANIFEST_DIGEST' '$GITHUB_RUN_ID' '$GITHUB_RUN_ATTEMPT' --json" \
-            > "$RUNNER_TEMP/prechange-receipts/acs-recovered-final.json" || true
-          timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo cat '$PROMOTION_REMOTE/acs-drain-diagnostics-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.jsonl'" \
-            > "$RUNNER_TEMP/acs-drain-diagnostics.jsonl" || true
-          timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo cat '$PROMOTION_REMOTE/acs-drain-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json'" \
-            > "$RUNNER_TEMP/acs-drain-proof.json" || true
-          for suffix in observation alert; do
-            timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-              "sudo cat '/var/lib/agent-saas-release-recovery/retirements/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/app-retirement-$suffix.json'" \
-              > "$RUNNER_TEMP/app-retirement-$suffix.json" || true
-          done
+          failed="$(jq -r '.failed | join("、")' "$RUNNER_TEMP/evidence-status.json" 2>/dev/null || echo '未知')"
+          echo "::warning title=发布成功，但 GitHub 记录未完整写入::$RELEASE_ID 已在生产收敛并写入 OSS 记录；未写入：$failed。重新运行同一 RC 的发布会幂等补写，不会重新部署。"
+          {
+            echo "## ⚠️ $RELEASE_ID 已发布，GitHub 记录未完整写入"
+            echo
+            echo "- 未写入：$failed"
+            echo '- 生产已回读收敛，OSS 发布记录已写入；此告警不影响发布结论。'
+            echo "- 补写方法：再次运行「生产环境发布」，release_id 填 \`$RELEASE_ID\`。"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 汇总脱敏的逐阶段诊断
+      - name: 写入发布摘要
+        if: env.PRODUCTION_CONVERGED == 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "## ✅ $RELEASE_ID 已在生产收敛"
+            echo
+            echo "- 模式：$PROMOTION_MODE；迁移阶段：$MIGRATION_PHASE"
+            echo "- 源码：\`$RELEASE_SHA\`"
+            echo "- Manifest：\`$MANIFEST_DIGEST\`"
+            echo "- 发布前 → 发布后组件已跳过：acs=$ACS_ALREADY_TARGET app=$APP_ALREADY_TARGET web=$WEB_ALREADY_TARGET"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 发布失败时写入下一步指引
+        if: failure() && env.PRODUCTION_CONVERGED != 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "## ❌ ${RELEASE_ID:-（未解析）} 发布未完成"
+            echo
+            echo '- 生产没有被记为已发布；已完成的组件会在重跑时自动跳过。'
+            echo "- 处理方法：看上方失败步骤的日志，修复后重新运行「生产环境发布」，release_id 填 \`${RELEASE_ID:-同一 RC}\`。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 收集诊断
         if: always()
-        run: node scripts/release/collect-promotion-diagnostics.mjs "$RUNNER_TEMP" "$RUNNER_TEMP/promotion-diagnostics"
+        run: |
+          set -euo pipefail
+          if [ -n "${PROMOTION_REMOTE:-}" ]; then
+            timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              "sudo cat '$PROMOTION_REMOTE/acs-drain-diagnostics-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.jsonl'" \
+              > "$RUNNER_TEMP/acs-drain-diagnostics.jsonl" || true
+            timeout 30 ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              "sudo node '$PROMOTION_REMOTE/web-recovery-journal.mjs' check '$RELEASE_ID' '$MANIFEST_DIGEST'" \
+              > "$RUNNER_TEMP/web-recovery-last.json" || true
+          fi
+          node scripts/release/collect-promotion-diagnostics.mjs "$RUNNER_TEMP" "$RUNNER_TEMP/promotion-diagnostics" || true
 
       - name: 上传生产发布证据
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: production-promotion-${{ env.RELEASE_ID }}-${{ github.run_attempt }}
+          name: production-promotion-${{ env.RELEASE_ID || 'unresolved' }}-${{ github.run_attempt }}
           if-no-files-found: warn
           retention-days: 90
           path: |
             ${{ runner.temp }}/production-before.json
+            ${{ runner.temp }}/production-target.json
             ${{ runner.temp }}/production-preflight*.json
-            ${{ runner.temp }}/promotion-prechange-failure.json
             ${{ runner.temp }}/production-after.json
             ${{ runner.temp }}/production-confirmed.json
-            ${{ runner.temp }}/production-partial-confirmed.json
             ${{ runner.temp }}/promotion-observation.json
-            ${{ runner.temp }}/deployment-engine.json
             ${{ runner.temp }}/promotion-diagnostics/
-            ${{ runner.temp }}/operation-receipts/
-            ${{ runner.temp }}/rollback-receipts/
-            ${{ runner.temp }}/prechange-receipts/
+            ${{ runner.temp }}/deploy-acs.log
+            ${{ runner.temp }}/deploy-app.log
             ${{ runner.temp }}/acs-drain-diagnostics.jsonl
-            ${{ runner.temp }}/acs-drain-proof.json
-            ${{ runner.temp }}/web-recovery-state.json
-            ${{ runner.temp }}/web-recovery-receipt.json
-            ${{ runner.temp }}/web-recovery-readback.json
-            ${{ runner.temp }}/web-recovery-replay.json
-            ${{ runner.temp }}/web-recovery-final.json
-            ${{ runner.temp }}/web-recovery-last.json
-            ${{ runner.temp }}/web-recovery-restore.json
+            ${{ runner.temp }}/web-recovery-*.json
             ${{ runner.temp }}/web-rollback.json
             ${{ runner.temp }}/web-budget.json
-            ${{ runner.temp }}/reconcile-input.json
             ${{ runner.temp }}/checkpoint-maintenance.json
             ${{ runner.temp }}/production-checkpoint.json
-            ${{ runner.temp }}/reconcile.json
+            ${{ runner.temp }}/evidence-status.json
             ${{ runner.temp }}/app-handoff.json
             ${{ runner.temp }}/app-retirement*.json
             ${{ runner.temp }}/migration-confirmation*.json
@@ -1696,7 +1280,6 @@ jobs:
             ${{ runner.temp }}/production-api-ready*.json
             ${{ runner.temp }}/attestations/
             ${{ runner.temp }}/staging-promotion-preflight/
-            ${{ runner.temp }}/automatic-child-authorization.jsonl
 
   web_recovery:
     concurrency:

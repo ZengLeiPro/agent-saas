@@ -33,16 +33,13 @@ for (const inputs of [
   { ...rc, operation: '' },
   { ...rc, operation: 'force' },
   { ...rc, operation: 'promote\nrecovery_mode=repair' },
-  { ...rc, release_id: '' },
   { ...rc, release_id: 'main' },
   { ...rc, release_id: 'rc-20260910-01\nextra=1' },
   { ...rc, reason: '   ' },
   { ...rc, reason: {} },
-  { ...rc, recovery_mode: 'force' },
   { ...rc, expected_plan_digest: digest },
   { ...rc, confirm_recovery_only: true },
   { ...repair, release_id: rc.release_id },
-  { ...repair, recovery_mode: 'repair' },
   { ...repair, confirm_recovery_only: false },
   { ...repair, confirm_recovery_only: 'false' },
   { ...repair, confirm_recovery_only: 1 },
@@ -52,7 +49,6 @@ for (const inputs of [
   { ...audit, confirm_recovery_only: true },
   { ...audit, expected_plan_digest: digest },
   { ...audit, release_id: rc.release_id },
-  { ...audit, recovery_mode: 'repair' },
   null,
   [],
 ]) {
@@ -60,6 +56,14 @@ for (const inputs of [
     assert.throws(() => validate(inputs));
   });
 }
+
+test('promote without release_id selects the newest RC inside the production job', () => {
+  assert.deepEqual(validate({ ...rc, release_id: '' }), { operation: 'promote', recoveryMode: '' });
+  assert.deepEqual(validate({ ...rc, release_id: undefined }), {
+    operation: 'promote',
+    recoveryMode: '',
+  });
+});
 
 test('push/PR/tag/non-main dispatch cannot select any production operation', () => {
   for (const eventName of ['push', 'pull_request', 'pull_request_target', 'repository_dispatch']) {

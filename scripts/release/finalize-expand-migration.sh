@@ -1,21 +1,14 @@
 #!/usr/bin/env bash
-# 在 Promotion 的生产互斥组内自动收尾；本脚本只读生产运行态并写入发布凭证，仅执行只读数据库后置条件。
+# 在 Promotion 的生产互斥组内自动收尾 expand 迁移；只读生产运行态、执行只读数据库后置条件，
+# 通过后在本地发布记录追加 completed。上传 GitHub/OSS 记录由 workflow 的后续步骤负责。
 set -euo pipefail
-mode="$(node scripts/release/promotion-finalization-mode.mjs \
-  "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$GITHUB_RUN_ID")"
+: "${RELEASE_ID:?}" "${MANIFEST_DIGEST:?}" "${RUNNER_TEMP:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_ATTEMPT:?}"
+log="$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
+awaiting="$(jq -c 'select(.state=="awaiting_expand_confirmation")' "$log" | tail -n1)"
+test -n "$awaiting" || { echo 'Expand confirmation requires an awaiting_expand_confirmation attestation' >&2; exit 1; }
+test "$(tail -n1 "$log" | jq -r .state)" = awaiting_expand_confirmation
+test "$(jq -r .migrationPlan.phase "$RUNNER_TEMP/manifest.json")" = expand
 MIGRATION_PLAN_DIGEST="$(jq -r .migrationPlan.planDigest "$RUNNER_TEMP/manifest.json")"
-if [ "$mode" = repair ]; then
-  # GitHub 已落 completed 时，仅修复同一 run 的 OSS 镜像，绝不再次部署或追加状态。
-  snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
-    "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
-  snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
-  bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
-    "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
-  echo '已从 GitHub completed 凭证修复 OSS 镜像' >> "$GITHUB_STEP_SUMMARY"
-  exit 0
-fi
-test "$mode" = confirm
-set -euo pipefail
 remote="/tmp/expand-confirmation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 lock_token="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-expand-confirmation"
 lock_log="$RUNNER_TEMP/expand-confirmation-lock.log"
@@ -151,9 +144,7 @@ fi
 lock_ready_confirmed=true
 
 if [ "$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")":"$(jq -r .components.runtimeWorker.action "$RUNNER_TEMP/manifest.json")" != keep:keep ]; then
-  retirement_id="$(node scripts/release/promotion-finalization-mode.mjs \
-    "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" \
-    "$GITHUB_RUN_ID" --retirement-id)"
+  retirement_id="$(printf '%s' "$awaiting" | jq -r .operationKey | sed -nE 's/^outcome:([1-9][0-9]*):([1-9][0-9]*)$/\1-\2/p')"
   [[ "$retirement_id" =~ ^[1-9][0-9]*-[1-9][0-9]*$ ]]
   retirement_root="/var/lib/agent-saas-release-recovery/retirements/$retirement_id"
   run_locked_ssh \
@@ -228,15 +219,6 @@ run_guarded pnpm exec tsx server/src/release/releaseAttestationCli.ts \
   --operation "expand-confirmation:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
   --actor "$GITHUB_ACTOR" --reason "$reason" \
   --confirmation-evidence "$RUNNER_TEMP/migration-confirmation.json"
-run_guarded node scripts/release/attestation-snapshot.mjs create \
-  "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots" \
-  > "$RUNNER_TEMP/attestation-snapshot-result.json"
-snapshot_path="$(jq -r .path "$RUNNER_TEMP/attestation-snapshot-result.json")"
-# GitHub Release 是重跑读取源；其成功后再镜像 OSS，失败重跑不会生成分叉状态。
-run_guarded bash scripts/release/upload-github-release-asset-immutable.sh \
-  "$RELEASE_ID" "$snapshot_path"
-run_guarded bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
-  "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
 {
   echo '### Expand migration confirmation'
   echo "- Release: \`$RELEASE_ID\`"

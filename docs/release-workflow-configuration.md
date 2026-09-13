@@ -183,12 +183,12 @@ append 还会验证 confirmation evidence 的完整 schema、API ready release I
 不同内容或 receipt 缺失都 fail closed。OSS bucket 还必须启用版本控制/保留策略或 WORM，并把 Workflow RAM 身份限制为不可删除、不可覆盖；
 仓库 helper 能阻止正常流程覆盖，但不能替代云端对高权限凭据失陷的保留保护。升级前已存在、尚未携带 migration binding 的旧 `promoting` 记录只允许原样 hydrate 供审计读取；兼容读取不会补写或推断 digest，也不会放宽任何新的 `promoting` append，停在旧 `promoting` 的历史不能由新代码直接补成 `completed`。
 
-`failed_before_change` 的安全重试尾链允许 `approved → promoting → failed_before_change`，但 durable `promoting` 已代表生产变更窗口开启：后续批准必须携带绑定当前 release ID、Manifest digest、`recoveryMode=retry_after_change` 与非空人工原因的结构化复核证据。普通 approval、悬空 `promoting`、缺失绑定或任何未经复核的 post-mutation outcome 都不能重试。`rolled_back` 只能由部署脚本或 Web 恢复 trap 实际执行后的 rollback 证据，加上完整权威读回确认为原生产矩阵后得出；Web、ACS、App receipt 必须一次性提供固定 `acs/app/web` 全集，且每项只能包含布尔 `attempted/succeeded`；缺项、未知项、非法类型、`attempted=false,succeeded=true` 或旧 aggregate flag 都直接 `needs_human`。Web、ACS、App receipt 均区分 attempted/succeeded；ACS/App 只有 symlink/env/identity、byte seal、服务与入口恢复并验证后才写 succeeded，Web 只有 identity 与 `index.html` 都恢复并从 OSS 按字节回读一致才算 succeeded，失败时即使 identity 回到 before 也必须 `needs_human`。单纯的 deploy step failure 不构成 rollback 证据，trap 安装前失败且现场仍为 before 只记 `failed_before_change`；durable `promoting` 后若 Deployment API 失败，复用 promoting 前已上传的只读 reader 通过 SSH stdout 完成现场读回，确认零 runtime mutation 后可记 `failed_before_change`。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt，重跑不得复用上一 attempt 的恢复证据。
-
-Production Promotion 的成功状态还硬性依赖共享主机锁内的 live read、trusted identity 单次写入与确认读回：只有 readback step
-成功且输出 `target_match=true`，才允许从 reconcile 的 `completed` 推进到最终 `completed` 或
-`awaiting_expand_confirmation`；identity 写入或 `production-confirmed.json` 回读失败一律记录
-`needs_human`，即使物理组件已等于目标也不能宣称发布完成。
+Production Promotion 分主干与旁证两层。主干（解析 RC → 证据 → 读生产 → ACS → API/Worker → Web →
+回读 → checkpoint → OSS 记录）每一步失败即失败，不做回执、reconcile 或状态机推断；写入前读取真实
+在线组件，生产矩阵只要是「基线 → ACS → App → Web」的某个前缀就放行，已在目标的组件跳过，因此中断后
+重新运行同一 RC 即为恢复。只有共享主机锁内的 live read 逐组件等于 Manifest 目标且 ConfigIdentity 一致，
+才写入 trusted identity、checkpoint 与 OSS `completed` 记录；GitHub tag / Release / Deployment 记录是
+旁证，带重试、失败只告警并可由同一 RC 的 `verify` 模式幂等补写。详见 `docs/promotion-recovery.md`。
 
 生产 API、Runtime Worker 和 ACS 的运行目录会保留原始压缩包并写入组件级 byte seal，后续复用与
 发布后读回都会重新计算压缩包和展开目录摘要。现有未带 byte seal 的旧目录不会被自动信任；首次
@@ -215,9 +215,9 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   先生成最终传输字节，再由独立 helper 只创建或精确复用；写入由仓库锁定的 `ali-oss` SDK 读取 runner 上权限收紧的临时凭据文件，使用规范化 `oss-<region>` endpoint，并发送真实 `x-oss-forbid-overwrite:true` 条件请求；固定 ossutil 2.1.2 只运行安装后已探测支持的 stat，不承担条件写，字节回读由同一 SDK 的 GET（不带 Accept-Encoding）完成——ossutil/aliyun `cp` 会对 `Content-Encoding: gzip` 对象透明解压并因 CRC 不一致失败；只有 SDK 精确返回 HTTP 409 `FileAlreadyExists` 才进入复用证明，并发同名创建或既有对象的字节/headers 漂移会在固定键 mutation 前 fail closed；recovery Web 的 `assets/**` 与 `workbox-*.js` 也会在复制和 symlink 切换前逐字节验证同名共享文件，冲突时保持 current/previous 不变且不写 `activated`。补偿或证明不完整则进入人工处置。
   此兼容入口不生成不可变 RC、Staging E2E 或完整 Promotion receipt；push/PR 均只执行 CI，不自动部署生产。
   独立 ACS Manual Deploy 已退役，ACS 仅经不可变 RC 晋级。
-- `生产环境发布` 的 `operation` 默认 `promote`，必须填写有效 `release_id` 和原因。
-  `web-recovery-audit` / `web-recovery-repair` 使用独立 `web_recovery` job，RC ID 必须留空，
-  不得混用 RC 的 `recovery_mode=repair`。冷备 repair 必须提交已审阅的 `expected_plan_digest`
+- `生产环境发布` 的 `operation` 默认 `promote`，必须填写原因；`release_id` 留空则发布 OSS 记录中
+  最新的 RC。`web-recovery-audit` / `web-recovery-repair` 使用独立 `web_recovery` job，RC ID 必须留空。
+  冷备 repair 必须提交已审阅的 `expected_plan_digest`
   并勾选 `confirm_recovery_only`。原 audit/repair 的生产锁、固定 SSH 身份、现场重读、失败补偿及审计附件不变。
 - 五个长期入口由 `config/github-workflow-inventory.json` 约束。绿色 main CI 才停用清单内已退役注册项，
   以 ID、文件路径、显示名称三重核对；历史运行与发布证据默认保留，但经独立审查并列入专项清单的临时

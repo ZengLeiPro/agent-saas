@@ -58,7 +58,7 @@ test('manual production boundaries and stable artifact identity are preserved', 
   assert.match(promotion, /group: production-runtime\s+cancel-in-progress: false/u);
   assert.match(
     deploy,
-    /if: github.ref == 'refs\/heads\/main' && \(needs.dispatch.outputs.operation == 'promote' \|\| needs.dispatch.outputs.operation == 'checkpoint-repair'\)/u,
+    /if: github.ref == 'refs\/heads\/main' && needs.dispatch.outputs.operation == 'promote'/u,
   );
   assert.match(
     ci,

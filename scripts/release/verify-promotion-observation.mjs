@@ -4,7 +4,40 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
-import { componentIdentityMatrix } from './reconcile-promotion.mjs';
+
+function hasIdentityFields(value, fields) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    fields.every((field) => typeof value[field] === 'string' && value[field].trim().length > 0)
+  );
+}
+
+export function componentIdentityMatrix(components) {
+  if (!components || typeof components !== 'object' || Array.isArray(components)) return null;
+  const { web, api, runtimeWorker, acs } = components;
+  if (
+    ![web, api, runtimeWorker].every((value) =>
+      hasIdentityFields(value, ['gitSha', 'artifactDigest']),
+    ) ||
+    !hasIdentityFields(acs, ['gitSha', 'orchestratorArtifactDigest', 'sandboxImageDigest'])
+  )
+    return null;
+  return {
+    web: { gitSha: web.gitSha, artifactDigest: web.artifactDigest },
+    api: { gitSha: api.gitSha, artifactDigest: api.artifactDigest },
+    runtimeWorker: {
+      gitSha: runtimeWorker.gitSha,
+      artifactDigest: runtimeWorker.artifactDigest,
+    },
+    acs: {
+      gitSha: acs.gitSha,
+      orchestratorArtifactDigest: acs.orchestratorArtifactDigest,
+      sandboxImageDigest: acs.sandboxImageDigest,
+    },
+  };
+}
 
 // Observation must happen even after compensation. This is a WRITE gate only:
 // retain an unknown live snapshot for reconciliation, but never bless it as the

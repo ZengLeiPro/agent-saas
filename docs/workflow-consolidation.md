@@ -42,11 +42,13 @@ Environment、生产服务和正在进行的其他开发分支不在本次删除
 
 ## 恢复操作的用法
 
-普通 RC 晋级：`operation=promote`（默认）、有效 `release_id`、操作原因；RC 的
-`recovery_mode=normal/repair` 语义不变。旧 API 调用不传 operation 时仍按 promote 处理。
+普通 RC 晋级：`operation=promote`（默认）、操作原因；`release_id` 留空时发布 OSS 记录中最新的
+RC。主干幂等，失败后重新运行同一 RC 即可续跑；没有 `recovery_mode`、`checkpoint-repair` 或自动父
+编排，恢复语义见 `docs/promotion-recovery.md`。「测试环境部署」勾选 `promote_to_production` 会在
+确定性门禁通过后自动触发一次 promote。
 
-冷备审计：`operation=web-recovery-audit`、原因；RC ID 留空，recovery_mode 保持 normal，
-不传 planDigest，不勾选确认。审计完成不表示基线一致，必须审阅 JSON 报告。
+冷备审计：`operation=web-recovery-audit`、原因；RC ID 留空，不传 planDigest，不勾选确认。
+审计完成不表示基线一致，必须审阅 JSON 报告。
 
 冷备修复：先审阅上述审计报告，再选 `operation=web-recovery-repair`，填入完整
 `expected_plan_digest=sha256:...`，勾选 `confirm_recovery_only` 并填写原因。运行时会重新

@@ -195,6 +195,38 @@ describe('OpenAI-only model resolver', () => {
       .toEqual([]);
   });
 
+  it('grok/glm/qwen 未配置时补上与火山/Codex 相同的 10 档发流前重试', () => {
+    const expected = [500, 1_000, 2_000, 10_000, 30_000, 60_000, 60_000, 60_000, 60_000, 60_000];
+    for (const id of ['grok', 'glm', 'qwen'] as const) {
+      const cfg: ModelsConfig = {
+        default: `${id}/m`,
+        allowCrossGroupSwitch: false,
+        groups: [{
+          id,
+          name: id,
+          models: [{ id: 'm', name: 'M', value: `model-${id}` }],
+        }],
+      };
+      expect(resolveModelRef(cfg, `${id}/m`)?.providerOptions?.preStreamRetryDelaysMs).toEqual(expected);
+    }
+  });
+
+  it('grok 显式空数组仍关闭重试；其他组未配置仍不默认重试', () => {
+    const grokOff: ModelsConfig = {
+      default: 'grok/m',
+      allowCrossGroupSwitch: false,
+      groups: [{
+        id: 'grok',
+        name: 'Grok',
+        pre_stream_retry_delays_ms: [],
+        models: [{ id: 'm', name: 'M', value: 'grok-4.6' }],
+      }],
+    };
+    expect(resolveModelRef(grokOff, 'grok/m')?.providerOptions?.preStreamRetryDelaysMs).toEqual([]);
+    expect(resolveModelRef(modelsConfig, 'openai-agents/doubao')?.providerOptions?.preStreamRetryDelaysMs)
+      .toBeUndefined();
+  });
+
   it('maps tool_call_repair per group/model without enabling a global default', () => {
     const withRepair: ModelsConfig = {
       default: 'proxy/detect',

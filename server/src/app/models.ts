@@ -330,8 +330,16 @@ type ConfigProviderOptions = {
   tool_search_protocol?: 'none' | 'openai_responses_hosted';
 };
 
+/** 与生产火山/Codex 组相同的 10 档发流前重试。一项 = 一次额外 POST。 */
+export const CANONICAL_PRE_STREAM_RETRY_DELAYS_MS = [
+  500, 1_000, 2_000, 10_000, 30_000, 60_000, 60_000, 60_000, 60_000, 60_000,
+] as const;
+
+/** 生产未配 pre_stream_retry_delays_ms、但应与火山/Codex 同档的组。 */
+const GROUPS_WITH_CANONICAL_PRE_STREAM_RETRY = new Set(['grok', 'glm', 'qwen']);
+
 function resolveProviderOptions(
-  group: ConfigProviderOptions,
+  group: ConfigProviderOptions & { id: string },
   model: ConfigProviderOptions,
 ): ModelProviderOptions | undefined {
   const extraBody = {
@@ -347,7 +355,11 @@ function resolveProviderOptions(
   const thinking = model.thinking !== undefined ? model.thinking : group.thinking;
   const inputModalities = model.input_modalities ?? group.input_modalities;
   const maxOutputTokens = model.max_output_tokens ?? group.max_output_tokens;
-  const preStreamRetryDelaysMs = model.pre_stream_retry_delays_ms ?? group.pre_stream_retry_delays_ms;
+  const preStreamRetryDelaysMs = model.pre_stream_retry_delays_ms
+    ?? group.pre_stream_retry_delays_ms
+    ?? (GROUPS_WITH_CANONICAL_PRE_STREAM_RETRY.has(group.id)
+      ? [...CANONICAL_PRE_STREAM_RETRY_DELAYS_MS]
+      : undefined);
   const toolCallRepair = model.tool_call_repair ?? group.tool_call_repair;
   // Responses 字段：model 级覆盖 group 级
   const protocol = model.protocol ?? group.protocol;

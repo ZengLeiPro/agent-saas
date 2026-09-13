@@ -29,6 +29,10 @@
         // 普通 assistant 文本工具调用修复：off（默认）/ detect（只观测）/ repair（安全提升）。
         // 必须按 provider/model 显式开启，生产不会全局自动 repair。
         // "tool_call_repair": "detect",
+        // Responses 发流前瞬时故障重试间隔（一项=一次额外 POST，最多 10 项）。
+        // 默认不重试；Grok/智谱/千问三组未配置时由代码补上与火山/Codex 相同的 10 档。
+        // 显式 [] 关闭。
+        // "pre_stream_retry_delays_ms": [500, 1000, 2000, 10000, 30000, 60000, 60000, 60000, 60000, 60000],
         // 无状态 OpenAI 兼容代理（如 cli-proxy）走 Responses 协议时必须关闭有状态接力，
         // 否则工具调用后那一轮上游会报 "No tool call found for function call output"。
         // group 级开关，组内所有模型生效；model 级 disable_response_chaining 可单独覆盖。

@@ -5,6 +5,8 @@ import type { Kubectl, KubectlResult } from './kubectl.js';
 import { SandboxManager } from './sandboxManager.js';
 import { baseConfig } from './sandboxManagerTestFixtures.js';
 import type { SandboxResourceOverride } from './sandboxManagerTypes.js';
+import { hasSandboxResourceDrift } from './sandboxResourceDrift.js';
+import type { SandboxStatus } from './sandboxState.js';
 
 const identity = {
   workspaceId: 'ws_kaiyan__test',
@@ -201,5 +203,40 @@ describe('SandboxManager profile resources', () => {
     expect(h.logs.some((line) => line.includes('sandbox_resource_drift_deferred') && line.includes('reason=busy'))).toBe(true);
     await manager.ensureRunning({ ...identity, resources: daily }, { activeKey: 'next-task' });
     expect(h.deleted).toContain(`sandbox/${ref.name}`);
+  });
+
+  it('override 只带 limit 时不因 request 回落 config 默认误判漂移', async () => {
+    const h = harness(sandboxBody({
+      requests: { cpu: '1', memory: '2Gi' },
+      limits: { cpu: '1', memory: '2048Mi' },
+    }));
+    const manager = new SandboxManager(baseConfig(), h.kubectl, h.logger);
+    await manager.ensureRunning({ ...identity, resources: daily });
+    expect(h.deleted).toEqual([]);
+    expect(h.sandboxManifests).toEqual([]);
+    expect(h.logs.some((line) => line.includes('sandbox_resource_drift'))).toBe(false);
+  });
+});
+
+describe('hasSandboxResourceDrift specified fields', () => {
+  const defaults = { ...daily, cpuRequest: '1', memoryRequest: '2Gi', sandboxContainerName: 'sandbox' };
+  function status(resources: { requests: Record<string, string>; limits: Record<string, string> }): SandboxStatus {
+    return { raw: sandboxBody(resources) } as SandboxStatus;
+  }
+
+  it('ignores unspecified request fields even when they differ from config defaults', () => {
+    expect(hasSandboxResourceDrift(
+      status({ requests: { cpu: '1', memory: '2Gi' }, limits: { cpu: '1', memory: '2048Mi' } }),
+      daily,
+      defaults,
+    )).toBe(false);
+  });
+
+  it('still rebuilds when an explicit limit differs', () => {
+    expect(hasSandboxResourceDrift(
+      status({ requests: { cpu: '1', memory: '2Gi' }, limits: { cpu: '2', memory: '4Gi' } }),
+      daily,
+      defaults,
+    )).toBe(true);
   });
 });

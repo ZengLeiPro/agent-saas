@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applySandboxProfileResources,
+  recipeWithSessionSandboxResources,
   resolveSessionSandboxProfile,
   sandboxResourcesFromHand,
   sandboxResourcesForSessionHand,
@@ -38,6 +39,22 @@ describe('sandboxProfile', () => {
       .toMatchObject({ resources: { cpu: '1', memoryMb: 2048, diskMb: 8192, timeoutMs: 60_000 } });
     expect(applySandboxProfileResources({ resources: { cpu: '9', memoryMb: 99 } }, 'coding'))
       .toMatchObject({ resources: { cpu: '2', memoryMb: 4096 } });
+  });
+
+  it('pins tenant-remote and default ACS recipes to the session profile so warmup and provision share one target', () => {
+    const warmupDaily = applySandboxProfileResources(undefined, 'daily').resources;
+    const provisionFromEmptyTenantRecipe = recipeWithSessionSandboxResources({}, 'daily').resources;
+    const provisionFromCodingConfig = recipeWithSessionSandboxResources(
+      { resources: { cpu: '2', memoryMb: 4096, timeoutMs: 60_000 } },
+      'daily',
+    ).resources;
+    expect(warmupDaily).toEqual({ cpu: '1', memoryMb: 2048 });
+    expect(provisionFromEmptyTenantRecipe).toEqual(warmupDaily);
+    expect(provisionFromCodingConfig).toEqual({ cpu: '1', memoryMb: 2048, timeoutMs: 60_000 });
+    expect(recipeWithSessionSandboxResources(undefined, undefined).resources)
+      .toEqual({ cpu: '2', memoryMb: 4096 });
+    expect(recipeWithSessionSandboxResources({}, 'daily', { cpu: '4', memoryMb: 8192 }).resources)
+      .toEqual({ cpu: '4', memoryMb: 8192 });
   });
 
   it('reads the final registered hand resources for later execute calls', () => {

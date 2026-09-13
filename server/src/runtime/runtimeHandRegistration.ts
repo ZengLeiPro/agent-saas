@@ -14,7 +14,7 @@ import {
   type WorkspaceRecipe,
 } from './handStore.js';
 import { HttpTransport } from './httpTransport.js';
-import { applySandboxProfileResources, LEGACY_SANDBOX_PROFILE, type SandboxResources } from './sandboxProfile.js';
+import { recipeWithSessionSandboxResources, type SandboxResources } from './sandboxProfile.js';
 import {
   selectTenantRemoteHandsForRegistration,
   type TenantRemoteHandAuthTokenResolver,
@@ -249,15 +249,11 @@ export async function ensureRuntimeHandRegistered(params: {
   }
   const effectiveTemplateVersionId = currentEnvironmentInstance?.templateVersionId
     ?? params.environmentTemplateVersionId;
-  const profileRecipeBase = params.executionTarget === 'server-remote'
-    ? applySandboxProfileResources(
-        params.serverRemoteRecipe,
-        params.sandboxProfile ?? LEGACY_SANDBOX_PROFILE,
-      )
-    : params.serverRemoteRecipe;
-  const profileRecipe = params.sandboxResources
-    ? { ...profileRecipeBase, resources: { ...profileRecipeBase?.resources, ...params.sandboxResources } }
-    : profileRecipeBase;
+  const profileRecipe = params.executionTarget === 'server-remote'
+    ? recipeWithSessionSandboxResources(params.serverRemoteRecipe, params.sandboxProfile, params.sandboxResources)
+    : params.sandboxResources
+      ? { ...params.serverRemoteRecipe, resources: { ...params.serverRemoteRecipe?.resources, ...params.sandboxResources } }
+      : params.serverRemoteRecipe;
   const baseRecipe = buildWorkspaceRecipe(
     params.workspaceId,
     params.executionTarget === 'server-remote'
@@ -569,7 +565,11 @@ export async function ensureRuntimeHandRegistered(params: {
     const tenantRecipe = buildWorkspaceRecipe(
       remoteWorkspaceId,
       {
-        ...hand.recipe,
+        ...recipeWithSessionSandboxResources(
+          hand.recipe,
+          params.sandboxProfile,
+          params.sandboxResources,
+        ),
         // Runtime classification belongs to this session/run. A tenant hand may
         // provide static repo/resources/setup/mount defaults, but its configured
         // workload must never override the persisted dispatch descriptor.

@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { rawRevision, readPublication } from '../../../scripts/release/config-publication.mjs';
-import { createProductionPublicationRig } from './helpers/productionPublicationRig.js';
+import { rawRevision, readPublication, writePublication } from '../../../scripts/release/config-publication.mjs';
+import { createProductionPublicationRig, publicIdentity } from './helpers/productionPublicationRig.js';
+import { ProductionModelPublisher } from '../config/productionModelPublisher.js';
+import { computeObservedConfigIdentity } from '../release/configIdentity.js';
+import { parseAppConfig } from '../app/config.js';
 import { GrokCredentialManager } from '../runtime/responses/grokCredentialManager.js';
 import { GrokOAuthClient } from '../runtime/responses/grokOAuthClient.js';
 import { grokTokens } from './grokTestFixtures.js';
@@ -96,6 +100,40 @@ describe('Grok signed dual-consumer publication T20-T22', () => {
     expect(f.refresh).toHaveBeenCalledOnce();
     expect(readPublication(rig.configPath)!.phase).toBe('committed');
     expect(rig.nodes.every((n) => n.view.isExecutionAllowed())).toBe(true);
+  });
+  it('adopts the current code release when rotating credentials against a signed older RC snapshot', async () => {
+    const f = await setup();
+    const before = readPublication(rig.configPath)!;
+    writePublication(rig.configPath, { ...before, releaseId: 'rc-old' });
+    const currentExpected = publicIdentity(
+      await computeObservedConfigIdentity(
+        parseAppConfig(JSON.parse(readFileSync(rig.configPath, 'utf8'))),
+        rig.vault,
+        rig.processCwd,
+      ),
+    );
+    const next = new ProductionModelPublisher({
+      configPath: rig.configPath,
+      processCwd: rig.processCwd,
+      promotionLockPath: join(rig.root, 'promotion.lock'),
+      releaseId: 'rc-new',
+      expected: currentExpected,
+      secretVault: rig.vault,
+      targets: () => rig.targets,
+      observeLocal: rig.observe,
+      timeoutMs: 500,
+      pollMs: 5,
+    });
+    f.manager.setCredentialRotationTransaction((ref, action) =>
+      next.withCredentialRotation(ref, action),
+    );
+    const token = await f.manager.getCredentials();
+    expect(token.generation).toBe(2);
+    const after = readPublication(rig.configPath)!;
+    expect(after.releaseId).toBe('rc-new');
+    expect(after.phase).toBe('committed');
+    expect(after.identity.digest).toBe(before.identity.digest);
+    expect(after.identity.credentialVersionDigest).not.toBe(before.identity.credentialVersionDigest);
   });
   it('rolls back rejected registration without changing the original model or publishing a candidate', async () => {
     const manager = new GrokCredentialManager({

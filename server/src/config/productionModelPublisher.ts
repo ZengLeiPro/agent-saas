@@ -119,6 +119,7 @@ export class ProductionModelPublisher implements ProductionPublisher {
       observeLocal: () => Promise<void>;
       pendingCredentialRotations?: () => Promise<string[]>;
       acknowledgeCredentialRotation?: (ref: string) => Promise<void>;
+      persistCredentialVersion?: (identity: PublishedIdentity) => void;
       promotionLockPath?: string;
       timeoutMs?: number;
       pollMs?: number;
@@ -347,24 +348,41 @@ export class ProductionModelPublisher implements ProductionPublisher {
     }
   }
 
-  private async coordinateCredentialRotationLocked(credentialRef: string): Promise<void> {
-    const state = assertPublishedDisk(this.options.configPath, this.state())!;
-    if (state.phase !== 'committed' || state.releaseId !== this.options.releaseId) {
+  private assertCredentialRotationAuthority(
+    state: ConfigPublication,
+    identity: PublishedIdentity,
+  ): void {
+    if (state.phase !== 'committed') throw new Error('凭据轮换时生产配置权威不可用');
+    if (state.releaseId === this.options.releaseId) return;
+    // 新代码发布仍运行已签名的同一份配置快照：只允许推进凭据版本。
+    if (identity.digest !== state.identity.digest || identity.digest !== this.options.expected.digest) {
       throw new Error('凭据轮换时生产配置权威不可用');
     }
+    if (rawRevision(readFileSync(this.options.configPath, 'utf8')) !== state.rawRevision) {
+      throw new Error('Unpublished production configuration change detected');
+    }
+  }
+
+  private async coordinateCredentialRotationLocked(credentialRef: string): Promise<void> {
+    const state = assertPublishedDisk(this.options.configPath, this.state())!;
     const currentText = readFileSync(this.options.configPath, 'utf8');
     const currentRaw = parseJsonc(currentText) as Record<string, unknown>;
     const config = parseAppConfig(currentRaw);
     const provider = configuredSubscriptionProvider(config, credentialRef);
     const identity = await this.identity(config);
-    if (canonical(identity) === canonical(this.expected(state))) {
+    this.assertCredentialRotationAuthority(state, identity);
+    const adoptRelease = state.releaseId !== this.options.releaseId;
+    if (!adoptRelease && canonical(identity) === canonical(this.expected(state))) {
       const targets = this.options.targets(); this.assertTargets(targets);
-      await this.wait(state, targets); return;
+      await this.wait(state, targets);
+      this.options.persistCredentialVersion?.(identity);
+      return;
     }
     const targets = this.options.targets();
     this.assertTargets(targets);
     const intent: ConfigPublication = {
       ...state,
+      releaseId: this.options.releaseId,
       phase: 'applying',
       sequence: state.sequence + 1,
       revision: randomUUID(),
@@ -385,6 +403,7 @@ export class ProductionModelPublisher implements ProductionPublisher {
       await this.wait(intent, targets);
       const committed = this.transition(intent, 'committed');
       await this.wait(committed, targets);
+      this.options.persistCredentialVersion?.(identity);
     } catch (error) {
       try {
         const latest = this.state();
@@ -423,11 +442,19 @@ export class ProductionModelPublisher implements ProductionPublisher {
     const identity = await this.identity(config);
     if (identity.digest !== state.previous.identity.digest) throw new Error('凭据轮换恢复不能接受配置内容漂移');
     const targets = this.options.targets(); this.assertTargets(targets);
-    const intent: ConfigPublication = { ...state, phase: 'applying', sequence: state.sequence + 1,
-      identity, owner: processIdentity(), updatedAt: new Date(this.now()).toISOString() };
+    const intent: ConfigPublication = {
+      ...state,
+      releaseId: this.options.releaseId,
+      phase: 'applying',
+      sequence: state.sequence + 1,
+      identity,
+      owner: processIdentity(),
+      updatedAt: new Date(this.now()).toISOString(),
+    };
     try {
       writePublication(this.options.configPath, intent); await this.wait(intent, targets);
       const committed = this.transition(intent, 'committed'); await this.wait(committed, targets);
+      this.options.persistCredentialVersion?.(identity);
     } catch (error) {
       try {
         const latest = this.state();

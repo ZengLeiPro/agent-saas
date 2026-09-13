@@ -84,6 +84,81 @@ function parseExpectedConfigIdentity(values) {
   };
 }
 
+function readLiveIdentitySnapshot(kind, color, options = {}) {
+  const path =
+    options.snapshotPath ??
+    `/run/agent-saas-${kind === 'worker' ? 'runtime-worker' : 'server'}-${color}.config-identity.json`;
+  const readFile = options.readFile ?? readFileSync;
+  try {
+    return JSON.parse(readFile(path, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 发布写身份时，digest 未变则绑定 API/Worker 现场 observed 凭据版本，
+ * 避免用两分钟前 release env 快照把刚轮换的 Vault 写成漂移。
+ */
+export function overlayLiveObservedCredentialVersion(
+  expected,
+  apiColor,
+  workerColor,
+  options = {},
+) {
+  if (!expected?.digest) return expected;
+  const api = readLiveIdentitySnapshot('server', apiColor, options);
+  const worker = readLiveIdentitySnapshot('worker', workerColor, options);
+  if (!api?.observed || !worker?.observed) return expected;
+  if (api.observed.digest !== expected.digest || worker.observed.digest !== expected.digest) {
+    throw new Error('Live ConfigIdentity digest disagrees with release env');
+  }
+  const credentialVersionDigest = api.observed.credentialVersionDigest;
+  if (
+    !credentialVersionDigest ||
+    credentialVersionDigest !== worker.observed.credentialVersionDigest
+  ) {
+    throw new Error('Live API/Worker credential versions disagree');
+  }
+  if (!/^sha256:[a-f0-9]{64}$/u.test(credentialVersionDigest)) {
+    throw new Error('Live credentialVersionDigest is malformed');
+  }
+  if (expected.credentialVersionDigest === credentialVersionDigest) return expected;
+  return { ...expected, credentialVersionDigest };
+}
+
+function patchReleaseEnvCredentialVersion(envPath, expected, releaseId, options = {}) {
+  const readFile = options.readFile ?? readFileSync;
+  const writeFile = options.writeFile ?? writeFileSync;
+  let text;
+  try {
+    text = readFile(envPath, 'utf8');
+  } catch {
+    return;
+  }
+  const lines = text.split(/\r?\n/u);
+  const values = Object.fromEntries(
+    lines
+      .filter((line) => line.includes('='))
+      .map((line) => {
+        const at = line.indexOf('=');
+        return [line.slice(0, at), line.slice(at + 1)];
+      }),
+  );
+  if (values.AGENT_SAAS_RELEASE_ID !== releaseId) return;
+  if (values.AGENT_SAAS_CONFIG_IDENTITY_DIGEST !== expected.digest) {
+    throw new Error('release env digest disagrees with identity being committed');
+  }
+  values.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST = expected.credentialVersionDigest;
+  writeFile(
+    envPath,
+    `${Object.entries(values)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n')}\n`,
+    { mode: 0o600 },
+  );
+}
+
 function validateTrustedExpectedConfigIdentity(value) {
   if (value === undefined) return undefined;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -300,14 +375,31 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const previousIdentity = existsSync(outputPath)
     ? JSON.parse(readFileSync(outputPath, 'utf8'))
     : undefined;
+  const expected = overlayLiveObservedCredentialVersion(
+    resolveExpectedConfigIdentityForProduction(manifest, apiColor, previousIdentity, {
+      activeReleaseTarget: topology.api.releaseTarget,
+    }),
+    apiColor,
+    workerColor,
+  );
+  if (expected?.credentialVersionDigest) {
+    patchReleaseEnvCredentialVersion(
+      `/etc/agent-saas/server-${apiColor}.release.env`,
+      expected,
+      manifest.releaseId,
+    );
+    patchReleaseEnvCredentialVersion(
+      `/etc/agent-saas/runtime-worker-${workerColor}.release.env`,
+      expected,
+      manifest.releaseId,
+    );
+  }
   const identity = buildProductionIdentity(
     manifest,
     topology,
     new Date().toISOString(),
     previousIdentity,
-    resolveExpectedConfigIdentityForProduction(manifest, apiColor, previousIdentity, {
-      activeReleaseTarget: topology.api.releaseTarget,
-    }),
+    expected,
   );
   writeFileSync(`${outputPath}.candidate`, `${JSON.stringify(identity, null, 2)}\n`, {
     mode: 0o444,

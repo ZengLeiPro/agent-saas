@@ -45,7 +45,11 @@ export function publicIdentity(value: {
       : {}),
   };
 }
-export async function createProductionPublicationRig() {
+export async function createProductionPublicationRig(
+  options: { publicationReleaseId?: string; runtimeReleaseId?: string } = {},
+) {
+  const publicationReleaseId = options.publicationReleaseId ?? 'test-release';
+  const runtimeReleaseId = options.runtimeReleaseId ?? publicationReleaseId;
   const root = mkdtempSync(join(tmpdir(), 'production-model-save-'));
   const processCwd = join(root, 'server');
   mkdirSync(processCwd);
@@ -81,7 +85,7 @@ export async function createProductionPublicationRig() {
   const expected = publicIdentity(
     await computeObservedConfigIdentity(parseAppConfig(raw), vault, processCwd),
   );
-  const baseline = preparePublicationAuthority(configPath, 'test-release', expected);
+  const baseline = preparePublicationAuthority(configPath, publicationReleaseId, expected);
   const targets: PublicationTarget[] = (['ws-only', 'runtime-worker'] as const).map((role) => ({
     role,
     process: processIdentity(),
@@ -98,7 +102,7 @@ export async function createProductionPublicationRig() {
       const view = createProductionConfigIdentityView({
         environment: 'production',
         configPath,
-        releaseId: 'test-release',
+        releaseId: runtimeReleaseId,
         expected,
         processCwd,
         secretVault: vault,
@@ -150,7 +154,7 @@ export async function createProductionPublicationRig() {
       if (canonical(observed) !== canonical(state.identity)) continue;
       const receipt: PublicationReceipt = {
         schemaVersion: 1,
-        releaseId: 'test-release',
+        releaseId: state.releaseId,
         role: node.target.role,
         process: node.target.process,
         revision: state.revision,
@@ -171,7 +175,7 @@ export async function createProductionPublicationRig() {
     configPath,
     processCwd,
     promotionLockPath: join(root, 'promotion.lock'),
-    releaseId: 'test-release',
+    releaseId: runtimeReleaseId,
     expected,
     secretVault: vault,
     targets: () => topology,
@@ -245,6 +249,7 @@ export async function createProductionPublicationRig() {
     oldRef,
     baseline,
     expected,
+    runtimeReleaseId,
     targets,
     nodes,
     publisher,

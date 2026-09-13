@@ -511,7 +511,11 @@ process.on('SIGUSR2', () => {
     serverLogger.info(`Drain ${why}; cleaning up and exiting`);
     const forceTimer = setTimeout(() => {
       drain.fail('shutdown_cleanup_failed');
-      writeDrainMarker({ activeStreams: runtime?.channelManager.getActiveStreamCount() ?? 0, activeUploads: runtime?.uploadManager.getActiveUploadCount() ?? 0, runtimeQuiesced: false });
+      writeDrainMarker({
+        activeStreams: runtime?.channelManager.getActiveStreamCount() ?? 0,
+        activeUploads: runtime?.uploadManager.getActiveUploadCount() ?? 0,
+        runtimeQuiesced: drain.runtimeQuiesced,
+      });
       process.exit(0);
     }, 30_000);
     forceTimer.unref();
@@ -519,7 +523,11 @@ process.on('SIGUSR2', () => {
       drain.fail('shutdown_cleanup_failed');
       serverLogger.error('Drain cleanup failed:', error);
     }).finally(() => {
-      writeDrainMarker({ activeStreams: runtime?.channelManager.getActiveStreamCount() ?? 0, activeUploads: runtime?.uploadManager.getActiveUploadCount() ?? 0, runtimeQuiesced: drain.runtimeQuiesced });
+      writeDrainMarker({
+        activeStreams: runtime?.channelManager.getActiveStreamCount() ?? 0,
+        activeUploads: runtime?.uploadManager.getActiveUploadCount() ?? 0,
+        runtimeQuiesced: drain.runtimeQuiesced,
+      });
       process.exit(0); // Keep Restart=on-failure from resurrecting a drained generation; the marker is authoritative.
     });
   };

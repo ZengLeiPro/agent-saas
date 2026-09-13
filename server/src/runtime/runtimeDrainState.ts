@@ -4,6 +4,8 @@ export class RuntimeDrainState {
   private phase: RuntimeDrainPhase = 'draining';
   private quiesced = false;
   private reason: string | undefined;
+  private cleanupStatus: 'failed' | undefined;
+  private cleanupReason: string | undefined;
   private readonly startedAt = new Date().toISOString();
 
   async quiesce(action: () => Promise<unknown>, onError: (error: unknown) => void): Promise<void> {
@@ -17,6 +19,11 @@ export class RuntimeDrainState {
   }
 
   fail(reason: 'runtime_quiesce_failed' | 'shutdown_cleanup_failed'): void {
+    if (this.phase === 'completed') {
+      this.cleanupStatus = 'failed';
+      this.cleanupReason = reason;
+      return;
+    }
     this.phase = 'failed';
     this.quiesced = false;
     this.reason = reason;
@@ -46,12 +53,15 @@ export class RuntimeDrainState {
     runtimeQuiesced: boolean;
     startedAt: string;
     reason?: string;
+    cleanupStatus?: 'failed';
+    cleanupReason?: string;
   } {
     return {
       drainState: this.phase,
       runtimeQuiesced: this.quiesced,
       startedAt: this.startedAt,
       ...(this.reason ? { reason: this.reason } : {}),
+      ...(this.cleanupStatus ? { cleanupStatus: this.cleanupStatus, cleanupReason: this.cleanupReason } : {}),
     };
   }
 }

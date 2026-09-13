@@ -119,6 +119,7 @@ scp -i ~/.ssh/production_key \
   scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \
   scripts/release/verify-installed-release.mjs \
   scripts/release/verify-app-retirement.sh \
+  scripts/release/app-retirement-verify-gate.mjs \
   "$ECS_USER@$ECS_HOST:$remote/"
 
 # 租约长于外层 30 分钟自动收尾上限，上传及提交期间持续验证持有者。

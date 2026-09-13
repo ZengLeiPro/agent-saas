@@ -296,9 +296,9 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
   it('finish(in_review) 成功停车后不再自动重派', async () => {
     const delivery = await putDeliveryInReview('Successful review stays parked', 'review-park', '402');
     const claimed = await claimReview(delivery.id, delivery.version, 'park');
-    await store.completeExecution(claimed.execution.runId, {
-      status: 'succeeded',
-      commentBody: '证据暂不足，保持 in_review',
+    await store.finishExecutionV2(identity, claimed.execution.runId, {
+      targetStatus: 'in_review',
+      body: '证据暂不足，保持 in_review',
     });
 
     expect((await store.claimIntegrationDispatchCandidatesV2(10))

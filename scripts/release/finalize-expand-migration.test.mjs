@@ -165,33 +165,26 @@ function events(root) {
   return readFileSync(join(root, 'events'), 'utf8').trim().split('\n');
 }
 
-test(
-  'Linux 实际自动收尾：两次回读、证据上传、真实状态机 completed、GitHub 与 OSS 落盘',
-  { skip: !linux },
-  () => {
-    const { root, env } = setup();
-    const result = run(env);
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(state(root), 'completed');
-    assert.deepEqual(events(root), [
-      'retirement-target',
-      'retirement-initial',
-      'read-initial',
-      'database-initial',
-      'retirement-final',
-      'read-final',
-      'database-final',
-      'evidence-upload',
-      'append-completed',
-      'github-upload',
-      'oss-mirror',
-    ]);
-    assert.equal(
-      readFileSync(join(root, 'github.jsonl'), 'utf8'),
-      readFileSync(join(root, 'oss-mirror.json'), 'utf8'),
-    );
-  },
-);
+test('Linux 实际自动收尾：两次回读、证据上传、真实状态机 completed', { skip: !linux }, () => {
+  const { root, env } = setup();
+  const result = run(env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(state(root), 'completed');
+  assert.deepEqual(events(root), [
+    'retirement-target',
+    'retirement-initial',
+    'read-initial',
+    'database-initial',
+    'retirement-final',
+    'read-final',
+    'database-final',
+    'evidence-upload',
+    'append-completed',
+  ]);
+  // 发布记录的 GitHub / OSS 上传由 workflow 的后续步骤统一负责，脚本本身不再上传。
+  assert.ok(!existsSync(join(root, 'github.jsonl')));
+  assert.ok(!existsSync(join(root, 'oss-mirror.json')));
+});
 
 for (const scenario of [
   'drift',
@@ -212,36 +205,3 @@ for (const scenario of [
     assert.ok(!existsSync(join(root, 'github.jsonl')));
   });
 }
-
-test('Linux GitHub 上传失败后，新 runner 从耐久等待状态续做确认', { skip: !linux }, () => {
-  const first = setup();
-  const failed = run({ ...first.env, FINALIZATION_TEST_SCENARIO: 'github-upload' });
-  assert.notEqual(failed.status, 0);
-  assert.equal(state(first.root), 'completed');
-  assert.ok(!existsSync(join(first.root, 'github.jsonl')));
-  assert.ok(!events(first.root).includes('oss-mirror'));
-  // 新 runner 只会从 GitHub 取回旧 awaiting 凭证，不复用失败 runner 的本地 completed。
-  const retry = setup();
-  const completed = run({ ...retry.env, GITHUB_RUN_ATTEMPT: '2' });
-  assert.equal(completed.status, 0, completed.stderr);
-  assert.equal(state(retry.root), 'completed');
-});
-
-test(
-  'Linux GitHub 完成而 OSS 失败，同一 run 重跑只修镜像、不读取或部署生产',
-  { skip: !linux },
-  () => {
-    const { root, env } = setup();
-    const first = run({ ...env, FINALIZATION_TEST_SCENARIO: 'oss-mirror' });
-    assert.notEqual(first.status, 0);
-    assert.equal(state(root), 'completed');
-    const initial = events(root);
-    const repaired = run({ ...env, GITHUB_RUN_ATTEMPT: '2' });
-    assert.equal(repaired.status, 0, repaired.stderr);
-    assert.deepEqual(events(root).slice(initial.length), ['oss-mirror']);
-    assert.equal(
-      readFileSync(join(root, 'github.jsonl'), 'utf8'),
-      readFileSync(join(root, 'oss-mirror.json'), 'utf8'),
-    );
-  },
-);

@@ -205,7 +205,8 @@ test('both workflows transport the complete preflight payload and archive failur
       assert.ok(workflow.includes(file), file);
     assert.ok(workflow.includes('production-preflight*.json'));
   }
-  assert.ok(production.includes('promotion-prechange-failure.json'));
+  // 主干模型下写入前失败即 job 失败，预检诊断随 production-preflight*.json 进入 artifact，不再单独归档 prechange marker。
+  assert.ok(!production.includes('promotion-prechange-failure.json'));
   assert.ok(staging.includes('production-baseline-provenance.json'));
   assert.ok(staging.includes('historical build baseline only'));
   assert.ok(

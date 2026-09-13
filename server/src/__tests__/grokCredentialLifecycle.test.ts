@@ -34,15 +34,86 @@ describe('Grok credential lifecycle (T08, T10-T12, T23, T36)', () => {
     await f.manager.markAuthUnavailable(ref, 'late', 1);
     expect(await f.manager.getRuntimeState(ref)).toBeUndefined();
   });
-  it('does not replay a rotating refresh token after an unknown upstream outcome', async () => {
+  it('treats a transport failure as retryable: no permanent mark, fence released, same token retried', async () => {
     const f = await grokFixture(1);
     const refresh = vi
       .spyOn(f.oauth, 'refresh')
-      .mockRejectedValue(new GrokProtocolError('network_outcome_unknown', undefined, true));
-    await expect(f.manager.getCredentials(true, 1)).rejects.toThrow('refresh_outcome_unknown');
-    await expect(f.manager.getCredentials(true, 1)).rejects.toThrow('refresh_outcome_unknown');
+      .mockRejectedValueOnce(new GrokProtocolError('network_outcome_unknown', undefined, true))
+      .mockImplementation(async (old) => ({
+        ...old,
+        accessToken: 'fixture-new',
+        refreshToken: 'fixture-rotated',
+      }));
+    await expect(f.manager.getCredentials(true, 1)).rejects.toMatchObject({
+      code: 'refresh_transient_failure',
+      outcomeUnknown: true,
+    });
+    expect(await f.journal.get(f.refs[0])).toBeUndefined();
+    expect(await f.manager.getRuntimeState(f.refs[0])).toBeUndefined();
+    expect((await f.manager.getStatus(f.refs[0])).connected).toBe(true);
+    const recovered = await f.manager.getCredentials(true, 1);
+    expect(recovered.generation).toBe(2);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(refresh.mock.calls[1]![0]!.refreshToken).toBe('fixture-refresh-fixture-0');
+  });
+  it('marks the account unavailable only when the authorization server rejects the grant', async () => {
+    const f = await grokFixture(1);
+    const refresh = vi
+      .spyOn(f.oauth, 'refresh')
+      .mockRejectedValue(new GrokProtocolError('invalid_grant', 400));
+    await expect(f.manager.getCredentials(true, 1)).rejects.toThrow('invalid_grant');
+    expect(await f.manager.getRuntimeState(f.refs[0])).toMatchObject({
+      availability: 'auth_unavailable',
+      lastFailureCode: 'invalid_grant',
+    });
+    await expect(f.manager.getCredentials(true, 1)).rejects.toThrow('invalid_grant');
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(await f.journal.get(f.refs[0])).toBe(1);
+    expect(await f.journal.get(f.refs[0])).toBeUndefined();
+    expect((await f.manager.getStatus(f.refs[0])).connected).toBe(false);
+  });
+  it('keeps serving a still-valid access token when an early refresh fails transiently', async () => {
+    const f = await grokFixture(1);
+    const candidate = await f.manager.persistLogin(grokTokens('fixture-soon', 8 * 60_000));
+    f.config.credentialRefs = [candidate.credentialRef];
+    f.config.credentialRef = candidate.credentialRef;
+    const refresh = vi
+      .spyOn(f.oauth, 'refresh')
+      .mockRejectedValue(new GrokProtocolError('network_outcome_unknown', undefined, true));
+    const token = await f.manager.getCredentials();
+    expect(token).toMatchObject({ generation: 1, accessToken: 'fixture-access-fixture-soon' });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(await f.manager.getRuntimeState(candidate.credentialRef)).toBeUndefined();
+    await expect(f.manager.getCredentials(true, 1)).rejects.toMatchObject({
+      code: 'refresh_transient_failure',
+    });
+  });
+  it('recovers a credential that an older release left as refresh_outcome_unknown with a pending fence', async () => {
+    const f = await grokFixture(1);
+    await f.journal.begin(f.refs[0], 1);
+    await f.state.markAuthUnavailable(f.refs[0], 'refresh_outcome_unknown', 1);
+    expect(await f.manager.getStatus(f.refs[0])).toMatchObject({
+      connected: true,
+      availability: 'available',
+      lastFailureCode: 'refresh_outcome_unknown',
+    });
+    const refresh = vi
+      .spyOn(f.oauth, 'refresh')
+      .mockImplementation(async (old) => ({ ...old, accessToken: 'fixture-recovered' }));
+    const token = await f.manager.getCredentials();
+    expect(token).toMatchObject({ generation: 2, accessToken: 'fixture-recovered' });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(await f.journal.get(f.refs[0])).toBeUndefined();
+    expect(await f.state.get(f.refs[0])).toBeUndefined();
+  });
+  it('clears a legacy transient auth_unavailable mark when the transport inspects runtime state', async () => {
+    const f = await grokFixture(1);
+    await f.state.markAuthUnavailable(f.refs[0], 'refresh_outcome_unknown', 1);
+    expect(await f.manager.getRuntimeState(f.refs[0])).toBeUndefined();
+    expect(await f.state.get(f.refs[0])).toBeUndefined();
+    await f.state.markAuthUnavailable(f.refs[0], 'invalid_grant', 1);
+    expect(await f.manager.getRuntimeState(f.refs[0])).toMatchObject({
+      availability: 'auth_unavailable',
+    });
   });
   it('recovers a rotated Vault version after a lost acknowledgement without exchanging the old token again', async () => {
     const f = await grokFixture(1);
@@ -54,7 +125,7 @@ describe('Grok credential lifecycle (T08, T10-T12, T23, T36)', () => {
     const refresh = vi
       .spyOn(f.oauth, 'refresh')
       .mockImplementation(async (old) => ({ ...old, accessToken: 'fixture-rotated-once' }));
-    await expect(f.manager.getCredentials(true, 1)).rejects.toThrow('refresh_outcome_unknown');
+    await expect(f.manager.getCredentials(true, 1)).rejects.toThrow('refresh_transient_failure');
     expect(await f.manager.getPendingPublicationRefs()).toEqual([f.refs[0]]);
     const recovered = await f.manager.getCredentials();
     expect(recovered.generation).toBe(2);

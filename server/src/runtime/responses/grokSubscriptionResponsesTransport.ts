@@ -7,7 +7,12 @@ import {
   type GrokCredentialManager,
   type GrokTokenBundle,
 } from './grokCredentialManager.js';
-import { GrokProtocolError, isRecord, subscriptionHeaders } from './grokProtocol.js';
+import {
+  GrokProtocolError,
+  isRecord,
+  isTransientGrokRefreshError,
+  subscriptionHeaders,
+} from './grokProtocol.js';
 import {
   classifyGrokResponse,
   grokErrorResponse,
@@ -64,6 +69,8 @@ export class GrokSubscriptionResponsesTransport implements ResponsesTransport {
       try {
         return this.binding(await this.credentials.getCredentialsForCredential(ref), input.context);
       } catch (error) {
+        // 刷新瞬态失败不代表账号失效：跳过本次绑定，不标记、不换号规避。
+        if (isTransientGrokRefreshError(error)) continue;
         if (!(error instanceof GrokCredentialError)) throw error;
         await this.credentials.markAuthUnavailable(ref, error.code, error.credentialGeneration);
       }

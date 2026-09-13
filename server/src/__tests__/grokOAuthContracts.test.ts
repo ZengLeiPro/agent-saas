@@ -118,6 +118,66 @@ describe('Grok trusted OAuth contracts T13-T17', () => {
       new GrokOAuthClient(vi.fn().mockRejectedValue(new Error('fixture-secret'))).discover(),
     ).rejects.toMatchObject({ code: 'network_outcome_unknown', outcomeUnknown: true });
   });
+  it('retries connection-level failures on the same proxy-required fetch and keeps identity continuity from id_token when userinfo is unavailable', async () => {
+    const idToken = `h.${Buffer.from(JSON.stringify({ sub: 'fixture-a' })).toString('base64url')}.s`;
+    let tokenAttempts = 0;
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === GROK_DISCOVERY_ENDPOINT) return jsonResponse(discovery);
+      if (String(url).endsWith('/token')) {
+        tokenAttempts += 1;
+        expect(isProxyRequiredEgressRequest(init)).toBe(true);
+        if (tokenAttempts < 3) throw new TypeError('fetch failed');
+        return jsonResponse({
+          access_token: 'fixture-new',
+          refresh_token: 'fixture-rotated',
+          id_token: idToken,
+          expires_in: 3600,
+        });
+      }
+      return new Response('upstream unavailable', {
+        status: 503,
+        headers: { 'content-type': 'text/html' },
+      });
+    });
+    const tokens = await new GrokOAuthClient(fetcher as typeof fetch).refresh(grokTokens());
+    expect(tokens).toMatchObject({
+      accessToken: 'fixture-new',
+      refreshToken: 'fixture-rotated',
+      accountId: 'fixture-a',
+      email: 'fixture-a@example.invalid',
+    });
+    expect(tokenAttempts).toBe(3);
+  });
+  it('rejects id_token continuity for another subject and surfaces the userinfo failure when no id_token exists', async () => {
+    const other = `h.${Buffer.from(JSON.stringify({ sub: 'someone-else' })).toString('base64url')}.s`;
+    const build = (idToken?: string) =>
+      vi.fn(async (url: RequestInfo | URL) => {
+        if (String(url) === GROK_DISCOVERY_ENDPOINT) return jsonResponse(discovery);
+        if (String(url).endsWith('/token'))
+          return jsonResponse({
+            access_token: 'fixture-new',
+            expires_in: 3600,
+            ...(idToken ? { id_token: idToken } : {}),
+          });
+        return jsonResponse({ error: 'server_error' }, 503);
+      });
+    await expect(
+      new GrokOAuthClient(build(other) as typeof fetch).refresh(grokTokens()),
+    ).rejects.toMatchObject({ code: 'identity_changed', outcomeUnknown: true });
+    await expect(
+      new GrokOAuthClient(build() as typeof fetch).refresh(grokTokens()),
+    ).rejects.toMatchObject({ code: 'server_error', outcomeUnknown: true });
+  });
+  it('propagates an explicit invalid_grant without retry or outcomeUnknown', async () => {
+    const fetcher = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === GROK_DISCOVERY_ENDPOINT) return jsonResponse(discovery);
+      return jsonResponse({ error: 'invalid_grant' }, 400);
+    });
+    await expect(
+      new GrokOAuthClient(fetcher as typeof fetch).refresh(grokTokens()),
+    ).rejects.toMatchObject({ code: 'invalid_grant', status: 400, outcomeUnknown: false });
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/token'))).toHaveLength(1);
+  });
   it('enforces pending/slow_down deadlines and single exchange without publishing configuration', async () => {
     let now = 0;
     const client = new GrokOAuthClient();

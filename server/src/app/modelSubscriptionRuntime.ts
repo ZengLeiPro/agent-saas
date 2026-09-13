@@ -19,8 +19,9 @@ export async function createModelSubscriptionRuntime(options: {
   secretVault: SecretVault;
   pool?: PgEventStore['pool'];
   egressFetch: typeof fetch;
+  logger?: { warn(message: string): void };
 }) {
-  const { config, secretVault, pool, egressFetch } = options;
+  const { config, secretVault, pool, egressFetch, logger } = options;
   const production = readRuntimeIdentity().environment === 'production';
   const getGrokConfig = () => {
     if (production && !pool && config.grokSubscription?.enabled === true) {
@@ -46,6 +47,7 @@ export async function createModelSubscriptionRuntime(options: {
     ...(await createGrokCredentialPersistence(pool, config.runtimeEventStore)),
     oauthClient,
     requireRotationCoordinator: production,
+    ...(logger ? { logger } : {}),
   });
   const grokDeviceAuthService = new GrokDeviceAuthService(oauthClient);
   const grokModelCatalog = new GrokModelCatalogService(grokCredentialManager, egressFetch);

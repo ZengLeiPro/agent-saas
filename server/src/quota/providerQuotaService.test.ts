@@ -511,7 +511,7 @@ describe('ProviderQuotaService', () => {
           configured: true,
           connected: false,
           availability: 'auth_unavailable' as const,
-          lastFailureCode: 'refresh_outcome_unknown',
+          lastFailureCode: 'invalid_grant',
           email: 'dead@x.ai',
         },
       ],

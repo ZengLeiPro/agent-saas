@@ -20,10 +20,22 @@ function manager(statuses: Array<Record<string, unknown>>): GrokQuotaCredentialS
 }
 
 describe('grokQuotaSources', () => {
-  it('blocks collection when auth is unavailable or refresh outcome is unknown', () => {
+  it('blocks collection only for permanently rejected grants, never for transient refresh failures', () => {
     expect(grokBillingCollectBlocked({ availability: 'auth_unavailable' })).toBe(true);
-    expect(grokBillingCollectBlocked({ lastFailureCode: 'refresh_outcome_unknown' })).toBe(true);
+    expect(
+      grokBillingCollectBlocked({
+        availability: 'auth_unavailable',
+        lastFailureCode: 'invalid_grant',
+      }),
+    ).toBe(true);
     expect(grokBillingCollectBlocked({ lastFailureCode: 'invalid_grant' })).toBe(true);
+    expect(
+      grokBillingCollectBlocked({
+        availability: 'auth_unavailable',
+        lastFailureCode: 'refresh_outcome_unknown',
+      }),
+    ).toBe(false);
+    expect(grokBillingCollectBlocked({ lastFailureCode: 'refresh_transient_failure' })).toBe(false);
     expect(grokBillingCollectBlocked({ availability: 'available' })).toBe(false);
     expect(grokBillingCollectBlocked({ availability: 'quota_cooldown' })).toBe(false);
   });
@@ -45,7 +57,7 @@ describe('grokQuotaSources', () => {
         {
           id: 'dead',
           availability: 'auth_unavailable',
-          lastFailureCode: 'refresh_outcome_unknown',
+          lastFailureCode: 'invalid_grant',
         },
         { id: 'live', availability: 'available', email: 'live@x.ai' },
       ]),

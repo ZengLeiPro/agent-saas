@@ -58,7 +58,8 @@ export class GrokOAuthClient {
           ? { revocationEndpoint: trustedGrokOAuthUrl(raw.revocation_endpoint) }
           : {}),
       };
-      this.discovery = { value, expiresAt: this.now() + 300_000 };
+      // 端点固定；缓存一小时可少走一跳代理，降低刷新链路上的传输失败暴露面。
+      this.discovery = { value, expiresAt: this.now() + 3_600_000 };
       return value;
     })().finally(() => {
       if (this.discoveryInFlight === promise) this.discoveryInFlight = undefined;
@@ -98,29 +99,27 @@ export class GrokOAuthClient {
   async refresh(previous: GrokOAuthTokens): Promise<GrokOAuthTokens> {
     if (previous.issuer !== GROK_OAUTH_ISSUER) throw new GrokProtocolError('invalid_issuer');
     const discovery = await this.discover();
-    // One exchange only: a lost response may have consumed the rotating grant.
+    // 授权服务器的明确拒绝（invalid_grant 等）原样抛出；连接级失败由 grokOAuthRequest 在同一代理上重试，
+    // 仍失败时以 outcomeUnknown 抛出，由凭据管理器决定下次是否沿用同一 refresh token。
     const raw = await grokOAuthRequest(this.fetchImpl, discovery.tokenEndpoint, {
       grant_type: 'refresh_token',
       refresh_token: previous.refreshToken,
       client_id: previous.clientId,
     });
+    let tokens: GrokOAuthTokens;
     try {
-      const tokens = await this.validateTokens(
-        raw,
-        previous.clientId,
-        discovery,
-        previous.refreshToken,
-      );
-      if (tokens.accountId !== previous.accountId)
-        throw new GrokProtocolError('identity_changed', undefined, true);
-      return tokens;
+      tokens = await this.validateTokens(raw, previous.clientId, discovery, previous);
     } catch (error) {
       throw new GrokProtocolError(
         error instanceof GrokProtocolError ? error.code : 'invalid_token_response',
         undefined,
         true,
+        { cause: error },
       );
     }
+    if (tokens.accountId !== previous.accountId)
+      throw new GrokProtocolError('identity_changed', undefined, true);
+    return tokens;
   }
   async revoke(tokens: GrokOAuthTokens): Promise<boolean> {
     const { revocationEndpoint } = await this.discover();
@@ -149,28 +148,20 @@ export class GrokOAuthClient {
     raw: unknown,
     clientId: string,
     discovery: GrokDiscovery,
-    previousRefreshToken?: string,
+    previous?: GrokOAuthTokens,
   ): Promise<GrokOAuthTokens> {
     if (!isRecord(raw)) throw new GrokProtocolError('invalid_token_response');
     if (raw.token_type !== undefined && String(raw.token_type).toLowerCase() !== 'bearer')
       throw new GrokProtocolError('unsupported_token_type');
     const accessToken = requiredString(raw.access_token);
-    const refreshToken = requiredString(raw.refresh_token ?? previousRefreshToken);
+    const refreshToken = requiredString(raw.refresh_token ?? previous?.refreshToken);
     const expiresAt = new Date(this.now() + positiveSeconds(raw.expires_in) * 1_000).toISOString();
-    // Identity is authenticated userinfo, not frontend input or an unverified JWT.
-    const identity = await grokOAuthRequest(
-      this.fetchImpl,
-      discovery.userinfoEndpoint,
-      undefined,
-      undefined,
+    const { accountId, email } = await this.resolveIdentity(
+      discovery,
       accessToken,
+      raw.id_token,
+      previous,
     );
-    if (!isRecord(identity)) throw new GrokProtocolError('invalid_identity_response');
-    const accountId = requiredString(identity.sub, 512);
-    const email =
-      identity.email_verified === true && typeof identity.email === 'string'
-        ? requiredString(identity.email, 254)
-        : undefined;
     return {
       accessToken,
       refreshToken,
@@ -181,5 +172,56 @@ export class GrokOAuthClient {
       ...(raw.id_token ? { idToken: requiredString(raw.id_token) } : {}),
       ...(email ? { email } : {}),
     };
+  }
+  /**
+   * 首次登录只信任经鉴权的 userinfo。刷新已换出新令牌后，userinfo 若因传输/上游原因取不到，
+   * 退回到同一响应里 id_token 的 `sub` 与已登录身份做连续性比对；比对不一致仍按 identity_changed 拒绝。
+   * 没有 id_token 可比对时把 userinfo 的错误原样抛出，由上层作为可重试失败处理，而不是丢弃 grant。
+   */
+  private async resolveIdentity(
+    discovery: GrokDiscovery,
+    accessToken: string,
+    rawIdToken: unknown,
+    previous?: GrokOAuthTokens,
+  ): Promise<{ accountId: string; email?: string }> {
+    try {
+      const identity = await grokOAuthRequest(
+        this.fetchImpl,
+        discovery.userinfoEndpoint,
+        undefined,
+        undefined,
+        accessToken,
+      );
+      if (!isRecord(identity)) throw new GrokProtocolError('invalid_identity_response');
+      const accountId = requiredString(identity.sub, 512);
+      const email =
+        identity.email_verified === true && typeof identity.email === 'string'
+          ? requiredString(identity.email, 254)
+          : undefined;
+      return { accountId, ...(email ? { email } : {}) };
+    } catch (error) {
+      if (!previous) throw error;
+      const subject = idTokenSubject(rawIdToken);
+      if (subject === undefined) throw error;
+      if (subject !== previous.accountId)
+        throw new GrokProtocolError('identity_changed', undefined, true);
+      return {
+        accountId: previous.accountId,
+        ...(previous.email ? { email: previous.email } : {}),
+      };
+    }
+  }
+}
+function idTokenSubject(rawIdToken: unknown): string | undefined {
+  if (typeof rawIdToken !== 'string') return undefined;
+  const parts = rawIdToken.split('.');
+  if (parts.length < 2 || !parts[1]) return undefined;
+  try {
+    const payload: unknown = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return isRecord(payload) && typeof payload.sub === 'string' && payload.sub.trim()
+      ? payload.sub
+      : undefined;
+  } catch {
+    return undefined;
   }
 }

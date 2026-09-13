@@ -13,6 +13,8 @@ import {
 } from 'server/runtime/runtimeIsolationEvidence.js';
 
 import { provisionBudgets, setupCommandBudgetMs as clampTimeoutMs, RUNTIME_BOOTSTRAP_TIMEOUT_MS } from './provisionBudgets.js';
+import { pythonRunnerDaemonExecArgs } from './ownedPodIdentity.js';
+import { readOwnedPodIdentity } from './remoteOwnership.js';
 const SETUP_MAX_OUTPUT_BYTES = 16 * 1024;
 
 type ProvisionResult = {
@@ -147,7 +149,11 @@ export class Provisioner {
       const timeoutMs = clampTimeoutMs(recipe.resources?.timeoutMs);
       const runtimeBootstrap = await this.runRuntimeBootstrap(ref.name, recipe, Math.max(timeoutMs, RUNTIME_BOOTSTRAP_TIMEOUT_MS));
       logs.push(runtimeBootstrap);
-      if (runtimeBootstrap.status === 'error') return this.error('runtime bootstrap failed; see logs[]', logs, recipeHash, 'runtime_bootstrap');
+      if (runtimeBootstrap.status === 'error') {
+        const detail = [runtimeBootstrap.stderr, runtimeBootstrap.note].filter(Boolean).join(' ').slice(0, 240)
+          || `exit ${runtimeBootstrap.exitCode}`;
+        return this.error(`runtime bootstrap failed: ${detail}`, logs, recipeHash, 'runtime_bootstrap');
+      }
 
       if (this.config.skipProvisionOnSameRecipe) {
         const existingHash = await this.readProvisionHash(ref.name);
@@ -268,22 +274,48 @@ export class Provisioner {
       },
     });
     const start = Date.now();
-    const result = await this.kubectl.run([
-      'exec',
-      '-i',
-      sandboxName,
-      '-c',
-      this.config.sandboxContainerName,
-      '--',
-      '/usr/local/bin/node',
-      '/app/acs-orchestrator/dist/sandboxRunner.mjs',
-    ], { input, timeoutMs });
+    const failed = (stderr: string, exitCode = 1): ProvisioningLogEntry => ({
+      step: 'runtime_bootstrap',
+      command: 'runner_daemon oneshot Shell <runtime bootstrap>',
+      stdout: '',
+      stderr: truncate(stderr, SETUP_MAX_OUTPUT_BYTES),
+      exitCode,
+      durationMs: Date.now() - start,
+      status: 'error',
+    });
+    const sandboxStatus = await this.sandboxManager.getStatus(sandboxName);
+    const metadata = sandboxStatus?.raw?.metadata;
+    const sandboxUid = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      && typeof (metadata as { uid?: unknown }).uid === 'string'
+      ? (metadata as { uid: string }).uid
+      : undefined;
+    if (!sandboxUid) return failed('sandbox uid unavailable');
+    let ownedPodUid: string;
+    try {
+      ownedPodUid = await readOwnedPodIdentity({
+        kubectl: this.kubectl,
+        sandboxName,
+        sandboxUid,
+      });
+    } catch (err) {
+      return failed(err instanceof Error ? err.message : String(err));
+    }
+    const result = await this.kubectl.run(
+      pythonRunnerDaemonExecArgs({
+        sandboxName,
+        containerName: this.config.sandboxContainerName,
+        interactive: true,
+        oneshot: true,
+        ownedPodUid,
+      }),
+      { input, timeoutMs },
+    );
     const parsed = parseSandboxRunnerFinal(result.stdout);
     const response = parsed?.response;
     const status = result.exitCode === 0 && response?.status === 'success' ? 'ok' : 'error';
     return {
       step: 'runtime_bootstrap',
-      command: 'sandboxRunner Shell <runtime bootstrap>',
+      command: 'runner_daemon oneshot Shell <runtime bootstrap>',
       stdout: truncate(response?.status === 'success' ? response.content : result.stdout, SETUP_MAX_OUTPUT_BYTES),
       stderr: truncate(response?.status === 'error' ? response.error : result.stderr, SETUP_MAX_OUTPUT_BYTES),
       exitCode: result.exitCode ?? (result.signal ? 128 : -1),

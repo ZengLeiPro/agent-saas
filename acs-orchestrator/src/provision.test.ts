@@ -25,7 +25,7 @@ describe('Provisioner runtime bootstrap', () => {
       'sandbox_ensure',
       'runtime_bootstrap',
     ]);
-    const bootstrap = calls.find((call) => call.args.includes('/app/acs-orchestrator/dist/sandboxRunner.mjs'));
+    const bootstrap = calls.find((call) => call.args.includes('/app/acs-orchestrator/dist/remote/runner_daemon.py'));
     expect(bootstrap).toBeTruthy();
     expect(bootstrap?.args).toEqual([
       'exec',
@@ -34,9 +34,13 @@ describe('Provisioner runtime bootstrap', () => {
       '-c',
       'sandbox',
       '--',
-      '/usr/local/bin/node',
-      '/app/acs-orchestrator/dist/sandboxRunner.mjs',
+      '/usr/local/bin/python3',
+      '-I',
+      '/app/acs-orchestrator/dist/remote/runner_daemon.py',
+      '--owned-pod-uid=a0c0f77c-13f5-484b-a1ee-9adc0cc6b121',
+      '--oneshot',
     ]);
+    expect(calls.some((call) => call.args.includes('/app/acs-orchestrator/dist/sandboxRunner.mjs'))).toBe(false);
     const bootstrapInput = JSON.parse(bootstrap?.input ?? '{}');
     expect(bootstrapInput).toMatchObject({
       toolName: 'Shell',
@@ -49,6 +53,27 @@ describe('Provisioner runtime bootstrap', () => {
     expect(bootstrapInput.input.command).toContain('assert executable.is_file(), executable');
     expect(bootstrapInput.input.command).toContain('p.chromium.launch(headless=True, channel="chromium"');
     expect(bootstrapInput.input.command).toContain('browser.close()');
+  });
+
+  it('fails closed when the owned Pod UID cannot be read', async () => {
+    const calls: Array<{ args: string[]; input?: string }> = [];
+    const kubectl = kubectlStub(calls);
+    const originalRun = kubectl.run.bind(kubectl);
+    kubectl.run = async (args, options) => {
+      if (args[0] === 'get' && args[1] === 'pod') {
+        return { stdout: '{"metadata":{"uid":"uid"}}', stderr: '', exitCode: 0, signal: null };
+      }
+      return originalRun(args, options);
+    };
+    const provisioner = new Provisioner(baseConfig(), kubectl, sandboxManagerStub(), () => new Set());
+    const result = await provisioner.provision({
+      workspaceId: 'ws_kaiyan__test',
+      sessionId: 'session-123',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    });
+    expect(result.status).toBe('error');
+    expect(result.error).toMatch(/runtime bootstrap failed/);
+    expect(calls.some((call) => call.args.includes('/app/acs-orchestrator/dist/remote/runner_daemon.py'))).toBe(false);
   });
 
   it('does not skip runtime bootstrap when recipe hash is already provisioned', async () => {
@@ -71,7 +96,7 @@ describe('Provisioner runtime bootstrap', () => {
       'runtime_bootstrap',
       'provision_idempotency',
     ]);
-    expect(calls.find((call) => call.args.includes('/app/acs-orchestrator/dist/sandboxRunner.mjs'))).toBeTruthy();
+    expect(calls.find((call) => call.args.includes('/app/acs-orchestrator/dist/remote/runner_daemon.py'))).toBeTruthy();
   });
 
   it('attests the exact SandboxRef returned by ensureRunning and binds every run identity field', async () => {
@@ -176,7 +201,7 @@ describe('Provisioner runtime bootstrap', () => {
       step: 'provision_singleflight',
       status: 'skipped',
     });
-    expect(calls.filter((call) => call.args.includes('/app/acs-orchestrator/dist/sandboxRunner.mjs'))).toHaveLength(1);
+    expect(calls.filter((call) => call.args.includes('/app/acs-orchestrator/dist/remote/runner_daemon.py'))).toHaveLength(1);
   });
 });
 
@@ -199,6 +224,9 @@ function sandboxManagerStub(): SandboxManager {
         sessionId: 'session-123',
         mountSubPath: 'workspaces/kaiyan/u-1',
       };
+    },
+    async getStatus() {
+      return { phase: 'Running', raw: { metadata: { uid: 'sandbox-uid-1' } } };
     },
     async probeNetworkPolicyForRef() {
       return validPolicy();
@@ -233,7 +261,20 @@ function kubectlStub(
     async run(args: string[], runOptions: { input?: string } = {}): Promise<KubectlResult> {
       calls.push({ args, input: runOptions.input });
       const joinedArgs = args.join('\n');
-      if (args.includes('/app/acs-orchestrator/dist/sandboxRunner.mjs')) {
+      if (args[0] === 'get' && args[1] === 'pod') {
+        return {
+          stdout: JSON.stringify({
+            metadata: {
+              uid: 'a0c0f77c-13f5-484b-a1ee-9adc0cc6b121',
+              ownerReferences: [{ uid: 'sandbox-uid-1' }],
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+          signal: null,
+        };
+      }
+      if (args.includes('/app/acs-orchestrator/dist/remote/runner_daemon.py')) {
         await options.onBootstrap?.();
         return {
           stdout: JSON.stringify({

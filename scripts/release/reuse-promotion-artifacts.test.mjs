@@ -4,48 +4,11 @@ import { mkdtemp, mkdir, readFile, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { hydrateArtifacts, reusableArtifactPlan } from './reuse-promotion-artifacts.mjs';
-
-test('真实工作流的 SSH 探测不会吞掉第二个制品的循环输入', async () => {
-  const { spawnSync } = await import('node:child_process');
-  const { chmod } = await import('node:fs/promises');
-  const root = await mkdtemp(join(tmpdir(), 'reuse-probe-'));
-  const bin = join(root, 'bin');
-  await mkdir(bin);
-  // 模拟 SSH 默认转发 stdin；-n 才会断开循环输入。
-  await writeFile(join(bin, 'ssh'), '#!/bin/bash\nif [ "$1" != -n ]; then cat >/dev/null; fi\n');
-  await chmod(join(bin, 'ssh'), 0o755);
-  await writeFile(
-    join(root, 'reusable-artifact-plan.tsv'),
-    'server-bundle.tgz\tdigest1\t/source/server\nacs-orchestrator.tgz\tdigest2\t/source/acs\n',
-  );
-  const list = join(root, 'reusable.txt');
-  await writeFile(list, '');
-  const workflow = await readFile(
-    new URL('../../.github/workflows/promote-release.yml', import.meta.url),
-    'utf8',
-  );
-  const start = workflow.indexOf("            while IFS=$'\\t'");
-  const marker = 'done < "$RUNNER_TEMP/reusable-artifact-plan.tsv"';
-  const end = workflow.indexOf(marker, start) + marker.length;
-  assert.ok(start > 0 && end > start);
-  const result = spawnSync('bash', ['-c', 'set -euo pipefail\n' + workflow.slice(start, end)], {
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      PATH: bin + ':' + process.env.PATH,
-      RUNNER_TEMP: root,
-      reusable_list: list,
-      ECS_USER: 'test',
-      ECS_HOST: 'test',
-    },
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual((await readFile(list, 'utf8')).trim().split('\n'), [
-    'server-bundle.tgz',
-    'acs-orchestrator.tgz',
-  ]);
-});
+import {
+  hydrateArtifacts,
+  reusableArtifactPlan,
+  assertInternalOssUrl,
+} from './reuse-promotion-artifacts.mjs';
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'reuse-promotion-'));
@@ -83,10 +46,16 @@ test('只从 Manifest 摘要推导固定发布目录，非法标识不能进入 
 
 test('复制前后校验摘要，保留原制品，已上传的匹配制品无需再复制', async () => {
   const f = await fixture();
-  assert.equal(await hydrateArtifacts(f.plan, f.root), 1);
+  assert.deepEqual(await hydrateArtifacts(f.plan, f.root), {
+    reusedArtifacts: 1,
+    fetchedArtifacts: 0,
+  });
   assert.deepEqual(await readFile(join(f.root, 'artifacts/server-bundle.tgz')), f.bytes);
   assert.deepEqual(await readFile(f.source), f.bytes);
-  assert.equal(await hydrateArtifacts(f.plan, f.root), 0);
+  assert.deepEqual(await hydrateArtifacts(f.plan, f.root), {
+    reusedArtifacts: 0,
+    fetchedArtifacts: 0,
+  });
 });
 
 test('探测后缓存变化时拒绝复用，不能把旧探测当作写入证据', async () => {
@@ -111,6 +80,66 @@ test('缓存链接及缺失缓存均不能成为可复用制品', async () => {
   await assert.rejects(hydrateArtifacts([{ ...f.plan[0], source: link }], f.root), /regular file/);
   await assert.rejects(
     hydrateArtifacts([{ ...f.plan[0], source: join(f.root, 'absent') }], f.root),
-    /ENOENT/,
+    /ENOENT|Missing fetch URL/,
   );
+});
+
+test('本地缓存未命中时从预签名 URL 拉取并校验摘要', async () => {
+  const f = await fixture();
+  const fetched = Buffer.from('fetched from shenzhen oss');
+  const digest = createHash('sha256').update(fetched).digest('hex');
+  const url = 'https://agent-saas-release-records.oss-cn-shenzhen-internal.aliyuncs.com/rc/server-bundle.tgz';
+  let downloaded = '';
+  const result = await hydrateArtifacts(
+    [
+      {
+        filename: 'server-bundle.tgz',
+        digest,
+        size: fetched.length,
+        source: join(f.root, 'absent.tgz'),
+        url,
+      },
+    ],
+    f.root,
+    {
+      download: async (href, dest) => {
+        downloaded = href;
+        await writeFile(dest, fetched);
+      },
+    },
+  );
+  assert.equal(downloaded, url);
+  assert.deepEqual(result, { reusedArtifacts: 0, fetchedArtifacts: 1 });
+  assert.deepEqual(await readFile(join(f.root, 'artifacts/server-bundle.tgz')), fetched);
+});
+
+test('拒绝非深圳 OSS 内网预签名 URL', () => {
+  assert.throws(
+    () => assertInternalOssUrl('https://example.com/server-bundle.tgz'),
+    /Shenzhen OSS internal/,
+  );
+  assert.throws(
+    () =>
+      assertInternalOssUrl(
+        'https://agent-saas-release-records.oss-cn-shenzhen.aliyuncs.com/rc/server-bundle.tgz',
+      ),
+    /Shenzhen OSS internal/,
+  );
+  assert.throws(() => assertInternalOssUrl('http://bucket.oss-cn-shenzhen-internal.aliyuncs.com/x'), /HTTPS/);
+  assertInternalOssUrl(
+    'https://agent-saas-release-records.oss-cn-shenzhen-internal.aliyuncs.com/rc/server-bundle.tgz?Expires=1',
+  );
+});
+
+test('工作流不再把 selected tgz 经 runner scp 回深圳', async () => {
+  const workflow = await readFile(
+    new URL('../../.github/workflows/promote-release.yml', import.meta.url),
+    'utf8',
+  );
+  const upload = workflow
+    .split('- name: 上传不可变部署载荷与 RC 绑定的托管单元')[1]
+    .split('\n      - name:')[0];
+  assert.equal(upload.includes('selected/"*.tgz'), false);
+  assert.equal(upload.includes('while IFS='), false);
+  assert.match(upload, /sign-promotion-artifact-urls\.mjs/u);
 });

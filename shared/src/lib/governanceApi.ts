@@ -147,7 +147,8 @@ export const oauthGrantResponseSchema = z.object({ grants: z.array(oauthGrantSch
 const oauthMutationReceiptShape = {
   changeId: z.string().min(1),
   auditId: z.string().min(1),
-  // 终态审计成功时不返回该字段；写入 durable outbox 时明确标记 pending。
+  // 终态审计成功时中间件注入 occurredAt；转 durable outbox 时改为 auditCompletion=pending。
+  effectiveAt: z.string().datetime({ offset: true }).optional(),
   auditCompletion: z.literal('pending').optional(),
   auditProjectionId: z.string().min(1).optional(),
 };

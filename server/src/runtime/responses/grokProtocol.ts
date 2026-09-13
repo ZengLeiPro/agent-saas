@@ -9,6 +9,31 @@ export const GROK_RESPONSES_ENDPOINT = `${GROK_SUBSCRIPTION_BASE_URL}/responses`
 export const GROK_MODELS_ENDPOINT = `${GROK_SUBSCRIPTION_BASE_URL}/models`;
 export const GROK_BILLING_ENDPOINT = `${GROK_SUBSCRIPTION_BASE_URL}/billing?format=credits`;
 export const GROK_DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
+/** 授权服务器明确拒绝 grant：只有这些错误才把账号标为永久失效、要求重授权。 */
+export const GROK_PERMANENT_GRANT_REJECTIONS: ReadonlySet<string> = new Set([
+  'invalid_grant',
+  'invalid_token',
+  'expired_token',
+  'unauthorized_client',
+  'invalid_client',
+]);
+/** 刷新链路上的传输/上游/本地写入失败：账号未被拒绝，允许沿用当前 refresh token 重试。 */
+export const GROK_TRANSIENT_REFRESH_CODES: ReadonlySet<string> = new Set([
+  'refresh_transient_failure',
+  'refresh_outcome_unknown',
+  'network_outcome_unknown',
+]);
+export function isPermanentGrokGrantRejection(code: string | undefined): boolean {
+  return code !== undefined && GROK_PERMANENT_GRANT_REJECTIONS.has(code);
+}
+export function isTransientGrokRefreshCode(code: string | undefined): boolean {
+  return code !== undefined && GROK_TRANSIENT_REFRESH_CODES.has(code);
+}
+export function isTransientGrokRefreshError(error: unknown): boolean {
+  return error instanceof GrokProtocolError && isTransientGrokRefreshCode(error.code);
+}
+/** 同一代理上的连接级失败（未收到任何响应）最多再试两次；不打开失败直连。 */
+const OAUTH_TRANSPORT_RETRY_DELAYS_MS = [250, 750];
 const OAUTH_ERRORS = new Set([
   'authorization_pending',
   'slow_down',
@@ -128,9 +153,8 @@ export async function grokOAuthRequest(
   accessToken?: string,
 ): Promise<unknown> {
   trustedGrokOAuthUrl(url);
-  let response: Response;
-  try {
-    response = await proxyRequiredSingleAttemptEgressFetch(fetchImpl)(url, {
+  const send = () =>
+    proxyRequiredSingleAttemptEgressFetch(fetchImpl)(url, {
       method: body ? 'POST' : 'GET',
       redirect: 'error',
       headers: {
@@ -144,10 +168,27 @@ export async function grokOAuthRequest(
         ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
         : AbortSignal.timeout(30_000),
     });
-  } catch {
-    signal?.throwIfAborted();
-    throw new GrokProtocolError('network_outcome_unknown', undefined, true);
+  let response: Response | undefined;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= OAUTH_TRANSPORT_RETRY_DELAYS_MS.length; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, OAUTH_TRANSPORT_RETRY_DELAYS_MS[attempt - 1]),
+      );
+      signal?.throwIfAborted();
+    }
+    try {
+      response = await send();
+      break;
+    } catch (error) {
+      signal?.throwIfAborted();
+      lastError = error;
+    }
   }
+  if (!response)
+    throw new GrokProtocolError('network_outcome_unknown', undefined, true, {
+      cause: lastError,
+    });
   const json = await readGrokJson(response);
   if (!response.ok) {
     const code =

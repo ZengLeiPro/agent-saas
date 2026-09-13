@@ -1,17 +1,23 @@
 import type { ProviderQuotaCredentialState, ProviderQuotaSnapshot } from '@agent/shared';
 import { GrokCredentialError } from '../runtime/responses/grokCredentialManager.js';
-import { GrokProtocolError } from '../runtime/responses/grokProtocol.js';
+import {
+  GrokProtocolError,
+  isPermanentGrokGrantRejection,
+  isTransientGrokRefreshCode,
+} from '../runtime/responses/grokProtocol.js';
 import { fetchGrokBilling, type GrokQuotaCredentialSource } from './grokSubscriptionQuota.js';
 
-const AUTH_FAILURE_CODES = new Set(['refresh_outcome_unknown', 'invalid_grant', 'invalid_token']);
-
-/** 刷新结果未知或授权已失效：停打 billing，避免每 5 分钟写失败快照。 */
+/**
+ * 授权被 xAI 明确拒绝时停打 billing，避免每 5 分钟写失败快照。
+ * 刷新链路的瞬态失败不算失效：继续采集，让下一次采集触发同一 refresh token 的重试与恢复。
+ */
 export function grokBillingCollectBlocked(
   status?: Pick<ProviderQuotaCredentialState, 'availability' | 'lastFailureCode'>,
 ): boolean {
+  if (isPermanentGrokGrantRejection(status?.lastFailureCode)) return true;
   return (
-    status?.availability === 'auth_unavailable' ||
-    (typeof status?.lastFailureCode === 'string' && AUTH_FAILURE_CODES.has(status.lastFailureCode))
+    status?.availability === 'auth_unavailable' &&
+    !isTransientGrokRefreshCode(status.lastFailureCode)
   );
 }
 

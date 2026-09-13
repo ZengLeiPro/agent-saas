@@ -1619,7 +1619,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ),
     });
   };
-  const subscriptionRuntime = await createModelSubscriptionRuntime({ config, secretVault, pool: pgEventStore?.pool, egressFetch });
+  const subscriptionRuntime = await createModelSubscriptionRuntime({ config, secretVault, pool: pgEventStore?.pool, egressFetch, logger: serverLogger.child('GrokSubscription') });
   const { codexCredentialManager, codexDeviceAuthService, grokCredentialManager, grokDeviceAuthService, grokModelCatalog } = subscriptionRuntime;
   const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch, subscriptionRuntime.factoryDependencies);
   const memoryContextTools = createRuntimeMemoryContextTools({

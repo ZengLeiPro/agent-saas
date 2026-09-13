@@ -22,6 +22,9 @@ import {
   GROK_OAUTH_CLIENT_ID,
   GROK_RESPONSES_ENDPOINT,
   GrokProtocolError,
+  isPermanentGrokGrantRejection,
+  isTransientGrokRefreshCode,
+  isTransientGrokRefreshError,
   validateGrokEndpoint,
 } from './grokProtocol.js';
 import { GrokCredentialRepository } from './grokCredentialRepository.js';
@@ -37,6 +40,8 @@ export {
   type GrokSubscriptionRuntimeConfig,
   type GrokTokenBundle,
 } from './grokCredentialTypes.js';
+/** 提前 10 分钟刷新：即使一次刷新失败，采集器与会话在令牌真正到期前仍有多次重试机会。 */
+const REFRESH_LEAD_MS = 600_000;
 export class GrokCredentialManager {
   private readonly repository: GrokCredentialRepository;
   private readonly lock: SubscriptionCredentialLock;
@@ -59,6 +64,7 @@ export class GrokCredentialManager {
       credentialRotationCoordinator?: (ref: string) => Promise<void>;
       requireRotationCoordinator?: boolean;
       now?: () => number;
+      logger?: { warn(message: string): void };
     },
   ) {
     this.repository = new GrokCredentialRepository(options.vault);
@@ -141,24 +147,51 @@ export class GrokCredentialManager {
     const observed = await this.readBundle(ref);
     const pending = await this.journal.get(ref);
     const unavailable = await this.state.get(ref);
-    if (pending === undefined && unavailable?.availability === 'auth_unavailable')
+    if (
+      pending === undefined &&
+      unavailable?.availability === 'auth_unavailable' &&
+      !isTransientGrokRefreshCode(unavailable.lastFailureCode)
+    )
       throw new GrokCredentialError(
         unavailable.lastFailureCode ?? 'auth_unavailable',
         observed.generation,
       );
+    // 旧版本把刷新瞬态失败记成 auth_unavailable；这类标记只能由一次成功刷新清除，不能直接沿用当前令牌。
+    const transientUnavailable =
+      unavailable?.availability === 'auth_unavailable' &&
+      isTransientGrokRefreshCode(unavailable.lastFailureCode);
     if (
       pending === undefined &&
+      !transientUnavailable &&
       !this.expiring(observed) &&
       (!force || (staleGeneration !== undefined && observed.generation > staleGeneration))
     )
       return { ...observed, credentialRef: ref };
-    const active = this.inFlight.get(ref);
-    if (active) return active;
-    const promise = this.refresh(ref, observed.generation, force, staleGeneration).finally(() => {
-      if (this.inFlight.get(ref) === promise) this.inFlight.delete(ref);
-    });
-    this.inFlight.set(ref, promise);
-    return promise;
+    let promise = this.inFlight.get(ref);
+    if (!promise) {
+      const started = this.refresh(
+        ref,
+        observed.generation,
+        force || transientUnavailable,
+        staleGeneration,
+      ).finally(() => {
+        if (this.inFlight.get(ref) === started) this.inFlight.delete(ref);
+      });
+      this.inFlight.set(ref, started);
+      promise = started;
+    }
+    try {
+      return await promise;
+    } catch (error) {
+      // 提前刷新失败但当前 access token 仍有效：先继续使用，下一次访问再重试刷新。
+      if (
+        !force &&
+        isTransientGrokRefreshError(error) &&
+        Date.parse(observed.expiresAt) > this.now()
+      )
+        return { ...observed, credentialRef: ref };
+      throw error;
+    }
   }
   async persistLogin(
     tokens: GrokOAuthTokens,
@@ -238,6 +271,12 @@ export class GrokCredentialManager {
       } catch (error) {
         if (!(error instanceof GrokCredentialError)) throw error;
       }
+      // 旧版本把刷新瞬态失败写成永久失效；现在视为可恢复：清掉标记，让下一次访问重试刷新而不是要求重授权。
+      if (
+        current.availability === 'auth_unavailable' &&
+        isTransientGrokRefreshCode(current.lastFailureCode)
+      )
+        await this.state.clear(ref);
     }
     return this.state.get(ref);
   }
@@ -269,17 +308,22 @@ export class GrokCredentialManager {
     try {
       const bundle = await this.readBundle(ref);
       const state = await this.state.get(ref);
+      // 刷新瞬态失败不算断开：对外仍报 available，只保留失败码供诊断。
+      const transient =
+        state?.availability === 'auth_unavailable' &&
+        isTransientGrokRefreshCode(state.lastFailureCode);
+      const availability = transient ? 'available' : (state?.availability ?? 'available');
       return {
         id: ref,
         configured: true,
-        connected: state?.availability !== 'auth_unavailable',
+        connected: availability !== 'auth_unavailable',
         accountBindingHash: hashAccountBinding(bundle.accountId),
         accountIdHint: bundle.accountId.slice(-6),
         ...(bundle.email ? { email: maskEmail(bundle.email) } : {}),
         expiresAt: bundle.expiresAt,
         accessTokenExpired: Date.parse(bundle.expiresAt) <= this.now(),
         generation: bundle.generation,
-        availability: state?.availability ?? 'available',
+        availability,
         cooldownUntil: state?.cooldownUntil,
         lastFailureCode: state?.lastFailureCode,
       };
@@ -319,8 +363,9 @@ export class GrokCredentialManager {
             await this.state.clear(ref, latest.generation);
             return { bundle: latest, pending };
           }
-          await this.state.markAuthUnavailable(ref, 'refresh_outcome_unknown', latest.generation);
-          throw new GrokCredentialError('refresh_outcome_unknown', latest.generation);
+          // 上一次刷新没有留下新 generation：视为未完成，释放 fence 后用当前 refresh token 重试。
+          // 若 grant 已在上游被消费，授权服务器会以 invalid_grant 明确拒绝，再进入永久失效。
+          await this.journal.clear(ref, pending);
         }
         if (
           !this.expiring(latest) &&
@@ -328,7 +373,10 @@ export class GrokCredentialManager {
         )
           return { bundle: latest };
         const state = await this.state.get(ref);
-        if (state?.availability === 'auth_unavailable')
+        if (
+          state?.availability === 'auth_unavailable' &&
+          !isTransientGrokRefreshCode(state.lastFailureCode)
+        )
           throw new GrokCredentialError(
             state.lastFailureCode ?? 'auth_unavailable',
             latest.generation,
@@ -336,8 +384,10 @@ export class GrokCredentialManager {
         if (this.options.requireRotationCoordinator && !this.rotationTransaction)
           throw new GrokProtocolError('credential_publication_unavailable');
         await this.journal.begin(ref, latest.generation);
+        let exchanged = false;
         try {
           const tokens = await this.oauth.refresh(latest);
+          exchanged = true;
           this.assertConfigured(ref);
           const next: GrokTokenBundle = { ...tokens, generation: latest.generation + 1 };
           await this.repository.rotate(ref, next);
@@ -348,14 +398,22 @@ export class GrokCredentialManager {
           this.telemetry.recordRefreshFailure(safeError(error));
           if (error instanceof GrokProtocolError && !error.outcomeUnknown) {
             await this.journal.clear(ref, latest.generation);
-            if (error.code === 'invalid_grant' || error.code === 'invalid_token') {
+            if (isPermanentGrokGrantRejection(error.code)) {
               await this.state.markAuthUnavailable(ref, error.code, latest.generation);
+              this.warn(ref, latest.generation, `授权被 xAI 拒绝（${error.code}），需要重授权`);
               throw new GrokCredentialError(error.code, latest.generation);
             }
             throw error;
           }
-          await this.state.markAuthUnavailable(ref, 'refresh_outcome_unknown', latest.generation);
-          throw new GrokProtocolError('refresh_outcome_unknown', undefined, true);
+          // 传输失败、上游 5xx/异常响应或本地写入失败：账号并未被拒绝，不标永久失效。
+          // 未换出令牌时释放 fence，下次沿用当前 refresh token 重试；已换出则保留 fence 供更高 generation 恢复。
+          if (!exchanged) await this.journal.clear(ref, latest.generation);
+          this.warn(
+            ref,
+            latest.generation,
+            `刷新未完成（${safeError(error)}${causeDetail(error)}），保留当前凭据，下次访问重试`,
+          );
+          throw new GrokProtocolError('refresh_transient_failure', 503, true, { cause: error });
         }
       });
     const result = this.rotationTransaction
@@ -390,7 +448,12 @@ export class GrokCredentialManager {
     return this.options.now?.() ?? Date.now();
   }
   private expiring(bundle: GrokTokenBundle): boolean {
-    return Date.parse(bundle.expiresAt) <= this.now() + 300_000;
+    return Date.parse(bundle.expiresAt) <= this.now() + REFRESH_LEAD_MS;
+  }
+  private warn(ref: string, generation: number, message: string): void {
+    this.options.logger?.warn(
+      `Grok 订阅凭据 ${ref.slice(0, 8)}… generation ${generation}：${message}`,
+    );
   }
   private lockKey(ref: string): string {
     return `agent-saas:grok-oauth:${ref}`;
@@ -400,6 +463,19 @@ function safeError(error: unknown): string {
   return error instanceof GrokProtocolError || error instanceof GrokCredentialError
     ? error.code
     : 'provider_request_failed';
+}
+/** 只取脱敏后的底层原因文本用于日志；令牌与凭据字段一律不进入日志。 */
+function causeDetail(error: unknown): string {
+  const cause = error instanceof Error ? error.cause : undefined;
+  const raw = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : '';
+  const text = raw
+    .replace(/[\u0000-\u001f\u007f]/gu, ' ')
+    .replace(/Bearer\s+\S+/giu, 'Bearer [redacted]')
+    .replace(/((?:access|refresh|id)[_-]?token|secret|password)\s*[:=]\s*\S+/giu, '$1=[redacted]')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!text) return '';
+  return `，原因：${text.length > 120 ? `${text.slice(0, 117)}...` : text}`;
 }
 function maskEmail(email: string): string {
   const at = email.lastIndexOf('@');

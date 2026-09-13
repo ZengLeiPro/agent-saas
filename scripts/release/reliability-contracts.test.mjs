@@ -6,33 +6,12 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { assertEngineCompatibility } from './deployment-engine.mjs';
 import { safeAssetEvent, collectDiagnostics } from './collect-promotion-diagnostics.mjs';
-import { validateProductionOperation } from './production-operation.mjs';
 
 test('T12: execution engine accepts reviewed historical manifest versions, rejects unknown versions', () => {
   for (const schemaVersion of [1, 2])
     assert.doesNotThrow(() => assertEngineCompatibility({ schemaVersion }));
   for (const schemaVersion of [undefined, 0, 3, '2'])
     assert.throws(() => assertEngineCompatibility({ schemaVersion }));
-});
-
-test('T15: checkpoint-only repair has explicit release/reason authorization, no standby authorization', () => {
-  const inputs = {
-    operation: 'checkpoint-repair',
-    release_id: 'rc-20260911-01',
-    reason: 'Repair derived checkpoint only',
-  };
-  const context = { eventName: 'workflow_dispatch', ref: 'refs/heads/main' };
-  assert.deepEqual(validateProductionOperation(inputs, context), {
-    operation: 'checkpoint-repair',
-    recoveryMode: '',
-  });
-  for (const overrides of [
-    { release_id: '' },
-    { reason: '' },
-    { confirm_recovery_only: true },
-    { expected_plan_digest: 'sha256:' + 'a'.repeat(64) },
-  ])
-    assert.throws(() => validateProductionOperation({ ...inputs, ...overrides }, context));
 });
 
 test('T16: diagnostics retain safe stage timing and drop arbitrary keys, user text and credentials', async (t) => {

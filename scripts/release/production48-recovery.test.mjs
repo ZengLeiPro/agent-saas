@@ -8,7 +8,6 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { verifyPromotionObservation } from './verify-promotion-observation.mjs';
 import { assertPromotionPhaseState } from './verify-promotion-phase-state.mjs';
-import { reconcilePromotion } from './reconcile-promotion.mjs';
 
 const deploy = await readFile(new URL('./deploy-production-release.sh', import.meta.url), 'utf8');
 const route = deploy.slice(
@@ -165,22 +164,6 @@ test('observation permits compensated matrices without weakening forward Web gat
     app: 'before',
     web: 'before',
   });
-  const outcome = reconcilePromotion({
-    releaseId: 'rc-20260911-117',
-    before: f.before.components,
-    target: f.target,
-    observed: f.live.components,
-    observationComplete: true,
-    externalSideEffects: 'unknown',
-    rollbackReceipts: {
-      acs: { attempted: false, succeeded: false },
-      app: { attempted: true, succeeded: true },
-      web: { attempted: false, succeeded: false },
-    },
-  });
-  assert.equal(outcome.outcome, 'needs_human');
-  assert.equal(outcome.componentResults.app.rollbackVerified, true);
-  assert.equal(outcome.componentResults.acs.state, 'target');
 });
 
 test('every component-level before/target combination is observable; unknown and split identities cannot be committed', () => {

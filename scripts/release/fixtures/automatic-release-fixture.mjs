@@ -1,8 +1,38 @@
 import { canonicalJson, digestBuffer } from '../artifact-lib.mjs';
 import { createValidReleaseEvidence } from '../release-evidence-fixture.test-helper.mjs';
-import { describeRelease } from '../automatic-release-plan.mjs';
+import assert from 'node:assert/strict';
 import { REQUEST_TASK, STEP_TASK, seal } from '../automatic-release-contract.mjs';
-import { createProductionCheckpoint } from '../production-checkpoint.mjs';
+import { assertCheckpointManifest, createProductionCheckpoint } from '../production-checkpoint.mjs';
+
+/** 测试夹具用的发布记录摘要（原 automatic-release-plan.mjs 已随自动父编排删除）。 */
+function describeRelease({ manifest, history }, now = Date.now()) {
+  assertCheckpointManifest(manifest);
+  assert(Array.isArray(history) && history.length > 0, 'Missing release history');
+  let time = 0;
+  const operations = new Set();
+  for (const entry of history) {
+    assert.equal(entry.releaseId, manifest.releaseId);
+    assert.equal(entry.manifestDigest, manifest.digest);
+    const at = Date.parse(entry.recordedAt);
+    assert(Number.isFinite(at) && at >= time && at <= now + 60000, 'Invalid history order');
+    assert(entry.operationKey && !operations.has(entry.operationKey), 'Duplicate operation');
+    operations.add(entry.operationKey);
+    time = at;
+  }
+  const last = history.at(-1);
+  const verified = history.findLast((entry) => entry.state === 'verified');
+  const mutation = history.findLast((entry) => entry.state === 'promoting');
+  const completion = history.findLast((entry) => entry.state === 'completed');
+  return {
+    manifest,
+    history,
+    state: last.state,
+    verifiedAt: verified ? Date.parse(verified.recordedAt) : null,
+    mutationAt: mutation ? Date.parse(mutation.recordedAt) : null,
+    completedAt: completion ? Date.parse(completion.recordedAt) : null,
+    lastAt: Date.parse(last.recordedAt),
+  };
+}
 
 export const repository = 'owner/agent-saas';
 export const sha = (n) => n.toString(16).repeat(40);

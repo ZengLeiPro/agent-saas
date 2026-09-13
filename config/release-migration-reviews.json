@@ -725,7 +725,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -746,6 +746,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -2029,7 +2033,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -2050,6 +2054,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -3131,7 +3139,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -3152,6 +3160,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -4196,7 +4208,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -4217,6 +4229,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -5261,7 +5277,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -5282,6 +5298,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -6304,7 +6324,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -6325,6 +6345,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -7347,7 +7371,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -7368,6 +7392,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -8390,7 +8418,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -8411,6 +8439,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -9690,7 +9722,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -9711,6 +9743,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -10760,7 +10796,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -10781,6 +10817,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -11836,7 +11876,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -11857,6 +11897,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -12912,7 +12956,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -12933,6 +12977,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -13930,7 +13978,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -13951,6 +13999,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -14948,7 +15000,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -14969,6 +15021,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -15966,7 +16022,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -15987,6 +16043,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -16984,7 +17044,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -17005,6 +17065,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -17984,7 +18048,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -18005,6 +18069,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -18984,7 +19052,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -19005,6 +19073,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -19915,7 +19987,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -19936,6 +20008,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -20842,7 +20918,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -20863,6 +20939,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -21761,7 +21841,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -21782,6 +21862,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -22680,7 +22764,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -22701,6 +22785,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -23599,7 +23687,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -23620,6 +23708,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -24482,7 +24574,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -24503,6 +24595,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -25359,7 +25455,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -25380,6 +25476,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -26192,7 +26292,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -26213,6 +26313,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -27025,7 +27129,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -27046,6 +27150,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -27814,7 +27922,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -27835,6 +27943,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -28595,7 +28707,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -28616,6 +28728,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -29350,7 +29466,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -29371,6 +29487,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -30101,7 +30221,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -30122,6 +30242,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -30856,7 +30980,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -30877,6 +31001,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -31596,7 +31724,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -31617,6 +31745,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -32336,7 +32468,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -32357,6 +32489,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -33072,7 +33208,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -33093,6 +33229,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -33820,7 +33960,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -33841,6 +33981,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -34568,7 +34712,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -34589,6 +34733,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -35316,7 +35464,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/release/PR642-integrated-system-scope-retirement-20260912.md",
@@ -35337,6 +35485,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -35997,6 +36149,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -36704,7 +36860,7 @@
         },
         {
           "path": "server/src/__tests__/grokProductionPublication.test.ts",
-          "digest": "sha256:1351349aa144a361e781c31d8a769858f5dee645911e22099fb225ee3c7e10f2"
+          "digest": "sha256:bae1a28e006ea88847304edd876f566b68d4541d812b69818336096b2f092e50"
         },
         {
           "path": "docs/reviews/grok-startup-root-evidence.md",
@@ -36729,6 +36885,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -37039,6 +37199,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -37326,6 +37490,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -37602,6 +37770,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -37867,6 +38039,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -38121,6 +38297,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -38317,6 +38497,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -38513,6 +38697,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -38694,6 +38882,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -38846,6 +39038,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -38914,6 +39110,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -38957,6 +39157,10 @@
         {
           "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
           "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     },
@@ -39037,6 +39241,10 @@
         {
           "path": "server/src/quota/grokQuotaSources.test.ts",
           "digest": "sha256:f3eef18d8ce81031e2f4a5113bc8bd9f474d439b1d7c5320330504d73653f89d"
+        },
+        {
+          "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
+          "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
         }
       ]
     }

@@ -161,7 +161,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -462,7 +462,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -742,6 +742,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -940,7 +944,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:2f4422bc42e1eb6c29beeed6aeb3122ab91f940e5e02ba15b3087d32a5258421",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -1703,7 +1707,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -2042,6 +2046,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -2226,7 +2234,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -2786,7 +2794,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -3140,6 +3148,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -3324,7 +3336,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -3863,7 +3875,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -4201,6 +4213,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -4385,7 +4401,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -4924,7 +4940,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -5262,6 +5278,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -5446,7 +5466,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -5971,7 +5991,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -6301,6 +6321,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -6485,7 +6509,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -7010,7 +7034,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -7340,6 +7364,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -7524,7 +7552,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -8049,7 +8077,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -8379,6 +8407,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -8577,7 +8609,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -9368,7 +9400,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -9675,6 +9707,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -9859,7 +9895,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:668c9b1bc1076b26d2310a62062674891b6e53223c3c68ec090b9e0963c68b4d",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -10391,7 +10427,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -10741,6 +10777,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -10918,7 +10958,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -11471,7 +11511,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -11813,6 +11853,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -11990,7 +12034,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -12543,7 +12587,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -12885,6 +12929,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -13055,7 +13103,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -13566,7 +13614,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -13899,6 +13947,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -14069,7 +14121,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -14580,7 +14632,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -14913,6 +14965,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -15083,7 +15139,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -15594,7 +15650,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -15927,6 +15983,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -16097,7 +16157,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -16608,7 +16668,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -16941,6 +17001,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -17104,7 +17168,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -17608,7 +17672,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -17937,6 +18001,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -18100,7 +18168,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -18604,7 +18672,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -18933,6 +19001,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -19096,7 +19168,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -19544,7 +19616,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -19860,6 +19932,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -20023,7 +20099,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -20464,7 +20540,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -20783,6 +20859,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -20946,7 +21026,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -21387,7 +21467,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -21698,6 +21778,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -21861,7 +21945,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -22302,7 +22386,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -22613,6 +22697,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -22776,7 +22864,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -23217,7 +23305,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -23528,6 +23616,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -23691,7 +23783,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -24104,7 +24196,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -24407,6 +24499,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -24570,7 +24666,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -24969,7 +25065,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -25280,6 +25376,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -25443,7 +25543,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -25814,7 +25914,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -26109,6 +26209,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -26272,7 +26376,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -26643,7 +26747,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -26938,6 +27042,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -27101,7 +27209,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；本批进一步初始化工具提示语动态存储并在 Run admission 读取覆盖，SQL 和幂等扩表均由单独审核的 PgToolDescriptionStore 承载。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -27430,7 +27538,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -27723,6 +27831,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -27886,7 +27998,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -28215,7 +28327,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -28500,6 +28612,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -28663,7 +28779,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -28978,7 +29094,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -29251,6 +29367,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -29414,7 +29534,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -29729,7 +29849,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -29998,6 +30118,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -30161,7 +30285,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -30476,7 +30600,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -30749,6 +30873,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -30912,7 +31040,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -31220,7 +31348,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -31485,6 +31613,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -31648,7 +31780,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -31956,7 +32088,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -32221,6 +32353,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -32384,7 +32520,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -32685,7 +32821,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -32953,6 +33089,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -33116,7 +33256,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。 补充启动前签名事务恢复及启动装配/执行准入分离，不新增 SQL 或数据库变更。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -33417,7 +33557,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -33697,6 +33837,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -33860,7 +34004,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -34161,7 +34305,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -34441,6 +34585,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -34604,7 +34752,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:1edf3d1ba70233f6f8b844bd389695e11e2133d9dfbcebbfd11097c264241b04",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。 本次公共辅助模型修复仅调整 SecretVault 解析后的配置装配顺序与运行时快照读取，不新增 SQL、DDL、回填或迁移调用；见公共辅助模型密钥装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -34905,7 +35053,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -35185,6 +35333,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -35614,7 +35766,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -35726,7 +35878,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:98ad3f908d51ba35069b91f463631812ec3635db668b3c14f423d4129e8bc96b",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -35841,6 +35993,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -36018,7 +36174,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:069baebe507675a57cdd22ae8391c8cab83539371f5ee6304cb37ae978d58994",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。 Grok 运行时装配增量已单独重新审核，保留原分类；见 grok-runtime-assembly-migration.md。 Runtime or conservative-closure dependency; audited startup DDL is unchanged. 本次仅接入生图、租户远程 Hand 和 Codex 凭据版本的内存运行态受控刷新，不新增 SQL、DDL、迁移、回填或数据删除；见平台管理配置受控保存运行时装配无结构变更审核。 PR654 re-review: production preflight/readiness runtime wiring only; no SQL, DDL, schema migration, data backfill, or persistence-shape change. 子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -36305,7 +36461,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -36569,6 +36725,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -36648,7 +36808,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -36760,7 +36920,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:434493a20325c590b65ecccf7a89d6816c67048aec244b18be6a53da6baf6cba",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -36875,6 +37035,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -36947,7 +37111,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -37059,7 +37223,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -37158,6 +37322,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -37223,7 +37391,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -37335,7 +37503,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -37430,6 +37598,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -37488,7 +37660,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -37600,7 +37772,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:7dde6919240f2c63626acda1432ff6b860eb4955c5ee8f642b08d70f250cfe7f",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -37691,6 +37863,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -37749,7 +37925,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -37854,7 +38030,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:629e44eb5ba69328e87388ec813859b13616fdf75f3a2de4bc142eb8b0921308",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -37941,6 +38117,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -38048,7 +38228,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -38090,7 +38270,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -38133,6 +38313,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -38233,7 +38417,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -38282,7 +38466,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -38325,6 +38509,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -38355,7 +38543,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": "sha256:87684a1533e597b96f7f3275f571bb7a90f027ad760e831b60562eeef7c17a36",
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -38453,7 +38641,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -38502,6 +38690,10 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -38602,7 +38794,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:16366a27f3df2443dfc5079fd08bfd1f1af8b7f4425c351adf9c84728ccc81fc",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "子 Agent 能力增强复审：只装配租户脱敏模型目录 getter，不新增 SQL、DDL、迁移调用或启动回填。"
         },
@@ -38643,6 +38835,10 @@
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
           "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -38652,7 +38848,7 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:660a2f109d2a4385b949d6bed404c410bfc9e2561e3afedcfc4c70f5146568e1",
-          "targetDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
           "classification": "no-schema-change",
           "reason": "把已初始化的共享 PgEventStore 交给 session 缺失时的后台任务终态路径，并转发失败原因；无 SQL、DDL、启动迁移或回填。"
         },
@@ -38700,6 +38896,10 @@
         {
           "path": "docs/reviews/grok-runtime-assembly-migration.md",
           "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
         }
       ]
     },
@@ -38709,7 +38909,7 @@
         {
           "path": "server/src/runtime/responses/grokProtocol.ts",
           "baselineDigest": "sha256:f014fed203d043c0ee5f2fb6322aaf74dcfa6b7647763a62e150c3ced759ea3d",
-          "targetDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
           "classification": "no-schema-change",
           "reason": "GrokProtocolError 可携带传输层 cause；协议 URL、校验和出站包装器不变，无 SQL/DDL。"
         },
@@ -38723,7 +38923,7 @@
         {
           "path": "server/src/quota/grokQuotaSources.ts",
           "baselineDigest": "sha256:490f16068befb0caba11fc31dbb0945d1a11088880467af5a678d5c1e8fcff00",
-          "targetDigest": "sha256:6a2896b695f8f33d743194b7cbacf60d8ee4837cca4028cc9d5e262006907453",
+          "targetDigest": "sha256:922655a0ada05652d957a9de7465830aba96c4b9381c719f8e7597968aa05cf4",
           "classification": "no-schema-change",
           "reason": "凭据失效时省略 collect；失败文案带脱敏传输原因。不改表结构。"
         },
@@ -38739,6 +38939,90 @@
         {
           "path": "docs/release/Grok套餐采集无结构变更审核-20260913.md",
           "digest": "sha256:94d2d7ee633304f192262b0b853f5e3cf47239a0bbcc4bceb5b6912dad745c48"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        }
+      ]
+    },
+    {
+      "baselineSha": "50b222a7a7326f5bcbf50c1343b41d09fc7080fd",
+      "files": [
+        {
+          "path": "server/src/runtime/responses/grokProtocol.ts",
+          "baselineDigest": "sha256:2e5300fd6b32399ed09b4279a44a1429448c8da77aefd19f320ac02812043a5e",
+          "targetDigest": "sha256:6c785ce35cc272188e6233a4ab88d25356618cd48d2fbb98b34d2a643219ee37",
+          "classification": "no-schema-change",
+          "reason": "OAuth 请求连接级失败同代理重试与永久拒绝/瞬态失败错误码集合；协议 URL、校验和出站包装器不变，GRANT 为 OAuth 术语，无 SQL/DDL。"
+        },
+        {
+          "path": "server/src/runtime/responses/grokOAuthClient.ts",
+          "baselineDigest": "sha256:9b12fb8e6d05930a38d0f6bb23263997cdc7cd860f7c7feb35f8a5faf62b8ee5",
+          "targetDigest": "sha256:5e5a0f1c0781e8db0577ff13859861a6e11aae2e1a8a94e718050cafc49e8224",
+          "classification": "no-schema-change",
+          "reason": "刷新后 userinfo 不可用时以 id_token sub 做身份连续性比对；发现文档缓存延长；无 SQL/DDL。"
+        },
+        {
+          "path": "server/src/runtime/responses/grokCredentialManager.ts",
+          "baselineDigest": "sha256:536e1bbedfa2457eb18fdbb0b08d8fb83e5e17ea9df3c1218079e5cd02f9e6ab",
+          "targetDigest": "sha256:385dfc54d6876f5f48516b577b6d2b6479a02b9187efa0da894109893e4a00bb",
+          "classification": "no-schema-change",
+          "reason": "只有授权服务器明确拒绝才标 auth_unavailable；瞬态失败释放 fence 重试并沿用有效旧令牌；只复用既有运行态表语句，无新 SQL/DDL。"
+        },
+        {
+          "path": "server/src/runtime/responses/grokSubscriptionResponsesTransport.ts",
+          "baselineDigest": "sha256:5b8e3262fceaac7901e617bc10954c0b9597dadf0923f9bb552b35f1bc56d9df",
+          "targetDigest": "sha256:a01d33e69ec9478ef44e33ba513e54d2baf40a1c9c054945cb1ec2a145ec16d1",
+          "classification": "no-schema-change",
+          "reason": "绑定查询跳过瞬态刷新失败账号，不标记；无 SQL/DDL。"
+        },
+        {
+          "path": "server/src/app/modelSubscriptionRuntime.ts",
+          "baselineDigest": "sha256:3ff5b2f96f57b04587dcca6673f3200bf5b94bc2b7bacf69e753b4fd651cb71b",
+          "targetDigest": "sha256:571bb14a3f8839c461abf6fdc98351c62dd7111394243c318b7696fa40d1e6a8",
+          "classification": "no-schema-change",
+          "reason": "仅向 Grok 凭据管理器注入日志器；无 SQL/DDL。"
+        },
+        {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:60c972807c248b1aaa31d2b5cb79b4438daa5c163d8fe4f4486092246dd44371",
+          "targetDigest": "sha256:f93b8154f24bb9bc5d67615dd55241c9e47e62a9849762c94867eff7163ddfa5",
+          "classification": "no-schema-change",
+          "reason": "仅把 serverLogger.child(GrokSubscription) 传入 createModelSubscriptionRuntime；启动根的迁移、建表与后置条件调用未变。"
+        },
+        {
+          "path": "server/src/quota/grokQuotaSources.ts",
+          "baselineDigest": "sha256:6a2896b695f8f33d743194b7cbacf60d8ee4837cca4028cc9d5e262006907453",
+          "targetDigest": "sha256:922655a0ada05652d957a9de7465830aba96c4b9381c719f8e7597968aa05cf4",
+          "classification": "no-schema-change",
+          "reason": "采集阻断只针对明确拒绝，瞬态失败继续采集；快照表结构与写入路径不变，无 SQL/DDL。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/PR672-队列残留收口无结构变更审核-20260913.md",
+          "digest": "sha256:2005f5d772c65fd57ce98264b9cde1907d631e8306fc5e97b288bdb9223bfbb2"
+        },
+        {
+          "path": "docs/reviews/grok-runtime-assembly-migration.md",
+          "digest": "sha256:585cff767ddd73e401882cecbcd4caa9007db21e394abfe8f8ca17199b72b4fa"
+        },
+        {
+          "path": "docs/release/Grok凭据刷新可恢复无结构变更审核-20260913.md",
+          "digest": "sha256:b93c2192e5ab49f01a0c12630eb1d4e5bc282bf068c86e3834438470bbbabdf2"
+        },
+        {
+          "path": "server/src/__tests__/grokCredentialLifecycle.test.ts",
+          "digest": "sha256:3231352ef29d6a67596372b5e91e317e5e5fed81d89e20fa89cfed15fc4028da"
+        },
+        {
+          "path": "server/src/__tests__/grokOAuthContracts.test.ts",
+          "digest": "sha256:dfdb50dd1d0017fac2200899dca0ecfc09d2df4e81aa955e1bcab2f96c3a8c3d"
+        },
+        {
+          "path": "server/src/quota/grokQuotaSources.test.ts",
+          "digest": "sha256:f3eef18d8ce81031e2f4a5113bc8bd9f474d439b1d7c5320330504d73653f89d"
         }
       ]
     }

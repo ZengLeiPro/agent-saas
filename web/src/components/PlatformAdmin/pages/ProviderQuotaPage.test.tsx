@@ -284,8 +284,13 @@ describe('ProviderQuotaPage', () => {
     expect(timestamp?.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(timestamp?.textContent).toContain(minuteTime('2026-09-05T06:25:00.000Z'));
     expect(timestamp?.textContent).not.toContain(minuteTime('2026-09-05T06:30:00.000Z'));
-    expect(timestamp?.querySelector('span')?.className).toContain('text-danger');
-    expect(within(card).getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' })).toBeTruthy();
+    expect(timestamp?.className).toContain('text-danger');
+    // 采集时间与刷新按钮同一行，并和下方到期行共用右列，保证两行右对齐。
+    const refreshButton = within(card).getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' });
+    expect(timestamp?.parentElement).toBe(refreshButton.parentElement);
+    expect(timestamp?.nextElementSibling).toBe(refreshButton);
+    // 采集时间不再落在进度卡里。
+    expect(tile.textContent).not.toContain('采集');
   });
 
   it('采集失败不显示红框和胶囊，不计入顶部异常，采集时间停在上次成功', async () => {
@@ -310,7 +315,8 @@ describe('ProviderQuotaPage', () => {
     const timestamp = [...card.querySelectorAll('span')].find((el) => el.textContent?.includes('采集 '));
     expect(timestamp?.textContent).toContain(minuteTime('2026-09-05T06:25:00.000Z'));
     expect(timestamp?.textContent).not.toContain(minuteTime('2026-09-05T06:30:00.000Z'));
-    expect(timestamp?.querySelector('span')?.className).toContain('text-danger');
+    expect(timestamp?.className).toContain('text-danger');
+    expect(within(card).getByTestId('quota-window-primary').textContent).not.toContain('采集');
   });
 
   it('零重置券隐藏，采集与到期统一为两个字标签、相同字号与等宽数字', async () => {
@@ -384,6 +390,60 @@ describe('ProviderQuotaPage', () => {
     expect(details.open).toBe(true);
     expect(within(details).getAllByRole('progressbar')).toHaveLength(2);
     expect(volcano.windows.map((window) => window.id)).toEqual(['five_hour', 'monthly', 'daily', 'weekly']);
+  });
+
+  it('进度卡首行是周期与倒计时，积分与百分比同行，卡头不重复采集时间', async () => {
+    render(<ProviderQuotaPage />);
+    const card = await screen.findByTestId('quota-account-volcengine:ark');
+    const tile = within(card).getByTestId('quota-window-monthly');
+    const [periodRow, valueRow] = [...tile.children] as HTMLElement[];
+    // 首行：周期 · 倒计时（原本被采集时间占着）。
+    expect(periodRow.textContent).toContain('月');
+    expect(periodRow.textContent).toContain('（');
+    expect(periodRow.textContent).not.toContain('采集');
+    // 次行：百分比 + 积分/AFP（原本是倒计时）。
+    expect(valueRow.textContent).toContain('94.1%');
+    expect(valueRow.textContent).toContain('37.8万 / 40.2万');
+    expect(valueRow.textContent).not.toContain('（');
+    // 采集时间只在卡头出现一次。
+    expect([...card.querySelectorAll('span')].filter((el) => /^采集 /u.test(el.textContent ?? '')))
+      .toHaveLength(1);
+  });
+
+  it('Grok 无冷却信息时不渲染占位块，卡内间距与其他卡一致', async () => {
+    const base = {
+      ...overview.items[1]!,
+      sourceKind: 'grok_subscription' as const,
+      accountKey: 'grok:g1',
+      accountLabel: 'grok-account',
+      ok: true,
+      error: undefined,
+      limitReached: false,
+      windows: [{ id: 'primary', label: '每周', usedPercent: 30 }],
+      extra: undefined,
+    };
+    api.providerQuota.mockResolvedValue({
+      ...overview,
+      items: [{ ...base, credential: { availability: 'available' as const } }],
+    });
+    const { unmount } = render(<ProviderQuotaPage />);
+    const card = await screen.findByTestId('quota-account-grok:g1');
+    expect(within(card).queryByTestId('grok-quota-scope')).toBeNull();
+    // 进度卡是 CardContent 的第一个子节点，前面没有空节点占掉一档行距。
+    const content = within(card).getByTestId('quota-window-primary').parentElement!.parentElement!;
+    expect(content.firstElementChild).toBe(within(card).getByTestId('quota-window-primary').parentElement);
+    unmount();
+
+    api.providerQuota.mockResolvedValue({
+      ...overview,
+      items: [{
+        ...base,
+        credential: { availability: 'quota_cooldown' as const, cooldownUntil: '2026-09-05T07:30:00.000Z' },
+      }],
+    });
+    render(<ProviderQuotaPage />);
+    const cooled = await screen.findByTestId('quota-account-grok:g1');
+    expect(within(cooled).getByTestId('grok-quota-scope').textContent).toContain('额度冷却');
   });
 
   it('火山未返回周额度时不补造窗口，5 小时仍在折叠区', async () => {

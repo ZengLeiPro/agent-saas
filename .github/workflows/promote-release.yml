@@ -8,26 +8,26 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'promote 发布 RC（release_id 留空则发布 OSS 记录中最新的 RC）；其余为 Web 冷备维护'
+        description: '操作'
         type: choice
         default: promote
         required: true
         options: [promote, web-recovery-audit, web-recovery-repair]
       release_id:
-        description: '要发布的 RC ID；留空自动选择最新 RC'
+        description: 'RC ID，空则最新'
         required: false
         type: string
       reason:
-        description: '操作原因；会写入发布记录'
+        description: '原因'
         required: true
         type: string
       expected_plan_digest:
-        description: 'web-recovery-repair 必填：已审阅 audit 报告中的 planDigest'
+        description: '冷备 planDigest，仅 repair'
         type: string
         default: ''
         required: false
       confirm_recovery_only:
-        description: '仅冷备修复时勾选；不修改 OSS、DNS、API 或可信身份'
+        description: '确认只修冷备，仅 repair'
         type: boolean
         default: false
         required: false

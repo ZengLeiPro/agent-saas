@@ -487,9 +487,20 @@ jobs:
             "$upload_root/"
           if [ "$PRODUCTION_ALREADY_TARGET" != true ]; then
             # 制品留在深圳 OSS。runner 只传脚本/清单/预签名拉取计划，ECS 内网直拉并校验摘要。
+            # 签名凭据只写 runner 私有文件，不进 env 扫描、不进 ECS 载荷。
+            : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing production secret ALIYUN_ACCESS_KEY_ID}"
+            : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing production secret ALIYUN_ACCESS_KEY_SECRET}"
+            oss_sign_credentials="$RUNNER_TEMP/promotion-oss-sign-credentials.json"
+            (
+              umask 077
+              jq -n --arg accessKeyId "$ALIBABACLOUD_ACCESS_KEY_ID" \
+                --arg accessKeySecret "$ALIBABACLOUD_ACCESS_KEY_SECRET" \
+                '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$oss_sign_credentials"
+            )
             node scripts/release/sign-promotion-artifact-urls.mjs \
               "$RUNNER_TEMP/manifest.json" "$RELEASE_RECORD_OSS_REGION" \
-              "$upload_root/promotion-artifact-fetch-plan.json"
+              "$upload_root/promotion-artifact-fetch-plan.json" \
+              "$oss_sign_credentials"
             unit_files=("$RUNNER_TEMP/selected-units/"*)
             if [ -e "${unit_files[0]}" ]; then
               cp "${unit_files[@]}" "$upload_root/"

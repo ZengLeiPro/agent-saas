@@ -96,11 +96,15 @@ test('signer 固定 internal+HTTPS，拒绝非深圳 region', () => {
   );
 });
 
-test('CLI 将计划写成 JSON', async () => {
+test('CLI 从凭据文件签发，不读 process.env', async () => {
+  const source = await readFile(new URL('./sign-promotion-artifact-urls.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /process\.env\./u);
   const root = await mkdtemp(join(tmpdir(), 'sign-plan-'));
   const manifestPath = join(root, 'manifest.json');
   const outputPath = join(root, 'plan.json');
+  const credentialsPath = join(root, 'credentials.json');
   await writeFile(manifestPath, JSON.stringify(manifest()));
+  await writeFile(credentialsPath, JSON.stringify({ accessKeyId: 'id', accessKeySecret: 'secret' }));
   const { spawnSync } = await import('node:child_process');
   const result = spawnSync(
     process.execPath,
@@ -109,15 +113,9 @@ test('CLI 将计划写成 JSON', async () => {
       manifestPath,
       'cn-shenzhen',
       outputPath,
+      credentialsPath,
     ],
-    {
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        ALIBABACLOUD_ACCESS_KEY_ID: 'id',
-        ALIBABACLOUD_ACCESS_KEY_SECRET: 'secret',
-      },
-    },
+    { encoding: 'utf8' },
   );
   // CLI 会加载真实 ali-oss；无网络签名仍应产出 HTTPS URL 字符串。
   if (result.status !== 0) {

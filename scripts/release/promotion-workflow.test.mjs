@@ -79,12 +79,15 @@ test('生产载荷不把制品绕美国 runner：ECS 按预签名 URL 从深圳 
     .split('\n      - name:')[0];
   assert.match(upload, /sign-promotion-artifact-urls\.mjs/u);
   assert.match(upload, /promotion-artifact-fetch-plan\.json/u);
+  assert.match(upload, /promotion-oss-sign-credentials\.json/u);
+  assert.match(upload, /umask 077/u);
   assert.match(
     upload,
     /hydrate '\$remote\/promotion-artifact-fetch-plan\.json'/u,
   );
   assert.doesNotMatch(upload, /selected\/"\*\.tgz/u);
   assert.doesNotMatch(upload, /Reusing digest-verified production archive/u);
+  assert.doesNotMatch(upload, /cp .*promotion-oss-sign-credentials/u);
 });
 
 test('生产真相只来自回读：不收敛就失败，收敛后才写 checkpoint、OSS 记录与 GitHub 旁证', async () => {

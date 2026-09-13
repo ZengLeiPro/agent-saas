@@ -71,18 +71,26 @@ export function buildFetchPlan(manifest, sign) {
   return { schemaVersion: 1, artifacts };
 }
 
+function required(value, name) {
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const [manifestPath, region, outputPath] = process.argv.slice(2);
-  if (!manifestPath || !outputPath) {
+  // 凭据只来自 runner 私有文件（与 put/get-web-object 同一契约）；不读 process.env，
+  // 避免 deployment/scripts env 名预算扩张，也不把长期 AK 写进 ECS 载荷。
+  const [manifestPath, region, outputPath, credentialsPath] = process.argv.slice(2);
+  if (!manifestPath || !outputPath || !credentialsPath) {
     throw new Error(
-      'usage: sign-promotion-artifact-urls.mjs <manifest> <region> <output>',
+      'usage: sign-promotion-artifact-urls.mjs <manifest> <region> <output> <credentials>',
     );
   }
+  const credentials = JSON.parse(await readFile(required(credentialsPath, 'credentialsPath'), 'utf8'));
   const OSS = requireFromServer('ali-oss');
   const sign = createInternalOssSigner({
     OSS,
-    accessKeyId: process.env.ALIBABACLOUD_ACCESS_KEY_ID,
-    accessKeySecret: process.env.ALIBABACLOUD_ACCESS_KEY_SECRET,
+    accessKeyId: credentials.accessKeyId,
+    accessKeySecret: credentials.accessKeySecret,
     region,
   });
   const plan = buildFetchPlan(JSON.parse(await readFile(manifestPath, 'utf8')), sign);

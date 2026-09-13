@@ -178,13 +178,9 @@ function formatMinuteTime(value: string): string {
 
 function WindowTile({
   window,
-  collectedAt,
-  collectionFailed,
   showAmount,
 }: {
   window: ProviderQuotaWindow;
-  collectedAt: string;
-  collectionFailed: boolean;
   showAmount: boolean;
 }) {
   const tone = windowTone(window);
@@ -200,17 +196,14 @@ function WindowTile({
       className="space-y-2 rounded-md border bg-muted/10 p-3"
       data-testid={`quota-window-${window.id}`}
     >
-      <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
-        <span className="min-w-0 truncate tabular-nums">
-          {label} · <span className={cn(collectionFailed && 'text-danger')}>采集 {formatMinuteTime(collectedAt)}</span>
-        </span>
-        {amount && <span className="shrink-0 whitespace-nowrap text-right tabular-nums">{amount}</span>}
+      <div className="truncate text-xs tabular-nums text-muted-foreground">
+        {label}{resetIn ? ` · ${resetIn}（${formatResetTime(window.resetAt)}）` : ''}
       </div>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="text-2xl font-semibold tabular-nums leading-none text-foreground">
           {window.usedPercent.toFixed(1)}%
         </span>
-        {resetIn && <span className="ml-auto text-right text-xs text-muted-foreground">{resetIn}（{formatResetTime(window.resetAt)}）</span>}
+        {amount && <span className="ml-auto shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground">{amount}</span>}
       </div>
       <div
         className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
@@ -258,7 +251,8 @@ function AccountCard({
   const additionalLimited = additionalWindows.filter((window) => windowTone(window) === 'critical').length;
   const lastSuccessAt =
     typeof snapshot.extra?.lastSuccessAt === 'string' ? snapshot.extra.lastSuccessAt : null;
-  const displayCollectedAt = !snapshot.ok && lastSuccessAt ? lastSuccessAt : snapshot.collectedAt;
+  const collectionFailed = !snapshot.ok;
+  const displayCollectedAt = collectionFailed && lastSuccessAt ? lastSuccessAt : snapshot.collectedAt;
   const credits = snapshot.extra?.credits as
     { balance?: string | number; hasCredits?: boolean } | undefined;
   const creditBalance = Number(credits?.balance ?? 0);
@@ -296,6 +290,15 @@ function AccountCard({
             )}
           </div>
           <div className="col-start-2 row-start-1 flex items-center justify-end gap-3">
+            <span
+              className={cn(
+                'whitespace-nowrap text-xs font-normal tabular-nums',
+                collectionFailed ? 'text-danger' : 'text-muted-foreground',
+              )}
+              title={collectionFailed ? `最近一次采集失败：${snapshot.error ?? '未知错误'}` : undefined}
+            >
+              采集 {formatMinuteTime(displayCollectedAt)}
+            </span>
             {!isPushOnly ? (
               <Button
                 variant="ghost"
@@ -329,13 +332,7 @@ function AccountCard({
         {mainWindows.length > 0 && (
           <div className={cn('grid gap-3', mainWindows.length > 1 && 'sm:grid-cols-2')}>
             {mainWindows.map((window) => (
-              <WindowTile
-                key={window.id}
-                window={window}
-                collectedAt={displayCollectedAt}
-                collectionFailed={!snapshot.ok}
-                showAmount={showWindowAmounts}
-              />
+              <WindowTile key={window.id} window={window} showAmount={showWindowAmounts} />
             ))}
           </div>
         )}
@@ -348,13 +345,7 @@ function AccountCard({
             </summary>
             <div className={cn('mt-3 grid gap-3', additionalWindows.length > 1 && 'sm:grid-cols-2')}>
               {additionalWindows.map((window) => (
-                <WindowTile
-                  key={window.id}
-                  window={window}
-                  collectedAt={displayCollectedAt}
-                  collectionFailed={!snapshot.ok}
-                  showAmount={showWindowAmounts}
-                />
+                <WindowTile key={window.id} window={window} showAmount={showWindowAmounts} />
               ))}
             </div>
           </details>

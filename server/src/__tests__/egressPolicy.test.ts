@@ -10,6 +10,7 @@ import {
   egressSandboxFingerprint,
   parseProxyUrl,
   proxyHostCidr,
+  isLoopbackHost,
   shouldProxyHost,
   type EgressServerProxyConfig,
 } from '../runtime/egressPolicy.js';
@@ -165,6 +166,14 @@ describe('buildPackageMirrorEnv', () => {
 describe('shouldProxyHost', () => {
   const enabled = serverConfig({ enabled: true, proxyUrl: 'http://172.16.177.77:7890' });
 
+  it('本机回环恒不代理，即使代理全开且 bypass 为空', () => {
+    // 复现 staging 事故：server 段 matchDomains=[] / bypassDomains=[] 时曾把
+    // 127.0.0.1:3410（本机 ACS orchestrator）送进 Squid 得到 403。
+    for (const host of ['127.0.0.1', '127.0.0.5', 'localhost', '::1', '[::1]', 'LOCALHOST']) {
+      expect(shouldProxyHost(host, enabled)).toBe(false);
+    }
+  });
+
   it('未启用或地址非法时一律直连', () => {
     expect(shouldProxyHost('example.com', serverConfig({ enabled: false }))).toBe(false);
     expect(shouldProxyHost('example.com', serverConfig({ enabled: true, proxyUrl: '' }))).toBe(false);
@@ -195,6 +204,20 @@ describe('shouldProxyHost', () => {
   it('大小写与前导点不敏感', () => {
     const config = serverConfig({ ...enabled, matchDomains: ['.Example.COM'] });
     expect(shouldProxyHost('WWW.example.com', config)).toBe(true);
+  });
+});
+
+describe('isLoopbackHost', () => {
+  it('识别 IPv4 127.0.0.0/8、IPv6 ::1 与 localhost', () => {
+    for (const host of ['127.0.0.1', '127.0.0.53', '127.255.255.254', 'localhost', 'LocalHost', '::1', '[::1]']) {
+      expect(isLoopbackHost(host)).toBe(true);
+    }
+  });
+
+  it('不误判公网/内网地址与相似串', () => {
+    for (const host of ['128.0.0.1', '10.0.0.8', 'example.com', 'notlocalhost', '', '1270.0.0.1']) {
+      expect(isLoopbackHost(host)).toBe(false);
+    }
   });
 });
 

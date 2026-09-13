@@ -12,9 +12,12 @@ case "$uri" in oss://*) ;; *) echo 'Release record URI must be OSS' >&2; exit 1 
 mkdir -p "$dest"
 record_uri="$uri/records/$release_id"
 
+# 用 cp 直接判定存在性并落盘，不再单独 `oss stat`：最小权限 RAM 用户对存在的
+# 对象也可能因缺 HeadObject 权限让 stat 返回 AccessDenied（见
+# upload-oss-object-immutable.sh 的同类说明），而 GetObject/cp 可靠。#677 起
+# Staging 不再打 tag/建 Release，OSS 记录是唯一权威来源，这里不能被 stat 误判跳过。
 if command -v aliyun >/dev/null \
-  && aliyun --secure oss stat "$record_uri/manifest.json" --region "$region" >/dev/null 2>&1; then
-  aliyun --secure oss cp "$record_uri/manifest.json" "$dest/manifest.json" --region "$region"
+  && aliyun --secure oss cp "$record_uri/manifest.json" "$dest/manifest.json" --region "$region" >/dev/null 2>&1; then
   aliyun --secure oss cp "$record_uri/artifact-index.json" "$dest/artifact-index.json" --region "$region"
   mkdir -p "$dest/attestations"
   aliyun --secure oss cp "$record_uri/attestations/" "$dest/attestations/" --recursive \

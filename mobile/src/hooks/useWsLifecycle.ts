@@ -46,8 +46,10 @@ export function useWsLifecycle(enabled = true): void {
       // NetInfo true is re-checked before and after the debounce window.
       const state = await NetInfo.fetch();
       if (generation !== networkGenerationRef.current || appStateRef.current !== 'active') return;
-      if (mobileReachability(state) !== true || wsClient.isSendingFrozen) return;
+      // Unknown reachability must not leave the socket permanently suspended:
+      // disconnect() is intentionalClose and will not scheduleRetry on its own.
       wsClient.resumeNonEssentialTransport();
+      if (mobileReachability(state) !== true || wsClient.isSendingFrozen) return;
       if (wsClient.isConnected && !detachedRef.current) return;
       reconnectTimerRef.current = setTimeout(() => {
         reconnectTimerRef.current = null;

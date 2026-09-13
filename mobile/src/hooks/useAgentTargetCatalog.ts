@@ -22,6 +22,7 @@ export function useAgentTargetCatalog(user: AgentTargetCatalogUser | null | unde
   const [agentTargetCatalogReason, setAgentTargetCatalogReason] =
     useState<AgentTargetUnavailableReason | null>(null);
   const [agentTargetCatalogLoading, setAgentTargetCatalogLoading] = useState(true);
+  const tenantId = user?.tenantId ?? null;
   const agentTargetCatalogOwnerKey = user ? `${user.tenantId}:${user.id}` : 'anonymous';
   const agentTargetCatalogOwnerKeyRef = useRef(agentTargetCatalogOwnerKey);
   agentTargetCatalogOwnerKeyRef.current = agentTargetCatalogOwnerKey;
@@ -34,7 +35,7 @@ export function useAgentTargetCatalog(user: AgentTargetCatalogUser | null | unde
 
   const refreshAgentTargetCatalog = useCallback(async () => {
     const requestOwnerKey = agentTargetCatalogOwnerKey;
-    if (!user) {
+    if (!tenantId) {
       setAgentTargetCatalog(null);
       setAgentTargetCatalogReason(null);
       setAgentTargetCatalogLoading(false);
@@ -46,7 +47,7 @@ export function useAgentTargetCatalog(user: AgentTargetCatalogUser | null | unde
       if (!response.ok) throw new Error('target_catalog_unavailable');
       const adapted = adaptAgentTargetCatalogResponse<OrgAgentSummary>(
         await response.json(),
-        user.tenantId,
+        tenantId,
       );
       if (agentTargetCatalogOwnerKeyRef.current !== requestOwnerKey) return;
       if (adapted.kind === 'catalog') {
@@ -68,12 +69,14 @@ export function useAgentTargetCatalog(user: AgentTargetCatalogUser | null | unde
       if (agentTargetCatalogOwnerKeyRef.current === requestOwnerKey)
         setAgentTargetCatalogLoading(false);
     }
-  }, [agentTargetCatalogOwnerKey, user]);
+  }, [agentTargetCatalogOwnerKey, tenantId]);
 
+  // 只在身份（tenantId:userId）变化时清 pending。同一账号 /api/auth/me 换新对象
+  // 不得拆掉 /chat/new 已绑定的目标，否则本地气泡会把着陆页重绑门禁锁死。
   useEffect(() => {
     setPendingAgentTarget(null);
     void refreshAgentTargetCatalog();
-  }, [refreshAgentTargetCatalog, setPendingAgentTarget]);
+  }, [agentTargetCatalogOwnerKey, refreshAgentTargetCatalog, setPendingAgentTarget]);
 
   return {
     agentTargetCatalog,

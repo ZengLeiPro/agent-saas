@@ -141,6 +141,8 @@ class WsClient {
     private boundaryGeneration = 0;
     private sendingFrozen = false;
     private lifecycleSuspended = false;
+    /** URL passed to the constructor after policy check. Native `ws.url` is not authoritative. */
+    private trustedSocketUrl: string | null = null;
     private activeAuthBinding: AuthSessionBinding | null = null;
     private refCount = 0;
     private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -263,6 +265,7 @@ class WsClient {
         this.socketAttempt++;
         const old = this.ws;
         this.ws = null;
+        this.trustedSocketUrl = null;
         this.activeAuthBinding = null;
         if (!old) return;
         old.onopen = null;
@@ -342,6 +345,7 @@ class WsClient {
             if (!current()) return;
             try { this.assertTrustedWsUrl(url); }
             catch { this.disconnect(); return; }
+            this.trustedSocketUrl = url;
             try {
                 // In no-auth mode the server sends auth_ok first; otherwise auth is the first client frame.
                 if (token) ws.send(JSON.stringify({ action: 'auth', token, ...binding }));
@@ -513,9 +517,9 @@ class WsClient {
         if (this.sendingFrozen || this.lifecycleSuspended) return false;
         const ws = this.ws;
         if (this.state !== 'connected' || !ws || ws.readyState !== WebSocket.OPEN) return false;
+        const socketUrl = this.trustedSocketUrl;
+        if (!socketUrl) return false;
         try {
-            const socketUrl = (ws as unknown as { url?: unknown }).url;
-            if (typeof socketUrl !== 'string') throw new Error('WebSocket URL unavailable');
             this.assertTrustedWsUrl(socketUrl);
         } catch { console.warn('[WS] Refusing send to an untrusted origin'); this.disconnect(); return false; }
         const outbound = msg.action === 'sync' ? {

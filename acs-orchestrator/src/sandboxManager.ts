@@ -39,7 +39,7 @@ import {
   type SandboxScopeDeletion,
   type SandboxWorkloadDescriptor,
 } from './sandboxLifecyclePolicy.js';
-import { hasSandboxResourceDrift, sameResourceTarget, sandboxResourceTarget } from './sandboxResourceDrift.js';
+import { formatSandboxResourceDriftLog, hasSandboxResourceDrift, sameResourceTarget } from './sandboxResourceDrift.js';
 import {
   type ManagedSandbox,
   type ManagedSandboxInventory,
@@ -249,7 +249,7 @@ export class SandboxManager {
         if (busy) {
           path = 'defer_resource_changed_busy'; resourceDriftDeferred = true; this.logger.warn(`sandbox_resource_drift_deferred name=${ref.name} workspaceId=${ref.workspaceId} reason=busy`);
         } else {
-          path = 'recreate_resource_changed'; this.logger.warn(`sandbox_resource_drift name=${ref.name} workspaceId=${ref.workspaceId}`);
+          path = 'recreate_resource_changed'; this.logger.warn(formatSandboxResourceDriftLog(ref, existing, this.config));
           await timing.step('deleteResourceDrift', () => this.delete(ref, { activeKey: options.activeKey, mutationToken }));
           existing = null;
         }

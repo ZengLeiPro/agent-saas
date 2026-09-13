@@ -39,29 +39,42 @@ export function sandboxResourceTarget(
   };
 }
 
+export function readSandboxContainerResources(
+  status: SandboxStatus,
+  sandboxContainerName: string,
+): { requests: Record<string, unknown>; limits: Record<string, unknown> } {
+  const spec = objectValue((status.raw ?? {}).spec);
+  const podSpec = objectValue(objectValue(spec.template).spec);
+  const containers = Array.isArray(podSpec.containers) ? podSpec.containers : [];
+  const container = containers.find((item): item is Record<string, unknown> => (
+    Boolean(item)
+    && typeof item === 'object'
+    && (!('name' in item) || item.name === sandboxContainerName)
+  ));
+  const resources = objectValue(container?.resources);
+  return { requests: objectValue(resources.requests), limits: objectValue(resources.limits) };
+}
+
 export function hasSandboxResourceDrift(
   status: SandboxStatus,
   override: SandboxResourceOverride,
   defaults: ResourceDefaults,
 ): boolean {
-  const raw = status.raw ?? {};
-  const spec = objectValue(raw.spec);
-  const template = objectValue(spec.template);
-  const podSpec = objectValue(template.spec);
-  const containers = Array.isArray(podSpec.containers) ? podSpec.containers : [];
-  const container = containers.find((item): item is Record<string, unknown> => (
-    Boolean(item)
-    && typeof item === 'object'
-    && (!('name' in item) || item.name === defaults.sandboxContainerName)
-  ));
-  const resources = objectValue(container?.resources);
-  const requests = objectValue(resources.requests);
-  const limits = objectValue(resources.limits);
-  const desired = sandboxResourceTarget(override, defaults);
-  return !resourceQuantityEqual('cpu', stringValue(requests.cpu), desired.cpuRequest)
-    || !resourceQuantityEqual('memory', stringValue(requests.memory), desired.memoryRequest)
-    || !resourceQuantityEqual('cpu', stringValue(limits.cpu), desired.cpuLimit)
-    || !resourceQuantityEqual('memory', stringValue(limits.memory), desired.memoryLimit);
+  const { requests, limits } = readSandboxContainerResources(status, defaults.sandboxContainerName);
+  return (override.cpuRequest !== undefined && !resourceQuantityEqual('cpu', stringValue(requests.cpu), override.cpuRequest))
+    || (override.memoryRequest !== undefined && !resourceQuantityEqual('memory', stringValue(requests.memory), override.memoryRequest))
+    || (override.cpuLimit !== undefined && !resourceQuantityEqual('cpu', stringValue(limits.cpu), override.cpuLimit))
+    || (override.memoryLimit !== undefined && !resourceQuantityEqual('memory', stringValue(limits.memory), override.memoryLimit));
+}
+
+export function formatSandboxResourceDriftLog(
+  ref: SandboxRef,
+  status: SandboxStatus,
+  defaults: ResourceDefaults,
+): string {
+  const override = ref.resources ?? {};
+  const actual = readSandboxContainerResources(status, defaults.sandboxContainerName);
+  return `sandbox_resource_drift name=${ref.name} workspaceId=${ref.workspaceId} override=${JSON.stringify(override)} actual_requests=${JSON.stringify(actual.requests)} actual_limits=${JSON.stringify(actual.limits)}`;
 }
 
 function resourceQuantityEqual(

@@ -47,6 +47,18 @@ export function applySandboxProfileResources(
 
 export type SandboxResources = { cpu: string; memoryMb: number };
 
+/** Session profile (then explicit overlay) is the CPU/memory source for every ACS ensure path. */
+export function recipeWithSessionSandboxResources(
+  recipe: Partial<WorkspaceRecipe> | undefined,
+  sandboxProfile: SandboxProfile | undefined,
+  sandboxResources?: SandboxResources,
+): Partial<WorkspaceRecipe> {
+  const profiled = applySandboxProfileResources(recipe, sandboxProfile ?? LEGACY_SANDBOX_PROFILE);
+  return sandboxResources
+    ? { ...profiled, resources: { ...profiled.resources, ...sandboxResources } }
+    : profiled;
+}
+
 export function parseSandboxResources(value: unknown): SandboxResources | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const { cpu, memoryMb } = value as { cpu?: unknown; memoryMb?: unknown };

@@ -35,6 +35,8 @@ export interface OwnershipRecord {
   updatedAt: string;
   sandboxUid?: string;
   phaseDeadlineAt?: string;
+  /** ISO time the record entered `running`. Optional on old journal rows. */
+  dispatchedAt?: string;
   /** An exact control-plane fence, persisted before dispatch. Contains no key. */
   remoteFence?: RemoteAttemptFence;
   /** A coordinator cannot release or forget its independently owned child work. */
@@ -104,6 +106,14 @@ export function ownershipIsTerminal(record: OwnershipRecord): boolean {
   return record.resource === 'stopped' || record.resource === 'not_started';
 }
 
+/** Prefer dispatchedAt; old journal rows fall back to updatedAt as the observation floor. */
+export function ownershipObservationFloor(record: OwnershipRecord): string | undefined {
+  for (const value of [record.dispatchedAt, record.updatedAt]) {
+    if (typeof value === 'string' && Number.isFinite(Date.parse(value))) return value;
+  }
+  return undefined;
+}
+
 function validIdentifier(value: unknown, maximum = 512): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= maximum && !/[\x00-\x1f\x7f]/.test(value);
 }
@@ -135,6 +145,7 @@ export function validateOwnershipRecords(value: unknown): OwnershipRecord[] {
     if (record.reasonCode !== undefined && !/^[a-z0-9_:-]{1,128}$/.test(record.reasonCode)) throw new OwnershipUnavailableError();
     if (record.sandboxUid !== undefined && !validIdentifier(record.sandboxUid, 128)) throw new OwnershipUnavailableError();
     if (record.phaseDeadlineAt !== undefined && !Number.isFinite(Date.parse(record.phaseDeadlineAt))) throw new OwnershipUnavailableError();
+    if (record.dispatchedAt !== undefined && !Number.isFinite(Date.parse(record.dispatchedAt))) throw new OwnershipUnavailableError();
     if (record.parentOperationId !== undefined && (!validIdentifier(record.parentOperationId) || record.parentOperationId === record.operationId)) throw new OwnershipUnavailableError();
     if (record.remoteFence !== undefined) {
       const fence = parseRemoteFence(record.remoteFence);

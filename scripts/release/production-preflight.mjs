@@ -4,7 +4,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
-import { observeProductionRuntime } from './production-runtime-observation.mjs';
+import {
+  diskPreflightReasons,
+  observeProductionRuntime,
+  PREFLIGHT_MIN_FREE_BYTES_DEFAULT,
+  PREFLIGHT_MIN_FREE_INODES_DEFAULT,
+} from './production-runtime-observation.mjs';
 import { executionIdentity, writeDiagnosticReport } from './production-preflight-report.mjs';
 
 const READERS = new Set(['read-production-state.mjs', 'read-live-production-components.mjs']);
@@ -133,6 +138,16 @@ export async function runProductionPreflight(options, dependencies = {}) {
           report.timedOut = true;
           break;
         }
+        const diskReasons = diskPreflightReasons(
+          observation.disk,
+          Number.parseInt(process.env.PREFLIGHT_MIN_FREE_BYTES ?? '', 10) || PREFLIGHT_MIN_FREE_BYTES_DEFAULT,
+          Number.parseInt(process.env.PREFLIGHT_MIN_FREE_INODES ?? '', 10) || PREFLIGHT_MIN_FREE_INODES_DEFAULT,
+        );
+        if (diskReasons.length) {
+          report.attempts[report.attempts.length - 1].diskReasons = diskReasons;
+          report.diskBlocked = true;
+          break;
+        }
         if (result.exitCode === 0) {
           // The ORIGINAL strict reader is the only authority. Diagnostic snapshots never authorize writes.
           const state = JSON.parse(readFileSync(candidate, 'utf8'));
@@ -198,10 +213,18 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
       runAttempt: flags['--run-attempt'],
     });
     if (!result.ok) {
-      const last = result.report.attempts.at(-1)?.observation;
-      process.stderr.write(
-        `Strict production reader rejected; worker observation=${last?.retry?.reasonCode ?? 'unknown'}; readyfile errno=${last?.runtimeWorker?.readyfile?.errno ?? 'none'}; attempts=${result.report.attempts.length}. See production-preflight.json.\n`,
-      );
+      const last = result.report.attempts.at(-1);
+      const diskReasons = last?.diskReasons;
+      if (result.report.diskBlocked && Array.isArray(diskReasons) && diskReasons.length) {
+        process.stderr.write(
+          `Production preflight disk gate rejected; ${diskReasons.join('; ')}. See production-preflight.json.\n`,
+        );
+      } else {
+        const observation = last?.observation;
+        process.stderr.write(
+          `Strict production reader rejected; worker observation=${observation?.retry?.reasonCode ?? 'unknown'}; readyfile errno=${observation?.runtimeWorker?.readyfile?.errno ?? 'none'}; attempts=${result.report.attempts.length}. See production-preflight.json.\n`,
+        );
+      }
       process.exitCode = 1;
     }
   } catch {

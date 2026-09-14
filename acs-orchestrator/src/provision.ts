@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { waitForOwned } from './ownedWait.js';
+import { waitForOwned, OwnedWaitEndedError } from './ownedWait.js';
 
 import type { AcsOrchestratorConfig } from './config.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
@@ -53,6 +53,7 @@ export class Provisioner {
     const recipeHash = createHash('sha256').update(JSON.stringify(provisionFingerprint(recipe))).digest('hex');
 
     while (true) {
+      options.signal?.throwIfAborted();
       const inFlight = this.inFlightBySandbox.get(plannedRef.name);
       if (!inFlight) break;
       try {
@@ -72,6 +73,7 @@ export class Provisioner {
         }
       } catch (err) {
         if (inFlight.recipeHash === recipeHash) throw err;
+        if (err instanceof OwnedWaitEndedError || options.signal?.aborted) throw err;
       }
     }
 

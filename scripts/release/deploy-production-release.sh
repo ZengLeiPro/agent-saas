@@ -183,7 +183,7 @@ rollback_acs_release() {
     if [ "$runtime_verify" = true ]; then
       rm -f /tmp/acs-rollback-health.json || rollback_status=1
       for _ in $(seq 1 90); do
-        curl -fsS http://127.0.0.1:3400/health >/tmp/acs-rollback-health.json && break
+        curl -fsS "${ACS_ORCH_BASE_URL:-http://127.0.0.1:3400}/health" >/tmp/acs-rollback-health.json && break
         sleep 2
       done
       test -s /tmp/acs-rollback-health.json || rollback_status=1
@@ -256,6 +256,8 @@ ACTIVE_COLOR_PATH="${ACTIVE_COLOR_PATH:-/etc/agent-saas/active-color}"
 WORKER_ACTIVE_COLOR_PATH="${WORKER_ACTIVE_COLOR_PATH:-/etc/agent-saas/runtime-worker-active-color}"
 NGINX_UPSTREAM_PATH="${NGINX_UPSTREAM_PATH:-/etc/nginx/conf.d/agent-saas-upstream.conf}"
 ACS_CURRENT_PATH="${ACS_CURRENT_PATH:-/opt/agent-saas/acs-current}"
+ACS_ORCH_BASE_URL="${ACS_ORCH_BASE_URL:-http://127.0.0.1:3400}"
+ACS_ORCH_BASE_URL="${ACS_ORCH_BASE_URL%/}"
 ACS_ENV_PATH="${ACS_ENV_PATH:-/etc/agent-saas/acs-orchestrator.env}"
 ACS_IDENTITY_PATH="${ACS_IDENTITY_PATH:-/etc/agent-saas/acs-release-identity.json}"
 ACS_UNIT_PATH="${ACS_UNIT_PATH:-/etc/systemd/system/agent-saas-acs-orchestrator.service}"
@@ -1575,7 +1577,7 @@ NODE
   acs_health_path="/tmp/acs-promotion-health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
   rm -f "$acs_health_path"
   for _ in $(seq 1 90); do
-    curl -fsS http://127.0.0.1:3400/health >"$acs_health_path" && break
+    curl -fsS "${ACS_ORCH_BASE_URL:-http://127.0.0.1:3400}/health" >"$acs_health_path" && break
     sleep 2
   done
   if [ ! -s "$acs_health_path" ] || ! node - "$MANIFEST_PATH" "$acs_health_path" <<'NODE'

@@ -27,6 +27,7 @@ acs-orchestrator/src/operationDiagnostics.ts
 acs-orchestrator/src/ownedExecutionRuntime.ts
 acs-orchestrator/src/ownedInvocation.ts
 acs-orchestrator/src/ownedOperations.ts
+acs-orchestrator/src/ownedPrepareAdmission.ts
 acs-orchestrator/src/ownedSharedWork.ts
 acs-orchestrator/src/ownedPodIdentity.ts
 acs-orchestrator/src/ownedWait.ts
@@ -45,6 +46,7 @@ acs-orchestrator/src/restorePerPodCli.ts
 acs-orchestrator/src/runnerDaemonProtocol.ts
 acs-orchestrator/src/runnerLog.ts
 acs-orchestrator/src/runnerTransport.ts
+acs-orchestrator/src/sandboxAbsence.ts
 acs-orchestrator/src/sandboxCapacity.ts
 acs-orchestrator/src/sandboxCapacityAdmission.ts
 acs-orchestrator/src/sandboxCleanup.ts

@@ -5,6 +5,17 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runProductionPreflight } from './production-preflight.mjs';
 
+function sufficientDisk() {
+  return {
+    paths: ['/', '/opt/agent-saas', '/opt/agent-saas-app', '/var/lib/agent-saas'].map((path) => ({
+      path,
+      availableBytes: 20 * 1024 * 1024 * 1024,
+      availableInodes: 500_000,
+      mountPoint: '/',
+    })),
+  };
+}
+
 function setup(t) {
   const dir = mkdtempSync(join(tmpdir(), 'production-preflight-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -29,6 +40,7 @@ function setup(t) {
     },
     observe: () => ({
       retry: { allowed: true, reasonCode: 'config_refresh_slow', identityKey: 'generation-A' },
+      disk: sufficientDisk(),
     }),
     execute: async (candidate) => {
       calls++;
@@ -111,6 +123,7 @@ for (const secondKey of ['generation-B', null]) {
         reasonCode: 'config_refresh_slow',
         identityKey: ++observed === 1 ? 'generation-A' : secondKey,
       },
+      disk: sufficientDisk(),
     });
     const result = await runProductionPreflight(f.options, f.dependencies);
     assert.equal(result.ok, false);
@@ -156,6 +169,7 @@ test('keeps legacy successful strict readers compatible without requiring a new 
   const f = setup(t);
   f.dependencies.observe = () => ({
     retry: { allowed: false, reasonCode: 'worker_readiness_reason_unavailable', identityKey: null },
+    disk: sufficientDisk(),
   });
   f.dependencies.execute = async (candidate) => {
     writeFileSync(candidate, JSON.stringify({ environment: 'production', components: {} }));
@@ -204,3 +218,24 @@ for (const invalid of [
     assert.equal(f.calls(), 0);
   });
 }
+
+test('fails closed when host disk is below the free-bytes floor even if the reader succeeded', async (t) => {
+  const f = setup(t);
+  f.dependencies.observe = () => ({
+    retry: { allowed: false, reasonCode: 'ready', identityKey: 'generation-A' },
+    disk: {
+      paths: sufficientDisk().paths.map((entry) =>
+        entry.path === '/opt/agent-saas' ? { ...entry, availableBytes: 1024 } : entry,
+      ),
+    },
+  });
+  f.dependencies.execute = async (candidate) => {
+    writeFileSync(candidate, JSON.stringify({ environment: 'production', components: {} }));
+    return { exitCode: 0 };
+  };
+  const result = await runProductionPreflight(f.options, f.dependencies);
+  assert.equal(result.ok, false);
+  assert.equal(result.report.diskBlocked, true);
+  assert.match(result.report.attempts[0].diskReasons.join('\n'), /\/opt\/agent-saas/u);
+  assert.equal(existsSync(f.options.output), false);
+});

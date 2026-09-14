@@ -9,6 +9,7 @@ import {
   parseReleaseEnvironment,
   hasSystemdEnvironment,
   readJson,
+  acsOrchestratorHealthUrl,
 } from './read-live-production-components.mjs';
 import {
   validateConfigIdentitySummary,
@@ -219,7 +220,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     verifyInstalledRelease(apiUnit.root, 'server'),
     verifyInstalledRelease(acsRoot, 'acs'),
     readJson('https://agent.kaiyan.net/release-identity.json'),
-    readJson('http://127.0.0.1:3400/health', { cacheBust: false }),
+    readJson(acsOrchestratorHealthUrl(), { cacheBust: false }),
     readReleaseConfigIdentityBinding(apiUnit.envPath),
     readReleaseConfigIdentityBinding(workerUnit.envPath),
   ]);

@@ -5,8 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
+  collectDiskObservation,
   observeProductionRuntime,
+  PRODUCTION_DISK_PATHS,
   readDiagnosticFile,
+  resolveDiskPaths,
   safeErrno,
 } from './production-runtime-observation.mjs';
 
@@ -87,6 +90,14 @@ function fixture() {
     realpath: () => `/opt/agent-saas-app/releases/${DIGEST.slice(7)}`,
     show: (unit) =>
       `MainPID=${unit.includes('runtime-worker') ? '101' : '100'}\nActiveState=active\nSubState=running\nControlGroup=/system.slice/${unit}\n`,
+    statfs: () => ({
+      type: 1,
+      bsize: 4096,
+      blocks: 10_000_000,
+      bavail: 5_000_000,
+      files: 1_000_000,
+      ffree: 500_000,
+    }),
   };
   return { files, put, status, options, observe: () => observeProductionRuntime(options) };
 }
@@ -268,4 +279,70 @@ test('re-observes a same-generation readyfile that recovered between the reader 
     admission: { state: 'healthy', admitting: true },
   });
   assert.equal(f.observe().retry.allowed, false);
+});
+
+test('records disk bytes and inodes for each production path without merging mount points', () => {
+  const f = fixture();
+  f.options.statfs = (path) => ({
+    type: path === '/' ? 1 : 2,
+    bsize: 4096,
+    blocks: 10_000_000,
+    bavail: path === '/opt/agent-saas' ? 1000 : 5_000_000,
+    files: 1_000_000,
+    ffree: path === '/opt/agent-saas-app' ? 42 : 500_000,
+  });
+  const result = f.observe();
+  assert.deepEqual(
+    result.disk.paths.map((entry) => entry.path),
+    [...PRODUCTION_DISK_PATHS],
+  );
+  const acs = result.disk.paths.find((entry) => entry.path === '/opt/agent-saas');
+  const app = result.disk.paths.find((entry) => entry.path === '/opt/agent-saas-app');
+  const root = result.disk.paths.find((entry) => entry.path === '/');
+  const varlib = result.disk.paths.find((entry) => entry.path === '/var/lib/agent-saas');
+  assert.equal(acs.availableBytes, 1000 * 4096);
+  assert.equal(app.availableInodes, 42);
+  assert.equal(typeof root.mountPoint, 'string');
+  assert.equal(typeof acs.mountPoint, 'string');
+  assert.equal(typeof app.mountPoint, 'string');
+  assert.equal(typeof varlib.mountPoint, 'string');
+  assert.equal(result.disk.paths.length, 4);
+});
+
+test('keeps separate disk rows when two paths share a mount', () => {
+  const disk = collectDiskObservation({
+    realpath: (path) => path,
+    statfs: () => ({ type: 1, bsize: 4096, blocks: 100, bavail: 50, files: 100, ffree: 80 }),
+  });
+  assert.deepEqual(
+    disk.paths.map((entry) => entry.path),
+    [...PRODUCTION_DISK_PATHS],
+  );
+  assert.equal(disk.paths.every((entry) => entry.mountPoint === '/'), true);
+  assert.equal(disk.paths.length, 4);
+});
+
+test('disk observation fails closed when statfs throws', () => {
+  const disk = collectDiskObservation({
+    statfs: (path) => {
+      if (path === '/opt/agent-saas') {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      return { type: 1, bsize: 4096, blocks: 100, bavail: 50, files: 100, ffree: 80 };
+    },
+  });
+  const failed = disk.paths.find((entry) => entry.path === '/opt/agent-saas');
+  assert.equal(failed.error, 'EACCES');
+  assert.equal(failed.availableBytes, undefined);
+});
+
+test('PREFLIGHT_DISK_PATHS overrides the production path list', () => {
+  assert.deepEqual(resolveDiskPaths('/tmp,/var/tmp'), ['/tmp', '/var/tmp']);
+  assert.deepEqual(resolveDiskPaths(''), [...PRODUCTION_DISK_PATHS]);
+  const disk = collectDiskObservation({
+    paths: resolveDiskPaths('/tmp'),
+    statfs: () => ({ type: 1, bsize: 4096, blocks: 100, bavail: 80, files: 100, ffree: 90 }),
+    realpath: (path) => path,
+  });
+  assert.deepEqual(disk.paths.map((entry) => entry.path), ['/tmp']);
 });

@@ -203,14 +203,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -757,6 +757,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -1046,7 +1050,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -1060,7 +1064,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -1354,7 +1358,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -2072,6 +2076,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -2326,7 +2334,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -2340,7 +2348,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -2571,7 +2579,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -3185,6 +3193,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -3439,7 +3451,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -3453,7 +3465,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -3684,7 +3696,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -4261,6 +4273,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -4515,7 +4531,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -4529,7 +4545,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -4760,7 +4776,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -5337,6 +5353,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -5584,7 +5604,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -5598,7 +5618,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -5822,7 +5842,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -6391,6 +6411,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -6638,7 +6662,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -6652,7 +6676,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -6876,7 +6900,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -7445,6 +7469,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -7692,7 +7720,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -7706,7 +7734,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -7930,7 +7958,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -8499,6 +8527,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -8795,7 +8827,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -8809,7 +8841,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -9103,7 +9135,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -9810,6 +9842,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -10071,7 +10107,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -10085,7 +10121,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -10309,7 +10345,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -10891,6 +10927,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -11145,7 +11185,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -11159,7 +11199,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -11383,7 +11423,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -11978,6 +12018,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -12232,7 +12276,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -12246,7 +12290,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -12470,7 +12514,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -13065,6 +13109,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -13298,7 +13346,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -13312,7 +13360,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -13536,7 +13584,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -14094,6 +14142,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -14327,7 +14379,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -14341,7 +14393,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -14565,7 +14617,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -15123,6 +15175,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -15356,7 +15412,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -15370,7 +15426,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -15594,7 +15650,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -16152,6 +16208,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -16385,7 +16445,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -16399,7 +16459,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -16623,7 +16683,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -17181,6 +17241,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -17407,7 +17471,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -17421,7 +17485,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -17645,7 +17709,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -18192,6 +18256,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -18418,7 +18486,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -18432,7 +18500,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -18656,7 +18724,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
@@ -19203,6 +19271,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -19415,7 +19487,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -19429,7 +19501,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -19611,7 +19683,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -20145,6 +20217,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -20357,7 +20433,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -20371,7 +20447,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -20553,7 +20629,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -21083,6 +21159,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -21295,7 +21375,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -21309,7 +21389,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -21491,7 +21571,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -22013,6 +22093,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -22225,7 +22309,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -22239,7 +22323,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -22421,7 +22505,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -22943,6 +23027,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -23155,7 +23243,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -23169,7 +23257,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -23351,7 +23439,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -23873,6 +23961,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -24085,7 +24177,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -24099,7 +24191,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -24281,7 +24373,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -24767,6 +24859,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -24979,7 +25075,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -24993,7 +25089,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -25175,7 +25271,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -25655,6 +25751,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -25867,7 +25967,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -25881,7 +25981,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -26035,7 +26135,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -26499,6 +26599,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -26711,7 +26815,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
@@ -26725,7 +26829,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -26879,7 +26983,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -27343,6 +27447,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -27548,14 +27656,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -27688,7 +27796,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -28143,6 +28251,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -28348,14 +28460,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -28488,7 +28600,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -28935,6 +29047,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -29140,14 +29256,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -29266,7 +29382,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -29701,6 +29817,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -29906,14 +30026,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -30032,7 +30152,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "构造函数与 init 逐字未变；仅修改运行期版本发布规则及现有 review_status 列的单条 UPDATE，无 DDL 或启动回填。"
         },
@@ -30463,6 +30583,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -30668,14 +30792,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -30794,7 +30918,7 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
-          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
           "classification": "no-schema-change",
           "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         },
@@ -31229,6 +31353,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -31434,14 +31562,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -31980,6 +32108,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -32185,14 +32317,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -32731,6 +32863,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -32936,14 +33072,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -33478,6 +33614,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -33683,14 +33823,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -34237,6 +34377,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -34442,14 +34586,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -34996,6 +35140,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -35201,14 +35349,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -35755,6 +35903,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -35946,14 +36098,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -36426,6 +36578,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -36652,14 +36808,14 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "targetDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "classification": "no-schema-change",
           "reason": "Migration registry wiring only; V47 owns the additive DDL and its exact postcondition."
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "targetDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
           "classification": "no-schema-change",
           "reason": "Migration registry wiring only; V47 owns the additive DDL and its exact postcondition."
         },
@@ -37060,7 +37216,7 @@
         },
         {
           "path": "scripts/release/migration-plan.mjs",
-          "digest": "sha256:e9b88bdaa1ac4b4ae6343cd7b5f689b8263673232d027c1e098d21edabe12669"
+          "digest": "sha256:e45d2f292fb91de79e6724edb7418b6c571e1b2e1f74e73ddb43b8744f082439"
         },
         {
           "path": "scripts/release/migration-plan.test.mjs",
@@ -37080,7 +37236,7 @@
         },
         {
           "path": "server/src/data/governance-schema/v47DwsDurableReceiverMigration.test.ts",
-          "digest": "sha256:4426572d2b8cd7d0c04f93b000e31683c3b9307e7b74cda451743b596f5c13e9"
+          "digest": "sha256:650a0bf57ed42b506f4d838c809cd26b218d6e64d5ab05531ca18a92aea6dc7a"
         },
         {
           "path": "server/src/dws/durableEventGateway.test.ts",
@@ -37169,6 +37325,10 @@
         {
           "path": "docs/release/Grok凭据轮换RC收养无结构变更审核-20260913.md",
           "digest": "sha256:a0ef1d317d5b8dd19b727996a4a5515e7176a4ca2e1c791ef89560695b351b4b"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     },
@@ -39657,9 +39817,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:fef73c9b3dd744c5013fafcd00b1e8f0ecc3b1484a5bfcd151dac3d9d4edd4ad",
+          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
           "classification": "no-schema-change",
-          "reason": "只读写 V48 已声明表；授权码消费、部署公钥登记和身份绑定在同一事务完成，不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，新增授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -39671,9 +39831,9 @@
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:c7df0af72586c3e96f3be307e7ed75e36e561a11c9dade5ef9bf3569c26d2fdc",
+          "targetDigest": "sha256:0c6f2f96cd9f3a2bad55e26d64d2717150bf63b3ed5226e1f07371525c0ef539",
           "classification": "no-schema-change",
-          "reason": "只读取和撤销 V48 部署公钥行，不执行启动 DDL 或回填。"
+          "reason": "读写 V48 部署公钥行，并以事务完成 next/current/previous 轮换；不执行启动 DDL 或回填。"
         },
         {
           "path": "server/src/kyapp/workload/replayStore.ts",
@@ -39690,11 +39850,15 @@
         },
         {
           "path": "server/src/kyapp/enrollment/store.pg.test.ts",
-          "digest": "sha256:7a5561e54d9e168f578bf1942b89a7ec8fd245392b551af392fd9d946bd965f5"
+          "digest": "sha256:0efbbb34c46925466df04543d46b7b7e8ad7be4b67402c144c9b1e13c1d9ce1b"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.test.ts",
           "digest": "sha256:b26231065e59b608101ecaaa82478709bb5acc614051c8d03e78ea57db72e413"
+        },
+        {
+          "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
+          "digest": "sha256:9f58f4b3b19be4e1f484e11e6084829a819f6eb0ba641016678f43e94dcb3448"
         }
       ]
     }

@@ -26,6 +26,7 @@ import {
   SandboxCapacityError,
   brokenSandboxStateReason,
 } from './sandboxManager.js';
+import { OwnershipBlockedError } from './ownershipState.js';
 import { SnatSharedCidrCoverageError } from './snatManager.js';
 import { SnatOperations } from './snatOperations.js';
 import {
@@ -702,6 +703,9 @@ async function handleProvision(req: IncomingMessage, res: ServerResponse): Promi
   } catch (err) {
     if (err instanceof SandboxCapacityError) return sendCapacityError(res, err);
     const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof OwnershipBlockedError) {
+      return sendJson(res, 409, { status: 'error', error: message, code: err.code });
+    }
     if (
       err instanceof SnatSharedCidrCoverageError ||
       /ACS SNAT|CreateSnatEntry\(shared\)/.test(message)
@@ -961,6 +965,15 @@ const deploymentDrain = new DeploymentDrain({
     writeFileSync(candidate, JSON.stringify(snapshot) + '\n', { mode: 0o600 });
     renameSync(candidate, path);
     logger.info(`deployment drain ${snapshot.state} (inflight=${snapshot.inflight})`);
+  },
+  describeBlockers: () => {
+    const blockers = ownedOperations.snapshot().filter((item) => item.resource !== 'stopped' && item.resource !== 'not_started');
+    const details = blockers.slice(0, 10).map((item) =>
+      `operation=${item.operationId} kind=${item.kind} phase=${item.phase} resource=${item.resource} sandbox=${item.sandboxName} elapsedMs=${item.elapsedMs}`,
+    ).join(' ');
+    const line = `deployment_drain_blockers requests=${inflightRequests} recovery=${executor.backgroundRecoveryCount()} unresolvedInvocations=${executor.unresolvedInvocationCount()} ${details}`.trimEnd();
+    logger.info(line);
+    return line;
   },
   onError: (error) => logger.error(`deployment drain proof failed: ${String(error)}`),
   exit: () => { server.close(); process.exit(0); },

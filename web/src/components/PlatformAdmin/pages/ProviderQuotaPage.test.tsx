@@ -157,9 +157,10 @@ describe('ProviderQuotaPage', () => {
   it('按账号渲染卡级状态、额度、凭据事实与采集器状态，不重复显示窗口级状态或 24h 变化', async () => {
     render(<ProviderQuotaPage />);
     await waitFor(() => expect(screen.getByTestId('quota-account-volcengine:ark')).toBeTruthy());
-    expect(screen.getAllByText('接近上限')).toHaveLength(1);
+    expect(screen.queryByText('接近上限')).toBeNull();
     expect(screen.queryByText('采集失败')).toBeNull();
-    expect(screen.getByText('已耗尽')).toBeTruthy();
+    expect(screen.queryByText('已耗尽')).toBeNull();
+    expect(screen.queryByText('正常')).toBeNull();
     expect(screen.getByText('94.1%')).toBeTruthy();
     expect(screen.getByText('37.8万 / 40.2万')).toBeTruthy();
     expect(screen.queryByText(/已用 37\.8万 \/ 40\.2万 AFP/u)).toBeNull();
@@ -197,11 +198,12 @@ describe('ProviderQuotaPage', () => {
     expect(within(card).queryByText(/Credits/)).toBeNull();
   });
 
-  it.each([2.5, '12', -1])('非零 Credits %s 紧接套餐标签展示', async (balance) => {
+  it.each([2.5, '12', -1])('非零 Credits %s 仍与账号卡一起展示', async (balance) => {
     api.providerQuota.mockResolvedValue({ ...overview, items: [{ ...overview.items[1], extra: { credits: { balance } } }] });
     render(<ProviderQuotaPage />);
-    const badge = await screen.findByText('Codex 订阅 · Pro · 重置券 2');
-    expect(within(badge.parentElement!).getByText(`Credits ${balance}`)).toBeTruthy();
+    const card = await screen.findByTestId('quota-account-codex:c1');
+    expect(within(card).getByText('Codex 订阅 · Pro · 重置券 2')).toBeTruthy();
+    expect(within(card).getByText(`Credits ${balance}`)).toBeTruthy();
   });
 
   it('Claude 左侧 7 天、右侧 5 小时，附加模型默认折叠且无外框', async () => {
@@ -253,7 +255,7 @@ describe('ProviderQuotaPage', () => {
     };
     api.providerQuota.mockResolvedValue({ ...overview, items: [codex], collector: { ...overview.collector, lastRunAt: null } });
     render(<ProviderQuotaPage />);
-    await waitFor(() => expect(screen.getByText('正常')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('quota-account-codex:c1')).toBeTruthy());
     const windows = screen.getAllByRole('progressbar');
     expect(windows[0]?.getAttribute('aria-label')).toBe('周 已用');
     const summary = screen.getByText(/其他（1）/u);
@@ -267,7 +269,7 @@ describe('ProviderQuotaPage', () => {
     expect(screen.queryByText('已耗尽')).toBeNull();
   });
 
-  it('单个主额度占满一行、卡片采用工作流同款渐变底色，采集文字使用等宽数字', async () => {
+  it('单个主额度占满一行、卡片采用工作流同款渐变底色，采集时间在页头刷新按钮右侧', async () => {
     render(<ProviderQuotaPage />);
     const card = await screen.findByTestId('quota-account-codex:c1');
     const tile = screen.getByTestId('quota-window-primary');
@@ -278,22 +280,20 @@ describe('ProviderQuotaPage', () => {
     expect(card.className).toContain('bg-gradient-to-b');
     expect(card.className).toContain('from-brand-50/80');
     expect(card.className).not.toContain('border-l-[3px]');
-    const timestamp = [...card.querySelectorAll('span')].find(el => el.textContent?.includes('采集 '));
+    expect([...card.querySelectorAll('span')].filter((el) => /^采集 /u.test(el.textContent ?? ''))).toHaveLength(0);
+    const pageRefresh = screen.getByRole('button', { name: /^刷新$/u });
+    const collectButton = screen.getByRole('button', { name: '采集' });
+    const timestamp = collectButton.nextElementSibling as HTMLElement | null;
+    expect(timestamp?.textContent).toBe(`采集 ${minuteTime('2026-09-05T06:30:00.000Z')}`);
     expect(timestamp?.className).toContain('tabular-nums');
-    expect(timestamp?.textContent).not.toContain('采集于');
     expect(timestamp?.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
-    expect(timestamp?.textContent).toContain(minuteTime('2026-09-05T06:25:00.000Z'));
-    expect(timestamp?.textContent).not.toContain(minuteTime('2026-09-05T06:30:00.000Z'));
-    expect(timestamp?.className).toContain('text-danger');
-    // 采集时间与刷新按钮同一行，并和下方到期行共用右列，保证两行右对齐。
-    const refreshButton = within(card).getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' });
-    expect(timestamp?.parentElement).toBe(refreshButton.parentElement);
-    expect(timestamp?.nextElementSibling).toBe(refreshButton);
-    // 采集时间不再落在进度卡里。
+    expect(timestamp?.className).not.toContain('text-danger');
+    expect(pageRefresh.nextElementSibling).toBe(collectButton);
+    expect(within(card).getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' }).className).toContain('text-danger');
     expect(tile.textContent).not.toContain('采集');
   });
 
-  it('采集失败不显示红框和胶囊，不计入顶部异常，采集时间停在上次成功', async () => {
+  it('采集失败不显示红框和胶囊，不计入顶部异常，仅该卡重新采集按钮变红', async () => {
     const item = {
       ...overview.items[1]!,
       ok: false,
@@ -308,14 +308,15 @@ describe('ProviderQuotaPage', () => {
     render(<ProviderQuotaPage />);
     const card = await screen.findByTestId('quota-account-codex:c1');
     expect(within(card).queryByText('采集失败')).toBeNull();
-    expect(within(card).getByText('正常')).toBeTruthy();
+    expect(within(card).queryByText('正常')).toBeNull();
     expect(screen.queryByText(/个异常/u)).toBeNull();
     expect(screen.queryByText(/Codex usage HTTP 401/u)).toBeNull();
     expect(screen.queryByText(/最后一次成功数据/u)).toBeNull();
-    const timestamp = [...card.querySelectorAll('span')].find((el) => el.textContent?.includes('采集 '));
-    expect(timestamp?.textContent).toContain(minuteTime('2026-09-05T06:25:00.000Z'));
-    expect(timestamp?.textContent).not.toContain(minuteTime('2026-09-05T06:30:00.000Z'));
-    expect(timestamp?.className).toContain('text-danger');
+    expect([...card.querySelectorAll('span')].filter((el) => /^采集 /u.test(el.textContent ?? ''))).toHaveLength(0);
+    const refreshButton = within(card).getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' });
+    expect(refreshButton.className).toContain('text-danger');
+    expect(refreshButton.getAttribute('title')).toContain('Codex usage HTTP 401');
+    expect(screen.getByText(`采集 ${minuteTime('2026-09-05T06:30:00.000Z')}`)).toBeTruthy();
     expect(within(card).getByTestId('quota-window-primary').textContent).not.toContain('采集');
   });
 
@@ -345,7 +346,8 @@ describe('ProviderQuotaPage', () => {
     };
     api.providerQuota.mockResolvedValue({ ...overview, items: [item] });
     render(<ProviderQuotaPage />);
-    await screen.findByText('正常');
+    await screen.findByTestId('quota-account-codex:c1');
+    expect(screen.queryByText('正常')).toBeNull();
     expect(screen.queryByText(/个异常|个需关注/)).toBeNull();
     expect(screen.getByTestId('quota-window-primary').textContent).not.toMatch(/接近上限|已撞限/);
     expect(screen.queryByText('已撞限')).toBeNull();
@@ -405,9 +407,9 @@ describe('ProviderQuotaPage', () => {
     expect(valueRow.textContent).toContain('94.1%');
     expect(valueRow.textContent).toContain('37.8万 / 40.2万');
     expect(valueRow.textContent).not.toContain('（');
-    // 采集时间只在卡头出现一次。
     expect([...card.querySelectorAll('span')].filter((el) => /^采集 /u.test(el.textContent ?? '')))
-      .toHaveLength(1);
+      .toHaveLength(0);
+    expect(screen.getByText(`采集 ${minuteTime('2026-09-05T06:30:00.000Z')}`)).toBeTruthy();
   });
 
   it('Grok 无冷却信息时不渲染占位块，卡内间距与其他卡一致', async () => {
@@ -464,7 +466,8 @@ describe('ProviderQuotaPage', () => {
     };
     api.providerQuota.mockResolvedValue({ ...overview, items: [item] });
     render(<ProviderQuotaPage />);
-    await screen.findByText('接近上限');
+    await screen.findByText('1 个需关注');
+    expect(screen.queryByText('接近上限')).toBeNull();
     expect(screen.getByRole('progressbar').firstElementChild?.className).toContain('bg-warning');
     expect(screen.queryByText('冷却中')).toBeNull();
     expect(screen.getByText('1 个需关注')).toBeTruthy();

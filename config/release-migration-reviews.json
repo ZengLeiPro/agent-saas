@@ -39637,14 +39637,14 @@
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
           "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
-          "classification": "expand",
+          "classification": "no-schema-change",
           "reason": "仅把 V48 追加到迁移序列；旧版本顺序与语义不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
           "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
-          "classification": "expand",
+          "classification": "no-schema-change",
           "reason": "治理 schema 目标版本从 47 单调提升到 48。"
         },
         {

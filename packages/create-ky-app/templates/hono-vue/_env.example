@@ -1,12 +1,18 @@
 # __SYSTEM_NAME__ 部署配置（§2.4）。真值只从密钥管理注入，绝不写进这个文件。
 # 复制成 .env 后填写；.env 已在 .gitignore 里。
 
-# --- KY Agent 衔接契约（必填） ---
+# --- KY Agent 接入（默认关闭；关闭时以下 KY_* 都不需要） ---
+AGENT_INTEGRATION_ENABLED=false
 KY_ENV=
 KY_SYSTEM_ID=
+KY_ORIGIN=
+KY_DEPLOYMENT_MODE=single_tenant
+KY_KEY_STORE_PROVIDER=aliyun_kms
+KY_PLATFORM_API_BASE_URL=
+
+# --- 仅旧 V1 系统兼容需要；V2 自动接入不要填写 ---
 KY_TENANT_ID=
 KY_INSTALLATION_ID=
-KY_ORIGIN=
 KY_SERVICE_CREDENTIAL=
 KY_INSTALLATION_KEY=
 KY_INSTALLATION_KEY_VERSION=

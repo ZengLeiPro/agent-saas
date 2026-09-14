@@ -6,6 +6,7 @@ import { app, askAgent, me, meState, notice, phase, refreshMe, theme } from './k
 import OrdersPage from './pages/Orders.vue';
 import RolesPage from './pages/Roles.vue';
 import LocalLoginPage from './pages/LocalLogin.vue';
+import IntegrationStatusPage from './pages/IntegrationStatus.vue';
 import { navigate } from './ky.js';
 
 const flatMenus = computed(() =>
@@ -15,6 +16,7 @@ const flatMenus = computed(() =>
 const page = computed(() => {
   if (currentPath.value.startsWith('/settings/roles')) return RolesPage;
   if (currentPath.value === '/local-login') return LocalLoginPage;
+  if (currentPath.value === '/settings/integration') return IntegrationStatusPage;
   return OrdersPage;
 });
 

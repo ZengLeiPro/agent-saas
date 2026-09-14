@@ -32,3 +32,25 @@ INSERT INTO demo_orders (order_id, customer, amount, status)
 VALUES ('SO-DEMO-1', 'C-DEMO', 1200.00, 'confirmed'),
        ('SO-DEMO-2', 'C-DEMO', 860.50, 'draft')
 ON CONFLICT (order_id) DO NOTHING;
+
+-- 独立业务身份与会话不依赖 KY 部署身份。初始化管理员由部署方显式写入密码 SHA-256。
+CREATE TABLE IF NOT EXISTS demo_local_user (
+  user_id TEXT PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS demo_local_session (
+  token_sha256 TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES demo_local_user(user_id),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS demo_local_session_expiry_idx ON demo_local_session(expires_at);
+
+CREATE TABLE IF NOT EXISTS demo_agent_integration (
+  id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id=1),
+  allowed BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO demo_agent_integration(id) VALUES(1) ON CONFLICT(id) DO NOTHING;

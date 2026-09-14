@@ -2,10 +2,17 @@
  * 部署配置。契约相关的 `KY_*` 一律交给 `@kaiyan/ky-app-server` 的 `loadKyAppConfig()`，
  * 本文件只补本项目自己的三项：数据库、端口、mock 壳 origin 与目录接口地址。
  */
-import { loadKyAppConfig, type KyAppConfig } from '@kaiyan/ky-app-server';
+import {
+  loadKyAppConfig,
+  loadKyAppIntegrationConfig,
+  type KyAppConfig,
+  type KyAppIntegrationConfig,
+} from '@kaiyan/ky-app-server';
 
 export interface AppConfig {
-  ky: KyAppConfig;
+  integration: KyAppIntegrationConfig;
+  /** 只有旧 V1 配置完整时才加载；默认独立模式没有这个字段。 */
+  ky?: KyAppConfig;
   port: number;
   databaseUrl: string;
   /** 组织目录接口基址（§3.6）。 */
@@ -40,16 +47,24 @@ export function resolvePort(argv: string[] = process.argv.slice(2)): number {
 }
 
 export function loadConfig(argv?: string[]): AppConfig {
-  const ky = loadKyAppConfig();
+  const integration = loadKyAppIntegrationConfig();
+  const legacyConfigured = Boolean(process.env.KY_SERVICE_CREDENTIAL);
+  const ky = legacyConfigured ? loadKyAppConfig() : undefined;
   const shellOrigin = process.env.KY_SHELL_ORIGIN;
   const directoryUrl = process.env.KY_DIRECTORY_URL;
   return {
-    ky,
+    integration,
+    ...(ky ? { ky } : {}),
     port: resolvePort(argv),
     databaseUrl: requireEnv('DATABASE_URL'),
-    directoryUrl: directoryUrl ?? new URL(ky.jwksUrl).origin,
+    directoryUrl:
+      directoryUrl ??
+      (ky ? new URL(ky.jwksUrl).origin : (integration.platformApiBaseUrl ?? 'http://127.0.0.1')),
     // 生产环境一律忽略这个变量，避免有人把壳白名单放开到别处。
-    ...(shellOrigin !== undefined && shellOrigin !== '' && (ky.env === 'local' || ky.env === 'test')
+    ...(shellOrigin !== undefined &&
+    shellOrigin !== '' &&
+    ky &&
+    (ky.env === 'local' || ky.env === 'test')
       ? { shellOrigin }
       : {}),
   };

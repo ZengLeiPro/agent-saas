@@ -62,7 +62,7 @@ export interface BuiltApp {
  */
 export function contentSecurityPolicy(
   shellOrigin?: string,
-  env: AppConfig['ky']['env'] = 'prod',
+  env: NonNullable<AppConfig['ky']>['env'] = 'prod',
 ): string {
   const csp = contentSecurityPolicyForEnv(env);
   if (shellOrigin === undefined || (env !== 'local' && env !== 'test')) return csp;
@@ -74,6 +74,8 @@ export function contentSecurityPolicy(
 }
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
+  if (!config.ky) throw new Error('旧版 KY 配置缺失，应使用独立启动路径');
+  const ky = config.ky;
   const manifest = JSON.parse(
     await readFile(join(projectRoot(), 'ky-app.manifest.json'), 'utf8'),
   ) as Manifest;
@@ -94,10 +96,10 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   let runtimeRef: KyAppRuntime | null = null;
   const now = (): number => runtimeRef?.now() ?? Date.now();
 
-  const localKeys = createLocalKeyRing(config.ky, { now });
+  const localKeys = createLocalKeyRing(ky, { now });
 
   const directory = createDirectoryClient({
-    config: config.ky,
+    config: ky,
     store: directoryStore,
     baseUrl: config.directoryUrl,
     now,
@@ -107,7 +109,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     client: directory,
     coordinator: new PgDirectorySyncCoordinator(
       pool,
-      `ky_app_directory_sync:${config.ky.tenantId}:${config.ky.installationId}`,
+      `ky_app_directory_sync:${ky.tenantId}:${ky.installationId}`,
     ),
   });
 
@@ -116,7 +118,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   let lazyEvents: ReturnType<typeof createEventsHandler> | null = null;
   const eventsHandler = (): ReturnType<typeof createEventsHandler> => {
     lazyEvents ??= createEventsHandler({
-      config: config.ky,
+      config: ky,
       store: eventsStore,
       jwks: runtime.jwks,
       now,
@@ -133,15 +135,15 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     manifestDigest: digest,
     executionStore,
     directory: directoryStore,
-    tenantId: config.ky.tenantId,
-    installationId: config.ky.installationId,
+    tenantId: ky.tenantId,
+    installationId: ky.installationId,
     writeAllowed: async () => (await directory.staleness()).allowWrite,
     now,
   };
   const capabilities = createCapabilityRuntime(capabilityDeps);
 
   const attestation = createAttestationIssuer({
-    config: config.ky,
+    config: ky,
     keys: localKeys,
     manifestDigest: () => digest,
     now,
@@ -149,7 +151,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
 
   let installationState: 'enabled' | 'disabled' | 'deleted' = (await eventsStore.getState()).state;
   const breakGlass = createBreakGlass({
-    config: config.ky,
+    config: ky,
     keys: localKeys,
     store: breakGlassStore,
     pathPrefixes: manifest.pathPrefixes,
@@ -163,13 +165,13 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
 
   const rolesOf = async (identity: KyRequestIdentity): Promise<string[]> =>
     getUserRoles(pool, {
-      tenantId: config.ky.tenantId,
-      installationId: config.ky.installationId,
+      tenantId: ky.tenantId,
+      installationId: ky.installationId,
       sub: identity.sub ?? '',
     });
 
   const { router, runtime } = createKyAppRouter({
-    config: config.ky,
+    config: ky,
     manifest,
     manifestDigest: digest,
     jtiStore,
@@ -219,11 +221,11 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
       },
     },
     securityHeaders: {
-      contentSecurityPolicy: contentSecurityPolicy(config.shellOrigin, config.ky.env),
+      contentSecurityPolicy: contentSecurityPolicy(config.shellOrigin, ky.env),
     },
     testHooks: createTestHooks({
       pool,
-      config: config.ky,
+      config: ky,
       breakGlass,
       directory,
       directoryStore,
@@ -234,8 +236,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   registerPageApi(router, {
     pool,
     runtime,
-    tenantId: config.ky.tenantId,
-    installationId: config.ky.installationId,
+    tenantId: ky.tenantId,
+    installationId: ky.installationId,
     contextFor,
   });
 

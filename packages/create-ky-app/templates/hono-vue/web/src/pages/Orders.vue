@@ -20,7 +20,9 @@ async function load(): Promise<void> {
   loading.value = true;
   message.value = null;
   try {
-    const response = await app.fetch(`/api/app/orders?keyword=${encodeURIComponent(keyword.value)}`);
+    const response = await app.fetch(
+      `/api/app/orders?keyword=${encodeURIComponent(keyword.value)}`,
+    );
     if (response.status === 403) {
       message.value = '你没有查看订单的权限，请联系组织管理员。';
       rows.value = [];
@@ -51,7 +53,13 @@ onMounted(() => {
     <p v-if="message" class="message">{{ message }}</p>
     <table v-else>
       <thead>
-        <tr><th>订单号</th><th>客户</th><th>金额</th><th>状态</th><th></th></tr>
+        <tr>
+          <th>订单号</th>
+          <th>客户</th>
+          <th>金额</th>
+          <th>状态</th>
+          <th></th>
+        </tr>
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="row.orderId">
@@ -62,7 +70,9 @@ onMounted(() => {
           <td>
             <button
               type="button"
-              @click="askAgent('帮我看看这张订单', { type: 'order', id: row.orderId, label: row.orderId })"
+              @click="
+                askAgent('帮我看看这张订单', { type: 'order', id: row.orderId, label: row.orderId })
+              "
             >
               问 Agent
             </button>
@@ -74,8 +84,22 @@ onMounted(() => {
 </template>
 
 <style scoped>
-table { border-collapse: collapse; width: 100%; }
-th, td { border-bottom: 1px solid #d0d7de; padding: 6px 8px; text-align: left; }
-.message { color: #57606a; }
-form { display: flex; gap: 8px; margin-bottom: 12px; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+th,
+td {
+  border-bottom: 1px solid #d0d7de;
+  padding: 6px 8px;
+  text-align: left;
+}
+.message {
+  color: #57606a;
+}
+form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
 </style>

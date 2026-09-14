@@ -1,6 +1,6 @@
 # **SYSTEM_NAME**（`__SYSTEM_ID__`）
 
-开沿定制项目，按《开沿定制项目与 KY Agent 衔接契约》v1 实现。
+可独立运行、按需接入 KY Agent 的业务系统。默认不接入任何组织，业务登录和数据读写照常可用。
 后端 Hono + `@kaiyan/ky-app-server`，前端 Vue 3 + Vite + `@kaiyan/ky-app-browser`，
 前端生产产物由后端托管（响应头必须由后端发，见契约 §5.1）。
 
@@ -13,7 +13,17 @@ cp .env.example .env
 
 `.env` 里的值**只从密钥管理拿**，不要提交（`.gitignore` 已经挡住，pre-commit 还会再扫一遍）。
 
-必填项（契约 §2.4）：
+独立运行只需要本项目自己的配置：
+
+| 变量           | 说明                |
+| -------------- | ------------------- |
+| `DATABASE_URL` | PostgreSQL 连接串   |
+| `PORT`         | 监听端口，默认 8787 |
+
+`AGENT_INTEGRATION_ENABLED=false` 是默认值。业务管理员先在“组织接入”页面允许接入，
+再由平台管理员完成网页授权；不需要重启业务系统。
+
+只有兼容旧 V1 接入时才填写以下内容：
 
 | 变量                                                  | 说明                                                       |
 | ----------------------------------------------------- | ---------------------------------------------------------- |
@@ -23,8 +33,6 @@ cp .env.example .env
 | `KY_ORIGIN`                                           | 本系统对外的 origin，例如 `https://demo.apps.kaiyancn.com` |
 | `KY_SERVICE_CREDENTIAL`                               | 组织目录接口的服务凭据                                     |
 | `KY_INSTALLATION_KEY` / `KY_INSTALLATION_KEY_VERSION` | 32 字节安装密钥与版本                                      |
-| `DATABASE_URL`                                        | PostgreSQL 连接串                                          |
-| `PORT`                                                | 监听端口，默认 8787（也可用 `--port`）                     |
 
 `local` / `test` 下还要给 `KY_JWKS_URL`；本地跑 mock 壳时再加 `KY_SHELL_ORIGIN`
 与 `KY_DIRECTORY_URL`（`ky-app mock-shell` 会把整组配置打印出来）。

@@ -78,8 +78,32 @@ export async function refreshMe(): Promise<void> {
   const timeout = window.setTimeout(() => controller.abort(), 10_000);
   try {
     const response = await app.fetch('/ky/v1/me', { signal: controller.signal });
-    if (!response.ok) throw new Error(`me ${response.status}`);
-    const body = (await response.json()) as MeResponse;
+    let body: MeResponse;
+    if (response.ok) body = (await response.json()) as MeResponse;
+    else {
+      const local = await fetch('/api/local/me', { signal: controller.signal });
+      if (!local.ok) {
+        menus.value = [{ key: 'local-login', label: '业务系统登录', path: '/local-login' }];
+        landing.value = '/local-login';
+        meState.value = 'ready';
+        return;
+      }
+      const profile = (await local.json()) as { userId: string; roles: string[] };
+      body = {
+        user: {
+          id: profile.userId,
+          displayName: profile.userId,
+          roles: profile.roles,
+          isTenantAdmin: true,
+        },
+        menus: [
+          { key: 'orders', label: '订单', path: '/orders' },
+          { key: 'integration', label: '组织接入', path: '/settings/integration' },
+        ],
+        landing: '/orders',
+        permVersion: 'standalone',
+      };
+    }
     me.value = body;
     menus.value = body.menus;
     landing.value = body.landing;

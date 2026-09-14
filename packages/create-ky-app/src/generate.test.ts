@@ -84,6 +84,16 @@ describe('createProject', () => {
     expect(files.every((text) => text.length > 0)).toBe(true);
   });
 
+  it('默认独立运行且不要求组织安装秘密', async () => {
+    const target = await generate();
+    const env = await readFile(join(target, '.env.example'), 'utf8');
+    const config = await readFile(join(target, 'server/config.ts'), 'utf8');
+    const entry = await readFile(join(target, 'server/index.ts'), 'utf8');
+    expect(env).toContain('AGENT_INTEGRATION_ENABLED=false');
+    expect(config).toContain('loadKyAppIntegrationConfig');
+    expect(entry).toContain('buildStandaloneApp');
+  });
+
   it('占位符全部被替换，生成物里不留 `__XXX__`', async () => {
     const target = await generate();
     for (const file of ['README.md', 'server/index.ts', 'ky-app.manifest.json', 'web/index.html']) {

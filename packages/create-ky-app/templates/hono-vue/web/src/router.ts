@@ -8,7 +8,14 @@ import { ref } from 'vue';
 
 import type { MenuItem } from '@kaiyan/ky-app-contract/browser';
 
-export const ROUTES = ['/', '/orders', '/settings', '/settings/roles', '/local-login'] as const;
+export const ROUTES = [
+  '/',
+  '/orders',
+  '/settings',
+  '/settings/roles',
+  '/settings/integration',
+  '/local-login',
+] as const;
 export type RoutePath = (typeof ROUTES)[number];
 
 export const currentPath = ref<string>('/');

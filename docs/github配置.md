@@ -443,7 +443,7 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 可选恢复凭据：
 
 - `ACS_WEBHOOK_REDELIVERY_TOKEN`：只在 Staging 的 ACS 镜像准备找不到当前 SHA 的 ACR 自动构建记录时，
-  用于补投一次 GitHub webhook。正常命中构建记录时不需要；需要补投但未配置时 Workflow fail closed。
+  用于补投 GitHub webhook（GitHub API 失败时最多 3 次）。正常命中构建记录时不需要；需要补投但未配置时 Workflow fail closed。
   该 token 必须仅授权 `ZengLeiPro/agent-saas`，Repository permissions 仅设 `Webhooks: write`。
 
 要求：

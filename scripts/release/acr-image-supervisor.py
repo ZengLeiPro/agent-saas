@@ -38,6 +38,11 @@ def run(command, env, timeout):
         process.communicate()
 
 
+MAX_RECOVERY_ATTEMPTS = 3
+# Seconds to wait after the 1st / 2nd GitHub API failure before the next exact redelivery.
+RECOVERY_BACKOFFS = (120, 300)
+
+
 def supervise(env, execute=run, now=time.monotonic, sleep=time.sleep):
     started = now()
     deadline = started + 45 * 60
@@ -46,6 +51,8 @@ def supervise(env, execute=run, now=time.monotonic, sleep=time.sleep):
     selected = ""
     recovered = False
     recovery_at = None
+    recovery_attempts = 0
+    next_recovery_at = None
     request_failures = 0
     report = {"sourceSha": env["RELEASE_SHA"], "status": "observing", "recovery": "not-needed"}
     report_path = Path(env["RUNNER_TEMP"]) / "acr-recovery-report.json"
@@ -96,22 +103,36 @@ def supervise(env, execute=run, now=time.monotonic, sleep=time.sleep):
                 budget = 1200 if current == "pending" else 1800
                 if now() - phase_started >= budget:
                     raise RuntimeError(f"ACR {current} deadline exceeded ({budget}s)")
+            elif recovered and now() - recovery_at >= 300:
+                raise RuntimeError("Redelivery accepted but no exact build appeared within 5 minutes; inspect ACR source ingestion")
             elif now() - phase_started >= 30 and not recovered:
                 if not env.get("ACR_WEBHOOK_REDELIVERY_TOKEN") or not env.get("ACR_GITHUB_HOOK_ID"):
                     raise RuntimeError("Exact build missing: configure staging ACS_WEBHOOK_REDELIVERY_TOKEN and ACR_GITHUB_HOOK_ID; read-only ACR credentials cannot recover push delivery")
-                # At most one recovery request per supervisor invocation. The helper refuses
-                # a delivery whose GUID already succeeded, including earlier run attempts.
-                recovered = True
-                report["recovery"] = "attempted"
-                code = execute(["python3", ".github/scripts/redeliver_acr_webhook.py",
-                                "--sha", env["RELEASE_SHA"]], env, min(120, deadline-now()))
-                if code != 0:
-                    raise RuntimeError(f"Exact push recovery unavailable (exit={code}); inspect webhook delivery/source binding, do not rebuild current main")
-                report["recovery"] = "accepted"
-                recovery_at = now()
-                print("Exact failed push redelivery accepted; waiting for matching ACR record", flush=True)
-            elif recovered and now() - recovery_at >= 300:
-                raise RuntimeError("Redelivery accepted but no exact build appeared within 5 minutes; inspect ACR source ingestion")
+                # Exit 2/3 stay fail-closed (config / no matching failed delivery). GitHub API
+                # failures such as 422 may clear; retry the same exact SHA with backoff.
+                # The helper still refuses a GUID that already succeeded or was redelivered.
+                if next_recovery_at is None or now() >= next_recovery_at:
+                    recovery_attempts += 1
+                    report["recovery"] = "attempted"
+                    report["recoveryAttempts"] = recovery_attempts
+                    code = execute(["python3", ".github/scripts/redeliver_acr_webhook.py",
+                                    "--sha", env["RELEASE_SHA"]], env, min(120, deadline-now()))
+                    if code == 0:
+                        recovered = True
+                        recovery_at = now()
+                        report["recovery"] = "accepted"
+                        print("Exact failed push redelivery accepted; waiting for matching ACR record", flush=True)
+                    elif code in (2, 3) or recovery_attempts >= MAX_RECOVERY_ATTEMPTS:
+                        suffix = f" after {recovery_attempts} attempts" if recovery_attempts > 1 and code not in (2, 3) else ""
+                        raise RuntimeError(f"Exact push recovery unavailable{suffix} (exit={code}); inspect webhook delivery/source binding, do not rebuild current main")
+                    else:
+                        backoff = RECOVERY_BACKOFFS[min(recovery_attempts - 1, len(RECOVERY_BACKOFFS) - 1)]
+                        next_recovery_at = now() + backoff
+                        report["recovery"] = "retrying"
+                        print(
+                            f"Exact push recovery failed (exit={code}); retry {recovery_attempts}/{MAX_RECOVERY_ATTEMPTS} after {backoff}s; do not rebuild current main",
+                            flush=True,
+                        )
             report.update(phase=current, buildRecordId=selected, elapsedSeconds=int(now()-started))
             report_path.write_text(json.dumps(report) + "\n")
             sleep(min(15, max(0, deadline-now())))

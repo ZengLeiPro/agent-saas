@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+from itertools import repeat
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ spec.loader.exec_module(module)
 
 
 class SupervisorTest(unittest.TestCase):
-    def simulate(self, codes, *, configured=True, recover_code=0, record_ids=None):
+    def simulate(self, codes, *, configured=True, recover_code=0, recover_codes=None, record_ids=None):
         root = tempfile.TemporaryDirectory()
         self.addCleanup(root.cleanup)
         env = {"RUNNER_TEMP": root.name, "RELEASE_SHA": "a" * 40}
@@ -21,11 +22,12 @@ class SupervisorTest(unittest.TestCase):
         calls = []
         codes = iter(codes)
         identities = iter(record_ids or [])
+        recoveries = iter(recover_codes) if recover_codes is not None else repeat(recover_code)
 
         def execute(command, child_env, timeout):
             calls.append((command, child_env, timeout))
             if command[0] == 'python3':
-                return recover_code
+                return next(recoveries)
             code = next(codes)
             if code == 'timeout':
                 clock[0] += timeout
@@ -69,6 +71,22 @@ class SupervisorTest(unittest.TestCase):
         error, calls, _ = self.simulate([77] * 3, recover_code=3)
         self.assertIn('recovery unavailable', str(error))
         self.assertEqual(len([c for c in calls if c[0][0] == 'python3']), 1)
+
+    def test_transient_github_api_failure_retries_then_accepts(self):
+        error, calls, report = self.simulate([77] * 11 + [0], recover_codes=[1, 0])
+        self.assertIsNone(error)
+        self.assertEqual(len([c for c in calls if c[0][0] == 'python3']), 2)
+        self.assertEqual(report['recovery'], 'accepted')
+        self.assertEqual(report['recoveryAttempts'], 2)
+        self.assertEqual(report['status'], 'verified')
+
+    def test_transient_github_api_failure_exhausts_bounded_attempts(self):
+        error, calls, report = self.simulate([77] * 40, recover_code=1)
+        self.assertIn('after 3 attempts', str(error))
+        self.assertIn('exit=1', str(error))
+        self.assertEqual(len([c for c in calls if c[0][0] == 'python3']), 3)
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(report['recoveryAttempts'], 3)
 
     def test_accepted_recovery_without_build_has_bounded_grace(self):
         error, _, report = self.simulate([77] * 40)

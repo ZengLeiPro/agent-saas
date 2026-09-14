@@ -1,6 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
-import { V2_ENDPOINTS, verifyV2Attestation } from '@kaiyan/ky-app-contract';
+import {
+  V2_ENDPOINTS,
+  manifestDigest,
+  validateMe,
+  verifyV2Attestation,
+  type Manifest,
+} from '@kaiyan/ky-app-contract';
 
 import type { GovernanceActor } from '../../data/governance-audit/recorder.js';
 import type { KyAppPlatformConfig } from '../config.js';
@@ -78,6 +84,14 @@ export class KyAppV2ActivationService {
     if (!definition?.publishedDigest || definition.publishedDigest !== input.manifestDigest) {
       throw new KyAppActivationError('业务系统版本不是当前发布版本', 'manifest_digest_mismatch');
     }
+    const version = await this.options.systems.getVersion(
+      installation.systemId,
+      definition.publishedDigest,
+    );
+    if (!version || version.status !== 'published') {
+      throw new KyAppActivationError('当前发布版本不可读取', 'system_not_published');
+    }
+    const manifest = version.manifest as unknown as Manifest;
     const key = await this.options.deploymentKeys.current(input.installationId);
     if (!key || key.keyId !== input.keyId || key.generation !== input.generation) {
       throw new KyAppActivationError('当前部署公钥不可用', 'key_id_mismatch');
@@ -129,6 +143,59 @@ export class KyAppV2ActivationService {
       stringField(ready.json, 'manifestDigest') !== definition.publishedDigest
     ) {
       throw new KyAppActivationError('业务系统尚未准备完成', 'readiness_failed');
+    }
+    const manifestRequestId = randomUUID();
+    const manifestSat = await this.options.issuer.issue({
+      act: 'platform',
+      tenantId: installation.tenantId,
+      installationId: installation.installationId,
+      systemId: installation.systemId,
+      rid: manifestRequestId,
+      dig: definition.publishedDigest,
+    });
+    const observedManifest = await this.options.outbound.request({
+      baseUrl: installation.baseUrl,
+      path: '/ky/v1/manifest',
+      method: 'GET',
+      requestId: manifestRequestId,
+      headers: { authorization: `Bearer ${manifestSat.token}` },
+    });
+    if (
+      observedManifest.status !== 200 ||
+      !observedManifest.json ||
+      manifestDigest(observedManifest.json) !== definition.publishedDigest
+    ) {
+      throw new KyAppActivationError(
+        '业务系统公开版本与平台登记不一致',
+        'manifest_digest_mismatch',
+      );
+    }
+    const meRequestId = randomUUID();
+    const userSat = await this.options.issuer.issue({
+      act: 'user',
+      tenantId: installation.tenantId,
+      installationId: installation.installationId,
+      systemId: installation.systemId,
+      userId: installation.techContactUserId,
+      tadm: false,
+      pathPrefixes: manifest.pathPrefixes,
+      authBinding: null,
+      activationProbe: true,
+    });
+    const me = await this.options.outbound.request({
+      baseUrl: installation.baseUrl,
+      path: '/ky/v1/me',
+      method: 'GET',
+      requestId: meRequestId,
+      headers: { authorization: `Bearer ${userSat.token}` },
+    });
+    const checkedMe = validateMe(me.json, manifest);
+    const observedUserId =
+      me.json && typeof me.json === 'object'
+        ? (me.json as { user?: { id?: unknown } }).user?.id
+        : undefined;
+    if (me.status !== 200 || !checkedMe.ok || observedUserId !== installation.techContactUserId) {
+      throw new KyAppActivationError('组织联系人无法以正确身份进入业务系统', 'me_probe_failed');
     }
     await this.options.runtimeStore.recordReady({
       installationId: installation.installationId,

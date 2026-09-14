@@ -198,4 +198,36 @@ describe('SAT 签发（规范 §3.1 矩阵与 TTL 表）', () => {
       }),
     ).resolves.toMatchObject({ kid: 'k-test' });
   });
+
+  it('首次生效探测只放宽 pending 与会话代次，不放宽用户和组织归属', async () => {
+    const pending = { ...installation, status: 'pending' as const };
+    const issuer = await createIssuer({ install: pending, epochOk: false });
+    await expect(
+      issuer.issue({
+        act: 'user',
+        tenantId: 't_demo',
+        installationId: 'tsi_01',
+        systemId: 'demo-erp',
+        userId: 'u_tech',
+        tadm: false,
+        pathPrefixes,
+        authBinding: null,
+        activationProbe: true,
+      }),
+    ).resolves.toMatchObject({ kid: 'k-test' });
+    const missingMember = await createIssuer({ install: pending, membership: null });
+    await expect(
+      missingMember.issue({
+        act: 'user',
+        tenantId: 't_demo',
+        installationId: 'tsi_01',
+        systemId: 'demo-erp',
+        userId: 'u_tech',
+        tadm: false,
+        pathPrefixes,
+        authBinding: null,
+        activationProbe: true,
+      }),
+    ).rejects.toMatchObject({ reason: 'membership_missing' });
+  });
 });

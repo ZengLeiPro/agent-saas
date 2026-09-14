@@ -35,6 +35,8 @@ export interface IssueUserSatInput {
   /** 会话令牌里的 epoch 绑定，交给 `AuthEpochAuthority.validates()` 复核。 */
   authBinding: { authEpoch?: number; generation?: number } | null | undefined;
   name?: string;
+  /** 仅首次生效探测：允许 pending 实例为技术联系人签一次 `/me` 短票据。 */
+  activationProbe?: true;
 }
 
 export interface IssueAgentSatInput {
@@ -220,12 +222,18 @@ export class KyAppSatIssuer {
     if (membership.status !== 'active') {
       throw new KyAppSatDeniedError('组织成员已停用', 'membership_inactive');
     }
-    if (!this.options.guard.validatesAuthEpoch(input.userId, input.authBinding)) {
+    if (
+      input.activationProbe !== true &&
+      !this.options.guard.validatesAuthEpoch(input.userId, input.authBinding)
+    ) {
       throw new KyAppSatDeniedError('会话已失效', 'auth_epoch_invalid');
     }
     const installation = await this.options.guard.getInstallation(input.installationId);
     if (!installation) throw new KyAppSatDeniedError('安装实例不存在', 'installation_not_found');
-    if (installation.status !== 'enabled') {
+    if (
+      installation.status !== 'enabled' &&
+      !(input.activationProbe === true && installation.status === 'pending')
+    ) {
       throw new KyAppSatDeniedError('安装实例未启用', 'installation_disabled');
     }
     if (installation.tenantId !== input.tenantId) {

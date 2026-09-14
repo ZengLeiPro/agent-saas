@@ -1,6 +1,12 @@
 import { generateKeyPairSync } from 'node:crypto';
 
-import { V2_JWT_TYP, p256JwkThumbprint, type P256PublicJwk } from '@kaiyan/ky-app-contract';
+import {
+  EXAMPLE_MANIFEST,
+  V2_JWT_TYP,
+  manifestDigest,
+  p256JwkThumbprint,
+  type P256PublicJwk,
+} from '@kaiyan/ky-app-contract';
 import { exportJWK, SignJWT } from 'jose';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +15,8 @@ import { KyAppV2ActivationService } from './activation.js';
 describe('KyAppV2ActivationService', () => {
   it('只有身份、版本、证明和 ready 全部一致后才启用', async () => {
     const now = 1_800_000_000_000;
-    const digest = 'a'.repeat(64);
+    const manifest = EXAMPLE_MANIFEST;
+    const digest = manifestDigest(manifest);
     const pair = generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const publicJwk = (await exportJWK(pair.publicKey)) as P256PublicJwk;
     const keyId = p256JwkThumbprint(publicJwk);
@@ -49,6 +56,7 @@ describe('KyAppV2ActivationService', () => {
       },
       systems: {
         getDefinition: async () => ({ publishedDigest: digest }),
+        getVersion: async () => ({ status: 'published', manifest }),
       },
       operations: { markReady },
       deploymentKeys: {
@@ -83,7 +91,20 @@ describe('KyAppV2ActivationService', () => {
               .sign(pair.privateKey);
             return { status: 200, json: { attestation } };
           }
-          return { status: 200, json: { manifestDigest: digest } };
+          if (input.path === '/ky/v1/health/ready')
+            return { status: 200, json: { manifestDigest: digest } };
+          if (input.path === '/ky/v1/manifest') return { status: 200, json: manifest };
+          return {
+            status: 200,
+            json: {
+              contractVersion: 1,
+              user: { id: 'u1', displayName: '用户', roles: [], isTenantAdmin: false },
+              landing: null,
+              menus: [],
+              capabilities: [],
+              permVersion: '1',
+            },
+          };
         },
       },
       runtimeStore: { recordReady: vi.fn() },
@@ -102,7 +123,7 @@ describe('KyAppV2ActivationService', () => {
         generation: 1,
       }),
     ).resolves.toMatchObject({ status: 'enabled' });
-    expect(calls).toBe(2);
+    expect(calls).toBe(4);
     expect(setRegisteredDigest).toHaveBeenCalledOnce();
     expect(setStatus).toHaveBeenCalledOnce();
     expect(markReady).toHaveBeenCalledWith(

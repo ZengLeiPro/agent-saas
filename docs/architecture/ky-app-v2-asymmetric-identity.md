@@ -34,6 +34,8 @@ V2 要解决的是部署身份与组织安装的安全绑定，不改变业务�
 - code exchange 使用 ES256 `private_key_jwt` 和 DPoP；client assertion 最长 60 秒且 `jti` 只能消费一次。
 - 后续使用 `client_credentials` 获取最长 5 分钟的 DPoP-bound workload token，不签发 refresh token，不接受 client secret。
 - DPoP proof 接受窗口为 60 秒，时钟容忍 10 秒，校验 `htm`、规范化后的 `htu`、`iat`、`jti`；资源请求还校验 `ath`。
+- DPoP `htu` 遵循 RFC 9449：排除 query 和 fragment 后比较；callback URL 仍按已验证 origin 下的固定完整地址精确匹配。
+- `registeredDigest` 与 `manifestDigest` 延续现有 KY App 契约，使用 64 字符小写 SHA-256 hex，不增加算法前缀。
 - 安装证明使用部署私钥签署 ES256 `ky-attest-v2+jwt`，平台按安装实例当前公钥验签。
 - Staging/Production 只允许 HTTPS；callback 固定为已验证 origin 下的 `/ky/v2/enrollment/callback`，必须逐字节精确匹配规范化结果，出站请求不跟随跨 origin 重定向。
 

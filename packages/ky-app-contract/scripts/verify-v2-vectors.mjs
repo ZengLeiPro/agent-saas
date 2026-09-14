@@ -32,7 +32,7 @@ for (const [name, key] of Object.entries(positive.keys)) {
   if (thumbprint(key.publicJwk) !== key.keyId) fail(`${name} thumbprint does not match keyId`);
 }
 
-const expectedTypes = new Set([
+const requiredTypes = new Set([
   'ky-enrollment-request+jwt',
   'ky-installation-grant+jwt',
   'ky-client-auth+jwt',
@@ -40,6 +40,7 @@ const expectedTypes = new Set([
   'dpop+jwt',
   'ky-attest-v2+jwt',
 ]);
+const seenTypes = new Set();
 const vectorIds = new Set();
 
 for (const vector of positive.vectors) {
@@ -54,9 +55,10 @@ for (const vector of positive.vectors) {
     fail(`${vector.id} protected header drifted`);
   if (stableJson(decodeJson(parts[1])) !== stableJson(vector.payload))
     fail(`${vector.id} payload drifted`);
-  if (vector.protected.alg !== 'ES256' || !expectedTypes.delete(vector.protected.typ)) {
-    fail(`${vector.id} has an unexpected or duplicate typ`);
+  if (vector.protected.alg !== 'ES256' || !requiredTypes.has(vector.protected.typ)) {
+    fail(`${vector.id} has an unexpected alg or typ`);
   }
+  seenTypes.add(vector.protected.typ);
 
   const key = positive.keys[vector.signer];
   if (!key) fail(`${vector.id} refers to unknown signer ${vector.signer}`);
@@ -69,7 +71,35 @@ for (const vector of positive.vectors) {
   if (!valid) fail(`${vector.id} signature is invalid`);
 }
 
-if (expectedTypes.size > 0) fail(`missing positive typ vectors: ${[...expectedTypes].join(', ')}`);
+const missingTypes = [...requiredTypes].filter((type) => !seenTypes.has(type));
+if (missingTypes.length > 0) fail(`missing positive typ vectors: ${missingTypes.join(', ')}`);
+
+const enrollment = positive.vectors.find((vector) => vector.id === 'enrollment-request-valid');
+const expectedChallenge = createHash('sha256')
+  .update(Buffer.from(positive.context.pkceVerifier, 'ascii'))
+  .digest('base64url');
+if (enrollment?.payload.code_challenge !== expectedChallenge) {
+  fail('enrollment PKCE S256 challenge cannot be reproduced from context.pkceVerifier');
+}
+
+for (const id of ['installation-grant-valid', 'attest-valid']) {
+  const vector = positive.vectors.find((item) => item.id === id);
+  const digest = vector?.payload.registered_digest ?? vector?.payload.manifest_digest;
+  if (!/^[0-9a-f]{64}$/u.test(digest ?? '')) fail(`${id} must use the canonical 64-char digest`);
+}
+
+const workload = positive.vectors.find((vector) => vector.id === 'workload-token-valid');
+const resourceProof = positive.vectors.find((vector) => vector.id === 'dpop-resource-valid');
+const expectedAth = createHash('sha256')
+  .update(Buffer.from(workload?.compact ?? '', 'ascii'))
+  .digest('base64url');
+if (resourceProof?.payload.ath !== expectedAth) fail('resource DPoP ath does not bind workload token');
+if (resourceProof?.protected.jwk === undefined) fail('resource DPoP proof is missing public jwk');
+if (thumbprint(resourceProof.protected.jwk) !== workload?.payload.cnf?.jkt) {
+  fail('resource DPoP key does not match workload token cnf.jkt');
+}
+const resourceHtu = new URL(positive.context.resourceHtu);
+if (resourceHtu.search || resourceHtu.hash) fail('resource DPoP htu must exclude query and fragment');
 
 const negativeIds = new Set();
 for (const testCase of negative.cases) {
@@ -82,5 +112,5 @@ for (const testCase of negative.cases) {
 }
 
 console.log(
-  `Verified ${vectorIds.size} positive and ${negativeIds.size} negative KY App V2 vectors.`,
+  `Verified ${vectorIds.size} positive signatures and ${negativeIds.size} negative case definitions.`,
 );

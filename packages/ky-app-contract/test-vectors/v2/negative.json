@@ -5,14 +5,22 @@
     {
       "id": "enrollment-alg-none",
       "source": "enrollment-request-valid",
-      "mutation": { "replaceProtected": { "alg": "none" } },
+      "mutation": {
+        "replaceProtected": {
+          "alg": "none"
+        }
+      },
       "expectedError": "invalid_alg",
       "stage": "jose_header"
     },
     {
       "id": "enrollment-alg-confusion-hs256",
       "source": "enrollment-request-valid",
-      "mutation": { "replaceProtected": { "alg": "HS256" } },
+      "mutation": {
+        "replaceProtected": {
+          "alg": "HS256"
+        }
+      },
       "expectedError": "invalid_alg",
       "stage": "jose_header"
     },
@@ -21,7 +29,10 @@
       "source": "enrollment-request-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replaceProtected": { "crit": ["future"], "future": true }
+        "replaceProtected": {
+          "crit": ["future"],
+          "future": true
+        }
       },
       "expectedError": "malformed_jose",
       "stage": "jose_header"
@@ -31,7 +42,9 @@
       "source": "enrollment-request-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replacePayload": { "public_jwk.d": "TEST_PRIVATE_MEMBER_MUST_BE_REJECTED" }
+        "replacePayload": {
+          "public_jwk.d": "TEST_PRIVATE_MEMBER_MUST_BE_REJECTED"
+        }
       },
       "expectedError": "private_jwk_rejected",
       "stage": "public_key"
@@ -41,7 +54,9 @@
       "source": "enrollment-request-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replacePayload": { "key_id": "wrong-thumbprint" }
+        "replacePayload": {
+          "key_id": "wrong-thumbprint"
+        }
       },
       "expectedError": "key_id_mismatch",
       "stage": "public_key"
@@ -51,7 +66,9 @@
       "source": "enrollment-request-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replacePayload": { "code_challenge_method": "plain" }
+        "replacePayload": {
+          "code_challenge_method": "plain"
+        }
       },
       "expectedError": "invalid_pkce",
       "stage": "claims"
@@ -59,7 +76,10 @@
     {
       "id": "enrollment-pkce-missing",
       "source": "enrollment-request-valid",
-      "mutation": { "resignWith": "deployment", "deletePayload": ["code_challenge"] },
+      "mutation": {
+        "resignWith": "deployment",
+        "deletePayload": ["code_challenge"]
+      },
       "expectedError": "invalid_pkce",
       "stage": "claims"
     },
@@ -68,7 +88,9 @@
       "source": "enrollment-request-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replacePayload": { "callback_uri": "https://attacker.example/collect" }
+        "replacePayload": {
+          "callback_uri": "https://attacker.example/collect"
+        }
       },
       "expectedError": "callback_mismatch",
       "stage": "binding"
@@ -78,7 +100,9 @@
       "source": "enrollment-request-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replacePayload": { "origin": "http://business.staging.example.com" }
+        "replacePayload": {
+          "origin": "http://business.staging.example.com"
+        }
       },
       "expectedError": "invalid_origin",
       "stage": "binding"
@@ -88,7 +112,9 @@
       "source": "enrollment-request-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replacePayload": { "iss": "deployment-attacker-001" }
+        "replacePayload": {
+          "iss": "deployment-attacker-001"
+        }
       },
       "expectedError": "invalid_issuer",
       "stage": "claims"
@@ -98,7 +124,9 @@
       "source": "enrollment-request-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replacePayload": { "aud": "https://attacker.example" }
+        "replacePayload": {
+          "aud": "https://attacker.example"
+        }
       },
       "expectedError": "invalid_audience",
       "stage": "claims"
@@ -106,7 +134,12 @@
     {
       "id": "enrollment-cross-tenant",
       "source": "enrollment-request-valid",
-      "mutation": { "resignWith": "deployment", "replacePayload": { "tid": "tenant-vector-002" } },
+      "mutation": {
+        "resignWith": "deployment",
+        "replacePayload": {
+          "tid": "tenant-vector-002"
+        }
+      },
       "expectedError": "installation_binding_mismatch",
       "stage": "binding"
     },
@@ -115,7 +148,10 @@
       "source": "enrollment-request-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replacePayload": { "iid": "ins-vector-002", "sub": "ins-vector-002" }
+        "replacePayload": {
+          "iid": "ins-vector-002",
+          "sub": "ins-vector-002"
+        }
       },
       "expectedError": "installation_binding_mismatch",
       "stage": "binding"
@@ -123,7 +159,12 @@
     {
       "id": "enrollment-ttl-too-long",
       "source": "enrollment-request-valid",
-      "mutation": { "resignWith": "deployment", "replacePayload": { "exp": 1789344621 } },
+      "mutation": {
+        "resignWith": "deployment",
+        "replacePayload": {
+          "exp": 1789344621
+        }
+      },
       "expectedError": "invalid_token_time",
       "stage": "claims"
     },
@@ -132,7 +173,9 @@
       "source": "installation-grant-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replaceProtected": { "kid": "BWe4CnFTkwCvc10uzbYhrTGB5SgevrSSNUpoS80YC_0" }
+        "replaceProtected": {
+          "kid": "lvYsCPhkihvWkq5hnoYcTzYrS1vMA0xFjqcsH5vXMe0"
+        }
       },
       "expectedError": "invalid_key_source",
       "stage": "signature"
@@ -140,7 +183,11 @@
     {
       "id": "grant-used-as-workload-token",
       "source": "installation-grant-valid",
-      "mutation": { "requestContext": { "verifier": "verifyWorkloadAccessToken" } },
+      "mutation": {
+        "requestContext": {
+          "verifier": "verifyWorkloadAccessToken"
+        }
+      },
       "expectedError": "invalid_typ",
       "stage": "jose_header"
     },
@@ -149,7 +196,9 @@
       "source": "client-assertion-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replacePayload": { "aud": "https://agent.staging.example.com/api/other" }
+        "replacePayload": {
+          "aud": "https://agent.staging.example.com/api/other"
+        }
       },
       "expectedError": "invalid_audience",
       "stage": "claims"
@@ -157,49 +206,79 @@
     {
       "id": "client-assertion-expired",
       "source": "client-assertion-valid",
-      "mutation": { "requestContext": { "verificationTime": "2026-09-14T00:02:00.000Z" } },
+      "mutation": {
+        "requestContext": {
+          "verificationTime": "2026-09-14T00:02:00.000Z"
+        }
+      },
       "expectedError": "invalid_token_time",
       "stage": "claims"
     },
     {
       "id": "client-assertion-replay",
       "source": "client-assertion-valid",
-      "mutation": { "replay": { "times": 2, "persistentStore": true } },
+      "mutation": {
+        "replay": {
+          "times": 2,
+          "persistentStore": true
+        }
+      },
       "expectedError": "assertion_replayed",
       "stage": "replay_store"
     },
     {
       "id": "workload-bearer-downgrade",
       "source": "workload-token-valid",
-      "mutation": { "requestContext": { "authorizationScheme": "Bearer" } },
+      "mutation": {
+        "requestContext": {
+          "authorizationScheme": "Bearer"
+        }
+      },
       "expectedError": "dpop_required",
       "stage": "request_auth"
     },
     {
       "id": "workload-cross-installation",
       "source": "workload-token-valid",
-      "mutation": { "requestContext": { "installationId": "ins-vector-002" } },
+      "mutation": {
+        "requestContext": {
+          "installationId": "ins-vector-002"
+        }
+      },
       "expectedError": "installation_binding_mismatch",
       "stage": "resource_binding"
     },
     {
       "id": "workload-revoked-installation",
       "source": "workload-token-valid",
-      "mutation": { "requestContext": { "installationStatus": "revoked" } },
+      "mutation": {
+        "requestContext": {
+          "installationStatus": "revoked"
+        }
+      },
       "expectedError": "installation_inactive",
       "stage": "resource_binding"
     },
     {
       "id": "workload-stale-key-generation",
       "source": "workload-token-valid",
-      "mutation": { "requestContext": { "currentGeneration": 2 } },
+      "mutation": {
+        "requestContext": {
+          "currentGeneration": 2
+        }
+      },
       "expectedError": "key_generation_mismatch",
       "stage": "resource_binding"
     },
     {
       "id": "workload-ttl-too-long",
       "source": "workload-token-valid",
-      "mutation": { "resignWith": "platform", "replacePayload": { "exp": 1789344326 } },
+      "mutation": {
+        "resignWith": "platform",
+        "replacePayload": {
+          "exp": 1789344326
+        }
+      },
       "expectedError": "invalid_token_time",
       "stage": "claims"
     },
@@ -208,7 +287,9 @@
       "source": "dpop-token-endpoint-valid",
       "mutation": {
         "resignWith": "deployment",
-        "replaceProtected": { "jwk.d": "TEST_PRIVATE_MEMBER_MUST_BE_REJECTED" }
+        "replaceProtected": {
+          "jwk.d": "TEST_PRIVATE_MEMBER_MUST_BE_REJECTED"
+        }
       },
       "expectedError": "private_jwk_rejected",
       "stage": "public_key"
@@ -216,7 +297,12 @@
     {
       "id": "dpop-wrong-method",
       "source": "dpop-token-endpoint-valid",
-      "mutation": { "resignWith": "deployment", "replacePayload": { "htm": "GET" } },
+      "mutation": {
+        "resignWith": "deployment",
+        "replacePayload": {
+          "htm": "GET"
+        }
+      },
       "expectedError": "invalid_dpop_proof",
       "stage": "request_binding"
     },
@@ -235,18 +321,21 @@
     {
       "id": "dpop-replay",
       "source": "dpop-token-endpoint-valid",
-      "mutation": { "replay": { "times": 2, "persistentStore": true } },
+      "mutation": {
+        "replay": {
+          "times": 2,
+          "persistentStore": true
+        }
+      },
       "expectedError": "dpop_replayed",
       "stage": "replay_store"
     },
     {
       "id": "dpop-missing-ath-on-resource",
-      "source": "dpop-token-endpoint-valid",
+      "source": "dpop-resource-valid",
       "mutation": {
-        "requestContext": {
-          "endpointKind": "resource",
-          "accessTokenSource": "workload-token-valid"
-        }
+        "resignWith": "deployment",
+        "deletePayload": ["ath"]
       },
       "expectedError": "invalid_dpop_proof",
       "stage": "request_binding"
@@ -254,14 +343,24 @@
     {
       "id": "attest-v1-hs256-downgrade",
       "source": "attest-valid",
-      "mutation": { "replaceProtected": { "alg": "HS256", "typ": "ky-attest+jwt" } },
+      "mutation": {
+        "replaceProtected": {
+          "alg": "HS256",
+          "typ": "ky-attest+jwt"
+        }
+      },
       "expectedError": "v2_downgrade_rejected",
       "stage": "jose_header"
     },
     {
       "id": "attest-nonce-mismatch",
       "source": "attest-valid",
-      "mutation": { "resignWith": "deployment", "replacePayload": { "nonce": "attacker-nonce" } },
+      "mutation": {
+        "resignWith": "deployment",
+        "replacePayload": {
+          "nonce": "attacker-nonce"
+        }
+      },
       "expectedError": "nonce_mismatch",
       "stage": "claims"
     },
@@ -271,7 +370,7 @@
       "mutation": {
         "resignWith": "deployment",
         "replacePayload": {
-          "manifest_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          "manifest_digest": "0000000000000000000000000000000000000000000000000000000000000000"
         }
       },
       "expectedError": "manifest_digest_mismatch",
@@ -280,9 +379,70 @@
     {
       "id": "compact-payload-tampered-without-resign",
       "source": "workload-token-valid",
-      "mutation": { "replacePayload": { "tid": "tenant-attacker" } },
+      "mutation": {
+        "replacePayload": {
+          "tid": "tenant-attacker"
+        }
+      },
       "expectedError": "invalid_signature",
       "stage": "signature"
+    },
+    {
+      "id": "enrollment-pkce-wrong-verifier",
+      "source": "enrollment-request-valid",
+      "mutation": {
+        "requestContext": {
+          "codeVerifier": "wrong-verifier-value-that-is-at-least-forty-three-characters"
+        }
+      },
+      "expectedError": "invalid_pkce",
+      "stage": "token_exchange"
+    },
+    {
+      "id": "dpop-wrong-ath-on-resource",
+      "source": "dpop-resource-valid",
+      "mutation": {
+        "resignWith": "deployment",
+        "replacePayload": {
+          "ath": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      },
+      "expectedError": "invalid_dpop_proof",
+      "stage": "request_binding"
+    },
+    {
+      "id": "dpop-wrong-token-on-resource",
+      "source": "dpop-resource-valid",
+      "mutation": {
+        "requestContext": {
+          "accessToken": "different-public-test-token"
+        }
+      },
+      "expectedError": "invalid_dpop_proof",
+      "stage": "request_binding"
+    },
+    {
+      "id": "dpop-wrong-key-binding-on-resource",
+      "source": "dpop-resource-valid",
+      "mutation": {
+        "requestContext": {
+          "tokenCnfJkt": "x5A2l3Ft-0bQANkMBUp6jlN4G_waNr0MTXsCVZ68nCc"
+        }
+      },
+      "expectedError": "dpop_key_mismatch",
+      "stage": "request_binding"
+    },
+    {
+      "id": "dpop-htu-includes-query",
+      "source": "dpop-resource-valid",
+      "mutation": {
+        "resignWith": "deployment",
+        "replacePayload": {
+          "htu": "https://agent.staging.example.com/api/app-contract/v2/directory/snapshot?cursor=next"
+        }
+      },
+      "expectedError": "invalid_dpop_proof",
+      "stage": "request_binding"
     }
   ]
 }

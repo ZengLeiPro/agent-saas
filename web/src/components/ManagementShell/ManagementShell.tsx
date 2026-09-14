@@ -87,11 +87,11 @@ function ManagementTabs({ route }: { route: GovernanceRouteState }) {
             id={`management-page-tab-${page.id}-${item.id}`}
             aria-controls="management-page-panel"
             aria-selected={selected}
+            data-state={selected ? 'active' : 'inactive'}
             tabIndex={selected ? 0 : -1}
             className={cn(
               PAGE_TAB_TRIGGER_CLASS,
               'transition-colors hover:text-foreground',
-              selected && 'border-primary text-primary',
             )}
             onKeyDown={(event) => handleTabKeyDown(event, index, page.tabs!.length, (nextIndex) => {
               const next = page.tabs?.[nextIndex];
@@ -125,12 +125,11 @@ function DetailTabs({ route }: { route: GovernanceRouteState }) {
           id={`management-detail-tab-${route.routeId}-${item}`}
           aria-controls="management-page-panel"
           aria-selected={activeTab === item}
+          data-state={activeTab === item ? 'active' : 'inactive'}
           tabIndex={activeTab === item ? 0 : -1}
           className={cn(
             PAGE_TAB_TRIGGER_CLASS,
             'transition-colors hover:text-foreground',
-            (route.tab === 'configuration' ? 'entitlements' : route.tab) === item &&
-              'border-primary text-primary',
           )}
           onKeyDown={(event) => handleTabKeyDown(event, definition.indexOf(item), definition.length, (nextIndex) => {
             const next = definition[nextIndex];

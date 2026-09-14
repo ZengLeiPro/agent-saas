@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import {
-  ChevronDown, ChevronLeft, CircleAlert, Database, FileStack, Globe2, KeyRound, Layers3,
+  ChevronLeft, CircleAlert, Database, FileStack, Globe2, KeyRound, Layers3,
   Loader2, LockKeyhole, Palette, Search, Settings2, SlidersHorizontal,
   UserMinus, type LucideIcon,
 } from "lucide-react";
@@ -79,7 +79,6 @@ export function UnifiedSettingsSidebar({
     ...((access.status === "ready" || access.status === "refreshing") && access.platformEntryAllowed ? [{ id: "platform" as const, label: "平台运营", items: managementItems('platform') }] : []),
   ], [access.platformEntryAllowed, access.status, access.tenantEntryAllowed, personalAgentEnabled]);
   const [search, setSearch] = useState("");
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const visibleGroups = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return groups;
@@ -145,21 +144,12 @@ export function UnifiedSettingsSidebar({
             </button>
           )}
           {visibleGroups.map((group) => {
-            const activeGroup = target === group.id;
-            const collapsed = !search.trim() && Boolean(collapsedGroups[group.id]) && !activeGroup;
             return (
               <div key={group.id} className="border-t py-4 first:border-t-0 first:pt-0">
-                <button
-                  type="button"
-                  className="mb-1 flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm font-semibold text-foreground transition-colors hover:bg-accent"
-                  aria-expanded={!collapsed}
-                  aria-controls={`unified-settings-group-${group.id}`}
-                  onClick={() => setCollapsedGroups((current) => ({ ...current, [group.id]: !current[group.id] }))}
-                >
-                  <span>{group.label}</span>
-                  <ChevronDown className={cn("size-3.5 shrink-0 transition-transform", collapsed && "-rotate-90")} />
-                </button>
-                <div id={`unified-settings-group-${group.id}`} className="flex flex-col gap-1" hidden={collapsed}>
+                <div className="mb-1 px-2 py-1.5 text-sm font-semibold text-foreground">
+                  {group.label}
+                </div>
+                <div className="flex flex-col gap-1">
                   {group.items.map((item, index) => {
                     const Icon = item.icon;
                     const active = target === group.id && activeSection === item.id;

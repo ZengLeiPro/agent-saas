@@ -5,13 +5,10 @@ import { cn } from "@/lib/utils";
 
 const Tabs = TabsPrimitive.Root;
 
-const BRAND_SEGMENTED_TABS_LIST_CLASS = "h-10 w-full rounded-[10px] bg-brand-50 p-1";
-const BRAND_SEGMENTED_TAB_TRIGGER_CLASS =
-  "h-full rounded-[7px] data-[state=active]:bg-transparent data-[state=active]:font-semibold data-[state=active]:text-brand-700 data-[state=active]:shadow-none";
 const PAGE_TABS_LIST_CLASS =
-  "h-auto w-full justify-start gap-6 overflow-x-auto rounded-none border-b bg-transparent p-0";
+  "flex h-12 w-full items-stretch justify-start gap-1 overflow-x-auto rounded-xl border bg-card p-1 text-muted-foreground shadow-sm";
 const PAGE_TAB_TRIGGER_CLASS =
-  "relative shrink-0 rounded-none border-b-2 border-transparent px-0.5 pb-2.5 pt-0 text-sm font-medium text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none";
+  "h-full min-w-28 flex-1 shrink-0 rounded-lg border-0 px-4 py-2 text-sm font-medium text-muted-foreground shadow-none data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none";
 
 const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,
@@ -63,8 +60,6 @@ export {
   TabsList,
   TabsTrigger,
   TabsContent,
-  BRAND_SEGMENTED_TABS_LIST_CLASS,
-  BRAND_SEGMENTED_TAB_TRIGGER_CLASS,
   PAGE_TABS_LIST_CLASS,
   PAGE_TAB_TRIGGER_CLASS,
 };

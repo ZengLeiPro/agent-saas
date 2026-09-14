@@ -35,7 +35,7 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(screen.queryByText("平台运营")).toBeNull();
   });
 
-  it("使用固定宽度、无整栏收缩和拖拽入口，分组由横线隔开", () => {
+  it("使用固定宽度、无任何收缩和拖拽入口，分组由横线隔开", () => {
     renderSidebar(access("ready", true, true));
 
     const navigation = screen.getByLabelText("设置导航");
@@ -44,6 +44,8 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(sidebar.getAttribute("data-layout-width")).toBe(String(SETTINGS_SIDEBAR_WIDTH));
     expect(screen.queryByTitle("收起侧边栏")).toBeNull();
     expect(screen.queryByTitle(/拖动调整侧边栏宽度/)).toBeNull();
+    expect(navigation.querySelector('[aria-expanded]')).toBeNull();
+    expect(navigation.querySelector('svg.lucide-chevron-down')).toBeNull();
     expect(navigation.querySelectorAll("nav > div.border-t")).toHaveLength(3);
     const activeItem = navigation.querySelector('[aria-current="page"]');
     expect(activeItem?.className).toContain("bg-brand-accent-soft");
@@ -102,7 +104,7 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(screen.getByRole("button", { name: "模板" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "业务系统" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "系统交付" })).toBeNull();
-    expect(screen.getByLabelText("设置导航").querySelectorAll('button:not([aria-expanded])')).toHaveLength(21);
+    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(21);
   });
 
   it("组织分组保留真实页面，并用分隔线替代小标题", () => {
@@ -112,11 +114,11 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
       expect(screen.queryByText(label)).toBeNull();
     }
     expect(screen.getByLabelText("设置导航").querySelectorAll('[aria-hidden="true"].border-t')).toHaveLength(6);
-    expect(screen.getByLabelText("设置导航").querySelectorAll('button:not([aria-expanded])')).toHaveLength(26);
+    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(26);
     expect(screen.queryByRole("button", { name: "进入组织治理" })).toBeNull();
   });
 
-  it("支持在授权范围内搜索并折叠设置分组", () => {
+  it("支持在授权范围内搜索，分组始终展开", () => {
     renderSidebar(access("ready", true, true));
 
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索设置" }), { target: { value: "成员" } });
@@ -124,8 +126,7 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(screen.queryByRole("button", { name: "网络出口" })).toBeNull();
 
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索设置" }), { target: { value: "" } });
-    const platformGroup = screen.getByRole("button", { name: /平台运营/ });
-    fireEvent.click(platformGroup);
-    expect(platformGroup.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByText("平台运营").closest("button")).toBeNull();
+    expect(screen.getByRole("button", { name: "网络出口" })).toBeTruthy();
   });
 });

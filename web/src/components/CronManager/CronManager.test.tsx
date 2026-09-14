@@ -110,10 +110,10 @@ describe("CronManager 桌面布局", () => {
 
     expect(within(navigation).getByRole("tab", { name: "定时任务" })).toBeTruthy();
     expect(within(navigation).getByRole("tab", { name: "任务看板" })).toBeTruthy();
-    expect(within(navigation).getByRole("tablist").className).toContain("bg-brand-50");
-    expect(within(navigation).getByRole("tablist").className).toContain("h-10");
+    expect(within(navigation).getByRole("tablist").className).toContain("bg-card");
+    expect(within(navigation).getByRole("tablist").className).toContain("h-12");
     expect(within(navigation).getByRole("tablist").className).toContain("w-[15rem]");
-    expect(navigation.querySelector<HTMLElement>("[data-task-center-tab-indicator]")?.style.transform).toBe("translateX(0%)");
+    expect(within(navigation).getByRole("tab", { name: "定时任务" }).getAttribute("data-state")).toBe("active");
     expect(within(header).getByRole("button", { name: "刷新" })).toBeTruthy();
     expect(within(header).getByRole("button", { name: "新建" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "定时任务" })).toBeNull();
@@ -144,7 +144,7 @@ describe("CronManager 桌面布局", () => {
     expect(window.location.search).toBe("");
     expect(window.localStorage.getItem("task-center:last-view")).toBe("board");
     expect(screen.getByText("任务看板视图")).toBeTruthy();
-    expect(document.querySelector<HTMLElement>("[data-task-center-tab-indicator]")?.style.transform).toBe("translateX(100%)");
+    expect(screen.getByRole("tab", { name: "任务看板" }).getAttribute("data-state")).toBe("active");
 
     act(() => {
       window.history.replaceState({}, "", "/cron");

@@ -524,8 +524,8 @@ describe("OrganizationGovernancePage", () => {
     const tabs = screen.getByRole("tablist", { name: "记忆与知识区域" });
     expect(Array.from(tabs.querySelectorAll('[role="tab"]')).map(tab => tab.textContent)).toEqual(["资源治理", "Context Center", "Timeline", "实体", "待审核"]);
     expect(tabs.className).toContain("overflow-x-auto");
-    expect(tabs.className).toContain("flex-nowrap");
-    expect(tabs.className).toContain("sm:flex-wrap");
+    expect(tabs.className).toContain("rounded-xl");
+    expect(tabs.className).toContain("bg-card");
     for (const tab of Array.from(tabs.querySelectorAll('[role="tab"]'))) expect(tab.className).toContain("shrink-0");
   });
 

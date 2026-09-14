@@ -8,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PAGE_TABS_LIST_CLASS, PAGE_TAB_TRIGGER_CLASS, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { installationPath, kyAppPost } from '@/lib/kyAppManagementApi';
 import type { InstallationManagement } from '@/lib/kyAppManagementTypes';
 import { loadMySystems } from '@/lib/mySystemsSource';
@@ -155,9 +155,9 @@ export function InstallationDetail({
         </div>
       </header>
       <Tabs value={tab} onValueChange={setTab} className="space-y-5">
-        <TabsList aria-label="业务系统实例管理" className="grid w-full max-w-sm grid-cols-2">
-          <TabsTrigger value="overview">接入概览</TabsTrigger>
-          <TabsTrigger value="access">访问授权</TabsTrigger>
+        <TabsList aria-label="业务系统实例管理" className={PAGE_TABS_LIST_CLASS}>
+          <TabsTrigger value="overview" className={PAGE_TAB_TRIGGER_CLASS}>接入概览</TabsTrigger>
+          <TabsTrigger value="access" className={PAGE_TAB_TRIGGER_CLASS}>访问授权</TabsTrigger>
         </TabsList>
         <TabsContent value="overview" className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">

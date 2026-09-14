@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import { governanceRoute } from "@/lib/governanceNavigation";
 import type { AppTab, ChatSessionIndexItem } from "@/types/sidebar";
-import { SETTINGS_SIDEBAR_WIDTH } from "@/components/SettingsCenter/settingsLayout";
+import { DESKTOP_PRIMARY_SIDEBAR_WIDTH, SETTINGS_SIDEBAR_WIDTH } from "@/components/SettingsCenter/settingsLayout";
 
 const authState = vi.hoisted(() => ({ sessionOrganizationEnabled: false }));
 
@@ -124,6 +124,7 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
     groupsState.current = [];
     billingState.current = { summary: null, allowance: null };
     billingMiniBadgeProps.current = null;
+    window.localStorage.clear();
   });
 
   it("会话智能整理默认关闭，用户开启后才显示入口", () => {
@@ -258,6 +259,12 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
     expect(screen.queryByRole("button", { name: "新建到分组" })).toBeNull();
   });
 
+  it.each(["single", "double"] as const)("%s 布局的一级侧边栏默认与设置页同宽", (sidebarLayout) => {
+    const { container } = renderSidebar("capabilities", [session], sidebarLayout, { activeSessionId: null });
+    const primarySidebar = sidebarLayout === "double" ? screen.getByTestId("desktop-sidebar-main-panel") : container.querySelector("aside");
+    expect((primarySidebar as HTMLElement | null)?.style.width).toBe(`${SETTINGS_SIDEBAR_WIDTH}px`);
+  });
+
   it("双栏只保留内部栏位分割线，侧边栏外缘不描边", () => {
     const collapsed = renderSidebar("capabilities", [session], "double", { activeSessionId: null });
     expect(screen.getByTestId("desktop-sidebar-main-panel").classList.contains("border-r")).toBe(false);
@@ -273,13 +280,13 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
     const secondaryPanel = screen.getByTestId("desktop-sidebar-secondary-panel");
 
     rerenderSidebar({ responsiveMode: "secondary-hidden" });
-    expect(sidebar?.style.width).toBe("160px");
+    expect(sidebar?.style.width).toBe(`${DESKTOP_PRIMARY_SIDEBAR_WIDTH}px`);
     expect(screen.getByTestId("desktop-sidebar-secondary-panel")).toBe(secondaryPanel);
     expect(secondaryPanel.classList.contains("hidden")).toBe(true);
     expect(secondaryPanel.getAttribute("aria-hidden")).toBe("true");
 
     rerenderSidebar({ responsiveMode: "none" });
-    expect(sidebar?.style.width).toBe("432px");
+    expect(sidebar?.style.width).toBe(`${DESKTOP_PRIMARY_SIDEBAR_WIDTH + 272}px`);
     expect(screen.getByTestId("desktop-sidebar-secondary-panel")).toBe(secondaryPanel);
     expect(secondaryPanel.classList.contains("hidden")).toBe(false);
   });

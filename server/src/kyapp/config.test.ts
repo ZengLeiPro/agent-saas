@@ -135,4 +135,44 @@ describe('kyApp 平台配置域', () => {
       );
     }
   });
+
+  it('V2 enrollment 默认关闭，只有显式 allowlist 与签发开关才生效', () => {
+    expect(resolveKyAppConfig({ kyApp: { environment: 'prod' } })?.enrollmentV2).toEqual({
+      enabled: false,
+      allowedSystemIds: [],
+      issueWorkloadTokens: false,
+      requireDpop: true,
+    });
+    expect(
+      resolveKyAppConfig({
+        kyApp: {
+          environment: 'staging',
+          enrollmentV2: {
+            enabled: true,
+            allowedSystemIds: ['demo-erp'],
+            issueWorkloadTokens: true,
+            requireDpop: true,
+          },
+        },
+      })?.enrollmentV2,
+    ).toEqual({
+      enabled: true,
+      allowedSystemIds: ['demo-erp'],
+      issueWorkloadTokens: true,
+      requireDpop: true,
+    });
+    expect(() =>
+      resolveKyAppConfig({
+        kyApp: {
+          environment: 'prod',
+          enrollmentV2: { enabled: true, allowedSystemIds: ['Bad_System'] },
+        },
+      }),
+    ).toThrow(KyAppConfigError);
+    expect(() =>
+      resolveKyAppConfig({
+        kyApp: { environment: 'prod', enrollmentV2: { requireDpop: false } },
+      }),
+    ).toThrow(KyAppConfigError);
+  });
 });

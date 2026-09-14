@@ -61,6 +61,8 @@ export interface KyAppWorkerOptions {
   /** WP2b 目录投影与保留清理；与上面的 `directory`（安装实例目录）不是一回事。 */
   directoryMaintenance?: KyAppDirectoryMaintenance;
   balanceMaintenance?: { reconcile: () => Promise<void> };
+  /** V2 assertion/DPoP 防重放记录只保留到 proof 过期。 */
+  replayMaintenance?: { purgeExpired: (now: Date) => Promise<number> };
   logger?: KyAppWorkerLogger;
   dispatchIntervalMs?: number;
   probeIntervalMs?: number;
@@ -241,6 +243,7 @@ export class KyAppWorker {
       await this.options.credentials.expireStale();
       await this.options.keys.retireExpired();
       await this.options.nonces.purgeExpired(new Date());
+      await this.options.replayMaintenance?.purgeExpired(new Date());
       this.options.suspensions.prune();
       // WP2b §3.6：变更流保留 30 天，过期号段被清掉即消费端重拉快照的信号。
       if (this.options.directoryMaintenance) {
@@ -248,7 +251,8 @@ export class KyAppWorker {
       }
       for (const installation of await this.options.directory.listLive()) {
         const due = await this.options.credentials.listRotationDue(installation.installationId);
-        if (due.length > 0) this.options.alerts.notifyCredentialExpiring(installation.installationId);
+        if (due.length > 0)
+          this.options.alerts.notifyCredentialExpiring(installation.installationId);
       }
       await this.options.balanceMaintenance?.reconcile();
     } catch (error) {

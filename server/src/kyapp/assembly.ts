@@ -12,6 +12,8 @@ import { KyAppAssignmentAccess } from './installations/assignmentAccess.js';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
+import { V2_ENDPOINTS } from '@kaiyan/ky-app-contract';
+
 import type { AppRuntime } from './../app/runtime.js';
 import type { KyAppPlatformConfig } from './config.js';
 import { PgKyAppNonceStore } from './attest/nonceStore.js';
@@ -39,6 +41,12 @@ import {
 } from './installations/queries.js';
 import { PgKyAppSigningKeyStore } from './keys/store.js';
 import { KyAppSigningKeyService } from './keys/service.js';
+import { PgEnrollmentStore } from './enrollment/store.js';
+import { KyAppEnrollmentService } from './enrollment/service.js';
+import { PgDeploymentKeyStore } from './workload/deploymentKeyStore.js';
+import { PgReplayReservationStore } from './workload/replayStore.js';
+import { KyAppV2Authenticator } from './workload/authenticator.js';
+import { KyAppV2TokenIssuer } from './workload/tokenIssuer.js';
 import { createKyAppOutbound, type KyAppOutbound } from './outbound.js';
 import { AppToolSnapshotService } from './gateway/snapshot.js';
 import { createKyAppSnapshotSource } from './gateway/snapshotSource.js';
@@ -70,6 +78,12 @@ export interface KyAppAssembly {
   eventStore: PgKyAppOutboundEventStore;
   nonces: PgKyAppNonceStore;
   keys: KyAppSigningKeyService;
+  enrollmentOperations: PgEnrollmentStore;
+  deploymentKeys: PgDeploymentKeyStore;
+  workloadReplays: PgReplayReservationStore;
+  v2Authenticator: KyAppV2Authenticator;
+  v2Tokens: KyAppV2TokenIssuer;
+  enrollment: KyAppEnrollmentService;
   issuer: KyAppSatIssuer;
   suspensions: KyAppSuspensionRegistry;
   credentials: KyAppCredentialManager;
@@ -131,6 +145,27 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
   const signingKeyStore = new PgKyAppSigningKeyStore(base);
   const directory = new KyAppInstallationDirectory(pool, systems.installationsTable);
   const keys = new KyAppSigningKeyService({ store: signingKeyStore, vault, now });
+  const enrollmentOperations = new PgEnrollmentStore(base);
+  const deploymentKeys = new PgDeploymentKeyStore(base);
+  const workloadReplays = new PgReplayReservationStore(base);
+  const v2Authenticator = new KyAppV2Authenticator({
+    issuer: config.issuer,
+    tokenEndpoint: new URL(V2_ENDPOINTS.token, config.issuer).toString(),
+    installations: systems,
+    platformKeys: signingKeyStore,
+    replays: workloadReplays,
+    now,
+  });
+  const v2Tokens = new KyAppV2TokenIssuer({ keys, issuer: config.issuer, now });
+  const enrollment = new KyAppEnrollmentService({
+    config,
+    systems,
+    operations: enrollmentOperations,
+    deploymentKeys,
+    authenticator: v2Authenticator,
+    tokens: v2Tokens,
+    now,
+  });
   const suspensions = new KyAppSuspensionRegistry({ now });
   const issuer = new KyAppSatIssuer({
     config,
@@ -233,7 +268,10 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
   const directoryChangeLog = userStore ? new PgKyAppDirectoryChangeLog(base) : null;
   const directoryUsers = userStore
     ? new UsersFileDirectoryReader({
-        filePath: resolve(runtime.processCwd, runtime.config.auth?.usersFile || './data/users.json'),
+        filePath: resolve(
+          runtime.processCwd,
+          runtime.config.auth?.usersFile || './data/users.json',
+        ),
         initialUsers: userStore.listAll(),
       })
     : null;
@@ -322,6 +360,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     nonces,
     suspensions,
     alerts,
+    replayMaintenance: { purgeExpired: (at) => workloadReplays.deleteExpired(at) },
     directoryIntervalMs: config.directory.reconcileIntervalMs,
     ...(directoryChangeLog && directoryReconciler
       ? {
@@ -459,6 +498,12 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     eventStore,
     nonces,
     keys,
+    enrollmentOperations,
+    deploymentKeys,
+    workloadReplays,
+    v2Authenticator,
+    v2Tokens,
+    enrollment,
     issuer,
     suspensions,
     credentials,

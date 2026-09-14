@@ -29,6 +29,7 @@ import {
   type PublicationReceipt,
   type PublicationTarget,
 } from '../../config/productionModelPublisher.js';
+import { persistPublishedIdentity } from '../../app/persistPublishedIdentity.js';
 import { createModelsAdminRouter } from '../../routes/modelsAdmin.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { GLOBAL_OWNER_ID, InMemorySecretVault } from '../../security/secretVault.js';
@@ -85,6 +86,19 @@ export async function createProductionPublicationRig(
   const expected = publicIdentity(
     await computeObservedConfigIdentity(parseAppConfig(raw), vault, processCwd),
   );
+  writeFileSync(join(root, 'active-color'), 'green\n');
+  writeFileSync(join(root, 'runtime-worker-active-color'), 'green\n');
+  const releaseEnv = [
+    `AGENT_SAAS_RELEASE_ID=${runtimeReleaseId}`,
+    `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${expected.digest}`,
+    'AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION=1',
+    ...(expected.credentialVersionDigest
+      ? [`AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST=${expected.credentialVersionDigest}`]
+      : []),
+    '',
+  ].join('\n');
+  writeFileSync(join(root, 'server-green.release.env'), releaseEnv);
+  writeFileSync(join(root, 'runtime-worker-green.release.env'), releaseEnv);
   const baseline = preparePublicationAuthority(configPath, publicationReleaseId, expected);
   const targets: PublicationTarget[] = (['ws-only', 'runtime-worker'] as const).map((role) => ({
     role,
@@ -180,6 +194,7 @@ export async function createProductionPublicationRig(
     secretVault: vault,
     targets: () => topology,
     observeLocal: observe,
+    persistCredentialVersion: (identity) => persistPublishedIdentity(configPath, runtimeReleaseId, identity),
     timeoutMs: 500,
     pollMs: 5,
   });

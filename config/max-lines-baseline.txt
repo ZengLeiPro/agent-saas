@@ -39,7 +39,7 @@ server/src/routes/sessions.ts	3305	production
 server/src/routes/skills.ts	1384	production
 server/src/runtime/rawAgentLoop.ts	3862	production
 server/src/runtime/rawRuntimeRunDispatch.ts	2936	production
-server/src/runtime/responsesApiAdapter.ts	1916	production
+server/src/runtime/responsesApiAdapter.ts	1899	production
 server/src/runtime/runStore.ts	1166	production
 server/src/runtime/types.ts	1052	production
 server/src/taskboard/store.ts	1011	production

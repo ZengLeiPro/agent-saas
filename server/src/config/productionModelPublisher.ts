@@ -672,6 +672,7 @@ export class ProductionModelPublisher implements ProductionPublisher {
       await this.wait(intent, targets);
       const committed = this.transition(intent, 'committed');
       await this.wait(committed, targets);
+      this.options.persistCredentialVersion?.(committed.identity);
       if (operationRecord) this.journal().update(operationRecord, {
         state: 'applied', updatedAt: new Date(this.now()).toISOString(),
       });

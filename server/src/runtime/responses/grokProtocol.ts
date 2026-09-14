@@ -60,6 +60,21 @@ export class GrokProtocolError extends Error {
     this.name = 'GrokProtocolError';
   }
 }
+const PERMANENT_GROK_PROTOCOL_CODES: ReadonlySet<string> = new Set([
+  'image_capability_unverified',
+  'reasoning_effort_capability_unverified',
+  'reasoning_effort_unsupported_for_model',
+  'unsupported_tool_result_media',
+  'invalid_model_id',
+  'full_history_required',
+  'invalid_history_item',
+  'invalid_function_schema',
+  'unsupported_server_tool',
+  'ambiguous_function_name',
+]);
+export function isPermanentGrokProtocolError(error: unknown): boolean {
+  return error instanceof GrokProtocolError && PERMANENT_GROK_PROTOCOL_CODES.has(error.code);
+}
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }

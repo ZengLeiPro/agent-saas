@@ -10,7 +10,6 @@ import {
   processIdentity,
   publishedExpected,
   readPublication,
-  type PublishedIdentity,
 } from '../../../scripts/release/config-publication.mjs';
 import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
 import {
@@ -25,46 +24,9 @@ import {
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import type { SecretVault } from '../security/secretVault.js';
 import { getAppConfigPath, type AppConfig } from './config.js';
+import { persistPublishedIdentity } from './persistPublishedIdentity.js';
 import type { SharedConfigRefresher } from './sharedConfigRefresher.js';
 import type { RuntimeConfigIdentityAssembly } from './configIdentityAssembly.js';
-
-function persistCredentialVersion(configPath: string, releaseId: string, identity: PublishedIdentity): void {
-  const digest = identity.credentialVersionDigest;
-  if (!digest) return;
-  const root = dirname(configPath);
-  for (const [colorFile, envPrefix] of [
-    ['active-color', 'server'],
-    ['runtime-worker-active-color', 'runtime-worker'],
-  ] as const) {
-    let color: string;
-    try {
-      color = readFileSync(join(root, colorFile), 'utf8').trim();
-    } catch {
-      return;
-    }
-    if (color !== 'blue' && color !== 'green') throw new Error('活动配置拓扑无效');
-    const envPath = join(root, `${envPrefix}-${color}.release.env`);
-    const text = readFileSync(envPath, 'utf8');
-    const values = Object.fromEntries(
-      text
-        .split(/\r?\n/u)
-        .filter((line) => line.includes('='))
-        .map((line) => {
-          const at = line.indexOf('=');
-          return [line.slice(0, at), line.slice(at + 1)];
-        }),
-    );
-    if (values.AGENT_SAAS_RELEASE_ID !== releaseId) continue;
-    if (values.AGENT_SAAS_CONFIG_IDENTITY_DIGEST !== identity.digest) {
-      throw new Error('release env digest 与凭据轮换身份不一致');
-    }
-    values.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST = digest;
-    const body = `${Object.entries(values)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('\n')}\n`;
-    atomicWrite(envPath, body);
-  }
-}
 
 function activeTargets(configPath: string): PublicationTarget[] {
   const root = dirname(configPath);
@@ -221,7 +183,7 @@ export function initializeProductionModelPublication(options: {
           observeLocal: observe,
           pendingCredentialRotations: () => options.grokCredentialManager?.getPendingPublicationRefs() ?? Promise.resolve([]),
           acknowledgeCredentialRotation: (ref) => options.grokCredentialManager?.acknowledgeCredentialRotation(ref) ?? Promise.resolve(),
-          persistCredentialVersion: (identity) => persistCredentialVersion(configPath, releaseId, identity),
+          persistCredentialVersion: (identity) => persistPublishedIdentity(configPath, releaseId, identity),
         });
   const mutationService = publisher
     && role === 'ws-only' ? new AdminConfigMutationService({

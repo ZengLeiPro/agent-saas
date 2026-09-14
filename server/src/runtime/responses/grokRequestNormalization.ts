@@ -6,6 +6,7 @@ const DOCUMENTED_REASONING_EFFORTS: Readonly<Record<string, readonly string[]>> 
   'grok-4.5-latest': ['low', 'medium', 'high'],
   'grok-build-latest': ['low', 'medium', 'high'],
 };
+const DOCUMENTED_IMAGE_MODELS: ReadonlySet<string> = new Set(['grok-4.6']);
 /** Full-history replay retains executed function results; only provider-owned anchors are removed. */
 export function normalizeGrokRequest(
   raw: Record<string, unknown>,
@@ -54,7 +55,10 @@ export function normalizeGrokRequest(
     delete body.tool_choice;
     delete body.parallel_tool_calls;
   }
-  const imagesAllowed = model?.inputModalities?.includes('image') === true;
+  const catalogModalities = model?.inputModalities;
+  const imagesAllowed =
+    catalogModalities?.includes('image') === true ||
+    (catalogModalities === undefined && DOCUMENTED_IMAGE_MODELS.has(raw.model));
   body.input = raw.input.flatMap((item: unknown) => {
     if (!isRecord(item)) throw new GrokProtocolError('invalid_history_item');
     if (item.type === 'additional_tools') return [];

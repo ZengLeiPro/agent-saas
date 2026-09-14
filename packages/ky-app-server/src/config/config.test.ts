@@ -1,7 +1,12 @@
 /** §2.4 / §3.8 部署配置读取与校验。 */
 import { describe, expect, it } from 'vitest';
 
-import { KyAppConfigError, decodeInstallationKey, loadKyAppConfig } from './index.js';
+import {
+  KyAppConfigError,
+  decodeInstallationKey,
+  loadKyAppConfig,
+  loadKyAppIntegrationConfig,
+} from './index.js';
 
 const base = {
   KY_ENV: 'prod',
@@ -98,6 +103,28 @@ describe('loadKyAppConfig', () => {
     expect(() => loadKyAppConfig({ ...base, KY_LOCAL_LOGIN_ENABLED: 'yes' })).toThrow(
       KyAppConfigError,
     );
+  });
+});
+
+describe('loadKyAppIntegrationConfig', () => {
+  it('默认关闭时不要求组织、安装或凭据配置', () => {
+    expect(loadKyAppIntegrationConfig({})).toEqual({ enabled: false });
+  });
+
+  it('V2 开启时不读取 V1 组织秘密', () => {
+    const result = loadKyAppIntegrationConfig({
+      AGENT_INTEGRATION_ENABLED: 'true',
+      KY_ENV: 'test',
+      KY_SYSTEM_ID: 'system-1',
+      KY_ORIGIN: 'https://business.example.com',
+      KY_KEY_STORE_PROVIDER: 'test_memory',
+      KY_DEPLOYMENT_MODE: 'single_tenant',
+      KY_PLATFORM_API_BASE_URL: 'https://platform.example.com',
+      KY_JWKS_URL: 'https://test.ky.invalid/.well-known/jwks.json',
+    });
+    expect(result).toMatchObject({ enabled: true, systemId: 'system-1' });
+    expect(result).not.toHaveProperty('tenantId');
+    expect(result).not.toHaveProperty('serviceCredential');
   });
 });
 

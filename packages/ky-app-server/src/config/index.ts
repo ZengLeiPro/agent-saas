@@ -67,6 +67,33 @@ export class KyAppConfigError extends Error {
 /** 环境变量来源，测试里直接传对象，避免污染 `process.env`。 */
 export type EnvSource = Record<string, string | undefined>;
 
+export type KyDeploymentMode = 'single_tenant' | 'multi_tenant';
+export type KyKeyStoreProvider = 'aliyun_kms' | 'aws_kms' | 'gcp_kms' | 'test_memory';
+
+/**
+ * V2 启动配置不包含组织身份或安装秘密。关闭集成时只读取开关，业务服务可独立启动。
+ */
+export interface KyAppIntegrationConfig {
+  enabled: boolean;
+  env?: KyEnv;
+  systemId?: string;
+  origin?: string;
+  deploymentMode?: KyDeploymentMode;
+  keyStoreProvider?: KyKeyStoreProvider;
+  platformIssuer?: string;
+  platformApiBaseUrl?: string;
+}
+
+export const V2_OPTIONAL_ENV = [
+  'AGENT_INTEGRATION_ENABLED',
+  'KY_ENV',
+  'KY_SYSTEM_ID',
+  'KY_ORIGIN',
+  'KY_DEPLOYMENT_MODE',
+  'KY_KEY_STORE_PROVIDER',
+  'KY_PLATFORM_API_BASE_URL',
+] as const;
+
 function required(env: EnvSource, name: string): string {
   const value = env[name];
   if (typeof value !== 'string' || value.trim() === '') {
@@ -126,6 +153,48 @@ function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
   if (raw === 'true' || raw === '1') return true;
   if (raw === 'false' || raw === '0') return false;
   throw new KyAppConfigError(`布尔配置只接受 true/false/1/0，收到 ${raw}`);
+}
+
+/** 读取可选 V2 adapter 配置；`enabled=false` 时绝不要求任何 KY 配置。 */
+export function loadKyAppIntegrationConfig(env: EnvSource = process.env): KyAppIntegrationConfig {
+  const enabled = parseBoolean(optional(env, 'AGENT_INTEGRATION_ENABLED'), false);
+  if (!enabled) return { enabled: false };
+  const rawEnv = required(env, 'KY_ENV');
+  if (!(KY_ENVS as readonly string[]).includes(rawEnv)) {
+    throw new KyAppConfigError(`KY_ENV 只能是 ${KY_ENVS.join('|')}，收到 ${rawEnv}`);
+  }
+  const kyEnv = rawEnv as KyEnv;
+  const origin = required(env, 'KY_ORIGIN');
+  const parsedOrigin = new URL(origin);
+  if (parsedOrigin.origin !== origin) throw new KyAppConfigError('KY_ORIGIN 必须是纯 origin');
+  const deploymentMode = optional(env, 'KY_DEPLOYMENT_MODE') ?? 'single_tenant';
+  if (deploymentMode !== 'single_tenant' && deploymentMode !== 'multi_tenant') {
+    throw new KyAppConfigError('KY_DEPLOYMENT_MODE 只能是 single_tenant|multi_tenant');
+  }
+  const keyStoreProvider = optional(env, 'KY_KEY_STORE_PROVIDER') ?? 'aliyun_kms';
+  if (!['aliyun_kms', 'aws_kms', 'gcp_kms', 'test_memory'].includes(keyStoreProvider)) {
+    throw new KyAppConfigError('KY_KEY_STORE_PROVIDER 不受支持');
+  }
+  const endpoints = resolveEndpoints(env, kyEnv);
+  const defaultApiBaseUrl =
+    kyEnv === 'prod' || kyEnv === 'staging'
+      ? new URL(JWKS_URL_BY_ENV[kyEnv]).origin
+      : new URL(endpoints.jwksUrl).origin;
+  const platformApiBaseUrl = optional(env, 'KY_PLATFORM_API_BASE_URL') ?? defaultApiBaseUrl;
+  const parsedApi = new URL(platformApiBaseUrl);
+  if (!['local', 'test'].includes(kyEnv) && parsedApi.protocol !== 'https:') {
+    throw new KyAppConfigError('平台 API 必须使用 HTTPS');
+  }
+  return {
+    enabled: true,
+    env: kyEnv,
+    systemId: required(env, 'KY_SYSTEM_ID'),
+    origin,
+    deploymentMode,
+    keyStoreProvider: keyStoreProvider as KyKeyStoreProvider,
+    platformIssuer: endpoints.issuer,
+    platformApiBaseUrl: parsedApi.origin,
+  };
 }
 
 /** 从环境变量读取并校验部署配置。 */

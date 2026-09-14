@@ -17,9 +17,11 @@ import type { JwksClient } from '../jwks/client.js';
 import type { JtiStore } from '../sat/jtiStore.js';
 import type { KyAppConfig } from '../config/index.js';
 import type { SecurityHeadersOptions } from './securityHeaders.js';
-import type { LocalKeyRing } from '../local/keys.js';
+import type { LocalAuthKeyProvider, LocalKeyRing } from '../local/keys.js';
 import type { VerifiedIdentity } from '../sat/verify.js';
 import type { VerifiedLocalIdentity } from '../local/token.js';
+import type { InstallationBindingProvider, DeploymentKeyStore } from '../identity/types.js';
+import type { V2EnrollmentService } from '../enrollment/service.js';
 
 /** 统一的请求身份：SAT 与 Local Token 两条来源收敛成同一形态。 */
 export interface KyRequestIdentity {
@@ -79,6 +81,8 @@ export interface KyAppRouterConfig {
   capabilities: CapabilityRuntime;
   events: EventsHandler;
   localKeys?: LocalKeyRing;
+  /** V2 推荐：业务系统自己的本地登录密钥，不得复用部署身份私钥。 */
+  localAuthKeys?: LocalAuthKeyProvider;
   attestation?: AttestationIssuer;
   breakGlass?: BreakGlass;
   /** 目录陈旧度门禁（§3.4）；缺省视为不设门禁。 */
@@ -100,6 +104,15 @@ export interface KyAppRouterConfig {
   clientIp?: (headers: Headers) => string | undefined;
   onLog?: (entry: KyLogEntry) => void;
   now?: () => number;
+  /** V2 adapter 可选且常驻；缺省时 V1 行为完全不变。 */
+  v2?: {
+    enabled: boolean;
+    enrollment: V2EnrollmentService;
+    bindings: InstallationBindingProvider;
+    keys: DeploymentKeyStore;
+    /** 本地业务管理员鉴权；不得复用部署私钥。 */
+    authorizeStatus: (authorization: string | null) => Promise<boolean>;
+  };
 }
 
 /** Hono 的 `Variables` 声明，供应用侧 `new Hono<{ Variables: KyAppVariables }>()` 复用。 */

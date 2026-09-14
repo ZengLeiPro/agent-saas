@@ -8,7 +8,10 @@ import { fileURLToPath } from 'node:url';
 import type { Pool } from 'pg';
 
 /** 迁移文件相对包根的路径（已随 `files` 一起发布）。 */
-export const MIGRATION_FILES = ['sql/001_ky_app_server.sql'] as const;
+export const MIGRATION_FILES = [
+  'sql/001_ky_app_server.sql',
+  'sql/002_asymmetric_installations.sql',
+] as const;
 
 function migrationUrl(file: string): URL {
   // dist/pg/schema.js → 包根，src/pg/schema.ts → 包根，两种布局都退两级。

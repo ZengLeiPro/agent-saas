@@ -81,6 +81,19 @@ const expectedChallenge = createHash('sha256')
 if (enrollment?.payload.code_challenge !== expectedChallenge) {
   fail('enrollment PKCE S256 challenge cannot be reproduced from context.pkceVerifier');
 }
+if (
+  thumbprint(enrollment?.payload.public_jwk ?? {}) !== positive.keys.deployment.keyId ||
+  enrollment?.payload.key_id !== positive.keys.deployment.keyId ||
+  enrollment?.protected.kid !== positive.keys.deployment.keyId
+) {
+  fail('enrollment embedded deployment key does not match fixture deployment key');
+}
+
+for (const vector of positive.vectors.filter((item) => item.protected.typ === 'dpop+jwt')) {
+  if (thumbprint(vector.protected.jwk ?? {}) !== positive.keys.deployment.keyId) {
+    fail(`${vector.id} embedded DPoP key does not match fixture deployment key`);
+  }
+}
 
 for (const id of ['installation-grant-valid', 'attest-valid']) {
   const vector = positive.vectors.find((item) => item.id === id);

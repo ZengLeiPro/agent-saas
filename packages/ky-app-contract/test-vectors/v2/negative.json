@@ -174,7 +174,7 @@
       "mutation": {
         "resignWith": "deployment",
         "replaceProtected": {
-          "kid": "lvYsCPhkihvWkq5hnoYcTzYrS1vMA0xFjqcsH5vXMe0"
+          "kid": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0"
         }
       },
       "expectedError": "invalid_key_source",
@@ -426,7 +426,7 @@
       "source": "dpop-resource-valid",
       "mutation": {
         "requestContext": {
-          "tokenCnfJkt": "x5A2l3Ft-0bQANkMBUp6jlN4G_waNr0MTXsCVZ68nCc"
+          "tokenCnfJkt": "i9yUvo_UAHwWDmNZRrC2tCDPr8L841ktM3pde2vCfmI"
         }
       },
       "expectedError": "dpop_key_mismatch",

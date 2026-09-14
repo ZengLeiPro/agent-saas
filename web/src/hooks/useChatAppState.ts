@@ -80,8 +80,8 @@ import {
   type WsBlockState,
 } from '@agent/shared';
 import {
-  activeRuntimePatchFromStreamStatus, fetchSessionStreamStatus, isActiveRuntimeStatus, isTerminalRuntimeStatus,
-  reconnectAfterServerDrain, runtimeStatusFromSessionStatus, sessionlessDoneBelongsToRuntime, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
+  activeRuntimePatchFromStreamStatus, buildStreamStartedResume, fetchSessionStreamStatus, isActiveRuntimeStatus, isTerminalRuntimeStatus,
+  reconnectAfterServerDrain, runtimeStatusFromSessionStatus, sessionlessDoneBelongsToRuntime, shouldAdvanceDurableCursor, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
 export type { ChatAppState, ChatAppStateOptions } from "./useChatAppStateTypes";
 import type {
   ChatAppState, ChatAppStateOptions, OutboxEntry,
@@ -968,6 +968,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }, 750);
   }, [advanceStreamBindingGenerationIfChanged, dispatchConnection, finalizeTerminalRuntime, invalidateResumeRequests, patchSessionRuntime, resetWatchdog]);
   const reconcileLastRunState = useCallback(async (sessionId: string, lastRunState: LastRunState) => {
+    const currentCursor = sessionId === immediateSessionIdRef.current
+      ? lastEventCursorRef.current
+      : activeRunsBySession.current.get(sessionId)?.lastEventCursor;
+    if (shouldAdvanceDurableCursor(currentCursor, lastRunState.eventCursor)) {
+      patchSessionRuntime(sessionId, { lastEventCursor: lastRunState.eventCursor }, { silent: true });
+    }
     if (!isTerminalRuntimeStatus(lastRunState.status)) return;
     if (sessionId !== immediateSessionIdRef.current) {
       patchSessionRuntime(sessionId, {
@@ -1438,13 +1444,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           wsAttachedRef.current = true;
           if (!loadingRef.current) setLoading(true);
           dispatchConnection('connect');
-          void sendCorrelatedResume({
-            action: 'resume',
-            sessionId: data.sessionId,
-            lastEventId: 0,
-            lastEventCursor: lastEventCursorRef.current,
-            skipReplay: false,
-          });
+          void sendCorrelatedResume(buildStreamStartedResume(data.sessionId, lastEventCursorRef.current));
         }
         // 先本地占位，再刷新服务端真值；避免 enqueue-only 会话尚未投影 .jsonl 时被 fresh 覆盖抹掉。
         sessionRef.current.upsertSession({

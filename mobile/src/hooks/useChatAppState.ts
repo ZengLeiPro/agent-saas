@@ -1100,7 +1100,7 @@ export function useChatAppStateCore(): ChatAppState {
           setLoading(true);
           dispatchConnection("connect");
           void wsClient.ensureConnectedSend(
-            makeResumeMessage(data.sessionId, false),
+            makeResumeMessage(data.sessionId, true),
           );
         }
         // 刷新会话列表，使其他设备的新会话立即可见

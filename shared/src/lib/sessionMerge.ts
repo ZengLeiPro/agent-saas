@@ -40,6 +40,14 @@ function toolCallIdentity(message: MessageItem): string | null {
     : null;
 }
 
+function assistantIdentity(message: MessageItem): string | null {
+  return (message.type === 'text' || message.type === 'thinking')
+    && message.runId
+    && message.content.trim()
+    ? `${message.type}:${message.runId}:${message.content}`
+    : null;
+}
+
 function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]): MessageItem[] {
   if (tail.length === 0) return server;
 
@@ -55,6 +63,9 @@ function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]):
   const projectedToolCalls = new Set(
     server.map(toolCallIdentity).filter((identity): identity is string => identity !== null),
   );
+  const projectedAssistants = new Set(
+    server.map(assistantIdentity).filter((identity): identity is string => identity !== null),
+  );
   // compaction_status 会先生成本地临时分界线，随后 done 刷新又从 transcript 取得
   // 同一条持久化分界线。二者 id 不同，不能沿用普通消息的 id 去重。
   const projectedCompactions = new Set(
@@ -69,6 +80,8 @@ function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]):
     if (clientMsgId !== null && serverUserClientMessageIds.has(clientMsgId)) return false;
     const toolCall = toolCallIdentity(message);
     if (toolCall !== null && projectedToolCalls.has(toolCall)) return false;
+    const assistant = assistantIdentity(message);
+    if (assistant !== null && projectedAssistants.has(assistant)) return false;
     const compaction = compactionIdentity(message);
     if (compaction !== null && projectedCompactions.has(compaction)) return false;
     const runtimeFailure = runtimeFailureIdentity(message);

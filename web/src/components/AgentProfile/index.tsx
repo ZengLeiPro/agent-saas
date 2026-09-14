@@ -19,24 +19,6 @@ import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHe
 import { SkillSelector } from "@/components/SkillSelector";
 import { AgentDocEditor } from "./AgentDocEditor";
 
-export { AllAgentsList } from "./AllAgentsList";
-
-/**
- * 设置中心独立 section：Skills。
- * 复用 SkillSelector，外层套 SettingsPanelHeader 保持与其他 section 标题风格一致；
- * 不传 onBack → SkillSelector 不渲染返回按钮（用户通过左侧菜单切换）。
- */
-export function SkillsSection() {
-  return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
-      <SkillSelector
-        headerTitle="技能"
-        headerDescription="为我的通用 Agent 选择启用的技能，新会话生效。"
-      />
-    </div>
-  );
-}
-
 /**
  * 设置中心独立 section：记忆。
  * 复用 AgentDocEditor(kind=memory)；隐藏内部 h2+hint 避免与 SettingsPanelHeader 双标题。
@@ -67,7 +49,7 @@ interface AgentProfileProps {
  * 我的 Agent 编辑器。
  *
  * 设计原则：
- * - 只承载「编辑」一种形态。所有 Agent 列表已拆到 AllAgentsList。
+ * - 只承载「编辑」一种形态。
  * - editing（编辑他人）支持受控/非受控两种模式：
  *   - 受控：外部传 editingUsername + onEditingChange，由上层（layout）配合 URL/section 切换
  *   - 非受控：外部都不传，内部 state 兜底（向后兼容）

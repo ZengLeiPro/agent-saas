@@ -92,14 +92,6 @@ export const PLATFORM_TOOL_CATALOG_BY_ID: ReadonlyMap<string, ToolDescriptor> = 
   PLATFORM_TOOL_CATALOG.map((tool) => [tool.id, tool]),
 );
 
-/**
- * 判断一个 toolId 是否是平台内建工具（区别于 MCP 动态工具）。
- * 用于 config schema 校验：只允许 override 内建工具，不允许污染 MCP 工具。
- */
-export function isPlatformBuiltinTool(toolId: string): boolean {
-  return PLATFORM_TOOL_CATALOG_BY_ID.has(toolId);
-}
-
 /*
  * 退休键说明（2026-08-03 工具面收敛批次）：BashOutput/KillBash/CronList/
  * ReadCompanyInfo/UpdateCompanyInfo/SessionGetEvents/SessionSearchEvents/

@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { UserManager } from "@/components/UserManager";
 import { governanceRoute } from "@/lib/governanceNavigation";
+import { navigateGovernance } from "@/lib/urlSync";
 import { PlatformAdminShell, TenantAdminShell } from "./AdminShells";
 
 const adminShellMocks = vi.hoisted(() => ({
@@ -163,8 +163,15 @@ describe("AdminShells V2 内容适配", () => {
       { id: "beta", name: "Beta" },
     ];
 
-    const renderUsers = (tenantId?: string, tenantName?: string) => (
-      <UserManager tenantIdScope={tenantId} tenantName={tenantName} />
+    const renderUsers = (tenantId?: string, _tenantName?: string) => (
+      tenantId ? (
+        <button
+          type="button"
+          onClick={() => navigateGovernance(governanceRoute("organization.members.list", { orgId: tenantId }))}
+        >
+          添加成员
+        </button>
+      ) : <div />
     );
     const { unmount } = render(
       <TenantAdminShell

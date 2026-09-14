@@ -27,14 +27,8 @@ export {
 } from './workspaceHandTools.js';
 
 export interface BuiltinToolsConfig {
-  /** Legacy no-op: Edit is now a workspace hand tool. */
-  enableEdit?: boolean;
   enableTodoWrite?: boolean;
   enableAskUserQuestion?: boolean;
-  /** Legacy no-op: CreateArtifact is now a workspace hand tool. */
-  enableCreateArtifact?: boolean;
-  /** Legacy no-op: CreateArtifact is wired through PlatformToolRuntime. */
-  artifactService?: unknown;
   /** 共享 TodoWrite store（不传则使用模块级单例）。 */
   todoStore?: SessionTodoStore;
 }

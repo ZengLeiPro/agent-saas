@@ -41,9 +41,6 @@ vi.mock('./ManagementResource', () => ({
 }));
 vi.mock('./InstallationRuntime', () => ({ InstallationRuntime: () => <div>服务健康</div> }));
 vi.mock('./InstallationActivity', () => ({ InstallationActivity: () => <div>调用情况</div> }));
-vi.mock('./InstallationAssignments', () => ({
-  InstallationAssignments: () => <div>规则编辑器</div>,
-}));
 vi.mock('./InstallationAccessOverview', () => ({
   InstallationAccessOverview: () => <div>成员授权</div>,
 }));

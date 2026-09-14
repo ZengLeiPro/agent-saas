@@ -134,6 +134,3 @@ export function createDingtalkSessionRouter(deps: DingtalkSessionRouterDeps): Ro
 
   return router;
 }
-
-// Backward-compatible alias.
-export const createDingtalkRouter = createDingtalkSessionRouter;

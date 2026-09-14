@@ -81,6 +81,11 @@ export class PgEnrollmentStore {
   }
 
   async get(operationId: string): Promise<EnrollmentOperation | null> {
+    await this.options.pool.query(
+      `UPDATE ${this.operationsTable} SET status='expired',version=version+1,updated_at=clock_timestamp()
+       WHERE operation_id=$1 AND status='code_issued' AND code_expires_at <= clock_timestamp()`,
+      [operationId],
+    );
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.operationsTable} WHERE operation_id=$1`,
       [operationId],

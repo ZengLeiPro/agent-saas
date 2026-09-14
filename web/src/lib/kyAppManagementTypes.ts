@@ -80,6 +80,31 @@ export interface CredentialMetadata {
   ackedAt: string | null;
   revokedAt: string | null;
 }
+export interface EnrollmentOperationView {
+  operationId: string;
+  installationId: string;
+  status:
+    | 'created'
+    | 'awaiting_consent'
+    | 'code_issued'
+    | 'exchanged'
+    | 'activating'
+    | 'ready'
+    | 'expired'
+    | 'cancelled'
+    | 'failed_retryable'
+    | 'needs_human';
+  version: number;
+  organization: { id: string; name: string };
+  system: { id: string; name: string };
+  origin: string;
+  deploymentId: string | null;
+  keyFingerprint: string | null;
+  scopes: string[];
+  codeExpiresAt: string | null;
+  updatedAt: string;
+  problem: { reason: string; diagnosticId: string | null } | null;
+}
 export interface InstallationManagement {
   installation: {
     installationId: string;

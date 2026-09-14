@@ -63,6 +63,10 @@ export class KyAppEnrollmentService {
     return this.options.operations.createOrGet({ ...input, requestDigest });
   }
 
+  async getOperation(operationId: string): Promise<EnrollmentOperation> {
+    return this.requireOperation(operationId);
+  }
+
   async acceptChallenge(input: {
     operationId: string;
     nonce: string;

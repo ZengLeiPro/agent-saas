@@ -50,6 +50,8 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   // 没有会话 JWT。鉴权与限速都在 `kyapp/routes/directory.ts` 内收口。
   { method: 'GET', path: '/app-contract/v1/directory/snapshot' },
   { method: 'GET', path: '/app-contract/v1/directory/changes' },
+  // V2 token 端点由 private_key_jwt + DPoP 自鉴权，不接受会话 JWT 或 client secret。
+  { method: 'POST', path: '/app-contract/v2/oauth/token' },
 ];
 
 export function isPublicRoute(req: Request): boolean {

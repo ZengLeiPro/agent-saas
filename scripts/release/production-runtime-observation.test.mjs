@@ -9,6 +9,7 @@ import {
   observeProductionRuntime,
   PRODUCTION_DISK_PATHS,
   readDiagnosticFile,
+  resolveDiskPaths,
   safeErrno,
 } from './production-runtime-observation.mjs';
 
@@ -333,4 +334,15 @@ test('disk observation fails closed when statfs throws', () => {
   const failed = disk.paths.find((entry) => entry.path === '/opt/agent-saas');
   assert.equal(failed.error, 'EACCES');
   assert.equal(failed.availableBytes, undefined);
+});
+
+test('PREFLIGHT_DISK_PATHS overrides the production path list', () => {
+  assert.deepEqual(resolveDiskPaths('/tmp,/var/tmp'), ['/tmp', '/var/tmp']);
+  assert.deepEqual(resolveDiskPaths(''), [...PRODUCTION_DISK_PATHS]);
+  const disk = collectDiskObservation({
+    paths: resolveDiskPaths('/tmp'),
+    statfs: () => ({ type: 1, bsize: 4096, blocks: 100, bavail: 80, files: 100, ffree: 90 }),
+    realpath: (path) => path,
+  });
+  assert.deepEqual(disk.paths.map((entry) => entry.path), ['/tmp']);
 });

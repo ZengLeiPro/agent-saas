@@ -2,7 +2,7 @@ import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
 import type { KubeApi } from './kubeApi.js';
 import type { OwnershipJournal } from './ownershipJournal.js';
-import { ownershipIsTerminal, type OwnershipRecord, type ResourceOwnership } from './ownershipState.js';
+import { ownershipIsTerminal, ownershipObservationFloor, type OwnershipRecord, type ResourceOwnership } from './ownershipState.js';
 import type { SandboxManager } from './sandboxManager.js';
 import { queryRemoteAttemptEvidence } from './remoteAttemptClient.js';
 import { establishInvocationCompletionFence } from './invocationCompletionRecovery.js';
@@ -16,8 +16,7 @@ const SANDBOX_ABSENT_RESOURCES: ResourceOwnership[] = ['running', 'unknown', 'st
 function eligibleForSandboxAbsent(record: OwnershipRecord): boolean {
   return Boolean(record.remoteFence)
     && Boolean(record.sandboxUid)
-    && Boolean(record.dispatchedAt)
-    && Number.isFinite(Date.parse(record.dispatchedAt!))
+    && Boolean(ownershipObservationFloor(record))
     && SANDBOX_ABSENT_RESOURCES.includes(record.resource)
     && !ownershipIsTerminal(record);
 }
@@ -42,6 +41,10 @@ export async function reconcileRemoteOwnership(input: {
   const candidates = records.filter(
     (record) => !ownershipIsTerminal(record) && Boolean(record.remoteFence),
   );
+  const live = new Set(candidates.map((record) => record.operationId));
+  for (const key of lastRetainLogAt.keys()) {
+    if (!live.has(key)) lastRetainLogAt.delete(key);
+  }
   let reconciled = 0;
   for (const record of candidates) {
     try {
@@ -82,7 +85,7 @@ async function reconcileRecord(
   if (!eligibleForSandboxAbsent(record)) {
     return retain(input, record, record.resource === 'background_owned' ? 'background_owned'
       : !record.sandboxUid ? 'missing_sandbox_uid'
-      : !record.dispatchedAt ? 'missing_dispatched_at'
+      : !ownershipObservationFloor(record) ? 'missing_observation_floor'
       : `resource_${record.resource}`);
   }
 
@@ -104,7 +107,8 @@ async function reconcileRecord(
   if (!latest || !eligibleForSandboxAbsent(latest) || latest.sandboxUid !== record.sandboxUid) {
     return retain(input, record, 'state_changed');
   }
-  if (Date.parse(absence.observedAt) < Date.parse(latest.dispatchedAt!)) {
+  const floor = ownershipObservationFloor(latest);
+  if (!floor || Date.parse(absence.observedAt) < Date.parse(floor)) {
     return retain(input, record, 'observed_before_dispatch');
   }
 

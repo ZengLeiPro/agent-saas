@@ -388,6 +388,7 @@ export class AcsExecutor {
     for (const [key, entry] of [...this.invocations.entries()]) {
       if (!entry.unresolved) continue;
       if (entry.sandboxUid === uid || (attemptId !== undefined && entry.leaseKey === attemptId)) {
+        entry.controller.abort();
         try { entry.releaseActive?.(); } catch { /* Registry release is best-effort; the owner is already gone. */ }
         this.invocations.delete(key);
       }

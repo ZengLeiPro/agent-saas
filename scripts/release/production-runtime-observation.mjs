@@ -67,6 +67,17 @@ export const PRODUCTION_DISK_PATHS = Object.freeze([
   '/var/lib/agent-saas',
 ]);
 
+export function resolveDiskPaths(raw = process.env.PREFLIGHT_DISK_PATHS) {
+  if (typeof raw === 'string' && raw.trim()) {
+    const paths = raw
+      .split(/[\s,]+/u)
+      .map((path) => path.trim())
+      .filter(Boolean);
+    if (paths.length) return paths;
+  }
+  return [...PRODUCTION_DISK_PATHS];
+}
+
 function numberish(value) {
   if (typeof value === 'bigint') {
     const next = Number(value);
@@ -142,7 +153,7 @@ export function diskPreflightReasons(
 }
 
 export function collectDiskObservation({
-  paths = PRODUCTION_DISK_PATHS,
+  paths = resolveDiskPaths(),
   statfs = statfsSync,
   realpath = realpathSync,
 } = {}) {

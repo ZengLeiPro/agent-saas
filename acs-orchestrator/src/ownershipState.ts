@@ -106,6 +106,14 @@ export function ownershipIsTerminal(record: OwnershipRecord): boolean {
   return record.resource === 'stopped' || record.resource === 'not_started';
 }
 
+/** Prefer dispatchedAt; old journal rows fall back to updatedAt as the observation floor. */
+export function ownershipObservationFloor(record: OwnershipRecord): string | undefined {
+  for (const value of [record.dispatchedAt, record.updatedAt]) {
+    if (typeof value === 'string' && Number.isFinite(Date.parse(value))) return value;
+  }
+  return undefined;
+}
+
 function validIdentifier(value: unknown, maximum = 512): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= maximum && !/[\x00-\x1f\x7f]/.test(value);
 }

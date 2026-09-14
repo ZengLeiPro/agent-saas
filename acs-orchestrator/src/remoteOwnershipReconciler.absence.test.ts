@@ -306,6 +306,51 @@ describe('sandbox_absent ownership proof', () => {
     expect(operations.drainBlockers()).toBe(1);
   });
 
+  it('settles an old running record that has no dispatchedAt once the CR is gone', async () => {
+    const fence: RemoteAttemptFence = {
+      protocolVersion: 1,
+      operationId: 'op-legacy',
+      attemptId: 'attempt-legacy',
+      ownerId: 'owner-legacy',
+      sandboxUid: 'uid-1',
+      podUid: 'pod-1',
+      startBeforeMs: Date.now() + 60_000,
+    };
+    const record: OwnershipRecord = {
+      protocolVersion: 1,
+      operationId: 'op-legacy',
+      attemptId: 'attempt-legacy',
+      invocationId: 'inv-legacy',
+      ownerId: 'owner-legacy',
+      revision: 4,
+      kind: 'provision',
+      scope,
+      resource: 'running',
+      outcome: 'pending',
+      phase: 'dispatch',
+      createdAt: '2026-09-09T00:00:00.000Z',
+      updatedAt: '2026-09-09T00:00:01.000Z',
+      sandboxUid: 'uid-1',
+      remoteFence: fence,
+    };
+    const { journal, records } = journalFixture([record]);
+    const operations = new OwnedOperations(journal, { receiptKey: () => 'receipt-key' });
+    expect(operations.drainBlockers()).toBe(1);
+    await reconcileRemoteOwnership({
+      config,
+      kubectl: kubectlNotFound(),
+      kubeApi: kubeApiItems([]),
+      journal,
+      sandboxManager: sandboxManager(),
+      operations,
+      logger,
+      sleep,
+    });
+    expect(records.get('op-legacy')?.resource).toBe('stopped');
+    expect(records.get('op-legacy')?.reasonCode).toBe('sandbox_absent');
+    expect(operations.drainBlockers()).toBe(0);
+  });
+
   it('does not observe absence when the record has no sandboxUid', async () => {
     const fence: RemoteAttemptFence = {
       protocolVersion: 1,
@@ -365,6 +410,23 @@ describe('sandbox_absent ownership proof', () => {
       ),
     ).rejects.toBeInstanceOf(OwnershipBlockedError);
     expect(operation.record.resource).not.toBe('stopped');
+  });
+
+  it('sandbox_absent complete uses updatedAt when dispatchedAt is missing', async () => {
+    const { operation } = await dispatchedLocal();
+    const { dispatchedAt: _dropped, ...rest } = operation.record;
+    operation.record = rest;
+    await operation.complete(
+      'failed',
+      {
+        kind: 'sandbox_absent',
+        attemptId: operation.record.attemptId,
+        sandboxUid: 'uid-1',
+        observedAt: new Date().toISOString(),
+      },
+      'stopped',
+    );
+    expect(operation.record.resource).toBe('stopped');
   });
 
   it('does not settle a durable background_owned record via sandbox_absent', async () => {

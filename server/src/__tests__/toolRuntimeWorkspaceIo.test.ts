@@ -104,4 +104,38 @@ describe('ServerLocalExecutionProvider workspace I/O hardening', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it('omitted -n path still argv-executes against cwd', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'agent-shell-omit-path-'));
+    const marker = join(root, 'shell-started');
+    try {
+      const rgPath = join(root, 'rg');
+      const bashEnv = join(root, 'bash-env.sh');
+      await writeFile(rgPath, '#!/bin/sh\nprintf "args:%s\\n" "$*"\n', 'utf8');
+      await chmod(rgPath, 0o755);
+      await writeFile(bashEnv, `/usr/bin/touch ${JSON.stringify(marker)}\n`, 'utf8');
+      const provider = new ServerLocalExecutionProvider({
+        envBuilder: () => ({ PATH: root }),
+      });
+      const chunks: ToolInvocationStreamChunk[] = [];
+      for await (const chunk of provider.executeStream({
+        toolName: 'Shell',
+        input: { command: 'rg --no-config -n needle' },
+        context: {
+          workspace: workspace(root),
+          env: { BASH_ENV: bashEnv },
+        },
+      }))
+        chunks.push(chunk);
+
+      const completed = chunks.at(-1);
+      expect(completed).toMatchObject({ type: 'completed', response: { status: 'success' } });
+      if (completed?.type === 'completed' && completed.response.status === 'success') {
+        expect(completed.response.content).toContain('args:--no-config -n needle .');
+      }
+      await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

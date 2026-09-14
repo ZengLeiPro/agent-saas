@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DefaultToolPolicy } from '../runtime/toolPolicy.js';
 import type { RunContext } from '../runtime/types.js';
 import { runShellToolDescriptor } from './toolRuntime.js';
-import { isProvablyReadOnlyShellCommand } from './shellReadOnlyPolicy.js';
+import { isProvablyReadOnlyShellCommand, parseProvablyReadOnlyRgCommand } from './shellReadOnlyPolicy.js';
 
 const context = {
   channelContext: {
@@ -15,11 +15,15 @@ const context = {
 describe('read-only Shell call policy', () => {
   it.each([
     'rg --no-config --files',
+    'rg --no-config -n pattern',
     "rg --no-config -n 'price$|a;b' .",
     "rg --no-config -n price -g 'server/src/**' .",
+    "rg --no-config -n DescriptionTip -g '!node_modules'",
     "rg --no-config --files -g '*.ts' .",
     'rg --no-config -n -e needle .',
+    'rg --no-config -n -e needle',
     'rg --no-config --line-number "plain text" .',
+    'rg --no-config --line-number "plain text"',
   ])('allows a provably read-only direct rg command: %s', async (command) => {
     expect(isProvablyReadOnlyShellCommand(command)).toBe(true);
     await expect(
@@ -29,7 +33,6 @@ describe('read-only Shell call policy', () => {
 
   it.each([
     'rg --files',
-    'rg --no-config -n pattern',
     'rg --no-config -n pattern | head',
     'rg --no-config -n pattern > result.txt',
     'rg --no-config -n $(touch owned)',
@@ -62,5 +65,23 @@ describe('read-only Shell call policy', () => {
     await expect(
       new DefaultToolPolicy().decide(runShellToolDescriptor, { command }, context),
     ).resolves.toMatchObject({ type: 'requires_approval' });
+  });
+
+  it('omitted -n path is executed against cwd, not stdin', () => {
+    expect(parseProvablyReadOnlyRgCommand('rg --no-config -n needle')).toEqual([
+      'rg', '--no-config', '-n', 'needle', '.',
+    ]);
+    expect(parseProvablyReadOnlyRgCommand("rg --no-config -n needle -g '*.ts'")).toEqual([
+      'rg', '--no-config', '-n', 'needle', '-g', '*.ts', '.',
+    ]);
+    expect(parseProvablyReadOnlyRgCommand('rg --no-config -n -e needle')).toEqual([
+      'rg', '--no-config', '-n', '-e', 'needle', '.',
+    ]);
+    expect(parseProvablyReadOnlyRgCommand('rg --no-config -n needle .')).toEqual([
+      'rg', '--no-config', '-n', 'needle', '.',
+    ]);
+    expect(parseProvablyReadOnlyRgCommand('rg --no-config --files')).toEqual([
+      'rg', '--no-config', '--files',
+    ]);
   });
 });

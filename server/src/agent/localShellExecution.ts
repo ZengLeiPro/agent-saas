@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, type SpawnOptions } from 'child_process';
 import { existsSync } from 'fs';
 
 import type { ToolInvocationStreamChunk, ToolInvocationResponse } from '../runtime/handProtocol.js';
@@ -52,10 +52,12 @@ export async function runLocalShellStreaming(options: LocalShellExecutionOptions
       ...(runtimeEnv ?? {}),
       ...(options.directArgv ? { PATH: baseEnv.PATH ?? '/usr/local/bin:/usr/bin:/bin' } : {}),
     };
-    const spawnOptions = {
+    const spawnOptions: SpawnOptions = {
       cwd: workspace.root,
       env: childEnv,
       detached: process.platform !== 'win32',
+      // rg -n 无路径时，打开的 pipe stdin 会被当成搜索目标并一直等到超时。
+      stdio: ['ignore', 'pipe', 'pipe'],
     };
     const child = options.directArgv
       ? spawn(options.directArgv[0]!, options.directArgv.slice(1), spawnOptions)

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { AcsOrchestratorConfig } from './config.js';
 import { Kubectl } from './kubectl.js';
 import { KubeApi } from './kubeApi.js';
@@ -6,7 +5,6 @@ import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { SandboxManager } from './sandboxManager.js';
 import { AcsExecutor } from './executor.js';
 import { Provisioner, sandboxResourceOverride } from './provision.js';
-import { provisionBudgets } from './provisionBudgets.js';
 import { OwnershipJournal } from './ownershipJournal.js';
 import { OwnedOperations } from './ownedOperations.js';
 import { OwnedSharedWork } from './ownedSharedWork.js';
@@ -15,6 +13,7 @@ import { writableScope } from './ownershipState.js';
 import { OWNED_WAIT_BUDGETS } from './ownedWait.js';
 import { deriveRemoteReceiptKey } from './remoteAttemptProtocol.js';
 import { reconcileRemoteOwnership } from './remoteOwnershipReconciler.js';
+import { ensureAdmissionFingerprint } from './ownedPrepareAdmission.js';
 
 export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logger: { info(msg: string): void; warn(msg: string): void; error(msg: string): void }) {
   const kubectl = new Kubectl(config);
@@ -32,13 +31,18 @@ export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logge
   const executor = new AcsExecutor(config, kubectl, sandboxManager, logger, activeRegistry, { ownedOperations });
   const provisioner = new Provisioner(config, kubectl, sandboxManager, () => executor.busySandboxNames(), activeRegistry);
   const ensurePool = new OwnedSharedWork<Awaited<ReturnType<SandboxManager['ensureRunning']>>>(ownedOperations);
-  const provisionPool = new OwnedSharedWork<Awaited<ReturnType<Provisioner['provision']>>>(ownedOperations);
   const ensure = sandboxManager.ensureRunning.bind(sandboxManager);
   sandboxManager.ensureRunning = (input, options = {}) => {
     const current = ownedOperations.current();
     if (current) return current.phase('ensure', () => ensure(input, options), OWNED_WAIT_BUDGETS.ensureMs, { ignoreCancellation: true });
     const ref = sandboxManager.ref(input);
-    return ensurePool.run({ key: ref.name, fingerprint: digest(input), kind: 'ensure', scope: writableScope(config, ref), work: () => ensure(input, options) });
+    return ensurePool.run({
+      key: ref.name,
+      fingerprint: ensureAdmissionFingerprint(ref),
+      kind: 'ensure',
+      scope: writableScope(config, ref),
+      work: () => ensure(input, options),
+    });
   };
   const provision = provisioner.provision.bind(provisioner);
   provisioner.provision = async (recipe, options = {}) => {
@@ -56,11 +60,9 @@ export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logge
     const activeKey = `provision-admission:${ref.name}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
     const releaseActive = activeRegistry.acquire(ref.name, activeKey);
     try {
-      // Warmup and formal provision must share the same ensure owner. Starting a
-      // provision owner first would conflict with an in-flight warmup owner.
       await sandboxManager.ensureRunning(ensureInput, { busySandboxNames: executor.busySandboxNames(), activeKey });
       options.signal?.throwIfAborted();
-      return await provisionPool.run({ key: ref.name, fingerprint: digest(recipe), kind: 'provision', scope: writableScope(config, ref), signal: options.signal, ownerTimeoutMs: provisionBudgets(recipe).totalMs, work: () => provision(recipe) });
+      return await provision(recipe, options);
     } finally {
       releaseActive();
     }
@@ -87,5 +89,3 @@ export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logge
   timer.unref?.();
   return { kubectl, kubeApi, activeRegistry, sandboxManager, executor, provisioner, ownershipJournal, ownedOperations };
 }
-
-function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }

@@ -39629,6 +39629,74 @@
           "digest": "sha256:ccfc3916c7283e8c96b35b2dfed462427a9d066bdeb88bd4d1eb8dbe5e9ea8a6"
         }
       ]
+    },
+    {
+      "baselineSha": "3ebc3acbf76e5aea5a8dd28fcf5791ff77dfcc89",
+      "files": [
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
+          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "classification": "expand",
+          "reason": "仅把 V48 追加到迁移序列；旧版本顺序与语义不变。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
+          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "classification": "expand",
+          "reason": "治理 schema 目标版本从 47 单调提升到 48。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:04ce6f9d826a6c30005961d0874f8f8863d8b3070de3f2913273a7681777340a",
+          "classification": "expand",
+          "reason": "只新增 V2 身份列、授权操作表、部署公钥表、防重放表及兼容约束和索引；不删改旧结构，不回填旧行。"
+        },
+        {
+          "path": "server/src/kyapp/enrollment/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:fef73c9b3dd744c5013fafcd00b1e8f0ecc3b1484a5bfcd151dac3d9d4edd4ad",
+          "classification": "no-schema-change",
+          "reason": "只读写 V48 已声明表；授权码消费、部署公钥登记和身份绑定在同一事务完成，不执行启动 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "targetDigest": "sha256:f06183c7f3c5258ab79e797b44df22d18d91d0ad963d493bc309b3f743748e3b",
+          "classification": "no-schema-change",
+          "reason": "安装实例读取增加 V48 新列映射；既有写入与状态机 SQL 不变。"
+        },
+        {
+          "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:c7df0af72586c3e96f3be307e7ed75e36e561a11c9dade5ef9bf3569c26d2fdc",
+          "classification": "no-schema-change",
+          "reason": "只读取和撤销 V48 部署公钥行，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/kyapp/workload/replayStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
+          "classification": "no-schema-change",
+          "reason": "只对 V48 防重放表执行原子占位和到期清理，不改变数据库结构。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/KY-App-V2-WP2-expand迁移审核-20260914.md",
+          "digest": "sha256:603277f25ffdde4cb6eea174bfb4c6a81174ad50af8a70c637b1613457e60c39"
+        },
+        {
+          "path": "server/src/kyapp/enrollment/store.pg.test.ts",
+          "digest": "sha256:7a5561e54d9e168f578bf1942b89a7ec8fd245392b551af392fd9d946bd965f5"
+        },
+        {
+          "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.test.ts",
+          "digest": "sha256:b26231065e59b608101ecaaa82478709bb5acc614051c8d03e78ea57db72e413"
+        }
+      ]
     }
   ]
 }

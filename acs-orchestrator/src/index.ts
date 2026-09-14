@@ -966,6 +966,15 @@ const deploymentDrain = new DeploymentDrain({
     renameSync(candidate, path);
     logger.info(`deployment drain ${snapshot.state} (inflight=${snapshot.inflight})`);
   },
+  describeBlockers: () => {
+    const blockers = ownedOperations.snapshot().filter((item) => item.resource !== 'stopped' && item.resource !== 'not_started');
+    const details = blockers.slice(0, 10).map((item) =>
+      `operation=${item.operationId} kind=${item.kind} phase=${item.phase} resource=${item.resource} sandbox=${item.sandboxName} elapsedMs=${item.elapsedMs}`,
+    ).join(' ');
+    const line = `deployment_drain_blockers requests=${inflightRequests} recovery=${executor.backgroundRecoveryCount()} unresolvedInvocations=${executor.unresolvedInvocationCount()} ${details}`.trimEnd();
+    logger.info(line);
+    return line;
+  },
   onError: (error) => logger.error(`deployment drain proof failed: ${String(error)}`),
   exit: () => { server.close(); process.exit(0); },
 });

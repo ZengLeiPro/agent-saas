@@ -74,7 +74,26 @@ function runtimeObservation(overrides = {}) {
       return '123';
     },
     topologyProcessExists: () => true,
+    disk: sufficientDisk(),
     ...overrides,
+  };
+}
+
+function sufficientDisk(overrides = {}) {
+  const entry = (path) => ({
+    path,
+    availableBytes: 20 * 1024 * 1024 * 1024,
+    availableInodes: 500_000,
+    mountPoint: '/',
+    ...overrides[path],
+  });
+  return {
+    paths: [
+      entry('/'),
+      entry('/opt/agent-saas'),
+      entry('/opt/agent-saas-app'),
+      entry('/var/lib/agent-saas'),
+    ],
   };
 }
 
@@ -137,6 +156,7 @@ test('preflight reports each blocking release condition as JSON data', () => {
     baseline: TARGET,
     identityPath: 'https://identity.example/production.json',
     execFileSync: successfulGit,
+    runtimeObservation: { disk: sufficientDisk() },
   });
 
   assert.equal(result.ok, false);
@@ -379,4 +399,75 @@ test('runtime identity accepts only local, complete production JSON', () => {
   });
   assert.equal(invalidJson.ok, false);
   assert.match(invalidJson.blockingReasons[0], /Unable to read production runtime identity JSON/u);
+});
+
+function passingPreflight(disk) {
+  return runPreflight({
+    target: TARGET,
+    baseline: BASELINE,
+    identityPath: 'fixtures/production-runtime-identity.json',
+    execFileSync: successfulGit,
+    readFileSync: () => JSON.stringify(productionIdentity()),
+    runtimeObservation: runtimeObservation({ disk }),
+  });
+}
+
+test('preflight passes when every observed path is above the disk and inode floors', () => {
+  const result = passingPreflight(sufficientDisk());
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.blockingReasons, []);
+});
+
+test('preflight fails closed below the free-bytes floor and names the path', () => {
+  const result = passingPreflight(
+    sufficientDisk({
+      '/opt/agent-saas': { availableBytes: 7 * 1024 * 1024 * 1024 },
+    }),
+  );
+  assert.equal(result.ok, false);
+  assert.match(
+    result.blockingReasons.join('\n'),
+    /Host disk free bytes below 8589934592 at \/opt\/agent-saas \(availableBytes=7516192768\)/u,
+  );
+});
+
+test('preflight fails closed below the free-inode floor and names the path', () => {
+  const result = passingPreflight(
+    sufficientDisk({
+      '/opt/agent-saas-app': { availableInodes: 249_999 },
+    }),
+  );
+  assert.equal(result.ok, false);
+  assert.match(
+    result.blockingReasons.join('\n'),
+    /Host disk free inodes below 250000 at \/opt\/agent-saas-app \(availableInodes=249999\)/u,
+  );
+});
+
+test('preflight fails closed when statfs throws instead of skipping the path', () => {
+  const result = runPreflight({
+    target: TARGET,
+    baseline: BASELINE,
+    identityPath: 'fixtures/production-runtime-identity.json',
+    execFileSync: successfulGit,
+    readFileSync: () => JSON.stringify(productionIdentity()),
+    runtimeObservation: runtimeObservation({
+      disk: undefined,
+      statfs: (path) => {
+        if (path === '/var/lib/agent-saas') {
+          throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+        }
+        return {
+          type: 1,
+          bsize: 4096,
+          blocks: 10_000_000,
+          bavail: 5_000_000,
+          files: 1_000_000,
+          ffree: 500_000,
+        };
+      },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /Host disk check failed for \/var\/lib\/agent-saas: EACCES/u);
 });

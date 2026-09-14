@@ -2,6 +2,28 @@ import { execFileSync as defaultExecFileSync } from 'node:child_process';
 import { classifyComponents } from './classify-components.mjs';
 import { createMigrationPlan } from './migration-plan.mjs';
 import { isFullSha, readRuntimeIdentity } from './read-runtime-identity.mjs';
+import {
+  collectDiskObservation,
+  diskPreflightReasons,
+  PREFLIGHT_MIN_FREE_BYTES_DEFAULT,
+  PREFLIGHT_MIN_FREE_INODES_DEFAULT,
+} from './production-runtime-observation.mjs';
+
+export { PREFLIGHT_MIN_FREE_BYTES_DEFAULT, PREFLIGHT_MIN_FREE_INODES_DEFAULT };
+
+function positiveNumber(raw, fallback) {
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function resolveDiskObservation(runtimeObservation) {
+  if (runtimeObservation.disk) return runtimeObservation.disk;
+  return collectDiskObservation({
+    ...(runtimeObservation.statfs ? { statfs: runtimeObservation.statfs } : {}),
+    ...(runtimeObservation.realpath ? { realpath: runtimeObservation.realpath } : {}),
+  });
+}
 
 export const TRUSTED_MAIN_REF = 'origin/main';
 export const TRUSTED_PRODUCTION_IDENTITY_PATH = '/etc/agent-saas/runtime-identity.json';
@@ -51,6 +73,18 @@ export function runPreflight({
   ) {
     blockingReasons.push(`Baseline ${baseline} is not an ancestor of target ${target}.`);
   }
+
+  const minFreeBytes = positiveNumber(
+    runtimeObservation.minFreeBytes ?? process.env.PREFLIGHT_MIN_FREE_BYTES,
+    PREFLIGHT_MIN_FREE_BYTES_DEFAULT,
+  );
+  const minFreeInodes = positiveNumber(
+    runtimeObservation.minFreeInodes ?? process.env.PREFLIGHT_MIN_FREE_INODES,
+    PREFLIGHT_MIN_FREE_INODES_DEFAULT,
+  );
+  blockingReasons.push(
+    ...diskPreflightReasons(resolveDiskObservation(runtimeObservation), minFreeBytes, minFreeInodes),
+  );
 
   const identity = readRuntimeIdentity({ identityPath, readFileSync, ...runtimeObservation });
   blockingReasons.push(...identity.blockingReasons);

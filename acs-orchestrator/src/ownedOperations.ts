@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import type { OwnershipJournal } from './ownershipJournal.js';
 import {
-  OWNERSHIP_LIMITS, OwnershipBlockedError, OwnershipUnavailableError, admissionScopeConflicts, ownershipIsTerminal,
+  OWNERSHIP_LIMITS, OwnershipBlockedError, OwnershipUnavailableError, admissionScopeConflicts, ownershipIsTerminal, ownershipObservationFloor,
   type OperationKind, type OperationOutcome, type OwnershipRecord, type ResourceOwnership, type WritableScope,
 } from './ownershipState.js';
 import { parseRemoteFence, parseRemoteReceipt, sameRemoteFence, type RemoteAttemptFence } from './remoteAttemptProtocol.js';
@@ -11,15 +11,17 @@ import { waitForOwned, OWNED_WAIT_BUDGETS, OwnedWaitEndedError } from './ownedWa
 import { settleBeginReservationFailure } from './ownedPrepareAdmission.js';
 
 export interface OperationProof {
-  kind: 'never_dispatched' | 'remote_receipt' | 'background_inventory' | 'coordinator_settled';
+  kind: 'never_dispatched' | 'remote_receipt' | 'background_inventory' | 'coordinator_settled' | 'sandbox_absent';
   attemptId: string;
   sandboxUid?: string;
   /** Must authenticate against the fence reserved before the remote launch. */
   receipt?: unknown;
+  /** ISO time the Sandbox CR was observed missing; required for `sandbox_absent`. */
+  observedAt?: string;
 }
 
 type StatePatch = Partial<Pick<OwnershipRecord,
-  'resource' | 'outcome' | 'phase' | 'phaseDeadlineAt' | 'sandboxUid' | 'reasonCode' | 'remoteFence'>>;
+  'resource' | 'outcome' | 'phase' | 'phaseDeadlineAt' | 'sandboxUid' | 'reasonCode' | 'remoteFence' | 'dispatchedAt'>>;
 
 export class OwnedOperation {
   readonly controller = new AbortController();
@@ -85,7 +87,10 @@ export class OwnedOperation {
     if (this.uncertain || (this.record.remoteFence && this.record.remoteFence.sandboxUid !== sandboxUid)) {
       throw new OwnershipBlockedError(this.record.operationId);
     }
-    await this.update({ resource: 'running', sandboxUid, phase: 'dispatch' });
+    await this.update({
+      resource: 'running', sandboxUid, phase: 'dispatch',
+      dispatchedAt: this.record.dispatchedAt ?? new Date().toISOString(),
+    });
     if (this.controller.signal.aborted) throw new OwnedWaitEndedError('wait_cancelled', 'dispatch');
     this.dispatched = true;
   }
@@ -117,6 +122,15 @@ export class OwnedOperation {
     } else if (proof.kind === 'coordinator_settled') {
       if (this.dispatched || this.uncertain || this.record.remoteFence || resource !== 'stopped'
         || this.registry.hasUnresolvedChildren(this.record.operationId)) throw new OwnershipBlockedError(this.record.operationId);
+    } else if (proof.kind === 'sandbox_absent') {
+      const floor = ownershipObservationFloor(this.record);
+      if (!this.record.sandboxUid || proof.sandboxUid !== this.record.sandboxUid
+        || typeof proof.observedAt !== 'string' || !Number.isFinite(Date.parse(proof.observedAt))
+        || !floor || Date.parse(proof.observedAt) < Date.parse(floor)
+        || !['running', 'unknown', 'stop_requested'].includes(this.record.resource)
+        || resource !== 'stopped' || (outcome !== 'failed' && outcome !== 'cancelled')) {
+        throw new OwnershipBlockedError(this.record.operationId);
+      }
     } else {
       const fence = this.record.remoteFence;
       let valid = false;

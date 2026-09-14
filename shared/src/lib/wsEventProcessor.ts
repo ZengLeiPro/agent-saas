@@ -389,6 +389,7 @@ export function processWsEvent(
         type: "thinking",
         content: "",
         streaming: true,
+        ...(blockRunId ? { runId: blockRunId } : {}),
         startedAt: Date.now(),
         ...(data.draftId ? { draftId: data.draftId } : {}),
       });

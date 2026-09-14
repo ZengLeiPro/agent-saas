@@ -93,6 +93,30 @@ export class ContextRecallAuthorizationError extends Error {
   }
 }
 
+function isEmptyScopeAuthorizationError(error: unknown): error is ContextRecallAuthorizationError {
+  return error instanceof ContextRecallAuthorizationError && error.code === 'CONTEXT_RECALL_EMPTY_SCOPE';
+}
+
+function emptyContextToolResult(toolId: string): ToolResult {
+  if (toolId === contextGetToolDescriptor.id) {
+    return {
+      content: JSON.stringify({
+        found: false,
+        hit: null,
+        degraded: false,
+        degradationReasons: [],
+      }),
+    };
+  }
+  return {
+    content: JSON.stringify({
+      hits: [],
+      degraded: false,
+      degradationReasons: [],
+    }),
+  };
+}
+
 export class ContextSearchToolProvider implements ToolProvider {
   constructor(
     private readonly recall: ContextRecallService,
@@ -107,37 +131,41 @@ export class ContextSearchToolProvider implements ToolProvider {
     call: AuthorizedToolCall<TInput>,
     context: ToolCallContext,
   ): Promise<ToolResult | undefined> {
-    if (call.toolId === contextSearchToolDescriptor.id) {
-      await assertWorkerTaskAuthorityIfNeeded(context);
-      const input = contextSearchSchema.parse(call.input);
-      const subject = resolveContextRecallSubject(context);
-      const scope = await this.resolveNonEmptyScope(subject, { operation: 'search' });
-      const sources = resolveAuthorizedSources(subject, input.sources);
-      const filters: ContextRecallSearchFilters = {
-        ...(input.timeRange ? { timeRange: input.timeRange } : {}),
-        ...(input.kinds ? { kinds: input.kinds } : {}),
-        ...(sources ? { sources } : {}),
-      };
-      const result = await this.recall.search({
-        subject,
-        scope,
-        query: input.query,
-        limit: input.limit ?? DEFAULT_CONTEXT_LIMIT,
-        filters,
-        ...(context.signal ? { signal: context.signal } : {}),
-      });
-      result.hits.forEach(hit => assertHitAuthorized(hit, scope, subject));
-      const degradation = mergeDegradation(scope, result);
-      return {
-        content: JSON.stringify({
-          hits: result.hits.map(formatHit),
-          degraded: degradation.degraded,
-          degradationReasons: degradation.reasons,
-        }),
-      };
+    if (call.toolId !== contextSearchToolDescriptor.id && call.toolId !== contextGetToolDescriptor.id) {
+      return undefined;
     }
 
-    if (call.toolId === contextGetToolDescriptor.id) {
+    try {
+      if (call.toolId === contextSearchToolDescriptor.id) {
+        await assertWorkerTaskAuthorityIfNeeded(context);
+        const input = contextSearchSchema.parse(call.input);
+        const subject = resolveContextRecallSubject(context);
+        const scope = await this.resolveNonEmptyScope(subject, { operation: 'search' });
+        const sources = resolveAuthorizedSources(subject, input.sources);
+        const filters: ContextRecallSearchFilters = {
+          ...(input.timeRange ? { timeRange: input.timeRange } : {}),
+          ...(input.kinds ? { kinds: input.kinds } : {}),
+          ...(sources ? { sources } : {}),
+        };
+        const result = await this.recall.search({
+          subject,
+          scope,
+          query: input.query,
+          limit: input.limit ?? DEFAULT_CONTEXT_LIMIT,
+          filters,
+          ...(context.signal ? { signal: context.signal } : {}),
+        });
+        result.hits.forEach(hit => assertHitAuthorized(hit, scope, subject));
+        const degradation = mergeDegradation(scope, result);
+        return {
+          content: JSON.stringify({
+            hits: result.hits.map(formatHit),
+            degraded: degradation.degraded,
+            degradationReasons: degradation.reasons,
+          }),
+        };
+      }
+
       await assertWorkerTaskAuthorityIfNeeded(context);
       const input = contextGetSchema.parse(call.input);
       const subject = resolveContextRecallSubject(context);
@@ -159,9 +187,12 @@ export class ContextSearchToolProvider implements ToolProvider {
           degradationReasons: degradation.reasons,
         }),
       };
+    } catch (error) {
+      if (isEmptyScopeAuthorizationError(error)) {
+        return emptyContextToolResult(call.toolId);
+      }
+      throw error;
     }
-
-    return undefined;
   }
 
   private async resolveNonEmptyScope(

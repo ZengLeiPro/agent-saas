@@ -3,7 +3,8 @@ import { PendingRunnerInvocation } from './pendingRunnerInvocation.js';
 import { OwnedSharedWork } from './ownedSharedWork.js';
 import { OwnedOperations } from './ownedOperations.js';
 import type { OwnershipJournal } from './ownershipJournal.js';
-import type { OwnershipRecord } from './ownershipState.js';
+import { OwnershipBlockedError, type OwnershipRecord } from './ownershipState.js';
+import { OwnedWaitEndedError } from './ownedWait.js';
 
 const scope = { storageId: 'test', mountSubPath: 'workspaces/account', sandboxName: 'as-test',
   workspaceId: 'account', sessionId: 'session', sandboxScopeId: 'scope' };
@@ -103,5 +104,73 @@ describe('actual owned work integration', () => {
     await expect(pool.run({ key: 'sandbox', fingerprint: 'b', kind: 'provision', scope, work: replacement }))
       .rejects.toMatchObject({ code: 'ownership_unresolved' });
     expect(replacement).not.toHaveBeenCalled();
+  });
+
+  it('a journal reserve 409 that never dispatched settles not_started and allows retry', async () => {
+    const journal = {
+      reserve: vi.fn()
+        .mockRejectedValueOnce(new OwnershipBlockedError('foreign-reserve'))
+        .mockImplementation(async (record: OwnershipRecord) => record),
+      update: vi.fn(async (record: OwnershipRecord) => record),
+      snapshot: () => ({ available: true, records: [] }),
+    } as unknown as OwnershipJournal;
+    const operations = new OwnedOperations(journal);
+    await expect(operations.begin({
+      kind: 'ensure', invocationId: 'ensure:a', attemptId: 'ensure:a:1', scope,
+    })).rejects.toBeInstanceOf(OwnershipBlockedError);
+    const local = operations.records().find((record) => record.kind === 'ensure');
+    expect(local).toMatchObject({ resource: 'not_started', outcome: 'failed', reasonCode: 'reservation_rejected' });
+    expect(operations.drainBlockers()).toBe(0);
+    await expect(operations.begin({
+      kind: 'ensure', invocationId: 'ensure:a', attemptId: 'ensure:a:2', scope,
+    })).resolves.toBeDefined();
+  });
+
+  it('a journal reserve timeout keeps unknown and does not never_dispatched', async () => {
+    const journal = {
+      reserve: vi.fn(async () => {
+        throw new OwnedWaitEndedError('wait_timed_out', 'ownership_reserve');
+      }),
+      update: vi.fn(async (record: OwnershipRecord) => record),
+      snapshot: () => ({ available: true, records: [] }),
+    } as unknown as OwnershipJournal;
+    const operations = new OwnedOperations(journal);
+    await expect(operations.begin({
+      kind: 'ensure', invocationId: 'ensure:a', attemptId: 'ensure:a:1', scope,
+    })).rejects.toMatchObject({ code: 'wait_timed_out' });
+    expect(operations.records()[0]?.resource).toBe('unknown');
+    expect(operations.records()[0]?.resource).not.toBe('not_started');
+    expect(operations.drainBlockers()).toBeGreaterThanOrEqual(1);
+  });
+
+  it('kubectl observer unknown after already_running does not poison a never-dispatched ensure', async () => {
+    const records = new Map<string, OwnershipRecord>();
+    const journal = {
+      reserve: vi.fn(async (record: OwnershipRecord) => {
+        records.set(record.operationId, structuredClone(record));
+        return record;
+      }),
+      update: vi.fn(async (record: OwnershipRecord) => {
+        records.set(record.operationId, structuredClone(record));
+        return record;
+      }),
+      snapshot: () => ({ available: true, records: [...records.values()] }),
+    } as unknown as OwnershipJournal;
+    const operations = new OwnedOperations(journal);
+    const pool = new OwnedSharedWork<string>(operations);
+    await expect(pool.run({
+      key: 'sandbox', fingerprint: 'ensure-v1', kind: 'ensure', scope,
+      work: async (operation) => {
+        operation.markUncertain('kubectl_remote_unknown');
+        return 'already_running';
+      },
+    })).resolves.toBe('already_running');
+    const local = operations.records().find((record) => record.kind === 'ensure');
+    expect(local?.resource === 'not_started' || local?.resource === 'stopped').toBe(true);
+    expect(local?.resource).not.toBe('unknown');
+    expect(operations.drainBlockers()).toBe(0);
+    await expect(operations.begin({
+      kind: 'ensure', invocationId: 'ensure:retry', attemptId: 'ensure:retry:1', scope,
+    })).resolves.toBeDefined();
   });
 });

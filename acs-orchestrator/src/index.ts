@@ -26,6 +26,7 @@ import {
   SandboxCapacityError,
   brokenSandboxStateReason,
 } from './sandboxManager.js';
+import { OwnershipBlockedError } from './ownershipState.js';
 import { SnatSharedCidrCoverageError } from './snatManager.js';
 import { SnatOperations } from './snatOperations.js';
 import {
@@ -702,6 +703,9 @@ async function handleProvision(req: IncomingMessage, res: ServerResponse): Promi
   } catch (err) {
     if (err instanceof SandboxCapacityError) return sendCapacityError(res, err);
     const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof OwnershipBlockedError) {
+      return sendJson(res, 409, { status: 'error', error: message, code: err.code });
+    }
     if (
       err instanceof SnatSharedCidrCoverageError ||
       /ACS SNAT|CreateSnatEntry\(shared\)/.test(message)

@@ -27,6 +27,7 @@ acs-orchestrator/src/operationDiagnostics.ts
 acs-orchestrator/src/ownedExecutionRuntime.ts
 acs-orchestrator/src/ownedInvocation.ts
 acs-orchestrator/src/ownedOperations.ts
+acs-orchestrator/src/ownedPrepareAdmission.ts
 acs-orchestrator/src/ownedSharedWork.ts
 acs-orchestrator/src/ownedPodIdentity.ts
 acs-orchestrator/src/ownedWait.ts

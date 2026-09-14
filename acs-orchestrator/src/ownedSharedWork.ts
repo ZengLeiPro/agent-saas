@@ -47,8 +47,7 @@ export class OwnedSharedWork<T> {
             if (this.leaders.get(input.key) === existing) this.leaders.delete(input.key);
             continue;
           }
-          // Incompatible callers do not turn an unresolved failed owner into a retry.
-          if (existing.fingerprint !== input.fingerprint && existing.operation) {
+          if (existing.operation && existing.operation.record.resource === 'unknown') {
             throw new OwnershipBlockedError(existing.operation.record.operationId);
           }
           throw error;
@@ -65,25 +64,36 @@ export class OwnedSharedWork<T> {
       // Publish synchronously, before reserve's first await, so followers cannot
       // accidentally become a second provisioning leader in the same process.
       leader.task = Promise.resolve().then(async () => {
-        const operation = await this.operations.begin({
-          kind: input.kind, scope: input.scope,
-          invocationId: `${input.kind}:${input.key}`,
-          attemptId: `${input.kind}:${randomUUID()}`,
-        });
-        leader.operation = operation;
-        let workReturned = false;
         try {
-          const result = await this.operations.context.run(operation, () =>
-            operation.phase(input.kind, () => input.work(operation), input.ownerTimeoutMs ?? input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs));
-          workReturned = true;
-          if (operation.record.resource === 'unknown') throw new OwnershipBlockedError(operation.record.operationId);
-          await operation.complete('success', {
-            kind: 'coordinator_settled', attemptId: operation.record.attemptId,
+          const operation = await this.operations.begin({
+            kind: input.kind, scope: input.scope,
+            invocationId: `${input.kind}:${input.key}`,
+            attemptId: `${input.kind}:${randomUUID()}`,
           });
-          return result;
+          leader.operation = operation;
+          let workReturned = false;
+          try {
+            const result = await this.operations.context.run(operation, () =>
+              operation.phase(input.kind, () => input.work(operation), input.ownerTimeoutMs ?? input.timeoutMs ?? OWNED_WAIT_BUDGETS.ensureMs));
+            workReturned = true;
+            if (operation.canProveNeverDispatched() && !operation.record.remoteFence) {
+              await operation.complete('success', {
+                kind: 'never_dispatched', attemptId: operation.record.attemptId,
+              }, 'not_started');
+              return result;
+            }
+            if (operation.record.resource === 'unknown') throw new OwnershipBlockedError(operation.record.operationId);
+            await operation.complete('success', {
+              kind: 'coordinator_settled', attemptId: operation.record.attemptId,
+            });
+            return result;
+          } catch (error) {
+            if (await settleUnfencedSharedFailure(operation, error, workReturned)) throw error;
+            await operation.unknown('shared_work_unconfirmed').catch(() => undefined);
+            throw error;
+          }
         } catch (error) {
-          if (await settleUnfencedSharedFailure(operation, error, workReturned)) throw error;
-          await operation.unknown('shared_work_unconfirmed').catch(() => undefined);
+          if (!leader.operation && this.leaders.get(input.key) === leader) this.leaders.delete(input.key);
           throw error;
         }
       });

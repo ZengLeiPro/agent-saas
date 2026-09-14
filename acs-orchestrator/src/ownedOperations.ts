@@ -8,6 +8,7 @@ import {
 } from './ownershipState.js';
 import { parseRemoteFence, parseRemoteReceipt, sameRemoteFence, type RemoteAttemptFence } from './remoteAttemptProtocol.js';
 import { waitForOwned, OWNED_WAIT_BUDGETS, OwnedWaitEndedError } from './ownedWait.js';
+import { settleBeginReservationFailure } from './ownedPrepareAdmission.js';
 
 export interface OperationProof {
   kind: 'never_dispatched' | 'remote_receipt' | 'background_inventory' | 'coordinator_settled' | 'sandbox_absent';
@@ -249,8 +250,7 @@ export class OwnedOperations {
         });
         operation.acceptReservation(reserved);
       } catch (error) {
-        // A timed-out CAS may have committed. Never discard its local owner.
-        operation.markUncertain('reservation_unknown');
+        await settleBeginReservationFailure(this, operation, error);
         throw error;
       }
     }

@@ -1,10 +1,4 @@
-import {
-  PAGE_TABS_LIST_CLASS,
-  PAGE_TAB_TRIGGER_CLASS,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
+import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { CapabilityTab } from "./navigation";
 
 const CAPABILITY_TABS: Array<{ value: CapabilityTab; label: string }> = [
@@ -27,15 +21,11 @@ export function CapabilityTabsList({
     ? CAPABILITY_TABS
     : CAPABILITY_TABS.filter((tab) => tab.value !== "templates");
   return (
-    <TabsList className={cn(
-      PAGE_TABS_LIST_CLASS,
-      className,
-    )} data-active-tab={activeValue}>
+    <TabsList variant="primary" className={className} data-active-tab={activeValue}>
       {tabs.map((tab) => (
         <TabsTrigger
           key={tab.value}
           value={tab.value}
-          className={PAGE_TAB_TRIGGER_CLASS}
         >
           {tab.label}
         </TabsTrigger>

@@ -7,8 +7,6 @@ import { AttachmentStorageSection } from "@/components/SettingsCenter/Attachment
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { Button } from "@/components/ui/button";
 import {
-  PAGE_TABS_LIST_CLASS,
-  PAGE_TAB_TRIGGER_CLASS,
   Tabs,
   TabsContent,
   TabsList,
@@ -52,9 +50,9 @@ export function MyAgentSection({
     <div className="flex h-full min-h-0 w-full flex-col">
       <SettingsPanelHeader title="我的 Agent" description="在资料与长期 Memory 之间切换；深链刷新会保留当前 Tab。" />
       <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col">
-        <TabsList className={PAGE_TABS_LIST_CLASS}>
-          <TabsTrigger value="agent-profile" className={PAGE_TAB_TRIGGER_CLASS}>资料</TabsTrigger>
-          <TabsTrigger value="memory" className={PAGE_TAB_TRIGGER_CLASS}>长期 Memory</TabsTrigger>
+        <TabsList variant="primary">
+          <TabsTrigger value="agent-profile">资料</TabsTrigger>
+          <TabsTrigger value="memory">长期 Memory</TabsTrigger>
         </TabsList>
         <TabsContent value="agent-profile" className="mt-4 min-h-0 flex-1 overflow-auto">
           {renderProfile()}
@@ -92,9 +90,9 @@ export function FilesStorageSection({ renderFiles }: { renderFiles?: () => React
         description="浏览个人文件、查看存储用量并管理附件。"
       />
       <Tabs defaultValue="files" className="flex min-h-0 flex-1 flex-col">
-        <TabsList className={PAGE_TABS_LIST_CLASS} aria-label="文件与存储">
-          <TabsTrigger value="files" className={PAGE_TAB_TRIGGER_CLASS}>文件</TabsTrigger>
-          <TabsTrigger value="storage" className={PAGE_TAB_TRIGGER_CLASS}>存储用量</TabsTrigger>
+        <TabsList variant="primary" aria-label="文件与存储">
+          <TabsTrigger value="files">文件</TabsTrigger>
+          <TabsTrigger value="storage">存储用量</TabsTrigger>
         </TabsList>
         <TabsContent value="files" className="mt-4 min-h-0 flex-1">{renderFiles?.() ?? null}</TabsContent>
         <TabsContent value="storage" className="mt-4 min-h-0 flex-1"><AttachmentStorageSection /></TabsContent>

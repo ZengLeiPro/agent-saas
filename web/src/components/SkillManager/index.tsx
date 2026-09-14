@@ -19,7 +19,7 @@ import {
 import { governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { PAGE_TABS_LIST_CLASS, PAGE_TAB_TRIGGER_CLASS, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -397,12 +397,12 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           )}
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "global" | "user")} className="flex min-h-0 flex-1 flex-col">
-            <TabsList className={PAGE_TABS_LIST_CLASS}>
-                <TabsTrigger value="global" className={PAGE_TAB_TRIGGER_CLASS}>
+            <TabsList variant="secondary">
+                <TabsTrigger value="global">
                   {isTenantMode ? "组织技能" : "平台技能"}
                   <span className="ml-1.5 text-xs font-normal">({activePoolSkillsCount})</span>
                 </TabsTrigger>
-                <TabsTrigger value="user" className={PAGE_TAB_TRIGGER_CLASS}>
+                <TabsTrigger value="user">
                   用户技能
                   <span className="ml-1.5 text-xs font-normal">({userSkillCount})</span>
                 </TabsTrigger>

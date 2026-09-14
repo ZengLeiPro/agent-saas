@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  PAGE_TABS_LIST_CLASS,
-  PAGE_TAB_TRIGGER_CLASS,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -94,22 +92,17 @@ export function CronManager({
   const navigation = (
     <Tabs value={view} onValueChange={changeView} className="min-w-0">
       <TabsList
-        className={cn(
-          PAGE_TABS_LIST_CLASS,
-          "max-w-xl",
-          headerNavigationTarget !== undefined && "w-[15rem] max-w-[min(15rem,calc(100vw-24rem))]",
-        )}
+        variant="secondary"
+        className={cn(headerNavigationTarget !== undefined && "md:min-w-60")}
         aria-label="任务中心二级导航"
       >
         <TabsTrigger
           value="schedule"
-          className={PAGE_TAB_TRIGGER_CLASS}
         >
           定时任务
         </TabsTrigger>
         <TabsTrigger
           value="board"
-          className={PAGE_TAB_TRIGGER_CLASS}
         >
           任务看板
         </TabsTrigger>

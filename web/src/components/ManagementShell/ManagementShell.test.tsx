@@ -107,6 +107,8 @@ describe('ManagementShell 统一布局', () => {
       </ManagementShell>,
     );
     expect(screen.getAllByRole('tab')).toHaveLength(4);
+    expect(screen.getByRole('tablist').getAttribute('data-tabs-variant')).toBe('primary');
+    expect(screen.getByRole('tablist').getAttribute('data-tabs-layout')).toBe('full');
     expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toContain('management-page-tab');
     expect(screen.getByTestId('organization-scope-banner').className).toContain('mb-4');
     expect(screen.getByTestId('organization-scope-banner').className).toContain('rounded-lg');
@@ -115,5 +117,20 @@ describe('ManagementShell 统一布局', () => {
     expect(navigationMocks.navigateGovernance).toHaveBeenLastCalledWith(expect.objectContaining({
       routeId: 'organization.agents.connector-mappings',
     }));
+  });
+
+  it('只有两个入口的页面使用紧凑一级标签', () => {
+    render(
+      <ManagementShell
+        route={governanceRoute('organization.agents.skills', { orgId: 'kaiyan' })}
+        access={access}
+      >
+        <div />
+      </ManagementShell>,
+    );
+
+    const tablist = screen.getByRole('tablist', { name: '技能页面切换' });
+    expect(tablist.getAttribute('data-tabs-layout')).toBe('compact');
+    expect(tablist.className).toContain('md:min-w-96');
   });
 });

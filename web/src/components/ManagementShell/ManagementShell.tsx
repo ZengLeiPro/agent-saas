@@ -21,7 +21,11 @@ import { governanceCollectionRoute, type GovernanceRouteState } from '@/lib/gove
 import { navigateGovernance } from '@/lib/urlSync';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { PAGE_TABS_LIST_CLASS, PAGE_TAB_TRIGGER_CLASS } from '@/components/ui/tabs';
+import {
+  pageTabsListClass,
+  pageTabTriggerClass,
+  resolvePageTabsLayout,
+} from '@/components/ui/tabs';
 import { StateBlock } from './StateBlock';
 
 const detailTabLabels: Readonly<Record<string, string>> = {
@@ -75,8 +79,15 @@ function ManagementTabs({ route }: { route: GovernanceRouteState }) {
   if (!page) return null;
   const activeTab = activeManagementTab(page, route);
   if (!page.tabs?.length) return null;
+  const layout = resolvePageTabsLayout('primary', page.tabs.length);
   return (
-    <div className={PAGE_TABS_LIST_CLASS} role="tablist" aria-label={`${page.label}页面切换`}>
+    <div
+      className={pageTabsListClass({ variant: 'primary', count: page.tabs.length })}
+      role="tablist"
+      aria-label={`${page.label}页面切换`}
+      data-tabs-layout={layout}
+      data-tabs-variant="primary"
+    >
       {page.tabs.map((item, index) => {
         const selected = activeTab?.id === item.id;
         return (
@@ -90,7 +101,7 @@ function ManagementTabs({ route }: { route: GovernanceRouteState }) {
             data-state={selected ? 'active' : 'inactive'}
             tabIndex={selected ? 0 : -1}
             className={cn(
-              PAGE_TAB_TRIGGER_CLASS,
+              pageTabTriggerClass({ variant: 'primary', layout }),
               'transition-colors hover:text-foreground',
             )}
             onKeyDown={(event) => handleTabKeyDown(event, index, page.tabs!.length, (nextIndex) => {
@@ -111,11 +122,14 @@ function DetailTabs({ route }: { route: GovernanceRouteState }) {
   const definition = detailTabDefinition(route);
   if (!definition) return null;
   const activeTab = route.tab === 'configuration' ? 'entitlements' : route.tab;
+  const layout = resolvePageTabsLayout('secondary', definition.length);
   return (
     <div
-      className={cn('mt-5', PAGE_TABS_LIST_CLASS)}
+      className={cn('mt-5', pageTabsListClass({ variant: 'secondary', count: definition.length }))}
       role="tablist"
       aria-label="详情页面切换"
+      data-tabs-layout={layout}
+      data-tabs-variant="secondary"
     >
       {definition.map((item) => (
         <button
@@ -128,7 +142,7 @@ function DetailTabs({ route }: { route: GovernanceRouteState }) {
           data-state={activeTab === item ? 'active' : 'inactive'}
           tabIndex={activeTab === item ? 0 : -1}
           className={cn(
-            PAGE_TAB_TRIGGER_CLASS,
+            pageTabTriggerClass({ variant: 'secondary', layout }),
             'transition-colors hover:text-foreground',
           )}
           onKeyDown={(event) => handleTabKeyDown(event, definition.indexOf(item), definition.length, (nextIndex) => {

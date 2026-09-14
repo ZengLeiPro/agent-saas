@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PAGE_TABS_LIST_CLASS, PAGE_TAB_TRIGGER_CLASS, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -981,14 +981,13 @@ export function TenantManager() {
             </div>
           ) : (
           <Tabs value={activeDetailTab} onValueChange={(value) => setActiveDetailTab(value as TenantDetailTab)} className="flex min-h-0 flex-1 flex-col">
-            <TabsList className={PAGE_TABS_LIST_CLASS}>
+            <TabsList variant="primary">
                 {tenantDetailTabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
                     <TabsTrigger
                       key={tab.id}
                       value={tab.id}
-                      className={PAGE_TAB_TRIGGER_CLASS}
                     >
                       <Icon className="size-3.5 shrink-0" />
                       <span className="truncate">{tab.label}</span>

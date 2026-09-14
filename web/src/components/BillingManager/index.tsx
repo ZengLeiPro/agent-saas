@@ -28,7 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PAGE_TABS_LIST_CLASS, PAGE_TAB_TRIGGER_CLASS, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
@@ -801,12 +801,12 @@ export function PlatformBillingManager({ tenantId: fixedTenantId }: { tenantId?:
           <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as PlatformTab)} className="flex min-h-0 flex-1 flex-col">
-            <TabsList className={PAGE_TABS_LIST_CLASS}>
-              <TabsTrigger value="overview" className={PAGE_TAB_TRIGGER_CLASS}>账户与策略</TabsTrigger>
-              <TabsTrigger value="ledger" className={PAGE_TAB_TRIGGER_CLASS}>流水</TabsTrigger>
-              {canReadFinance && <TabsTrigger value="usage-events" className={PAGE_TAB_TRIGGER_CLASS}>用量事件</TabsTrigger>}
-              {canReadFinance && <TabsTrigger value="pricing-versions" className={PAGE_TAB_TRIGGER_CLASS}>价格版本</TabsTrigger>}
-              {canReadFinance && <TabsTrigger value="audit" className={PAGE_TAB_TRIGGER_CLASS}>平台审计</TabsTrigger>}
+            <TabsList variant="primary">
+              <TabsTrigger value="overview">账户与策略</TabsTrigger>
+              <TabsTrigger value="ledger">流水</TabsTrigger>
+              {canReadFinance && <TabsTrigger value="usage-events">用量事件</TabsTrigger>}
+              {canReadFinance && <TabsTrigger value="pricing-versions">价格版本</TabsTrigger>}
+              {canReadFinance && <TabsTrigger value="audit">平台审计</TabsTrigger>}
             </TabsList>
 
             <div className="min-h-0 flex-1 overflow-auto pt-4">

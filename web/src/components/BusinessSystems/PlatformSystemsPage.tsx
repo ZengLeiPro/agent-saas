@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { PAGE_TABS_LIST_CLASS, PAGE_TAB_TRIGGER_CLASS, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EntityIcons } from '@/lib/icons';
 import { governanceRoute } from '@/lib/governanceNavigation';
 import { navigateGovernance } from '@/lib/urlSync';
@@ -166,9 +166,9 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
           window.history.replaceState(window.history.state, '', url);
         }}
       >
-        <TabsList aria-label="业务系统管理" className={PAGE_TABS_LIST_CLASS}>
-          <TabsTrigger value="config" className={PAGE_TAB_TRIGGER_CLASS}>系统配置</TabsTrigger>
-          <TabsTrigger value="installations" className={PAGE_TAB_TRIGGER_CLASS}>组织接入</TabsTrigger>
+        <TabsList aria-label="业务系统管理" variant="primary">
+          <TabsTrigger value="config">系统配置</TabsTrigger>
+          <TabsTrigger value="installations">组织接入</TabsTrigger>
         </TabsList>
         <TabsContent value="config" className="space-y-4">
           <section className="rounded-xl border bg-card p-4 shadow-sm md:p-5">

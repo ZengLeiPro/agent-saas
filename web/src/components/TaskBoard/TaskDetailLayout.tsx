@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { TaskBoard, TaskBoardExecutionPurpose, TaskBoardStageModels, TaskBoardTask } from "@agent/shared";
 import {
-  PAGE_TABS_LIST_CLASS,
-  PAGE_TAB_TRIGGER_CLASS,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -87,9 +85,9 @@ export function TaskDetailTabs({
 }) {
   return (
     <Tabs value={value} onValueChange={(next) => onChange(next as TaskDetailTab)} className="shrink-0 border-b px-4 py-2 sm:px-6">
-      <TabsList aria-label="任务详情分区" className={PAGE_TABS_LIST_CLASS}>
-        <TabsTrigger value="details" className={PAGE_TAB_TRIGGER_CLASS}>详细信息</TabsTrigger>
-        <TabsTrigger value="discussion" className={PAGE_TAB_TRIGGER_CLASS}>讨论（{commentCount}）</TabsTrigger>
+      <TabsList aria-label="任务详情分区" variant="secondary">
+        <TabsTrigger value="details">详细信息</TabsTrigger>
+        <TabsTrigger value="discussion">讨论（{commentCount}）</TabsTrigger>
       </TabsList>
     </Tabs>
   );

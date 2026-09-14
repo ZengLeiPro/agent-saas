@@ -88,6 +88,27 @@ describe('PgTaskboardStore.completeTask', () => {
     expect(sql).toContain('INSERT INTO changes');
   });
 
+  it('allows completing a ready-to-merge eligible delivery with an unmerged pull request', async () => {
+    const current = task({
+      kind: 'delivery',
+      status: 'ready_to_merge',
+      mergeEligibility: 'eligible',
+      providerPullRequestId: '235',
+      pullRequestNumber: 235,
+    });
+    const { store, query, completed } = host(current, { boardRole: 'maintainer' });
+
+    await expect(PgTaskboardStore.prototype.completeTask.call(
+      store as unknown as PgTaskboardStore,
+      identity,
+      current.id,
+      { expectedVersion: current.version },
+    )).resolves.toEqual(completed);
+
+    const sql = query.mock.calls.map(([statement]) => statement).join('\n');
+    expect(sql).toContain("SET status='done'");
+  });
+
   it('requires a maintainer role', async () => {
     const current = task();
     const { store } = host(current, { boardRole: 'editor' });
@@ -118,6 +139,13 @@ describe('PgTaskboardStore.completeTask', () => {
     ['canceled task', task({ status: 'canceled' })],
     ['eligible delivery', task({ kind: 'delivery', mergeEligibility: 'eligible' })],
     ['claimed delivery', task({ kind: 'delivery', mergeEligibility: 'claimed' })],
+    ['claimed ready-to-merge delivery', task({
+      kind: 'delivery',
+      status: 'ready_to_merge',
+      mergeEligibility: 'claimed',
+      providerPullRequestId: '235',
+      pullRequestNumber: 235,
+    })],
     ['delivery with an unmerged pull request', task({
       kind: 'delivery', providerPullRequestId: '235', pullRequestNumber: 235,
     })],

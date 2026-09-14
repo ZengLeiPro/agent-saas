@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GrokSubscriptionResponsesTransport } from '../runtime/responses/grokSubscriptionResponsesTransport.js';
 import { GrokModelCatalogService } from '../runtime/responses/grokModelCatalog.js';
-import {
-  GROK_RESPONSES_ENDPOINT,
-  GrokProtocolError,
-  isPermanentGrokProtocolError,
-} from '../runtime/responses/grokProtocol.js';
+import { GROK_RESPONSES_ENDPOINT, GrokProtocolError } from '../runtime/responses/grokProtocol.js';
 import { normalizeGrokRequest } from '../runtime/responses/grokRequestNormalization.js';
-import { isPermanentTransportError } from '../runtime/responses/permanentTransportError.js';
+import {
+  isPermanentGrokProtocolError,
+  isPermanentTransportError,
+} from '../runtime/responses/permanentTransportError.js';
 import { createModelAdapterForProtocol } from '../runtime/modelAdapterFactory.js';
 import { isProxyRequiredEgressRequest } from '../runtime/egressRequestPolicy.js';
 import { grokFixture, jsonResponse } from './grokTestFixtures.js';

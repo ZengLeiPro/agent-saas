@@ -31,7 +31,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run && pnpm run test:v2-vectors",
+    "test:v2-vectors": "node scripts/verify-v2-vectors.mjs",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-schemas.mjs",
     "prepack": "pnpm run build"
   },

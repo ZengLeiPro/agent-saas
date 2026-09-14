@@ -43,6 +43,7 @@ import { PgKyAppSigningKeyStore } from './keys/store.js';
 import { KyAppSigningKeyService } from './keys/service.js';
 import { PgEnrollmentStore } from './enrollment/store.js';
 import { KyAppEnrollmentService } from './enrollment/service.js';
+import { KyAppV2ActivationService } from './enrollment/activation.js';
 import { PgDeploymentKeyStore } from './workload/deploymentKeyStore.js';
 import { PgReplayReservationStore } from './workload/replayStore.js';
 import { KyAppV2Authenticator } from './workload/authenticator.js';
@@ -84,6 +85,7 @@ export interface KyAppAssembly {
   v2Authenticator: KyAppV2Authenticator;
   v2Tokens: KyAppV2TokenIssuer;
   enrollment: KyAppEnrollmentService;
+  activation: KyAppV2ActivationService;
   issuer: KyAppSatIssuer;
   suspensions: KyAppSuspensionRegistry;
   credentials: KyAppCredentialManager;
@@ -150,7 +152,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
   const workloadReplays = new PgReplayReservationStore(base);
   const v2Authenticator = new KyAppV2Authenticator({
     issuer: config.issuer,
-    tokenEndpoint: new URL(V2_ENDPOINTS.token, config.issuer).toString(),
+    tokenEndpoint: new URL(V2_ENDPOINTS.token, new URL(config.jwksUrl).origin).toString(),
     installations: systems,
     platformKeys: signingKeyStore,
     replays: workloadReplays,
@@ -215,6 +217,18 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
           },
         }
       : {}),
+  });
+  const activation = new KyAppV2ActivationService({
+    config,
+    systems,
+    operations: enrollmentOperations,
+    deploymentKeys,
+    authenticator: v2Authenticator,
+    issuer,
+    outbound,
+    runtimeStore,
+    installations,
+    now,
   });
   const handshake = new KyAppHandshakeService({
     config,
@@ -504,6 +518,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     v2Authenticator,
     v2Tokens,
     enrollment,
+    activation,
     issuer,
     suspensions,
     credentials,

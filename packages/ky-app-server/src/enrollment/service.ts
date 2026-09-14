@@ -34,6 +34,7 @@ export interface EnrollmentServiceOptions {
   verifier: PlatformChallengeVerifier;
   platformKeys: PlatformKeyResolver;
   runtimes: InstallationRuntimeManager;
+  activation?: { appVersion: string; manifestDigest: string };
   fetch?: typeof fetch;
   now?: () => number;
 }
@@ -216,16 +217,22 @@ export class V2EnrollmentService {
         throw new Error(`token_exchange_${response.status}`);
       }
       definitiveFailure = true;
-      const body = (await response.json()) as { installationGrant?: unknown };
-      if (typeof body.installationGrant !== 'string') throw new Error('invalid_token_response');
-      const decoded = decodeV2Jws(body.installationGrant);
+      const body = (await response.json()) as {
+        installation_grant?: unknown;
+        installationGrant?: unknown;
+        access_token?: unknown;
+        token_type?: unknown;
+      };
+      const installationGrant = body.installation_grant ?? body.installationGrant;
+      if (typeof installationGrant !== 'string') throw new Error('invalid_token_response');
+      const decoded = decodeV2Jws(installationGrant);
       const platformKid = decoded.protectedHeader.kid;
       if (typeof platformKid !== 'string') throw new Error('grant_missing_kid');
       const platformJwk = await this.options.platformKeys.resolve(
         this.options.platformIssuer,
         platformKid,
       );
-      const claims = verifyInstallationGrant(body.installationGrant, {
+      const claims = verifyInstallationGrant(installationGrant, {
         platformPublicJwk: platformJwk,
         platformKeyId: platformKid,
         platformIssuer: this.options.platformIssuer,
@@ -253,6 +260,39 @@ export class V2EnrollmentService {
         updatedAt: new Date(this.now()).toISOString(),
       };
       await this.options.runtimes.install(binding);
+      if (this.options.activation) {
+        if (typeof body.access_token !== 'string' || body.token_type !== 'DPoP') {
+          throw new Error('invalid_activation_token');
+        }
+        const activationPath = `/api/app-contract/v2/installations/${encodeURIComponent(attempt.installationId)}/activate`;
+        const activationUrl = `${this.options.platformApiBaseUrl}${activationPath}`;
+        const activationProof = await createDpopProof({
+          keys: this.options.keys,
+          keyRef: current.keyRef,
+          publicJwk: current.publicJwk,
+          method: 'POST',
+          url: activationUrl,
+          accessToken: body.access_token,
+          now: this.now(),
+        });
+        const activated = await this.request(activationUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `DPoP ${body.access_token}`,
+            dpop: activationProof,
+            'cache-control': 'no-store',
+          },
+          body: JSON.stringify({
+            manifestDigest: this.options.activation.manifestDigest,
+            appVersion: this.options.activation.appVersion,
+            keyId: current.keyId,
+            generation: claims.generation,
+          }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!activated.ok) throw new Error(`activation_${activated.status}`);
+      }
       await this.options.attempts.finish(attempt.operationId, 'consumed');
       await this.options.secrets.delete(attempt.verifierRef);
       return { ...binding, state: 'connected' };

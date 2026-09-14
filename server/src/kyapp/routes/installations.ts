@@ -58,6 +58,7 @@ export interface KyAppInstallationRoutesOptions {
   credentials: KyAppCredentialManager;
   runtimeStore: PgKyAppInstallationRuntimeStore;
   accessOverview?: InstallationAccessOverviewService;
+  useV2?: (systemId: string) => boolean;
 }
 
 export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesOptions): Router {
@@ -466,6 +467,7 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
           publishedDigest: definition?.publishedDigest ?? null,
           runtime,
           assignmentConfigured: summary?.assignmentSummary.configured ?? false,
+          v2EnrollmentEnabled: options.useV2?.(installation.systemId) ?? false,
         }),
         upgrade: {
           currentDigest: installation.registeredDigest,

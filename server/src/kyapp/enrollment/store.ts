@@ -111,6 +111,19 @@ export class PgEnrollmentStore {
     return result.rows[0] ? rowToOperation(result.rows[0] as Row) : null;
   }
 
+  async markReady(installationId: string, result: Record<string, unknown>): Promise<void> {
+    const updated = await this.options.pool.query(
+      `UPDATE ${this.operationsTable} SET status='ready',result_json=result_json || $2::jsonb,
+         version=version+1,updated_at=clock_timestamp()
+       WHERE operation_id=(SELECT operation_id FROM ${this.operationsTable}
+         WHERE installation_id=$1 AND status IN ('exchanged','activating','ready')
+         ORDER BY code_consumed_at DESC NULLS LAST,updated_at DESC LIMIT 1)
+       RETURNING operation_id`,
+      [installationId, JSON.stringify(result)],
+    );
+    if (!updated.rows[0]) throw new EnrollmentStoreError('找不到待生效的授权', 'invalid_state');
+  }
+
   async createOrGet(input: {
     operationId: string;
     installationId: string;

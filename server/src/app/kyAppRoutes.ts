@@ -25,6 +25,7 @@ import { createKyAppDeliveryRouter } from '../kyapp/routes/delivery.js';
 import { createKyAppExistingOnboardRouter } from '../kyapp/routes/existingOnboard.js';
 import {
   createKyAppEnrollmentRouter,
+  createKyAppV2ActivationRouter,
   createKyAppV2TokenRouter,
 } from '../kyapp/routes/enrollment.js';
 import { PgKyAppConnectionSettingsStore } from '../kyapp/delivery/connectionSettings.js';
@@ -185,6 +186,10 @@ export function registerKyAppRoutes(
     createKyAppV2TokenRouter({ enrollment: assembly.enrollment }),
   );
   app.use(
+    KY_APP_CONTRACT_V2_BASE_PATH,
+    createKyAppV2ActivationRouter({ activation: assembly.activation }),
+  );
+  app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppInstallationsRouter({
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
@@ -193,6 +198,8 @@ export function registerKyAppRoutes(
       installations: assembly.installations,
       credentials: assembly.credentials,
       runtimeStore: assembly.runtimeStore,
+      useV2: (systemId) =>
+        config.enrollmentV2.enabled && config.enrollmentV2.allowedSystemIds.includes(systemId),
       ...(accessOverview ? { accessOverview } : {}),
     }),
   );
@@ -233,6 +240,8 @@ export function registerKyAppRoutes(
           toolRegistrationDryRun:
             options.toolRegistrationDryRun ?? createKyAppToolRegistrationDryRun(),
           runSmoke: (installationId, fixture) => assembly.diagnostics.run(installationId, fixture),
+          useV2: (systemId) =>
+            config.enrollmentV2.enabled && config.enrollmentV2.allowedSystemIds.includes(systemId),
           verifyTenantSkills: async (tenantId, manifest) => {
             const installed: string[] = [];
             const missing: string[] = [];
@@ -286,6 +295,8 @@ export function registerKyAppRoutes(
           return Boolean(set?.assignments.some((rule) => rule.effect === 'allow'));
         },
         runSmoke: (installationId, fixture) => assembly.diagnostics.run(installationId, fixture),
+        useV2: (systemId) =>
+          config.enrollmentV2.enabled && config.enrollmentV2.allowedSystemIds.includes(systemId),
       }),
     );
   }

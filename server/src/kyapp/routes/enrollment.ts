@@ -11,6 +11,7 @@ import {
 } from '../../data/governance-audit/recorder.js';
 import type { GovernanceAuditStore } from '../../data/governance-audit/types.js';
 import type { KyAppEnrollmentService } from '../enrollment/service.js';
+import type { KyAppV2ActivationService } from '../enrollment/activation.js';
 import { enrollmentReason } from '../enrollment/service.js';
 import type { EnrollmentOperation } from '../enrollment/types.js';
 import type { KyAppOutbound } from '../outbound.js';
@@ -39,6 +40,14 @@ const tokenInput = z
     client_assertion: z.string().min(80).max(16_384),
     installation_id: id.optional(),
     scope: z.string().max(512).optional(),
+  })
+  .strict();
+const activationInput = z
+  .object({
+    manifestDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    appVersion: z.string().min(1).max(128),
+    keyId: z.string().min(20).max(128),
+    generation: z.number().int().positive(),
   })
   .strict();
 
@@ -341,6 +350,47 @@ export function createKyAppV2TokenRouter(
     } catch (error) {
       const reason = enrollmentReason(error);
       return res.status(statusFor(reason)).json({ error: reason });
+    }
+  });
+  return router;
+}
+
+export function createKyAppV2ActivationRouter(options: {
+  activation: KyAppV2ActivationService;
+}): Router {
+  const router = Router();
+  router.post('/installations/:iid/activate', async (req, res) => {
+    res.setHeader('cache-control', 'no-store');
+    const installationId = id.safeParse(req.params.iid);
+    const body = activationInput.safeParse(req.body ?? {});
+    const authorization = req.header('authorization') ?? '';
+    const dpopProof = req.header('dpop') ?? '';
+    if (
+      !installationId.success ||
+      !body.success ||
+      !authorization.startsWith('DPoP ') ||
+      !dpopProof
+    ) {
+      return res.status(400).json({ ok: false, error: { code: 'invalid_request' } });
+    }
+    try {
+      const installation = await options.activation.activate({
+        installationId: installationId.data,
+        accessToken: authorization.slice('DPoP '.length),
+        dpopProof,
+        ...body.data,
+      });
+      return res.json({
+        ok: true,
+        installationId: installation.installationId,
+        status: installation.status,
+      });
+    } catch (error) {
+      const reason =
+        error instanceof Error && 'reason' in error
+          ? String((error as { reason: unknown }).reason)
+          : enrollmentReason(error);
+      return res.status(statusFor(reason)).json({ ok: false, error: { code: reason } });
     }
   });
   return router;

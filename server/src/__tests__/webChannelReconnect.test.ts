@@ -170,7 +170,7 @@ describe('WebChannel active stream reconnect', () => {
     // durable 增量：从客户端 cursor 之后取，而不是 buffer 全量
     expect(listPage).toHaveBeenCalledWith(DEFAULT_TENANT_ID, 'session-dc', {
       afterCursor: '4321',
-      limit: 200,
+      limit: 200, runId: 'run-dc',
     });
     expect(JSON.stringify(ws.sent)).not.toContain('already shown in transcript snapshot');
   });

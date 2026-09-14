@@ -103,6 +103,8 @@ export interface ApiLastRunState {
   finishedAt?: string;
   /** Server-owned M40-02 projection; absent means legacy unknown. */
   liveness?: RunLiveness;
+  /** Durable runtime event cursor of this run_state_changed; clients advance lastEventCursor after a successful detail refresh. */
+  eventCursor?: string;
 }
 
 export type SessionDetailAccessMode = "owner" | "read_only";

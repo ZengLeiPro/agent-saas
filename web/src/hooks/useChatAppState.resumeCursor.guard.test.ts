@@ -26,9 +26,10 @@ describe("会话级 durable cursor 生命周期", () => {
     }
   });
 
-  it("跨设备新流从已保存的 durable cursor 继续增量回放", () => {
+  it("跨设备新流 resume 携带已保存 cursor，但 skipReplay 以免陈旧游标重放上一轮", () => {
     const streamStarted = sourceBetween("if (data.type === 'stream_started')", "// 防串流守卫");
-    expect(streamStarted).toContain("lastEventCursor: lastEventCursorRef.current");
+    expect(streamStarted).toContain("buildStreamStartedResume(data.sessionId, lastEventCursorRef.current)");
     expect(streamStarted).not.toContain("lastEventCursor: null");
+    expect(streamStarted).not.toContain("skipReplay: false");
   });
 });

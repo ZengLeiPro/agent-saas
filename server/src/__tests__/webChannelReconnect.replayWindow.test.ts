@@ -42,7 +42,7 @@ describe('WebChannel active stream reconnect', () => {
     return channel;
   }
 
-  it('durable replay with a cursor remains session-wide after that cursor', async () => {
+  it('durable replay with a cursor is limited to the active run', async () => {
     const channel = createChannel();
     const ws = new FakeWebSocket();
     const listPage = vi.fn(async () => ({ events: [], hasMore: false }));
@@ -62,7 +62,53 @@ describe('WebChannel active stream reconnect', () => {
     expect(listPage).toHaveBeenCalledWith(DEFAULT_TENANT_ID, 'session-durable', {
       afterCursor: '1581',
       limit: 200,
+      runId: 'run-current',
     });
+  });
+
+  it('stale session cursor does not replay a previous run assistant_message or run_finished', async () => {
+    const channel = createChannel();
+    const ws = new FakeWebSocket();
+    const previousRun = {
+      timestamp: new Date().toISOString(),
+      runId: 'run-old',
+      sessionId: 'session-stale-cursor',
+    };
+    const currentRun = {
+      timestamp: new Date().toISOString(),
+      runId: 'run-current',
+      sessionId: 'session-stale-cursor',
+    };
+    const listPage = vi.fn(async () => ({
+      events: [
+        { ...previousRun, id: 'event-old-text', sequence: '2386', type: 'assistant_message', content: '上一轮最终回复', streamed: true },
+        { ...previousRun, id: 'event-old-done', sequence: '2389', type: 'run_state_changed', status: 'completed' },
+        { ...currentRun, id: 'event-current-delta', sequence: '2400', type: 'assistant_message', content: '新一轮开头', streamed: true },
+      ],
+      hasMore: false,
+    }));
+
+    await (channel as any).replayDurableRuntimeEvents(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      'session-stale-cursor',
+      { listPage },
+      { lastEventId: 0, lastEventCursor: '2200', activeRunId: 'run-current', tenantId: DEFAULT_TENANT_ID },
+    );
+
+    const sent = JSON.stringify(ws.sent);
+    expect(listPage).toHaveBeenCalledWith(DEFAULT_TENANT_ID, 'session-stale-cursor', {
+      afterCursor: '2200',
+      limit: 200,
+      runId: 'run-current',
+    });
+    expect(sent).toContain('新一轮开头');
+    expect(sent).not.toContain('上一轮最终回复');
+    expect(ws.sent.filter((entry) => (entry as { data?: { type?: string } }).data?.type === 'done')).toHaveLength(0);
   });
 
   it('prewarms stream state before a durable cursor so a new ws-only process replays only the missing suffix', async () => {

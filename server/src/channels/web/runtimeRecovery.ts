@@ -354,11 +354,13 @@ export class WebRuntimeRecovery {
         const page = await store.listPage(tenantId, sessionId, {
           afterCursor: cursor,
           limit: 200,
-          // durable cursor 是会话级游标；没有游标时绝不能从会话开头回放，
-          // 否则重连会把历次 Agent 回复全部追加到当前消息流。
-          ...(!hasDurableCursor ? { runId: options.activeRunId } : {}),
+          // durable cursor 仍是会话级位置；没有游标时绝不能从会话开头回放。
+          // 有游标时也必须限制在当前活跃 run，否则陈旧游标会把上一轮
+          // assistant_message / run_finished 重放到新用户消息下方。
+          ...(options.activeRunId || !hasDurableCursor ? { runId: options.activeRunId } : {}),
         });
         for (const event of page.events) {
+          if (!belongsToActiveRun(event, options.activeRunId)) continue;
           const eventCursor = getDurableEventCursor(event);
           const frames = projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events;
           for (const [index, data] of frames.entries()) {
@@ -384,6 +386,7 @@ export class WebRuntimeRecovery {
           (event) => 'runId' in event && event.runId === options.activeRunId,
         );
     for (const event of events) {
+      if (!belongsToActiveRun(event, options.activeRunId)) continue;
       const eventCursor = getDurableEventCursor(event);
       const frames = projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events;
       for (const [index, data] of frames.entries()) {
@@ -565,6 +568,12 @@ export class WebRuntimeRecovery {
     });
   }
 
+}
+
+function belongsToActiveRun(event: object, activeRunId: string): boolean {
+  if (!activeRunId) return true;
+  const runId = 'runId' in event ? (event as { runId?: unknown }).runId : undefined;
+  return typeof runId !== 'string' || !runId || runId === activeRunId;
 }
 
 /** Keep the durable run alive while releasing connection-scoped recovery state. */

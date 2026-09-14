@@ -3,6 +3,32 @@ import { authFetch } from "@/lib/authFetch";
 import type { RunLiveness, SessionRuntimeStatus } from "@agent/shared";
 import { wsClient, type WsResumeMessage } from "@/lib/wsClient";
 
+export function shouldAdvanceDurableCursor(
+  current: string | null | undefined,
+  incoming: string | undefined,
+): incoming is string {
+  if (!incoming) return false;
+  if (!current) return true;
+  try {
+    return BigInt(incoming) > BigInt(current);
+  } catch {
+    return incoming !== current;
+  }
+}
+
+export function buildStreamStartedResume(
+  sessionId: string,
+  lastEventCursor: string | null,
+): WsResumeMessage {
+  return {
+    action: 'resume',
+    sessionId,
+    lastEventId: 0,
+    lastEventCursor,
+    skipReplay: true,
+  };
+}
+
 export type LastRunState = NonNullable<ApiSessionDetail["lastRunState"]>;
 export type TerminalRuntimeStatus = "idle" | "completed" | "failed" | "cancelled" | "orphaned";
 

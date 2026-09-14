@@ -68,9 +68,8 @@ export default function SessionListScreen() {
 
   const groupsHook = useGroups();
   const avatarMap = useSessionAvatarMap({ isAdmin: isAdminUser, username: authUser?.username });
-  // 个人偏好 `showSessionListAvatar`（设置 → 外观与布局）；
-  // 移动端缺省显示头像，与 Web 缺省相反，理由见 app/settings/appearance-layout.tsx。
-  const showSessionListAvatar = authUser?.preferences?.showSessionListAvatar !== false;
+  // 头像列永远显示：不读取 Web 共享偏好 `showSessionListAvatar`，
+  // 避免个人会话与固定带图标的分组行错位（见 SessionRow）。
 
   const sidebarSessions = useMemo(
     () => toSidebarSessions(chat.sessions, chat.loading ? chat.sessionId : null),
@@ -264,7 +263,6 @@ export default function SessionListScreen() {
           agentAvatar={ownerAvatar?.avatar}
           agentAvatarVersion={ownerAvatar?.avatarVersion}
           agentAvatarUsername={ownerUsername}
-          showAvatar={showSessionListAvatar}
         />
       );
     },
@@ -277,7 +275,6 @@ export default function SessionListScreen() {
       groupActions.confirmDeleteGroup,
       authUser?.username,
       avatarMap,
-      showSessionListAvatar,
       getSessionActions,
       handleSelectSession,
       selection,

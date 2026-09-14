@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/ky-app-enrollment/v2.json",
+  "title": "KY App V2 enrollment",
+  "$defs": {
+    "publicJwk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kty", "crv", "x", "y"],
+      "properties": {
+        "kty": { "const": "EC" },
+        "crv": { "const": "P-256" },
+        "x": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+        "y": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+        "alg": { "const": "ES256" },
+        "use": { "const": "sig" },
+        "kid": { "type": "string", "minLength": 1 },
+        "key_ops": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "const": "verify" }
+        }
+      }
+    },
+    "enrollmentRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "iss",
+        "sub",
+        "aud",
+        "iat",
+        "exp",
+        "jti",
+        "tid",
+        "iid",
+        "sid",
+        "deployment_id",
+        "origin",
+        "callback_uri",
+        "nonce",
+        "code_challenge_method",
+        "code_challenge",
+        "key_id",
+        "public_jwk",
+        "scope"
+      ],
+      "properties": {
+        "iss": { "type": "string", "minLength": 1 },
+        "sub": { "type": "string", "minLength": 1 },
+        "aud": { "type": "string", "pattern": "^https://" },
+        "iat": { "type": "integer", "minimum": 1 },
+        "exp": { "type": "integer", "minimum": 1 },
+        "jti": { "type": "string", "minLength": 1 },
+        "tid": { "type": "string", "minLength": 1 },
+        "iid": { "type": "string", "minLength": 1 },
+        "sid": { "type": "string", "minLength": 1 },
+        "deployment_id": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "pattern": "^https://" },
+        "callback_uri": { "type": "string", "pattern": "^https://" },
+        "nonce": { "type": "string", "minLength": 1 },
+        "code_challenge_method": { "const": "S256" },
+        "code_challenge": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+        "key_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+        "public_jwk": { "$ref": "#/$defs/publicJwk" },
+        "scope": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "installationGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "iss",
+        "sub",
+        "aud",
+        "iat",
+        "exp",
+        "jti",
+        "tid",
+        "iid",
+        "sid",
+        "client_id",
+        "origin",
+        "key_id",
+        "scope",
+        "registered_digest",
+        "generation"
+      ],
+      "properties": {
+        "iss": { "type": "string", "pattern": "^https://" },
+        "sub": { "type": "string", "minLength": 1 },
+        "aud": { "type": "string", "minLength": 1 },
+        "iat": { "type": "integer", "minimum": 1 },
+        "exp": { "type": "integer", "minimum": 1 },
+        "jti": { "type": "string", "minLength": 1 },
+        "tid": { "type": "string", "minLength": 1 },
+        "iid": { "type": "string", "minLength": 1 },
+        "sid": { "type": "string", "minLength": 1 },
+        "client_id": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "pattern": "^https://" },
+        "key_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+        "scope": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "registered_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "generation": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

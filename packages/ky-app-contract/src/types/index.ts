@@ -6,3 +6,5 @@ export * from './claims.js';
 export * from './directory.js';
 export * from './events.js';
 export * from './messages.js';
+export * from './enrollment.js';
+export * from './workload.js';

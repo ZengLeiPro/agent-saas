@@ -15,3 +15,4 @@ export * from './me.js';
 export * from './claims.js';
 export * from './claudeMd.js';
 export * from './vectors.js';
+export * from './v2/index.js';

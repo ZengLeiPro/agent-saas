@@ -13,6 +13,7 @@ export class DeploymentDrain {
   private startedAt?: number;
   private deadlineAt?: number;
   private poll?: ReturnType<typeof setInterval>;
+  private lastBlockerLogAt = 0;
 
   constructor(
     private readonly options: {
@@ -24,6 +25,7 @@ export class DeploymentDrain {
       exit: () => void;
       onError?: (error: unknown) => void;
       now?: () => number;
+      describeBlockers?: () => string;
     },
   ) {}
 
@@ -41,6 +43,7 @@ export class DeploymentDrain {
     if (this.state === 'draining' || this.state === 'completed') return;
     this.startedAt = (this.options.now ?? Date.now)();
     this.deadlineAt = this.startedAt + this.options.deadlineMs();
+    this.lastBlockerLogAt = this.startedAt;
     this.state = 'draining';
     if (!this.publish()) {
       this.state = 'idle';
@@ -53,7 +56,9 @@ export class DeploymentDrain {
 
   tick(): void {
     if (this.state !== 'draining') return;
-    if (this.options.inflight() === 0) {
+    const inflight = this.options.inflight();
+    const now = (this.options.now ?? Date.now)();
+    if (inflight === 0) {
       this.state = 'completed';
       // Do not exit if proof cannot be persisted. The deployment must fail closed.
       if (!this.publish()) {
@@ -62,8 +67,12 @@ export class DeploymentDrain {
       }
       clearInterval(this.poll);
       this.options.exit();
-    } else if ((this.options.now ?? Date.now)() >= this.deadlineAt!) {
-      this.resume('timed_out');
+    } else {
+      if (this.options.describeBlockers && now - this.lastBlockerLogAt >= 60_000) {
+        this.lastBlockerLogAt = now;
+        this.options.describeBlockers();
+      }
+      if (now >= this.deadlineAt!) this.resume('timed_out');
     }
   }
 

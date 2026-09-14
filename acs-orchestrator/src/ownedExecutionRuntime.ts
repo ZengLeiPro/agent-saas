@@ -73,9 +73,11 @@ export function createOwnedExecutionRuntime(config: AcsOrchestratorConfig, logge
       await reconcileRemoteOwnership({
         config,
         kubectl,
+        kubeApi,
         journal: ownershipJournal,
         sandboxManager,
         operations: ownedOperations,
+        executor,
         logger,
       });
     }

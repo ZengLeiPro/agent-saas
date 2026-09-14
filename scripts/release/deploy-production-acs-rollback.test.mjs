@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const SCRIPT = resolve('scripts/release/deploy-production-release.sh');
@@ -259,4 +259,78 @@ test('ACS committed state prevents rollback even after deployment locals disappe
   await assert.rejects(readFile(join(value.root, 'prechange-acs.recovered'), 'utf8'), {
     code: 'ENOENT',
   });
+});
+
+test('PHASE=acs TERM after mutation writes rollback-acs.attempted', async (t) => {
+  const value = await fixture();
+  t.after(() => rm(value.root, { recursive: true, force: true }));
+  const source = await readFile(SCRIPT, 'utf8');
+  const deployStart = source.indexOf('deploy_acs() {');
+  const snapshotStart = source.indexOf('  DEPLOY_ACS_ROLLBACK_COMMITTED=false', deployStart);
+  const snapshotEnd = source.indexOf('  arm_deploy_rollback cleanup_acs_failure', snapshotStart);
+  const prefix = source.slice(0, source.indexOf('\nAPP_COLOR_ROOT='));
+  const lifecycle = source.slice(
+    source.indexOf('# BEGIN deploy rollback cleanup lifecycle'),
+    source.indexOf('# END deploy rollback cleanup lifecycle'),
+  );
+  const names = ['previous', 'rollback_root', 'unit_path', 'had_previous_identity', 'had_previous_unit'];
+  const receipt = join(value.root, 'rollback-acs.attempted');
+  const ready = join(value.root, 'term-ready');
+  const env = {
+    ...process.env,
+    ...value.environment,
+    PHASE: 'acs',
+    release_id: 'rc-20260912-131',
+    manifest_digest: `sha256:${'a'.repeat(64)}`,
+    GITHUB_RUN_ID: '34696842640',
+    GITHUB_RUN_ATTEMPT: '1',
+    ROLLBACK_ATTEMPTED_RECEIPT_PATH: receipt,
+    PRECHANGE_RECOVERY_RECEIPT_PATH: join(value.root, 'prechange-acs.recovered'),
+    ROLLBACK_RUNTIME_VERIFY: 'false',
+    TERM_READY: ready,
+  };
+  for (const name of names) {
+    env[`FIXTURE_${name}`] = env[name];
+    delete env[name];
+  }
+  delete env.acs_committed;
+  delete env.acs_mutation_started;
+  const shell = `${prefix}
+${lifecycle}
+mark_rollback_attempted() { :; }
+emit_rollback_attempted_sentinel() { :; }
+cancel_acs_deployment_drain() { return 0; }
+setup() {
+  local acs_committed=false acs_mutation_started=false
+${names.map((name) => `  local ${name}="$FIXTURE_${name}"`).join('\n')}
+${source.slice(snapshotStart, snapshotEnd)}
+  arm_deploy_rollback cleanup_acs_failure
+  DEPLOY_ACS_ROLLBACK_MUTATION_STARTED=true
+  DEPLOY_ACS_ROLLBACK_COMMITTED=false
+}
+setup
+printf ready > "$TERM_READY"
+while true; do sleep 0.2; done
+`;
+  const child = spawn('bash', ['-c', shell], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const stderrChunks = [];
+  child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
+  const started = Date.now();
+  while (Date.now() - started < 5_000) {
+    try {
+      await readFile(ready, 'utf8');
+      break;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  child.kill('SIGTERM');
+  const status = await new Promise((resolve) => child.on('close', resolve));
+  const stderr = Buffer.concat(stderrChunks).toString('utf8');
+  assert.equal(status, 130, stderr);
+  const body = JSON.parse(await readFile(receipt, 'utf8'));
+  assert.equal(body.schemaVersion, 1);
+  assert.equal(body.component, 'acs');
+  assert.equal(body.state, 'attempted');
+  assert.equal(body.releaseId, 'rc-20260912-131');
 });

@@ -28,6 +28,7 @@ interface InvocationEntry {
   controller: AbortController;
   child?: ChildProcessWithoutNullStreams;
   sandboxName?: string;
+  sandboxUid?: string;
   leaseKey?: string;
   unresolved?: boolean;
   releaseActive?: () => void;
@@ -150,6 +151,8 @@ export class AcsExecutor {
         backgroundShellRequested ? 'background_pending' : 'executing',
       );
       if (!sandboxUid) throw new Error('invocation lease mutation did not return Sandbox UID');
+      const leased = this.invocations.get(invocationKey);
+      if (leased) leased.sandboxUid = sandboxUid;
       leasePersisted = true;
       if (typeof this.sandboxManager.getBackgroundShellProtection === 'function') {
         const observed = await this.sandboxManager.getBackgroundShellProtection(ref.name, sandboxUid);
@@ -380,6 +383,15 @@ export class AcsExecutor {
   }
   unresolvedInvocationCount(): number {
     return [...this.invocations.values()].filter((entry) => entry.unresolved).length;
+  }
+  forgetUnresolvedInvocationsForSandboxUid(uid: string, attemptId?: string): void {
+    for (const [key, entry] of [...this.invocations.entries()]) {
+      if (!entry.unresolved) continue;
+      if (entry.sandboxUid === uid || (attemptId !== undefined && entry.leaseKey === attemptId)) {
+        try { entry.releaseActive?.(); } catch { /* Registry release is best-effort; the owner is already gone. */ }
+        this.invocations.delete(key);
+      }
+    }
   }
   busySandboxNames(): Set<string> {
     return new Set(

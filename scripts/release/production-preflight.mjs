@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
-import { observeProductionRuntime } from './production-runtime-observation.mjs';
+import { diskPreflightReasons, observeProductionRuntime } from './production-runtime-observation.mjs';
 import { executionIdentity, writeDiagnosticReport } from './production-preflight-report.mjs';
 
 const READERS = new Set(['read-production-state.mjs', 'read-live-production-components.mjs']);
@@ -131,6 +131,12 @@ export async function runProductionPreflight(options, dependencies = {}) {
         }
         if (clock() >= end) {
           report.timedOut = true;
+          break;
+        }
+        const diskReasons = diskPreflightReasons(observation.disk);
+        if (diskReasons.length) {
+          report.attempts[report.attempts.length - 1].diskReasons = diskReasons;
+          report.diskBlocked = true;
           break;
         }
         if (result.exitCode === 0) {

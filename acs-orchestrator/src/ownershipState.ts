@@ -35,6 +35,8 @@ export interface OwnershipRecord {
   updatedAt: string;
   sandboxUid?: string;
   phaseDeadlineAt?: string;
+  /** ISO time the record entered `running`. Optional on old journal rows. */
+  dispatchedAt?: string;
   /** An exact control-plane fence, persisted before dispatch. Contains no key. */
   remoteFence?: RemoteAttemptFence;
   /** A coordinator cannot release or forget its independently owned child work. */
@@ -135,6 +137,7 @@ export function validateOwnershipRecords(value: unknown): OwnershipRecord[] {
     if (record.reasonCode !== undefined && !/^[a-z0-9_:-]{1,128}$/.test(record.reasonCode)) throw new OwnershipUnavailableError();
     if (record.sandboxUid !== undefined && !validIdentifier(record.sandboxUid, 128)) throw new OwnershipUnavailableError();
     if (record.phaseDeadlineAt !== undefined && !Number.isFinite(Date.parse(record.phaseDeadlineAt))) throw new OwnershipUnavailableError();
+    if (record.dispatchedAt !== undefined && !Number.isFinite(Date.parse(record.dispatchedAt))) throw new OwnershipUnavailableError();
     if (record.parentOperationId !== undefined && (!validIdentifier(record.parentOperationId) || record.parentOperationId === record.operationId)) throw new OwnershipUnavailableError();
     if (record.remoteFence !== undefined) {
       const fence = parseRemoteFence(record.remoteFence);

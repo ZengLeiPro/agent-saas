@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { resolveDwsConnectorRunEnv, resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
 import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
-import { applyNativeConnectorRuntimeState } from '../connectors/runtimeState.js';
+import { applyNativeConnectorRuntimeState, pausedWorkspaceCliEnv } from '../connectors/runtimeState.js';
 import { isHandEnvAllowed, pickHandEnv } from '../runtime/handEnvAllowlist.js';
 
 describe('Feishu broker runtime env', () => {
@@ -54,6 +54,10 @@ describe('Feishu broker runtime env', () => {
     expect(resolveDwsConnectorRunEnv(disabledStore, identity)).toEqual({
       DWS_CONFIG_DIR: '/tmp/agent-saas-paused/user-a/dws/config',
     });
+    expect(pausedWorkspaceCliEnv('google-workspace', identity.userId)).toEqual({
+      GOOGLE_WORKSPACE_CLI_CONFIG_DIR: '/tmp/agent-saas-paused/user-a/gws',
+      GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file',
+    });
   });
 
   it('applies pause masks after tenant env so credentials cannot be merged back', () => {
@@ -71,6 +75,9 @@ describe('Feishu broker runtime env', () => {
       TWITTER_CT0: 'tenant-x-ct0',
       NOTION_API_TOKEN: 'tenant-notion',
       GOOGLE_WORKSPACE_CLI_TOKEN: 'tenant-google',
+      GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: '/workspace/.gws/credentials.json',
+      GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file',
+      GOOGLE_WORKSPACE_CLI_CONFIG_DIR: '/workspace/.gws',
       ALIBABA_CLOUD_ACCESS_KEY_ID: 'tenant-ak',
       ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'tenant-sk',
       LARKSUITE_CLI_APP_ID: 'tenant-app',
@@ -79,6 +86,8 @@ describe('Feishu broker runtime env', () => {
     })).toEqual({
       NOTION_API_TOKEN: 'tenant-notion',
       DWS_CONFIG_DIR: '/tmp/agent-saas-paused/user-a/dws/config',
+      GOOGLE_WORKSPACE_CLI_CONFIG_DIR: '/tmp/agent-saas-paused/user-a/gws',
+      GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file',
       LARKSUITE_CLI_CONFIG_DIR: '/tmp/agent-saas-paused/user-a/lark/config',
       LARKSUITE_CLI_DATA_DIR: '/tmp/agent-saas-paused/user-a/lark/data',
     });

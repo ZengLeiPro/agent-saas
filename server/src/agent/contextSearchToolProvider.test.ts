@@ -42,7 +42,9 @@ function makeContext(): ToolCallContext {
   } as ToolCallContext;
 }
 
-function makeWorkerContext(): ToolCallContext {
+function makeWorkerContext(overrides: { contextEnabled?: boolean; allowedSourceIds?: string[] } = {}): ToolCallContext {
+  const allowedSourceIds = overrides.allowedSourceIds ?? ['source-a'];
+  const contextEnabled = overrides.contextEnabled ?? true;
   const task = deriveOrgAgentTaskWorkspace({ agentWorkspaceId: 'agent-ws', agentRoot: '/tmp/agent',
     agentMountSubPath: 'tenant-a/agent', sharedReadOnlySubPath: 'tenant-a/agent/shared/binding-a/topic-a',
     taskId: 'bg-a', attemptNo: 2 });
@@ -52,13 +54,13 @@ function makeWorkerContext(): ToolCallContext {
     policyRevision: 7, workOrderId: 'work-a', taskRunId: 'bg-a', taskSessionId: 'bg-session-a',
     attemptId: task.attemptId, attemptNo: 2, currentAttemptNo: 2,
     taskWorkspaceId: task.taskWorkspaceId, sandboxScopeId: task.sandboxScopeId,
-    allowedSourceIds: ['source-a'] };
+    allowedSourceIds };
   return { channelContext: { channel: 'dingtalk', sessionOwner: { id: 'adws-account-a', username: 'agent',
     role: 'user', tenantId: 'tenant-a' }, orgAgentChannel: { accountId: 'account-a', agentId: 'agent-a',
     bindingId: 'binding-a', conversationSpaceId: 'space-a', workConversationId: 'topic-a', policyRevision: 7,
     agentPrincipal: { kind: 'org_agent', tenantId: 'tenant-a', agentId: 'agent-a', accountId: 'account-a',
       workspaceId: 'agent-ws' }, externalActorAssurance: 'mapped', allowedToolNames: ['ContextSearch'],
-    allowedSkillIds: [], allowedSourceIds: ['source-a'], dwsResourceIds: [], contextEnabled: true,
+    allowedSkillIds: [], allowedSourceIds, dwsResourceIds: [], contextEnabled,
     taskVisibility: 'conversation', triggerRoles: ['member'], approvalRoles: [], actorRole: 'member',
     externalActor: { kind: 'external_user', provider: 'dingtalk', corpId: 'corp-a', openId: 'open-a',
       mappedUserId: 'user-a', role: 'member', assurance: 'mapped' }, channelPrincipal: { provider: 'dingtalk',
@@ -141,10 +143,14 @@ describe('ContextSearchToolProvider', () => {
     expect(scopes.resolve).not.toHaveBeenCalled(); expect(recall.search).not.toHaveBeenCalled();
   });
 
-  it('blocks a current worker after Assignment scope revocation', async () => {
+  it('blocks a current worker after Assignment scope revocation without surfacing EMPTY_SCOPE', async () => {
     const { provider, recall } = makeHarness({ collections: [], resolvedAt: '2026-08-22T12:00:00.000Z', degraded: false });
-    await expect(provider.invoke(makeCall('ContextSearch', { query: 'secret' }), makeWorkerContext()))
-      .rejects.toMatchObject({ code: 'CONTEXT_RECALL_EMPTY_SCOPE' });
+    const result = await provider.invoke(makeCall('ContextSearch', { query: 'secret' }), makeWorkerContext());
+    expect(JSON.parse(result!.content)).toEqual({
+      hits: [],
+      degraded: false,
+      degradationReasons: [],
+    });
     expect(recall.search).not.toHaveBeenCalled();
   });
   it('rejects tenantId/userId injection and never calls server ports', async () => {
@@ -177,12 +183,56 @@ describe('ContextSearchToolProvider', () => {
     }));
   });
 
-  it('fails closed on an empty authorized collection scope', async () => {
+  it('fails closed on an empty authorized collection scope without surfacing EMPTY_SCOPE', async () => {
     const { provider, recall } = makeHarness({
       collections: [], resolvedAt: '2026-08-22T12:00:00.000Z', degraded: false,
     });
-    await expect(provider.invoke(makeCall('ContextSearch', { query: 'anything' }), makeContext()))
-      .rejects.toMatchObject({ code: 'CONTEXT_RECALL_EMPTY_SCOPE' });
+    const result = await provider.invoke(makeCall('ContextSearch', { query: 'anything' }), makeContext());
+    expect(JSON.parse(result!.content)).toEqual({
+      hits: [],
+      degraded: false,
+      degradationReasons: [],
+    });
+    expect(recall.search).not.toHaveBeenCalled();
+  });
+
+  it('ContextGet returns not found on an empty authorized collection scope', async () => {
+    const { provider, recall } = makeHarness({
+      collections: [], resolvedAt: '2026-08-22T12:00:00.000Z', degraded: false,
+    });
+    const result = await provider.invoke(makeCall('ContextGet', { id: 'hit-a' }), makeContext());
+    expect(JSON.parse(result!.content)).toEqual({
+      found: false,
+      hit: null,
+      degraded: false,
+      degradationReasons: [],
+    });
+    expect(recall.get).not.toHaveBeenCalled();
+  });
+
+  it('returns empty hits when org-agent channel context is disabled or has no allowed sources', async () => {
+    const { provider, recall, scopes } = makeHarness();
+    const disabledResult = await provider.invoke(
+      makeCall('ContextSearch', { query: 'secret' }),
+      makeWorkerContext({ contextEnabled: false }),
+    );
+    expect(JSON.parse(disabledResult!.content)).toEqual({
+      hits: [],
+      degraded: false,
+      degradationReasons: [],
+    });
+
+    const emptyResult = await provider.invoke(
+      makeCall('ContextSearch', { query: 'secret' }),
+      makeWorkerContext({ allowedSourceIds: [] }),
+    );
+    expect(JSON.parse(emptyResult!.content)).toEqual({
+      hits: [],
+      degraded: false,
+      degradationReasons: [],
+    });
+
+    expect(scopes.resolve).not.toHaveBeenCalled();
     expect(recall.search).not.toHaveBeenCalled();
   });
 

@@ -14,15 +14,13 @@ import { Wrench, ChevronRight, CircleCheck } from "lucide-react";
 import { StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { activityStatusBadgeClass, activityStatusIconClass, formatActivityDuration, type ActivityStatusTone } from "./activityStatusStyles";
-import { ImageLightbox } from "./ImageLightbox";
+import { StableImage } from './StableImage';
 
 // ============================================
 // Result Content (shared between ToolBlock and ToolResultBlock)
 // ============================================
 
 function ResultContent({ result, toolName, standalone }: { result: string; toolName: string; standalone?: boolean }) {
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-
   const parsed = useMemo(() => parseToolResult(result), [result]);
   const hasImages = parsed.images.length > 0;
 
@@ -33,11 +31,11 @@ function ResultContent({ result, toolName, standalone }: { result: string; toolN
           {parsed.images.map((img, i) => {
             const src = `data:${img.mimeType};base64,${img.data}`;
             return (
-              <img
+              <StableImage
                 key={i}
                 src={src}
-                className="max-h-80 max-w-full cursor-pointer rounded-lg border border-border shadow-sm transition-shadow hover:shadow-md"
-                onClick={() => setLightboxSrc(src)}
+                cacheKey={`${toolName}:${i}:${img.mimeType}:${img.data.length}:${img.data.slice(0, 64)}:${img.data.slice(-64)}`}
+                enableLightbox
                 alt={`${toolName} result ${i + 1}`}
               />
             );
@@ -45,9 +43,6 @@ function ResultContent({ result, toolName, standalone }: { result: string; toolN
         </div>
         {parsed.text && (
           <pre className="mt-1 whitespace-pre-wrap break-words">{parsed.text}</pre>
-        )}
-        {lightboxSrc && (
-          <ImageLightbox src={lightboxSrc} alt={`${toolName} result`} onClose={() => setLightboxSrc(null)} />
         )}
       </>
     );

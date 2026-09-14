@@ -37,6 +37,7 @@ import {
 } from './useHistoryAnchorRestoration';
 import { adaptRenderModelForWeb } from '@/lib/renderModelAdapter';
 import { groupIntoBubbles, type BubbleRenderItem } from './groupIntoBubbles';
+import { getBubbleVirtualKeys } from '@/lib/messageVirtualIdentity';
 
 const BusinessStepDetail = lazy(() => import('./BusinessStepDetailPanel'));
 const BusinessStepFlow = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepFlow })));
@@ -84,19 +85,6 @@ function getFirstTimestamp(items: RenderItem[]): number | undefined {
  * 头像 header（自带 mb 4px）+ pt-1.5 = 与流内块一致的 10px 盒间。
  */
 const HEADER_FLOW_PADDING_CLASS = 'pt-1.5';
-
-function getBubbleVirtualKey(item: BubbleRenderItem): string {
-  const timestamp = item.type === 'ai_bubble'
-    ? getFirstTimestamp(item.items)
-    : 'timestamp' in item
-      ? item.timestamp
-      : item.type === 'activity_group'
-        ? getFirstTimestamp(item.items)
-        : undefined;
-  // Transcript block ids restart at line-1 in every session. Including the stable timestamp
-  // prevents height measurements from one cached session leaking into another with equal ids.
-  return `${item.id}:${timestamp ?? ''}`;
-}
 
 function AiMessageHeader({ agentProfile, timestamp }: { agentProfile?: AgentProfile | null; timestamp?: number }) {
   const timeStr = formatHeaderTime(timestamp);
@@ -284,7 +272,7 @@ export const MessageList = memo(function MessageList({
   });
 
   const lastRenderIdx = bubbleItems.length - 1;
-  const bubbleKeys = useMemo(() => bubbleItems.map(getBubbleVirtualKey), [bubbleItems]);
+  const bubbleKeys = useMemo(() => getBubbleVirtualKeys(bubbleItems), [bubbleItems]);
   const [measuredRowHeights, setMeasuredRowHeights] = useState<ReadonlyMap<string, number>>(
     () => new Map(),
   );
@@ -759,7 +747,7 @@ export const MessageList = memo(function MessageList({
             const timestamp = getFirstTimestamp(item.items);
             return (
               <div
-                key={item.id}
+                key={virtualKey}
                 ref={ri === lastRenderIdx && !showAgentLoading ? lastMessageRef : undefined}
                 className="flex flex-col"
               >

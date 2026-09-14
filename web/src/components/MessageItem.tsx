@@ -31,6 +31,7 @@ import {
 } from './SystemErrorMessage';
 
 import { ImageLightbox } from './ImageLightbox';
+import { StableImage } from './StableImage';
 const AutomationTranscriptBadge = lazy(() => import('@/components/AutomationTranscriptBadge'));
 const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
 import "katex/dist/katex.min.css";
@@ -72,39 +73,8 @@ function LazyVideo({ src, className }: { src: string; className: string }) {
 }
 /** 工作区图片：异步解析路径，支持 lightbox 大图 */
 function AuthImage({ src, alt, owner }: { src: string; alt?: string; owner?: string }) {
-  const [resolvedSrc, setResolvedSrc] = useState<string | null>(null);
-  const [lightbox, setLightbox] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    resolveImageSrc(src, owner)
-      .then(url => { if (!cancelled) setResolvedSrc(url); })
-      .catch(() => { if (!cancelled) setResolvedSrc(src); });
-    return () => { cancelled = true; };
-  }, [src, owner]);
-
-  if (!resolvedSrc) {
-    return <span className="inline-block h-40 w-60 animate-pulse rounded-lg bg-muted" />;
-  }
-
-  return (
-    <>
-      <img
-        src={resolvedSrc}
-        alt={alt}
-        loading="lazy"
-        decoding="async"
-        className="max-h-80 max-w-full cursor-pointer rounded-lg border border-border shadow-sm transition-shadow hover:shadow-md"
-        onClick={() => setLightbox(true)}
-      />
-      {lightbox && (
-        <ImageLightbox
-          src={resolvedSrc}
-          alt={alt ?? ''}
-          onClose={() => setLightbox(false)}
-        />
-      )}
-    </>
-  );
+  const resolve = useCallback(() => resolveImageSrc(src, owner), [owner, src]);
+  return <StableImage src={src} cacheKey={src} resolve={resolve} alt={alt} enableLightbox />;
 }
 
 /** 工作区视频：异步解析路径，HTML5 video 播放 */
@@ -182,12 +152,12 @@ const LazyMarkdown = lazy(async () => {
           </div>
         );
       },
-      img: ({ src, alt, ...props }) => {
+      img: ({ src, alt }) => {
         if (!src || isExternalSrc(src)) {
           if (src && VIDEO_EXT_RE.test(src)) {
             return <LazyVideo src={src} className="max-h-80 max-w-full rounded-lg border border-border shadow-sm" />;
           }
-          return <img src={src} alt={alt} {...props} loading="lazy" decoding="async" />;
+          return src ? <StableImage src={src} alt={alt} /> : null;
         }
         if (filePreview?.shareToken) {
           const sharedSrc = publicSessionShareFileUrl(filePreview.shareToken, src);

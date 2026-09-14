@@ -737,8 +737,9 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     render(<Harness messages={messages} debugMode />);
     await waitForBusinessPlan();
     expect(screen.queryByText(/Reset 前读取/)).toBeNull();
-    expect(screen.getByText(/Reset 后读取/)).toBeTruthy();
     expect(screen.getByText("Reset 后最终总结")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /过程记录/ }));
+    expect(screen.getByText(/Reset 后读取/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Reset 边界核验/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：Reset 边界核验")).toBeTruthy());

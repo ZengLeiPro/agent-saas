@@ -6,7 +6,8 @@ import { MessageItem as MessageItemType, type RenderItem } from './types';
 import { MessageItemWithDisplay as MessageItem } from './MessageItemWithDisplay';
 import type { TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
-import { BusinessStepTimeline, businessStepMainItems } from './BusinessStepTimeline';
+import { businessStepMainItems } from './BusinessStepTimeline';
+import { AssistantTurnItems } from './TurnProcessFold';
 import { useBusinessStepDetail } from './useBusinessStepDetail';
 import { CompactionDivider } from './CompactionDivider';
 import { asCompactionItem } from '@/lib/compaction';
@@ -44,9 +45,7 @@ const BusinessStepFlow = lazy(() => import('./BusinessStepFlow').then((module) =
 const BusinessStepProcessEvent = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepProcessEvent })));
 const HISTORY_LOAD_TRIGGER_PX = 80;
 const HISTORY_LOAD_REARM_PX = 160; // hysteresis avoids duplicate page retries
-// ---------------------------------------------------------------------------
 // Header helpers
-// ---------------------------------------------------------------------------
 
 const AVATAR_SIZE = 36;
 const SENDER_GAP = 12;
@@ -757,7 +756,7 @@ export const MessageList = memo(function MessageList({
                 {/* 普通流块保持 10px；连续业务步骤收进专属时间线组后使用 6px，
                     避免折叠标题被当成一串独立消息块。 */}
                 <div className={cn('flex flex-col gap-2.5', showHeader && HEADER_FLOW_PADDING_CLASS)}>
-                  <BusinessStepTimeline items={item.items} renderItem={renderFlowItem} />
+                  <AssistantTurnItems items={item.items} renderItem={renderFlowItem} />
                 </div>
               </div>
             );

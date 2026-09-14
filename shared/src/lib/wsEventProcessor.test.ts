@@ -1056,13 +1056,14 @@ describe('processWsEvent - 语音 / 文件 / 溢出', () => {
   });
 });
 describe('最终输出追认', () => {
-  it('block_start 把 runId 绑定到实时 text 消息', () => {
+  it('block_start 把 runId 绑定到实时 text 与 thinking 消息', () => {
     const ctrl = makeController();
     const { ctx } = makeCtx(ctrl);
     dispatch({ type: 'block_start', blockType: 'text', runId: 'run-1' }, ctx);
     expect(ctrl.messages[0]).toMatchObject({ type: 'text', runId: 'run-1', streaming: true });
+    dispatch({ type: 'block_start', blockType: 'thinking', runId: 'run-2' }, ctx);
+    expect(ctrl.messages[1]).toMatchObject({ type: 'thinking', runId: 'run-2', streaming: true });
   });
-
   it('成功 done 只追认同 Run 最后一条文本', () => {
     const ctrl = makeController([
       { id: 'u', type: 'user', content: '开始', status: 'sent' },
@@ -1071,7 +1072,6 @@ describe('最终输出追认', () => {
       { id: 'final', type: 'text', content: '最终回答', runId: 'run-1', streaming: true },
     ]);
     const { ctx } = makeCtx(ctrl, { userMsgIndex: 0 });
-
     dispatch({ type: 'done', runId: 'run-1', finalOutput: true }, ctx);
 
     expect(ctrl.messages[1]).not.toHaveProperty('finalOutput');

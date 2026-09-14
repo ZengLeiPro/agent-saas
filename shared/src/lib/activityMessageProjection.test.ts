@@ -20,6 +20,18 @@ describe('canonical activity/message projection', () => {
     expect(selectProjectedMessages(state)).toMatchObject([{ id: 'block-1', content: 'hello', streaming: true }]);
   });
 
+  it('把父 runId 保留到 thinking 与 subagent 展示消息', () => {
+    const messages = selectProjectedMessages(reduce([
+      { eventId: 'thinking', domain: 'message', kind: 'assistant_block_snapshot', ...base, blockType: 'thinking', content: '分析', status: 'running' },
+      { eventId: 'subagent', domain: 'subagent', kind: 'subagent_activity', ...base, blockId: 'subagent-block', toolCallId: 'agent-call', subagentId: 'child-run', agentType: 'general', status: 'running' },
+    ]));
+
+    expect(messages).toEqual([
+      expect.objectContaining({ type: 'thinking', runId: 'run-1' }),
+      expect.objectContaining({ type: 'subagent', runId: 'run-1' }),
+    ]);
+  });
+
   it('orders sequenced deltas deterministically despite replay and out-of-order delivery', () => {
     const start: ActivityMessageProjectionEvent = { eventId: 'ordered-start', domain: 'message', kind: 'assistant_block_start', ...base, blockType: 'text' };
     const second: ActivityMessageProjectionEvent = { eventId: 'ordered-2', domain: 'message', kind: 'assistant_block_delta', ...base, blockType: 'text', delta: 'B', sequence: 2 };

@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 362350,
-    "startupCssGzipBytes": 35403,
-    "startupJsBrotliBytes": 288648,
-    "startupCssBrotliBytes": 27993,
-    "largestJsGzipBytes": 362350,
-    "largestCssGzipBytes": 35403,
-    "largestJsBrotliBytes": 288648,
-    "largestCssBrotliBytes": 27993,
-    "largestJs": "assets/index-CedqvuH7.js",
-    "largestCss": "assets/index-DOyEMDW4.css"
+    "startupJsGzipBytes": 363464,
+    "startupCssGzipBytes": 35424,
+    "startupJsBrotliBytes": 289591,
+    "startupCssBrotliBytes": 28066,
+    "largestJsGzipBytes": 363464,
+    "largestCssGzipBytes": 35424,
+    "largestJsBrotliBytes": 289591,
+    "largestCssBrotliBytes": 28066,
+    "largestJs": "assets/index-BsRzJpph.js",
+    "largestCss": "assets/index-DPBffzZX.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "设置与分析工作区首批改造新增布局状态、错误反馈与键盘交互所需启动代码",
-  "updatedAt": "2026-09-12"
+  "reason": "会话陈旧游标回放按 activeRun 过滤后，客户端 skipReplay 与 text 去重进入聊天启动包",
+  "updatedAt": "2026-09-14"
 }

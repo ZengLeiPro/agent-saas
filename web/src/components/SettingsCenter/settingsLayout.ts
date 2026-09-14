@@ -10,3 +10,14 @@ export const DESKTOP_PRIMARY_SIDEBAR_WIDTH = 256;
 export const SETTINGS_SIDEBAR_WIDTH = DESKTOP_PRIMARY_SIDEBAR_WIDTH;
 export const SETTINGS_CONTENT_WIDTH = 'w-full';
 export const SETTINGS_PRODUCT_SURFACE_CLASS = 'settings-product-surface';
+
+export type SettingsPageWidth = 'compact' | 'standard' | 'wide';
+
+/**
+ * 页面宽度按信息密度分级；同一页面的标题、标签和内容必须放在同一个容器内。
+ */
+export function settingsPageWidthClass(width: SettingsPageWidth) {
+  if (width === 'compact') return 'mx-auto w-full max-w-5xl';
+  if (width === 'standard') return 'mx-auto w-full max-w-6xl';
+  return 'w-full';
+}

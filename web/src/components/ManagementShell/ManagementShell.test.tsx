@@ -131,6 +131,6 @@ describe('ManagementShell 统一布局', () => {
 
     const tablist = screen.getByRole('tablist', { name: '技能页面切换' });
     expect(tablist.getAttribute('data-tabs-layout')).toBe('compact');
-    expect(tablist.className).toContain('md:min-w-96');
+    expect(tablist.className).toContain('md:w-72');
   });
 });

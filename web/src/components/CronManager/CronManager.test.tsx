@@ -110,9 +110,9 @@ describe("CronManager 桌面布局", () => {
 
     expect(within(navigation).getByRole("tab", { name: "定时任务" })).toBeTruthy();
     expect(within(navigation).getByRole("tab", { name: "任务看板" })).toBeTruthy();
-    expect(within(navigation).getByRole("tablist").className).toContain("bg-card");
-    expect(within(navigation).getByRole("tablist").className).toContain("h-12");
-    expect(within(navigation).getByRole("tablist").className).toContain("w-[15rem]");
+    expect(within(navigation).getByRole("tablist").className).toContain("bg-muted/60");
+    expect(within(navigation).getByRole("tablist").className).toContain("h-10");
+    expect(within(navigation).getByRole("tablist").className).toContain("md:min-w-60");
     expect(within(navigation).getByRole("tab", { name: "定时任务" }).getAttribute("data-state")).toBe("active");
     expect(within(header).getByRole("button", { name: "刷新" })).toBeTruthy();
     expect(within(header).getByRole("button", { name: "新建" })).toBeTruthy();

@@ -34,7 +34,7 @@ describe("能力中心标签栏", () => {
     ]);
     expect(container.querySelector("svg")).toBeNull();
     expect(screen.getByRole("tablist").className).toContain("bg-card");
-    expect(screen.getByRole("tablist").className).toContain("h-12");
+    expect(screen.getByRole("tablist").className).toContain("h-11");
   });
 
   it("未开放个人通用 Agent 时不显示工作流", () => {

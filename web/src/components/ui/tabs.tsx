@@ -36,19 +36,19 @@ function pageTabsListClass({
 }) {
   const resolvedLayout = resolvePageTabsLayout(variant, count, layout);
   return cn(
-    "flex max-w-full items-stretch justify-start gap-1 overflow-x-auto text-muted-foreground",
+    "flex max-w-full items-stretch justify-start gap-0.5 overflow-x-auto text-muted-foreground",
     variant === "primary"
-      ? "h-12 rounded-xl border bg-card p-1 shadow-sm"
+      ? "h-11 rounded-xl border bg-card p-1 shadow-sm"
       : "h-10 rounded-lg bg-muted/60 p-1",
     resolvedLayout === "full"
       ? "w-full"
       : count <= 2
         ? variant === "primary"
-          ? "w-full md:w-fit md:min-w-96"
-          : "w-full md:w-fit md:min-w-72"
+          ? "w-full md:w-72"
+          : "w-full md:w-56"
         : variant === "primary"
-          ? "w-full md:w-fit md:min-w-[33rem]"
-          : "w-full md:w-fit",
+          ? "w-full md:w-[27rem]"
+          : "w-full md:w-[21rem]",
   );
 }
 
@@ -58,9 +58,7 @@ function pageTabTriggerClass({
 }: Pick<PageTabsPresentation, "variant" | "layout">) {
   return cn(
     "h-full shrink-0 border-0 text-sm font-medium shadow-none",
-    layout === "full" ? "min-w-28 flex-1" : "min-w-0 flex-1 md:flex-none",
-    layout === "compact" && variant === "primary" && "md:min-w-44",
-    layout === "compact" && variant === "secondary" && "md:min-w-32",
+    layout === "full" ? "min-w-28 basis-0 grow shrink-0" : "min-w-0 flex-1",
     variant === "primary"
       ? "rounded-lg px-4 py-2 text-muted-foreground data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none"
       : "rounded-md px-3 py-1.5 text-muted-foreground data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm",

@@ -23,8 +23,8 @@ describe('page tabs presentation', () => {
     const tablist = renderTabs('primary', 2);
 
     expect(tablist.getAttribute('data-tabs-layout')).toBe('compact');
-    expect(tablist.className).toContain('md:min-w-96');
-    expect(screen.getAllByRole('tab')[0]?.className).toContain('md:min-w-44');
+    expect(tablist.className).toContain('md:w-72');
+    expect(screen.getAllByRole('tab')[0]?.className).toContain('flex-1');
   });
 
   it('一级标签在四项时自动铺满', () => {
@@ -32,13 +32,15 @@ describe('page tabs presentation', () => {
 
     expect(tablist.getAttribute('data-tabs-layout')).toBe('full');
     expect(tablist.className).toContain('w-full');
-    expect(screen.getAllByRole('tab')[0]?.className).toContain('flex-1');
+    expect(screen.getAllByRole('tab')[0]?.className).toContain('grow');
+    expect(screen.getAllByRole('tab')[0]?.className).toContain('shrink-0');
   });
 
   it('二级标签弱化显示且少量标签保持紧凑', () => {
     const tablist = renderTabs('secondary', 2);
 
     expect(tablist.getAttribute('data-tabs-layout')).toBe('compact');
+    expect(tablist.className).toContain('md:w-56');
     expect(tablist.className).toContain('bg-muted/60');
     expect(tablist.className).not.toContain('shadow-sm');
     expect(screen.getAllByRole('tab')[0]?.className).toContain('data-[state=active]:bg-card');

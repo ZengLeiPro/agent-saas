@@ -5,6 +5,7 @@ import { AgentDocEditor } from "@/components/AgentProfile/AgentDocEditor";
 import { MyPermissionList } from "@/components/PersonalSettings/MyPermissionList";
 import { AttachmentStorageSection } from "@/components/SettingsCenter/AttachmentStorageSection";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { settingsPageWidthClass } from "@/components/SettingsCenter/settingsLayout";
 import { Button } from "@/components/ui/button";
 import {
   Tabs,
@@ -16,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useEffectiveResources } from "@/hooks/useEffectiveResources";
 import { governanceRoute, parseGovernanceUrl } from "@/lib/governanceNavigation";
 import { navigateSettingsRoute } from "@/lib/urlSync";
+import { cn } from "@/lib/utils";
 import type { MyAgentSettingsTab } from "@/types/settings";
 
 function readMyAgentTab(): MyAgentSettingsTab {
@@ -47,7 +49,7 @@ export function MyAgentSection({
   }, []);
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col">
+    <div className={cn("flex h-full min-h-0 flex-col", settingsPageWidthClass("standard"))}>
       <SettingsPanelHeader title="我的 Agent" description="在资料与长期 Memory 之间切换；深链刷新会保留当前 Tab。" />
       <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList variant="primary">
@@ -69,7 +71,7 @@ export function MyPermissionsSection() {
   const request = useEffectiveResources();
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col">
+    <div className={cn("flex h-full min-h-0 flex-col", settingsPageWidthClass("standard"))}>
       <SettingsPanelHeader
         title="我的权限"
         description="查看当前账号已经获得并可直接使用的 Agent、技能和其他能力。"
@@ -84,7 +86,7 @@ export function MyPermissionsSection() {
 
 export function FilesStorageSection({ renderFiles }: { renderFiles?: () => ReactNode }) {
   return (
-    <div className="flex h-full min-h-0 w-full flex-col">
+    <div className={cn("flex h-full min-h-0 flex-col", settingsPageWidthClass("standard"))}>
       <SettingsPanelHeader
         title="文件与存储"
         description="浏览个人文件、查看存储用量并管理附件。"

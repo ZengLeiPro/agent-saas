@@ -31,7 +31,7 @@ import {
 } from './SystemErrorMessage';
 
 import { ImageLightbox } from './ImageLightbox';
-import { StableImage } from './StableImage';
+import { LazyStableImage } from './LazyStableImage';
 const AutomationTranscriptBadge = lazy(() => import('@/components/AutomationTranscriptBadge'));
 const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
 import "katex/dist/katex.min.css";
@@ -74,7 +74,7 @@ function LazyVideo({ src, className }: { src: string; className: string }) {
 /** 工作区图片：异步解析路径，支持 lightbox 大图 */
 function AuthImage({ src, alt, owner }: { src: string; alt?: string; owner?: string }) {
   const resolve = useCallback(() => resolveImageSrc(src, owner), [owner, src]);
-  return <StableImage src={src} cacheKey={src} resolve={resolve} alt={alt} enableLightbox />;
+  return <LazyStableImage src={src} cacheKey={src} resolve={resolve} alt={alt} enableLightbox />;
 }
 
 /** 工作区视频：异步解析路径，HTML5 video 播放 */
@@ -157,7 +157,7 @@ const LazyMarkdown = lazy(async () => {
           if (src && VIDEO_EXT_RE.test(src)) {
             return <LazyVideo src={src} className="max-h-80 max-w-full rounded-lg border border-border shadow-sm" />;
           }
-          return src ? <StableImage src={src} alt={alt} /> : null;
+          return src ? <LazyStableImage src={src} alt={alt} /> : null;
         }
         if (filePreview?.shareToken) {
           const sharedSrc = publicSessionShareFileUrl(filePreview.shareToken, src);

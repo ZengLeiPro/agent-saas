@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import { formatJson } from './types';
 import {
   normalizeToolPresentation,
@@ -14,7 +14,7 @@ import { Wrench, ChevronRight, CircleCheck } from "lucide-react";
 import { StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { activityStatusBadgeClass, activityStatusIconClass, formatActivityDuration, type ActivityStatusTone } from "./activityStatusStyles";
-import { StableImage } from './StableImage';
+import { LazyStableImage } from './LazyStableImage';
 
 // ============================================
 // Result Content (shared between ToolBlock and ToolResultBlock)
@@ -31,7 +31,7 @@ function ResultContent({ result, toolName, standalone }: { result: string; toolN
           {parsed.images.map((img, i) => {
             const src = `data:${img.mimeType};base64,${img.data}`;
             return (
-              <StableImage
+              <LazyStableImage
                 key={i}
                 src={src}
                 cacheKey={`${toolName}:${i}:${img.mimeType}:${img.data.length}:${img.data.slice(0, 64)}:${img.data.slice(-64)}`}

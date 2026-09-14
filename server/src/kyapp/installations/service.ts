@@ -311,6 +311,11 @@ export class KyAppInstallationService {
     }
   }
 
+  /** 身份代次变化：只让下一次运行重建能力快照，不改变当前运行。 */
+  signalIdentityChanged(installationId: string): void {
+    this.notifyStateChanged(installationId);
+  }
+
   async require(installationId: string): Promise<KyAppInstallation> {
     const installation = await this.options.systems.getInstallation(installationId);
     if (!installation) throw new KyAppSystemNotFoundError(`未知安装实例 ${installationId}`);
@@ -348,7 +353,11 @@ export class KyAppInstallationService {
       installation.tenantId,
       'system_installation',
       installation.installationId,
-      existing?.assignments.map(({ assigneeType, assigneeId, effect }) => ({ assigneeType, ...(assigneeId ? { assigneeId } : {}), effect })) ?? [],
+      existing?.assignments.map(({ assigneeType, assigneeId, effect }) => ({
+        assigneeType,
+        ...(assigneeId ? { assigneeId } : {}),
+        effect,
+      })) ?? [],
       expectedVersion,
       updatedBy,
       {

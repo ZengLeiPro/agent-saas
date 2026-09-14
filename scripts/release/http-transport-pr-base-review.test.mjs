@@ -60,6 +60,16 @@ const grokEgressReviewPaths = [
 ];
 const grokEgressEvidence = 'docs/release/Grok出站与推理强度无结构变更审核-20260912.md';
 const taskboardReviewDispatch = 'server/src/taskboard/integrationTriggers.ts';
+const kyAppV2ReviewPaths = [
+  'server/src/data/governance-schema/latestMigrations.ts',
+  'server/src/data/governance-schema/migrations.ts',
+  'server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts',
+  'server/src/kyapp/enrollment/store.ts',
+  'server/src/kyapp/systems/store.ts',
+  'server/src/kyapp/workload/deploymentKeyStore.ts',
+  'server/src/kyapp/workload/replayStore.ts',
+];
+const kyAppV2Evidence = 'docs/release/KY-App-V2-最终迁移复核-20260914.md';
 const auditedPaths = [
   ...new Set([
     transport,
@@ -71,6 +81,7 @@ const auditedPaths = [
     ...subagentReviewedPaths,
     ...grokEgressReviewPaths,
     taskboardReviewDispatch,
+    ...kyAppV2ReviewPaths,
   ]),
 ];
 const evidencePaths = [
@@ -80,8 +91,14 @@ const evidencePaths = [
   ...grokEvidencePaths,
   subagentEvidence,
   grokEgressEvidence,
+  kyAppV2Evidence,
 ];
-const expandPaths = [providerStore, ...grokExpandPaths, 'server/src/runtime/runStoreSchema.ts'];
+const expandPaths = [
+  providerStore,
+  ...grokExpandPaths,
+  'server/src/runtime/runStoreSchema.ts',
+  'server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts',
+];
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 const target = git('rev-parse', 'HEAD').trim();
@@ -183,6 +200,7 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
         ...subagentReviewedPaths,
         ...grokEgressReviewPaths,
         taskboardReviewDispatch,
+        ...kyAppV2ReviewPaths,
       ]),
     ].sort(),
   );
@@ -207,6 +225,7 @@ test('PR642 baseline retains scope retirement plus the independently reviewed Gr
       ...subagentReviewedPaths,
       ...grokEgressReviewPaths,
       taskboardReviewDispatch,
+      ...kyAppV2ReviewPaths,
     ]),
   ];
   const loaded = loadMigrationReviews({

@@ -69,6 +69,7 @@ export interface KyAppOnboardResult {
     ticketExpiresAt: string;
     ackDeadlineAt: string;
   };
+  authorization?: { path: string; installationId: string };
 }
 
 export interface KyAppOnboardServiceOptions {
@@ -98,6 +99,7 @@ export interface KyAppOnboardServiceOptions {
     installationId: string,
     fixture: KyAppDiagnosticFixture,
   ) => Promise<KyAppDiagnosticReport>;
+  useV2?: (systemId: string) => boolean;
 }
 
 function requestDigest(input: KyAppOnboardRequest): string {
@@ -257,70 +259,139 @@ export class KyAppOnboardService {
           }
         : null;
 
-      const credentials = await this.options.credentials.listRotationDue(input.installationId);
-      const allCredentials = await this.options.credentials.listMetadata(input.installationId);
-      const active = allCredentials.find((item) => item.status === 'active');
-      if (!active) {
-        const pending = allCredentials.find((item) => item.status === 'pending_ack');
-        if (pending) {
-          setStep(
-            steps,
-            'installation_credential',
-            'waiting',
-            {
-              credentialId: pending.credentialId,
-              ackDeadlineAt: pending.ackDeadlineAt,
-            },
-            'credential_ack_required',
+      if (this.options.useV2?.(input.systemId)) {
+        if (!installation.domainVerifiedAt) {
+          const domain = await this.options.installations.probeDomainOwnership(
+            new URL(installation.baseUrl).hostname,
+            installation.domainVerificationToken!,
           );
+          if (domain.verified) {
+            installation = (
+              await this.options.installations.verifyDomain(input.installationId, governanceActor)
+            ).installation;
+          } else {
+            setStep(
+              steps,
+              'installation_credential',
+              'waiting',
+              result.domainVerification as Record<string, unknown>,
+              'domain_verification_required',
+            );
+            return {
+              execution: await save(
+                'waiting_external',
+                'installation_credential',
+                'domain_verification_required',
+              ),
+            };
+          }
+        }
+        if (
+          installation.authMode !== 'v2_asymmetric' ||
+          !installation.deploymentId ||
+          !installation.currentKeyId ||
+          !installation.identityGeneration
+        ) {
+          setStep(steps, 'installation_credential', 'waiting', undefined, 'authorization_required');
           return {
             execution: await save(
               'waiting_external',
               'installation_credential',
-              'credential_ack_required',
+              'authorization_required',
+            ),
+            authorization: {
+              path: `/ky-app/credentials/claim?installation=${encodeURIComponent(input.installationId)}`,
+              installationId: input.installationId,
+            },
+          };
+        }
+        if (installation.status !== 'enabled') {
+          setStep(steps, 'installation_credential', 'waiting', undefined, 'activation_pending');
+          return {
+            execution: await save(
+              'waiting_external',
+              'installation_credential',
+              'activation_pending',
             ),
           };
         }
-        const issued = await this.options.credentials.issue({
-          installationId: input.installationId,
-        });
-        result.credential = this.credentialMetadata(issued);
+        result.credential = {
+          mode: 'automatic_authorization',
+          generation: installation.identityGeneration,
+        };
         setStep(
           steps,
           'installation_credential',
-          'waiting',
-          this.credentialMetadata(issued),
-          'credential_claim_required',
+          'completed',
+          result.credential as Record<string, unknown>,
         );
-        const saved = await save(
-          'waiting_external',
-          'installation_credential',
-          'credential_claim_required',
-        );
-        return {
-          execution: saved,
-          claim: {
-            path: `/api/app-contract/v1/installations/${input.installationId}/credentials/claim/${issued.ticket}`,
-            credentialId: issued.credentialId,
-            ticketExpiresAt: issued.ticketExpiresAt,
-            ackDeadlineAt: issued.ackDeadlineAt,
-          },
+        await save('running', 'enable');
+      } else {
+        const credentials = await this.options.credentials.listRotationDue(input.installationId);
+        const allCredentials = await this.options.credentials.listMetadata(input.installationId);
+        const active = allCredentials.find((item) => item.status === 'active');
+        if (!active) {
+          const pending = allCredentials.find((item) => item.status === 'pending_ack');
+          if (pending) {
+            setStep(
+              steps,
+              'installation_credential',
+              'waiting',
+              {
+                credentialId: pending.credentialId,
+                ackDeadlineAt: pending.ackDeadlineAt,
+              },
+              'credential_ack_required',
+            );
+            return {
+              execution: await save(
+                'waiting_external',
+                'installation_credential',
+                'credential_ack_required',
+              ),
+            };
+          }
+          const issued = await this.options.credentials.issue({
+            installationId: input.installationId,
+          });
+          result.credential = this.credentialMetadata(issued);
+          setStep(
+            steps,
+            'installation_credential',
+            'waiting',
+            this.credentialMetadata(issued),
+            'credential_claim_required',
+          );
+          const saved = await save(
+            'waiting_external',
+            'installation_credential',
+            'credential_claim_required',
+          );
+          return {
+            execution: saved,
+            claim: {
+              path: `/api/app-contract/v1/installations/${input.installationId}/credentials/claim/${issued.ticket}`,
+              credentialId: issued.credentialId,
+              ticketExpiresAt: issued.ticketExpiresAt,
+              ackDeadlineAt: issued.ackDeadlineAt,
+            },
+          };
+        }
+        result.credential = {
+          credentialId: active.credentialId,
+          status: active.status,
+          ackedAt: active.ackedAt,
+          expiresAt: active.expiresAt,
+          rotationDue: credentials.some((item) => item.credentialId === active.credentialId),
         };
+        setStep(
+          steps,
+          'installation_credential',
+          'completed',
+          result.credential as Record<string, unknown>,
+        );
+        await save('running', 'enable');
       }
-      result.credential = {
-        credentialId: active.credentialId,
-        status: active.status,
-        ackedAt: active.ackedAt,
-        expiresAt: active.expiresAt,
-        rotationDue: credentials.some((item) => item.credentialId === active.credentialId),
-      };
-      setStep(
-        steps,
-        'installation_credential',
-        'completed',
-        result.credential as Record<string, unknown>,
-      );
-      await save('running', 'enable');
 
       installation = (await this.options.systems.getInstallation(input.installationId))!;
       if (!installation.domainVerifiedAt) {
@@ -427,7 +498,9 @@ export class KyAppOnboardService {
         ],
       };
       const checklist = {
-        assignmentConfigured: await this.options.getAssignmentConfigured?.(input.tenantId, input.installationId) ?? false,
+        assignmentConfigured:
+          (await this.options.getAssignmentConfigured?.(input.tenantId, input.installationId)) ??
+          false,
         tenantAdmin: true,
         credits: true,
         publishedVersion: true,

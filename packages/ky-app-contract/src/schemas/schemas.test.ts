@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -10,7 +12,14 @@ import {
   validateDirectorySnapshot,
   validateManifestSchema,
   validateMeSchema,
+  validateEnrollmentRequestV2,
+  validateInstallationGrantV2,
+  validateClientAssertionV2,
+  validateWorkloadTokenV2,
+  validateDpopProofV2,
+  validateAttestV2,
 } from './index.js';
+import { decodeV2Jws } from '../v2/jws.js';
 import type { DirectoryChanges, DirectorySnapshot } from '../types/directory.js';
 import type { ConformanceFixture } from '../types/manifest.js';
 
@@ -25,6 +34,42 @@ describe('五份 schema 都注册且带 $id', () => {
   it('manifest 与 me 的编译入口可用', () => {
     expect(validateManifestSchema({}).ok).toBe(false);
     expect(validateMeSchema({}).ok).toBe(false);
+  });
+});
+
+describe('V2 非对称身份 schema', () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL('../../test-vectors/v2/positive.json', import.meta.url), 'utf8'),
+  ) as { vectors: Array<{ id: string; compact: string }> };
+  const payload = (id: string) =>
+    decodeV2Jws(fixture.vectors.find((item) => item.id === id)!.compact).payload;
+
+  it('冻结的六类 claims 全部符合 Schema', () => {
+    expect(validateEnrollmentRequestV2(payload('enrollment-request-valid')).ok).toBe(true);
+    expect(validateInstallationGrantV2(payload('installation-grant-valid')).ok).toBe(true);
+    expect(validateClientAssertionV2(payload('client-assertion-valid')).ok).toBe(true);
+    expect(validateWorkloadTokenV2(payload('workload-token-valid')).ok).toBe(true);
+    expect(validateDpopProofV2(payload('dpop-resource-valid')).ok).toBe(true);
+    expect(validateAttestV2(payload('attest-valid')).ok).toBe(true);
+  });
+
+  it('私钥字段、摘要前缀和 Bearer audience 均被拒绝', () => {
+    const enrollment = payload('enrollment-request-valid');
+    expect(
+      validateEnrollmentRequestV2({
+        ...enrollment,
+        public_jwk: { ...(enrollment.public_jwk as object), d: 'private' },
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateInstallationGrantV2({
+        ...payload('installation-grant-valid'),
+        registered_digest: `sha256:${'a'.repeat(64)}`,
+      }).ok,
+    ).toBe(false);
+    expect(validateWorkloadTokenV2({ ...payload('workload-token-valid'), aud: 'Bearer' }).ok).toBe(
+      false,
+    );
   });
 });
 

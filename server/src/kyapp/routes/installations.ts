@@ -12,10 +12,7 @@ import {
  * 服务凭据 Bearer：`credential-ack`（该路径已进 `PUBLIC_ROUTES`，在本 router 内自鉴权）。
  */
 import type { KyAppManagementQueries } from '../installations/managementQueries.js';
-import {
-  managementTenant,
-  installationActions,
-} from '../installations/managementPolicy.js';
+import { managementTenant, installationActions } from '../installations/managementPolicy.js';
 import { Router } from 'express';
 import { z } from 'zod';
 
@@ -61,6 +58,7 @@ export interface KyAppInstallationRoutesOptions {
   credentials: KyAppCredentialManager;
   runtimeStore: PgKyAppInstallationRuntimeStore;
   accessOverview?: InstallationAccessOverviewService;
+  useV2?: (systemId: string) => boolean;
 }
 
 export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesOptions): Router {
@@ -154,6 +152,9 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
     if (!iid.success) return sendKyAppError(req, res, 'invalid_input', 'iid 非法');
     try {
       const installation = await options.installations.require(iid.data);
+      if (installation.authMode === 'v2_asymmetric') {
+        return sendKyAppError(req, res, 'conflict', '该安装已使用自动接入，不能再签发旧版凭据');
+      }
       const intent = await recordGovernanceIntent(options.audit, governanceActorOf(req.user!), {
         action: 'ky_app.installation.credential.issue',
         targetType: 'system_installation',
@@ -187,6 +188,9 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
     if (!req.user) return sendKyAppError(req, res, 'unauthorized', '需要登录');
     try {
       const installation = await options.installations.require(iid.data);
+      if (installation.authMode === 'v2_asymmetric') {
+        return sendKyAppError(req, res, 'conflict', '该安装已使用自动接入，不再提供旧版凭据');
+      }
       if (!canManageTenant(req.user, installation.tenantId)) {
         return sendKyAppError(req, res, 'forbidden', '需要平台管理员或本组织管理员权限');
       }
@@ -206,6 +210,9 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
     if (!req.user) return sendKyAppError(req, res, 'unauthorized', '需要登录');
     try {
       const installation = await options.installations.require(iid.data);
+      if (installation.authMode === 'v2_asymmetric') {
+        return sendKyAppError(req, res, 'conflict', '该安装已使用自动接入，不再允许领取旧版凭据');
+      }
       if (!isPlatformAdmin(req.user) && installation.techContactUserId !== req.user.sub) {
         return sendKyAppError(req, res, 'forbidden', '只有平台管理员或已登记的技术联系人可以领取');
       }
@@ -228,6 +235,10 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
     if (token === '') return sendKyAppError(req, res, 'unauthorized', '缺少服务凭据');
     try {
+      const installation = await options.installations.require(iid.data);
+      if (installation.authMode === 'v2_asymmetric') {
+        return sendKyAppError(req, res, 'conflict', '该安装已使用自动接入，旧版凭据不能确认');
+      }
       const record = await options.credentials.authenticate(token, 'credential-ack');
       if (!record || record.installationId !== iid.data) {
         return sendKyAppError(req, res, 'unauthorized', '服务凭据无效');
@@ -456,6 +467,7 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
           publishedDigest: definition?.publishedDigest ?? null,
           runtime,
           assignmentConfigured: summary?.assignmentSummary.configured ?? false,
+          v2EnrollmentEnabled: options.useV2?.(installation.systemId) ?? false,
         }),
         upgrade: {
           currentDigest: installation.registeredDigest,

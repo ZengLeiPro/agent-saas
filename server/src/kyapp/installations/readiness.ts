@@ -20,6 +20,7 @@ export function installationReadiness(input: {
   publishedDigest: string | null;
   runtime: KyAppInstallationRuntimeRecord | null;
   assignmentConfigured: boolean;
+  v2EnrollmentEnabled?: boolean;
 }): InstallationReadiness {
   const { installation, definitionStatus, publishedDigest, runtime, assignmentConfigured } = input;
   const base = {
@@ -59,6 +60,38 @@ export function installationReadiness(input: {
       reasonCode: 'domain_verification_required',
       ownerRole: 'technical_contact',
       nextAction: '验证业务域名',
+    };
+  if (
+    input.v2EnrollmentEnabled &&
+    (installation.authMode !== 'v2_asymmetric' ||
+      !installation.deploymentId ||
+      !installation.currentKeyId ||
+      !installation.identityGeneration)
+  )
+    return {
+      ...base,
+      overallStatus: 'action_required',
+      pageStatus: 'not_configured',
+      agentStatus: 'not_configured',
+      currentStep: 'authorization',
+      reasonCode: 'authorization_required',
+      ownerRole: 'technical_contact',
+      nextAction: '授权并自动接入',
+    };
+  if (
+    input.v2EnrollmentEnabled &&
+    installation.authMode === 'v2_asymmetric' &&
+    installation.status === 'pending'
+  )
+    return {
+      ...base,
+      overallStatus: 'action_required',
+      pageStatus: 'not_configured',
+      agentStatus: 'waiting_service',
+      currentStep: 'activation',
+      reasonCode: 'activation_pending',
+      ownerRole: 'technical_contact',
+      nextAction: '等待业务系统完成接入确认',
     };
   if (
     runtime?.liveStatus === 'failed' ||

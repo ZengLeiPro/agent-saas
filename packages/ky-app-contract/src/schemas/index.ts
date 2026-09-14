@@ -12,6 +12,8 @@ import directorySchemaJson from './ky-app-directory.v1.json' with { type: 'json'
 import errorSchemaJson from './ky-app-error.v1.json' with { type: 'json' };
 import manifestSchemaJson from './ky-app-manifest.v1.json' with { type: 'json' };
 import meSchemaJson from './ky-app-me.v1.json' with { type: 'json' };
+import enrollmentV2SchemaJson from './ky-app-enrollment.v2.json' with { type: 'json' };
+import workloadV2SchemaJson from './ky-app-workload.v2.json' with { type: 'json' };
 
 /** JSON Schema 文档的宽类型，避免 d.ts 里内联整份 schema 的字面量类型。 */
 export type JsonSchemaDocument = Readonly<Record<string, unknown>>;
@@ -21,6 +23,8 @@ export const meSchema: JsonSchemaDocument = meSchemaJson;
 export const errorSchema: JsonSchemaDocument = errorSchemaJson;
 export const conformanceSchema: JsonSchemaDocument = conformanceSchemaJson;
 export const directorySchema: JsonSchemaDocument = directorySchemaJson;
+export const enrollmentV2Schema: JsonSchemaDocument = enrollmentV2SchemaJson;
+export const workloadV2Schema: JsonSchemaDocument = workloadV2SchemaJson;
 
 export const SCHEMA_IDS = {
   manifest: 'https://agent.kaiyan.net/schemas/ky-app-manifest/v1.json',
@@ -28,6 +32,8 @@ export const SCHEMA_IDS = {
   error: 'https://agent.kaiyan.net/schemas/ky-app-error/v1.json',
   conformance: 'https://agent.kaiyan.net/schemas/ky-app-conformance/v1.json',
   directory: 'https://agent.kaiyan.net/schemas/ky-app-directory/v1.json',
+  enrollmentV2: 'https://agent.kaiyan.net/schemas/ky-app-enrollment/v2.json',
+  workloadV2: 'https://agent.kaiyan.net/schemas/ky-app-workload/v2.json',
 } as const;
 
 /** 全部 schema 文档，按 $id 索引，便于消费方自行编译或对外发布。 */
@@ -37,6 +43,8 @@ export const SCHEMAS: Readonly<Record<string, JsonSchemaDocument>> = {
   [SCHEMA_IDS.error]: errorSchema,
   [SCHEMA_IDS.conformance]: conformanceSchema,
   [SCHEMA_IDS.directory]: directorySchema,
+  [SCHEMA_IDS.enrollmentV2]: enrollmentV2Schema,
+  [SCHEMA_IDS.workloadV2]: workloadV2Schema,
 };
 
 export interface SchemaValidationResult {
@@ -63,6 +71,8 @@ ajv.addSchema(manifestSchemaJson);
 ajv.addSchema(meSchemaJson);
 ajv.addSchema(conformanceSchemaJson);
 ajv.addSchema(directorySchemaJson);
+ajv.addSchema(enrollmentV2SchemaJson);
+ajv.addSchema(workloadV2SchemaJson);
 
 function formatErrors(errors: ErrorObject[] | null | undefined): string[] {
   if (!errors || errors.length === 0) return ['schema 校验失败但未给出细节'];
@@ -114,3 +124,16 @@ export const validateDirectoryEvent = toValidator(`${SCHEMA_IDS.directory}#/$def
 
 /** 附录 L：410 响应。 */
 export const validateDirectoryGone = toValidator(`${SCHEMA_IDS.directory}#/$defs/error410`);
+
+export const validateEnrollmentRequestV2 = toValidator(
+  `${SCHEMA_IDS.enrollmentV2}#/$defs/enrollmentRequest`,
+);
+export const validateInstallationGrantV2 = toValidator(
+  `${SCHEMA_IDS.enrollmentV2}#/$defs/installationGrant`,
+);
+export const validateClientAssertionV2 = toValidator(
+  `${SCHEMA_IDS.workloadV2}#/$defs/clientAssertion`,
+);
+export const validateWorkloadTokenV2 = toValidator(`${SCHEMA_IDS.workloadV2}#/$defs/workloadToken`);
+export const validateDpopProofV2 = toValidator(`${SCHEMA_IDS.workloadV2}#/$defs/dpopProof`);
+export const validateAttestV2 = toValidator(`${SCHEMA_IDS.workloadV2}#/$defs/attest`);

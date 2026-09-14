@@ -15,6 +15,7 @@ import { createKyAppRuntime, type KyAppRuntime } from './runtime.js';
 import { securityHeaders } from './securityHeaders.js';
 import { registerTestRoutes } from './testRoutes.js';
 import type { KyAppRouterConfig, KyAppVariables, KyRequestIdentity } from './types.js';
+import { createKyAppV2Router } from './v2Router.js';
 
 export type KyAppRouter = Hono<{ Variables: KyAppVariables }>;
 
@@ -96,6 +97,19 @@ export function createKyAppRouter(options: KyAppRouterConfig): {
       }),
     );
   });
+
+  if (options.v2) {
+    app.route(
+      '/',
+      createKyAppV2Router({
+        ...options.v2,
+        manifestDigest: runtime.manifestDigest,
+        now: runtime.now,
+      }),
+    );
+  } else {
+    app.get('/ky/v2/health/live', (c) => c.json({ ok: true, integration: 'disabled' }));
+  }
 
   app.get('/ky/v1/attest', async (c) => {
     if (options.attestation === undefined) {

@@ -178,6 +178,18 @@ const directorySchema = z
   })
   .strict();
 
+const enrollmentV2Schema = z
+  .object({
+    enabled: z.boolean().optional(),
+    allowedSystemIds: z
+      .array(z.string().regex(/^[a-z][a-z0-9-]{2,23}$/u))
+      .max(100)
+      .optional(),
+    issueWorkloadTokens: z.boolean().optional(),
+    requireDpop: z.literal(true).optional(),
+  })
+  .strict();
+
 /** `config.json` 中 `kyApp` 域的原始形态。 */
 export const kyAppConfigSchema = z
   .object({
@@ -193,6 +205,8 @@ export const kyAppConfigSchema = z
     gateway: gatewaySchema.optional(),
     /** WP2b 组织目录变更流（§3.6）。整域缺省即全部取默认值，不需要新增任何环境变量。 */
     directory: directorySchema.optional(),
+    /** V2 默认关闭；只允许显式 allowlist 的系统进入 enrollment。 */
+    enrollmentV2: enrollmentV2Schema.optional(),
     /**
      * 仅 staging/local 可开：允许向 http 的本机地址出站（规范 §6.3 自建出站安全）。
      * prod 打开一律视为配置错误。
@@ -216,6 +230,12 @@ export interface KyAppPlatformConfig {
   events: { retryWindowMs: number };
   gateway: KyAppGatewayConfig;
   directory: { retentionDays: number; reconcileIntervalMs: number };
+  enrollmentV2: {
+    enabled: boolean;
+    allowedSystemIds: string[];
+    issueWorkloadTokens: boolean;
+    requireDpop: true;
+  };
   allowInsecureOutbound: boolean;
 }
 
@@ -335,6 +355,12 @@ export function resolveKyAppConfig(rawConfig: unknown): KyAppPlatformConfig | nu
       retentionDays: raw.directory?.retentionDays ?? DEFAULT_DIRECTORY.retentionDays,
       reconcileIntervalMs:
         raw.directory?.reconcileIntervalMs ?? DEFAULT_DIRECTORY.reconcileIntervalMs,
+    },
+    enrollmentV2: {
+      enabled: raw.enrollmentV2?.enabled === true,
+      allowedSystemIds: [...(raw.enrollmentV2?.allowedSystemIds ?? [])],
+      issueWorkloadTokens: raw.enrollmentV2?.issueWorkloadTokens === true,
+      requireDpop: true,
     },
     allowInsecureOutbound: raw.allowInsecureOutbound === true,
   };

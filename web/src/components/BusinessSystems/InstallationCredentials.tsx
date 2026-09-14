@@ -44,55 +44,66 @@ export function InstallationCredentials({
   }
   return (
     <section className="space-y-3">
-      <h3 className="font-medium">凭据与轮换</h3>
-      <p className="text-sm">平台管理员或登记的技术联系人均可一次性领取凭据并完成系统接入。</p>
-      {!resource.data ? (
-        <ResourceState error={resource.error} retry={resource.reload} />
-      ) : (
-        <ul>
-          {!resource.data.credentials.length && <li>尚未签发凭据</li>}
-          {resource.data.credentials.map((item) => (
-            <li className="border-b py-2 text-sm" key={item.credentialId}>
-              {item.credentialId} · {item.status}
-              <p>
-                到期：{item.expiresAt} · 确认：{item.ackedAt ?? '待确认'} · 吊销：
-                {item.revokedAt ?? '未吊销'}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="flex gap-2">
-        {canIssue && (
-          <Button disabled={busy} onClick={() => void issue()}>
-            {busy ? '签发中…' : '签发 / 轮换凭据'}
-          </Button>
-        )}
-        <Button variant="outline" onClick={resource.reload}>
-          刷新凭据状态
-        </Button>
-      </div>
+      <h3 className="font-medium">组织接入</h3>
+      <p className="text-sm">
+        平台管理员或登记的技术联系人可以在线授权，业务系统无需停机或重新发布。
+      </p>
+      <Button asChild>
+        <a href={credentialClaimUrl(installationId)} target="_blank" rel="noopener noreferrer">
+          授权并自动接入
+        </a>
+      </Button>
       {error && <p role="alert">{error}</p>}
-      {ticket && (
-        <div>
-          <p>凭据领取链接（{ticket.ticketExpiresAt} 前有效）</p>
-          <input
-            className="w-full rounded border bg-background p-2 text-xs"
-            aria-label="凭据领取链接"
-            readOnly
-            value={credentialClaimUrl(installationId, ticket.ticket)}
-          />
-          <Button asChild variant="outline">
-            <a
-              href={credentialClaimUrl(installationId, ticket.ticket)}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              领取凭据
-            </a>
-          </Button>
+      <details className="rounded border p-3">
+        <summary className="cursor-pointer text-sm font-medium">旧版系统手动配置</summary>
+        <div className="mt-3 space-y-3">
+          {!resource.data ? (
+            <ResourceState error={resource.error} retry={resource.reload} />
+          ) : (
+            <ul>
+              {!resource.data.credentials.length && <li>尚未签发旧版凭据</li>}
+              {resource.data.credentials.map((item) => (
+                <li className="border-b py-2 text-sm" key={item.credentialId}>
+                  {item.credentialId} · {item.status}
+                  <p>
+                    到期：{item.expiresAt} · 确认：{item.ackedAt ?? '待确认'}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex gap-2">
+            {canIssue && (
+              <Button variant="outline" disabled={busy} onClick={() => void issue()}>
+                {busy ? '签发中…' : '签发旧版凭据'}
+              </Button>
+            )}
+            <Button variant="outline" onClick={resource.reload}>
+              刷新旧版凭据
+            </Button>
+          </div>
+          {ticket && (
+            <div>
+              <p>旧版领取链接（{ticket.ticketExpiresAt} 前有效）</p>
+              <input
+                className="w-full rounded border bg-background p-2 text-xs"
+                aria-label="旧版凭据领取链接"
+                readOnly
+                value={credentialClaimUrl(installationId, ticket.ticket)}
+              />
+              <Button asChild variant="outline">
+                <a
+                  href={credentialClaimUrl(installationId, ticket.ticket)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  打开旧版领取页
+                </a>
+              </Button>
+            </div>
+          )}
         </div>
-      )}
+      </details>
     </section>
   );
 }

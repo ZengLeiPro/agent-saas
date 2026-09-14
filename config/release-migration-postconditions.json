@@ -280,6 +280,20 @@
           "params": ["$tablePrefix"]
         }
       ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:04ce6f9d826a6c30005961d0874f8f8863d8b3070de3f2913273a7681777340a",
+      "checks": [
+        {
+          "id": "ky-app-v2-asymmetric-identity-schema",
+          "configPath": "runtimeEventStore",
+          "description": "KY App V2 安装身份列、授权操作、部署公钥、防重放表及关键唯一索引已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_ky_app_tenant_system_installations') AS installations, to_regclass($1 || '_ky_app_enrollment_operations') AS operations, to_regclass($1 || '_ky_app_deployment_keys') AS deployment_keys, to_regclass($1 || '_ky_app_dpop_replays') AS replays), columns_ok AS (SELECT count(*)=4 AS ok FROM refs,pg_attribute WHERE attrelid=refs.installations AND attname IN ('auth_mode','deployment_id','current_key_id','identity_generation') AND NOT attisdropped), indexes_ok AS (SELECT count(*)=2 AS ok FROM refs,pg_index WHERE indrelid=refs.deployment_keys AND indisunique AND indisvalid AND indisready AND pg_get_expr(indpred,indrelid) IN ('(status = ''current''::text)','(status = ''next''::text)')), sensitive_ok AS (SELECT count(*)=0 AS ok FROM refs,pg_attribute WHERE attrelid IN (refs.operations,refs.deployment_keys,refs.replays) AND attname IN ('code','access_token','private_jwk','private_key') AND NOT attisdropped) SELECT refs.installations IS NOT NULL AND refs.operations IS NOT NULL AND refs.deployment_keys IS NOT NULL AND refs.replays IS NOT NULL AND columns_ok.ok AND indexes_ok.ok AND sensitive_ok.ok AS ok FROM refs,columns_ok,indexes_ok,sensitive_ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
     }
   ]
 }

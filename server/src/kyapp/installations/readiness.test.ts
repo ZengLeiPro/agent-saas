@@ -77,6 +77,47 @@ describe('installationReadiness', () => {
     });
   });
 
+  it('V2 在身份尚未建立时只提示授权，不误报可用', () => {
+    expect(
+      installationReadiness({
+        installation: { ...installation, status: 'pending', authMode: 'v1_symmetric' },
+        definitionStatus: 'published',
+        publishedDigest: 'digest-a',
+        runtime,
+        assignmentConfigured: true,
+        v2EnrollmentEnabled: true,
+      }),
+    ).toMatchObject({
+      overallStatus: 'action_required',
+      reasonCode: 'authorization_required',
+      nextAction: '授权并自动接入',
+    });
+  });
+
+  it('V2 身份已建立但平台未确认可用时保持生效中', () => {
+    expect(
+      installationReadiness({
+        installation: {
+          ...installation,
+          status: 'pending',
+          authMode: 'v2_asymmetric',
+          deploymentId: 'deployment-1',
+          currentKeyId: 'key-12345678901234567890',
+          identityGeneration: 1,
+        },
+        definitionStatus: 'published',
+        publishedDigest: 'digest-a',
+        runtime,
+        assignmentConfigured: true,
+        v2EnrollmentEnabled: true,
+      }),
+    ).toMatchObject({
+      overallStatus: 'action_required',
+      reasonCode: 'activation_pending',
+      nextAction: '等待业务系统完成接入确认',
+    });
+  });
+
   it('把完整接入闭环归一为可用状态', () => {
     expect(
       installationReadiness({

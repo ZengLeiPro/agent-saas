@@ -26,7 +26,9 @@ async function load(): Promise<void> {
 
 async function toggle(sub: string, role: string, checked: boolean): Promise<void> {
   const current = data.value?.users.find((user) => user.sub === sub)?.roles ?? [];
-  const roles = checked ? [...new Set([...current, role])] : current.filter((item) => item !== role);
+  const roles = checked
+    ? [...new Set([...current, role])]
+    : current.filter((item) => item !== role);
   const response = await app.fetch('/api/admin/roles', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -68,7 +70,16 @@ onMounted(() => {
 </template>
 
 <style scoped>
-table { border-collapse: collapse; }
-th, td { border-bottom: 1px solid #d0d7de; padding: 6px 12px; text-align: left; }
-.message { color: #57606a; }
+table {
+  border-collapse: collapse;
+}
+th,
+td {
+  border-bottom: 1px solid #d0d7de;
+  padding: 6px 12px;
+  text-align: left;
+}
+.message {
+  color: #57606a;
+}
 </style>

@@ -82,4 +82,19 @@ describe('SAT 签名密钥生命周期（规范 §3.1、§8.4）', () => {
       }),
     ).rejects.toThrow();
   });
+
+  it('V2 目录分页材料按安装实例隔离，且不会把 next 密钥提前用于验签', async () => {
+    const { service } = createService();
+    const active = await service.ensureActive();
+    const first = await service.directoryPageTokenKeys('iid-a');
+    const repeated = await service.directoryPageTokenKeys('iid-a');
+    const other = await service.directoryPageTokenKeys('iid-b');
+    expect(repeated).toEqual(first);
+    expect(first).toHaveLength(1);
+    expect(first[0]?.keyVersion).toBe(`platform:${active.kid}`);
+    expect(first[0]?.installationKey).not.toEqual(other[0]?.installationKey);
+
+    await service.rotate();
+    expect(await service.directoryPageTokenKeys('iid-a')).toEqual(first);
+  });
 });

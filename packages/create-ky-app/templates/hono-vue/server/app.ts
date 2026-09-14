@@ -24,6 +24,7 @@ import {
   createLocalKeyRing,
   type DirectoryClient,
   type ManagedDirectorySync,
+  type KyAppWorkloadClient,
 } from '@kaiyan/ky-app-server';
 import {
   contentSecurityPolicyForEnv,
@@ -34,6 +35,7 @@ import {
   type KyRequestIdentity,
 } from '@kaiyan/ky-app-server/hono';
 import type { Pool } from 'pg';
+import type { InstallationBinding } from '@kaiyan/ky-app-contract';
 
 import { createCapabilityRuntime, buildContext, type CapabilityDeps } from './capabilities.js';
 import { createPool, runMigrations, waitForDatabase } from './db.js';
@@ -62,7 +64,7 @@ export interface BuiltApp {
  */
 export function contentSecurityPolicy(
   shellOrigin?: string,
-  env: AppConfig['ky']['env'] = 'prod',
+  env: NonNullable<AppConfig['ky']>['env'] = 'prod',
 ): string {
   const csp = contentSecurityPolicyForEnv(env);
   if (shellOrigin === undefined || (env !== 'local' && env !== 'test')) return csp;
@@ -73,7 +75,12 @@ export function contentSecurityPolicy(
   return csp.replace(`frame-ancestors ${origin}`, `frame-ancestors ${origin} ${shellOrigin}`);
 }
 
-export async function buildApp(config: AppConfig): Promise<BuiltApp> {
+export async function buildApp(
+  config: AppConfig,
+  dynamicV2?: { binding: InstallationBinding; workload: KyAppWorkloadClient },
+): Promise<BuiltApp> {
+  if (!config.ky) throw new Error('旧版 KY 配置缺失，应使用独立启动路径');
+  const ky = config.ky;
   const manifest = JSON.parse(
     await readFile(join(projectRoot(), 'ky-app.manifest.json'), 'utf8'),
   ) as Manifest;
@@ -94,20 +101,28 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   let runtimeRef: KyAppRuntime | null = null;
   const now = (): number => runtimeRef?.now() ?? Date.now();
 
-  const localKeys = createLocalKeyRing(config.ky, { now });
+  const localKeys = createLocalKeyRing(ky, { now });
 
-  const directory = createDirectoryClient({
-    config: config.ky,
-    store: directoryStore,
-    baseUrl: config.directoryUrl,
-    now,
-  });
+  const directory = dynamicV2
+    ? createDirectoryClient({
+        binding: dynamicV2.binding,
+        workload: dynamicV2.workload,
+        store: directoryStore,
+        baseUrl: config.directoryUrl,
+        now,
+      })
+    : createDirectoryClient({
+        config: ky,
+        store: directoryStore,
+        baseUrl: config.directoryUrl,
+        now,
+      });
   // SDK 托管首轮同步、五分钟兜底、失败退避与多实例互斥；业务项目不再自写 Cron。
   const directorySync = createManagedDirectorySync({
     client: directory,
     coordinator: new PgDirectorySyncCoordinator(
       pool,
-      `ky_app_directory_sync:${config.ky.tenantId}:${config.ky.installationId}`,
+      `ky_app_directory_sync:${ky.tenantId}:${ky.installationId}`,
     ),
   });
 
@@ -116,7 +131,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   let lazyEvents: ReturnType<typeof createEventsHandler> | null = null;
   const eventsHandler = (): ReturnType<typeof createEventsHandler> => {
     lazyEvents ??= createEventsHandler({
-      config: config.ky,
+      config: ky,
       store: eventsStore,
       jwks: runtime.jwks,
       now,
@@ -133,15 +148,15 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     manifestDigest: digest,
     executionStore,
     directory: directoryStore,
-    tenantId: config.ky.tenantId,
-    installationId: config.ky.installationId,
+    tenantId: ky.tenantId,
+    installationId: ky.installationId,
     writeAllowed: async () => (await directory.staleness()).allowWrite,
     now,
   };
   const capabilities = createCapabilityRuntime(capabilityDeps);
 
   const attestation = createAttestationIssuer({
-    config: config.ky,
+    config: ky,
     keys: localKeys,
     manifestDigest: () => digest,
     now,
@@ -149,7 +164,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
 
   let installationState: 'enabled' | 'disabled' | 'deleted' = (await eventsStore.getState()).state;
   const breakGlass = createBreakGlass({
-    config: config.ky,
+    config: ky,
     keys: localKeys,
     store: breakGlassStore,
     pathPrefixes: manifest.pathPrefixes,
@@ -163,13 +178,13 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
 
   const rolesOf = async (identity: KyRequestIdentity): Promise<string[]> =>
     getUserRoles(pool, {
-      tenantId: config.ky.tenantId,
-      installationId: config.ky.installationId,
+      tenantId: ky.tenantId,
+      installationId: ky.installationId,
       sub: identity.sub ?? '',
     });
 
   const { router, runtime } = createKyAppRouter({
-    config: config.ky,
+    config: ky,
     manifest,
     manifestDigest: digest,
     jtiStore,
@@ -182,9 +197,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
       },
       state: () => eventsStore.getState(),
     },
-    localKeys,
-    attestation,
-    breakGlass,
+    // V2 运行时只接受平台签发的非对称身份；不要同时暴露旧版本地证明与紧急登录端点。
+    ...(dynamicV2 ? {} : { localKeys, attestation, breakGlass }),
     directoryStaleness: () => directory.staleness(),
     directorySync: async () => {
       const checkpoint = await directoryStore.getCheckpoint();
@@ -219,11 +233,11 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
       },
     },
     securityHeaders: {
-      contentSecurityPolicy: contentSecurityPolicy(config.shellOrigin, config.ky.env),
+      contentSecurityPolicy: contentSecurityPolicy(config.shellOrigin, ky.env),
     },
     testHooks: createTestHooks({
       pool,
-      config: config.ky,
+      config: ky,
       breakGlass,
       directory,
       directoryStore,
@@ -234,8 +248,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   registerPageApi(router, {
     pool,
     runtime,
-    tenantId: config.ky.tenantId,
-    installationId: config.ky.installationId,
+    tenantId: ky.tenantId,
+    installationId: ky.installationId,
     contextFor,
   });
 

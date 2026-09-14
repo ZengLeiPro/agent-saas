@@ -22,7 +22,7 @@ describe('治理库 V47 DWS 持久接收迁移', () => {
   });
 
   it('连续登记为 V47', () => {
-    expect(governanceLatestMigrations('safe').at(-1)).toEqual({
+    expect(governanceLatestMigrations('safe').find(({ version }) => version === 47)).toEqual({
       version: 47,
       statements: governanceV47DwsDurableReceiverStatements('safe'),
     });

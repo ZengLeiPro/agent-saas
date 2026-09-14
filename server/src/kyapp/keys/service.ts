@@ -7,7 +7,7 @@
  * → `promote(kid, verifiedKid)` 切换签发 → 旧键 retiring 24 小时 → `retireExpired()` 下线。
  * 紧急撤销 `revoke(kid)` 立即移出 JWKS 并撤销 vault 中的私钥。
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 
 import { exportJWK, exportPKCS8, generateKeyPair, importPKCS8, type CryptoKey } from 'jose';
 
@@ -143,6 +143,34 @@ export class KyAppSigningKeyService {
     const kids = await this.options.store.retireExpired(now);
     for (const kid of kids) this.privateKeys.delete(kid);
     return kids;
+  }
+
+  /**
+   * 为 V2 目录分页生成平台侧、按安装实例隔离的短时游标签名材料。
+   * 私钥原文不离开服务；两层用途派生确保游标密钥既不复用 ES256 签名，也不能跨实例使用。
+   */
+  async directoryPageTokenKeys(
+    installationId: string,
+  ): Promise<Array<{ keyVersion: string; installationKey: Uint8Array }>> {
+    await this.ensureActive();
+    const records = (await this.options.store.listPublishable()).filter(
+      (record) =>
+        record.status === 'active' ||
+        (record.status === 'retiring' &&
+          record.retireAfter !== null &&
+          Date.parse(record.retireAfter) > this.now()),
+    );
+    return Promise.all(
+      records.map(async (record) => {
+        const pkcs8 = await this.options.vault.getSecret(record.secretRef, vaultCaller('read'));
+        const root = createHash('sha256').update(pkcs8, 'utf8').digest();
+        const installationKey = createHmac('sha256', root)
+          .update('ky-app-v2-directory-page-token\0', 'utf8')
+          .update(installationId, 'utf8')
+          .digest();
+        return { keyVersion: `platform:${record.kid}`, installationKey };
+      }),
+    );
   }
 
   private async createKey(status: 'active' | 'next'): Promise<KyAppSigningKeyRecord> {

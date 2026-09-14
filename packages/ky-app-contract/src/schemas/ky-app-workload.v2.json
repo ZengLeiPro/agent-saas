@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/ky-app-workload/v2.json",
+  "title": "KY App V2 workload identity",
+  "$defs": {
+    "clientAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["iss", "sub", "aud", "iat", "exp", "jti", "iid", "key_id"],
+      "properties": {
+        "iss": { "type": "string", "minLength": 1 },
+        "sub": { "type": "string", "minLength": 1 },
+        "aud": { "type": "string", "pattern": "^https://" },
+        "iat": { "type": "integer", "minimum": 1 },
+        "exp": { "type": "integer", "minimum": 1 },
+        "jti": { "type": "string", "minLength": 1 },
+        "iid": { "type": "string", "minLength": 1 },
+        "key_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }
+      }
+    },
+    "workloadToken": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "iss",
+        "sub",
+        "aud",
+        "iat",
+        "nbf",
+        "exp",
+        "jti",
+        "tid",
+        "iid",
+        "sid",
+        "client_id",
+        "scope",
+        "cnf",
+        "generation"
+      ],
+      "properties": {
+        "iss": { "type": "string", "pattern": "^https://" },
+        "sub": { "type": "string", "minLength": 1 },
+        "aud": { "const": "ky-app-platform-api" },
+        "iat": { "type": "integer", "minimum": 1 },
+        "nbf": { "type": "integer", "minimum": 1 },
+        "exp": { "type": "integer", "minimum": 1 },
+        "jti": { "type": "string", "minLength": 1 },
+        "tid": { "type": "string", "minLength": 1 },
+        "iid": { "type": "string", "minLength": 1 },
+        "sid": { "type": "string", "minLength": 1 },
+        "client_id": { "type": "string", "minLength": 1 },
+        "scope": { "type": "string", "minLength": 1 },
+        "cnf": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["jkt"],
+          "properties": {
+            "jkt": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }
+          }
+        },
+        "generation": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "dpopProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["htm", "htu", "iat", "jti"],
+      "properties": {
+        "htm": { "type": "string", "pattern": "^[A-Z]+$" },
+        "htu": { "type": "string", "pattern": "^https://" },
+        "iat": { "type": "integer", "minimum": 1 },
+        "jti": { "type": "string", "minLength": 1 },
+        "ath": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+        "nonce": { "type": "string", "minLength": 1 }
+      }
+    },
+    "attest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "iss",
+        "sub",
+        "aud",
+        "iat",
+        "exp",
+        "jti",
+        "tid",
+        "iid",
+        "sid",
+        "deployment_id",
+        "key_id",
+        "generation",
+        "nonce",
+        "manifest_digest",
+        "ready"
+      ],
+      "properties": {
+        "iss": { "type": "string", "minLength": 1 },
+        "sub": { "type": "string", "minLength": 1 },
+        "aud": { "type": "string", "pattern": "^https://" },
+        "iat": { "type": "integer", "minimum": 1 },
+        "exp": { "type": "integer", "minimum": 1 },
+        "jti": { "type": "string", "minLength": 1 },
+        "tid": { "type": "string", "minLength": 1 },
+        "iid": { "type": "string", "minLength": 1 },
+        "sid": { "type": "string", "minLength": 1 },
+        "deployment_id": { "type": "string", "minLength": 1 },
+        "key_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+        "generation": { "type": "integer", "minimum": 1 },
+        "nonce": { "type": "string", "minLength": 1 },
+        "manifest_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "ready": { "type": "boolean" }
+      }
+    }
+  }
+}

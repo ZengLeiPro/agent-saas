@@ -60,6 +60,11 @@ export interface KyAppInstallation {
   /** CAS 切换后的登记 digest；能力调用以它比对 SAT `dig`（规范 §8.1 发布顺序）。 */
   registeredDigest: string | null;
   stateVersion: number;
+  /** V48 之前的测试/内存实现可省略，消费方按 V1/0 处理。 */
+  authMode?: 'v1_symmetric' | 'v2_asymmetric';
+  deploymentId?: string | null;
+  currentKeyId?: string | null;
+  identityGeneration?: number;
   createdAt: string;
   createdBy: string;
   updatedAt: string;

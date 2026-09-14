@@ -14,12 +14,14 @@ import {
   type DirectoryGroup,
   type DirectorySnapshot,
   type DirectoryUser,
+  type InstallationBinding,
 } from '@kaiyan/ky-app-contract';
 
 import type { KyAppConfig } from '../config/index.js';
 import { KyAppError } from '../errors.js';
 import type { FetchLike } from '../jwks/client.js';
 import type { DirectoryStore } from './store.js';
+import type { KyAppWorkloadClient } from '../workload/client.js';
 import { directoryStalenessGate, type DirectoryStalenessGate } from './staleness.js';
 
 /** 每租户每分钟最多 60 次目录请求（§3.6）。 */
@@ -42,8 +44,7 @@ export interface DirectorySyncResult {
   resnapshot?: boolean;
 }
 
-export interface DirectoryClientOptions {
-  config: KyAppConfig;
+interface DirectoryClientBaseOptions {
   store: DirectoryStore;
   /** KY Agent 的 API 基址，例如 `https://api.agent.kaiyan.net`。 */
   baseUrl: string;
@@ -51,6 +52,12 @@ export interface DirectoryClientOptions {
   now?: () => number;
   requestTimeoutMs?: number;
 }
+
+export type DirectoryClientOptions = DirectoryClientBaseOptions &
+  (
+    | { config: KyAppConfig; binding?: never; workload?: never }
+    | { config?: never; binding: InstallationBinding; workload: KyAppWorkloadClient }
+  );
 
 export interface DirectoryClient {
   /** 跑一轮同步。 */
@@ -100,15 +107,30 @@ export function createDirectoryClient(options: DirectoryClientOptions): Director
     if (!limiter.take(now())) {
       throw new KyAppError('rate_limited', { message: '目录接口本地限速（每分钟 60 次）' });
     }
-    const response = await doFetch(`${base}${path}`, {
+    const url = `${base}${path}`;
+    const requestInit = {
       ...init,
       signal: init.signal ?? AbortSignal.timeout(requestTimeoutMs),
       headers: {
-        authorization: `Bearer ${options.config.serviceCredential}`,
         accept: 'application/json',
         ...(init.headers as Record<string, string> | undefined),
       },
-    });
+    };
+    const response = options.binding
+      ? await options.workload.request(
+          options.binding,
+          path.includes('/changes') ? 'directory.changes' : 'directory.snapshot',
+          url,
+          requestInit,
+          (init.method ?? 'GET') !== 'GET',
+        )
+      : await doFetch(url, {
+          ...requestInit,
+          headers: {
+            ...requestInit.headers,
+            authorization: `Bearer ${options.config.serviceCredential}`,
+          },
+        });
     if (response.status === 410) {
       const body: unknown = await response.json();
       const check = validateDirectoryGone(body);
@@ -237,6 +259,7 @@ export function createDirectoryClient(options: DirectoryClientOptions): Director
     },
 
     async ackCredential(): Promise<void> {
+      if (options.binding) throw new Error('V2 不使用服务凭据确认');
       await request(
         `/api/app-contract/v1/installations/${encodeURIComponent(options.config.installationId)}/credential-ack`,
         { method: 'POST' },

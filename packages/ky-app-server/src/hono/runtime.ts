@@ -2,7 +2,7 @@
  * Hono 适配器的共享运行时：验签、安装实例状态、兜底模式、目录门禁、限速与日志。
  * 路由与业务侧中间件（`requireUser()`）共用同一个实例，避免两处各写一遍判定。
  */
-import { decodeProtectedHeader } from 'jose';
+import { decodeJwt, decodeProtectedHeader } from 'jose';
 
 import {
   HTTP_HEADERS,
@@ -87,6 +87,7 @@ export function createKyAppRuntime(options: KyAppRouterConfig): KyAppRuntime {
 
     /** §3.7：`disabled` 时除 `events` / `health` 外一律 403 `installation_disabled`。 */
     async assertInstallationUsable(pathname: string): Promise<void> {
+      if (options.v2?.enabled) return;
       const state = await runtime.installationState();
       if (state === 'enabled') return;
       if (ALWAYS_REACHABLE.some((prefix) => pathname.startsWith(prefix))) return;
@@ -121,10 +122,13 @@ export function createKyAppRuntime(options: KyAppRouterConfig): KyAppRuntime {
       }
 
       if (typ === JWT_TYP.localToken) {
-        if (options.localKeys === undefined) throw unauthorized('本部署未启用 Local Token');
+        const localKeys = options.localAuthKeys
+          ? await options.localAuthKeys.current()
+          : options.localKeys;
+        if (localKeys === undefined) throw unauthorized('本部署未启用 Local Token');
         const local = await verifyLocalToken(token, {
           config: options.config,
-          keys: options.localKeys,
+          keys: localKeys,
           localMode: await runtime.localModeActive(),
           installationState: await runtime.installationState(),
           request: { method: input.method, pathname: input.pathname },
@@ -135,8 +139,33 @@ export function createKyAppRuntime(options: KyAppRouterConfig): KyAppRuntime {
         return { act: local.act, sub: local.sub, tadm: local.tadm, pfx: local.pfx, local };
       }
 
+      let config = options.config;
+      if (options.v2?.enabled) {
+        let unverified: Record<string, unknown>;
+        try {
+          unverified = decodeJwt(token);
+        } catch {
+          throw unauthorized('SAT 不是合法 JWT');
+        }
+        const iid = unverified.iid;
+        if (typeof iid !== 'string') throw unauthorized('SAT 缺少安装实例');
+        const binding = await options.v2.bindings.get(iid);
+        if (!binding || binding.state === 'revoked') throw unauthorized('安装实例未绑定或已撤销');
+        if (binding.state !== 'connected' && unverified.act !== 'platform') {
+          throw unauthorized('安装实例尚未就绪');
+        }
+        config = {
+          ...options.config,
+          tenantId: binding.tenantId,
+          installationId: binding.installationId,
+          systemId: binding.systemId,
+          origin: binding.origin,
+          issuer: binding.platformIssuer,
+        };
+      }
+
       const sat = await verifySat(token, {
-        config: options.config,
+        config,
         jwks,
         jtiStore: options.jtiStore,
         request: {

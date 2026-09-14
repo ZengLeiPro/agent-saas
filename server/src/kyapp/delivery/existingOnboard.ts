@@ -38,6 +38,7 @@ export type ExistingOnboardOptions = Pick<
   | 'memberships'
   | 'getAssignmentConfigured'
   | 'runSmoke'
+  | 'useV2'
 > & {
   settings: PgKyAppConnectionSettingsStore;
   config: KyAppPlatformConfig;
@@ -223,29 +224,64 @@ export class KyAppExistingOnboardService {
           }
         : undefined;
       result.domainVerification = domain ?? null;
-      const credentials = await this.options.credentials.listMetadata(request.installationId);
-      if (!credentials.some((item) => item.status === 'active')) {
-        const pending = credentials.find((item) => item.status === 'pending_ack');
-        if (pending)
-          return wait('installation_credential', 'credential_ack_required', {
-            credentialId: pending.credentialId,
+      if (this.options.useV2?.(request.systemId)) {
+        if (!installation.domainVerifiedAt) {
+          const verified =
+            installation.domainVerificationToken &&
+            (
+              await this.options.installations.probeDomainOwnership(
+                new URL(installation.baseUrl).hostname,
+                installation.domainVerificationToken,
+              )
+            ).verified;
+          if (!verified)
+            return wait('installation_credential', 'domain_verification_required', domain);
+          installation = (
+            await this.options.installations.verifyDomain(request.installationId, actor)
+          ).installation;
+        }
+        if (
+          installation.authMode !== 'v2_asymmetric' ||
+          !installation.deploymentId ||
+          !installation.currentKeyId ||
+          !installation.identityGeneration
+        ) {
+          const waiting = await wait('installation_credential', 'authorization_required');
+          return {
+            ...waiting,
+            authorization: {
+              path: `/ky-app/credentials/claim?installation=${encodeURIComponent(request.installationId)}`,
+              installationId: request.installationId,
+            },
+          };
+        }
+        if (installation.status !== 'enabled')
+          return wait('installation_credential', 'activation_pending');
+      } else {
+        const credentials = await this.options.credentials.listMetadata(request.installationId);
+        if (!credentials.some((item) => item.status === 'active')) {
+          const pending = credentials.find((item) => item.status === 'pending_ack');
+          if (pending)
+            return wait('installation_credential', 'credential_ack_required', {
+              credentialId: pending.credentialId,
+            });
+          const issued = await this.options.credentials.issue({
+            installationId: request.installationId,
           });
-        const issued = await this.options.credentials.issue({
-          installationId: request.installationId,
-        });
-        const waiting = await wait('installation_credential', 'credential_claim_required', {
-          credentialId: issued.credentialId,
-          ackDeadlineAt: issued.ackDeadlineAt,
-        });
-        return {
-          ...waiting,
-          claim: {
-            path: `/api/app-contract/v1/installations/${request.installationId}/credentials/claim/${issued.ticket}`,
+          const waiting = await wait('installation_credential', 'credential_claim_required', {
             credentialId: issued.credentialId,
-            ticketExpiresAt: issued.ticketExpiresAt,
             ackDeadlineAt: issued.ackDeadlineAt,
-          },
-        };
+          });
+          return {
+            ...waiting,
+            claim: {
+              path: `/api/app-contract/v1/installations/${request.installationId}/credentials/claim/${issued.ticket}`,
+              credentialId: issued.credentialId,
+              ticketExpiresAt: issued.ticketExpiresAt,
+              ackDeadlineAt: issued.ackDeadlineAt,
+            },
+          };
+        }
       }
       step('installation_credential', 'completed');
       step('enable', 'pending');

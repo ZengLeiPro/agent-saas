@@ -1,0 +1,261 @@
+{
+  "formatVersion": 1,
+  "contract": "ky-app-v2-asymmetric-identity",
+  "verificationTime": "2026-09-14T00:00:30.000Z",
+  "note": "PUBLIC TEST VECTORS ONLY - NEVER USE THESE KEYS IN AN ENVIRONMENT",
+  "keys": {
+    "platform": {
+      "keyId": "i9yUvo_UAHwWDmNZRrC2tCDPr8L841ktM3pde2vCfmI",
+      "alg": "ES256",
+      "use": "sig",
+      "publicJwk": {
+        "kty": "EC",
+        "x": "At51UKY4WFU1BqXoL8221h58reCoRggYcuBiMsMTTsA",
+        "y": "SCajsX3mYEUBZJNUsGhppUpgsMJK6XOR9GXF4J9dvWA",
+        "crv": "P-256"
+      }
+    },
+    "deployment": {
+      "keyId": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0",
+      "alg": "ES256",
+      "use": "sig",
+      "publicJwk": {
+        "kty": "EC",
+        "x": "NVZXuD_TQ9I9gUiF5c7FzgBNMnEP2YeOg1TbZoNaoX8",
+        "y": "mKzoe6wdrV3s0G4g8iH_tFSMF0s9ZbtyNWQ_AjCywE8",
+        "crv": "P-256"
+      }
+    }
+  },
+  "context": {
+    "tenantId": "tenant-vector-001",
+    "installationId": "ins-vector-001",
+    "systemId": "system-vector-001",
+    "deploymentId": "deployment-vector-001",
+    "origin": "https://business.staging.example.com",
+    "callback": "https://business.staging.example.com/ky/v2/enrollment/callback",
+    "platformIssuer": "https://agent.staging.example.com",
+    "tokenEndpoint": "https://agent.staging.example.com/api/app-contract/v2/oauth/token",
+    "pkceVerifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+    "resourceRequestUrl": "https://agent.staging.example.com/api/app-contract/v2/directory/snapshot?cursor=next",
+    "resourceHtu": "https://agent.staging.example.com/api/app-contract/v2/directory/snapshot"
+  },
+  "vectors": [
+    {
+      "id": "enrollment-request-valid",
+      "signer": "deployment",
+      "protected": {
+        "alg": "ES256",
+        "typ": "ky-enrollment-request+jwt",
+        "kid": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0"
+      },
+      "payload": {
+        "iss": "deployment-vector-001",
+        "sub": "ins-vector-001",
+        "aud": "https://agent.staging.example.com",
+        "iat": 1789344020,
+        "exp": 1789344620,
+        "jti": "enroll-jti-001",
+        "tid": "tenant-vector-001",
+        "iid": "ins-vector-001",
+        "sid": "system-vector-001",
+        "deployment_id": "deployment-vector-001",
+        "origin": "https://business.staging.example.com",
+        "callback_uri": "https://business.staging.example.com/ky/v2/enrollment/callback",
+        "nonce": "platform-challenge-nonce-001",
+        "code_challenge_method": "S256",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "key_id": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0",
+        "public_jwk": {
+          "kty": "EC",
+          "x": "NVZXuD_TQ9I9gUiF5c7FzgBNMnEP2YeOg1TbZoNaoX8",
+          "y": "mKzoe6wdrV3s0G4g8iH_tFSMF0s9ZbtyNWQ_AjCywE8",
+          "crv": "P-256"
+        },
+        "scope": ["installation.activate", "directory.snapshot", "directory.changes"]
+      },
+      "compact": "eyJhbGciOiJFUzI1NiIsInR5cCI6Imt5LWVucm9sbG1lbnQtcmVxdWVzdCtqd3QiLCJraWQiOiJJeXNpMEZtSlVZWmZDOGJfRWpVUklxSzZFa3VydjV0MGhqZUVVT2dSbkcwIn0.eyJpc3MiOiJkZXBsb3ltZW50LXZlY3Rvci0wMDEiLCJzdWIiOiJpbnMtdmVjdG9yLTAwMSIsImF1ZCI6Imh0dHBzOi8vYWdlbnQuc3RhZ2luZy5leGFtcGxlLmNvbSIsImlhdCI6MTc4OTM0NDAyMCwiZXhwIjoxNzg5MzQ0NjIwLCJqdGkiOiJlbnJvbGwtanRpLTAwMSIsInRpZCI6InRlbmFudC12ZWN0b3ItMDAxIiwiaWlkIjoiaW5zLXZlY3Rvci0wMDEiLCJzaWQiOiJzeXN0ZW0tdmVjdG9yLTAwMSIsImRlcGxveW1lbnRfaWQiOiJkZXBsb3ltZW50LXZlY3Rvci0wMDEiLCJvcmlnaW4iOiJodHRwczovL2J1c2luZXNzLnN0YWdpbmcuZXhhbXBsZS5jb20iLCJjYWxsYmFja191cmkiOiJodHRwczovL2J1c2luZXNzLnN0YWdpbmcuZXhhbXBsZS5jb20va3kvdjIvZW5yb2xsbWVudC9jYWxsYmFjayIsIm5vbmNlIjoicGxhdGZvcm0tY2hhbGxlbmdlLW5vbmNlLTAwMSIsImNvZGVfY2hhbGxlbmdlX21ldGhvZCI6IlMyNTYiLCJjb2RlX2NoYWxsZW5nZSI6IkU5TWVsaG9hMk93dkZyRU1USmd1Q0hhb2VLMXQ4VVJXYnVHSlNzdHctY00iLCJrZXlfaWQiOiJJeXNpMEZtSlVZWmZDOGJfRWpVUklxSzZFa3VydjV0MGhqZUVVT2dSbkcwIiwicHVibGljX2p3ayI6eyJrdHkiOiJFQyIsIngiOiJOVlpYdURfVFE5STlnVWlGNWM3RnpnQk5NbkVQMlllT2cxVGJab05hb1g4IiwieSI6Im1Lem9lNndkclYzczBHNGc4aUhfdEZTTUYwczlaYnR5TldRX0FqQ3l3RTgiLCJjcnYiOiJQLTI1NiJ9LCJzY29wZSI6WyJpbnN0YWxsYXRpb24uYWN0aXZhdGUiLCJkaXJlY3Rvcnkuc25hcHNob3QiLCJkaXJlY3RvcnkuY2hhbmdlcyJdfQ.PyuSetpKFCJYx6l-9_t5kJQyOoEZSTnCCCXqIGW0zjY7DWsXsCpkK1B56TKn9dYC8ng11Eoibl1-13hyuos91g",
+      "expected": {
+        "verifier": "verifyEnrollmentRequest",
+        "maxTtlSeconds": 600,
+        "pkceVerifierSource": "context.pkceVerifier"
+      }
+    },
+    {
+      "id": "installation-grant-valid",
+      "signer": "platform",
+      "protected": {
+        "alg": "ES256",
+        "typ": "ky-installation-grant+jwt",
+        "kid": "i9yUvo_UAHwWDmNZRrC2tCDPr8L841ktM3pde2vCfmI"
+      },
+      "payload": {
+        "iss": "https://agent.staging.example.com",
+        "sub": "ins-vector-001",
+        "aud": "deployment-vector-001",
+        "iat": 1789344025,
+        "exp": 1789344085,
+        "jti": "grant-jti-001",
+        "tid": "tenant-vector-001",
+        "iid": "ins-vector-001",
+        "sid": "system-vector-001",
+        "client_id": "deployment-vector-001",
+        "origin": "https://business.staging.example.com",
+        "key_id": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0",
+        "scope": ["installation.activate", "directory.snapshot", "directory.changes"],
+        "registered_digest": "5f1f28fb6b66646fd604fb9d124f2cbd6d3d3c5d8db14f967f22721b8fbd37f7",
+        "generation": 1
+      },
+      "compact": "eyJhbGciOiJFUzI1NiIsInR5cCI6Imt5LWluc3RhbGxhdGlvbi1ncmFudCtqd3QiLCJraWQiOiJpOXlVdm9fVUFId1dEbU5aUnJDMnRDRFByOEw4NDFrdE0zcGRlMnZDZm1JIn0.eyJpc3MiOiJodHRwczovL2FnZW50LnN0YWdpbmcuZXhhbXBsZS5jb20iLCJzdWIiOiJpbnMtdmVjdG9yLTAwMSIsImF1ZCI6ImRlcGxveW1lbnQtdmVjdG9yLTAwMSIsImlhdCI6MTc4OTM0NDAyNSwiZXhwIjoxNzg5MzQ0MDg1LCJqdGkiOiJncmFudC1qdGktMDAxIiwidGlkIjoidGVuYW50LXZlY3Rvci0wMDEiLCJpaWQiOiJpbnMtdmVjdG9yLTAwMSIsInNpZCI6InN5c3RlbS12ZWN0b3ItMDAxIiwiY2xpZW50X2lkIjoiZGVwbG95bWVudC12ZWN0b3ItMDAxIiwib3JpZ2luIjoiaHR0cHM6Ly9idXNpbmVzcy5zdGFnaW5nLmV4YW1wbGUuY29tIiwia2V5X2lkIjoiSXlzaTBGbUpVWVpmQzhiX0VqVVJJcUs2RWt1cnY1dDBoamVFVU9nUm5HMCIsInNjb3BlIjpbImluc3RhbGxhdGlvbi5hY3RpdmF0ZSIsImRpcmVjdG9yeS5zbmFwc2hvdCIsImRpcmVjdG9yeS5jaGFuZ2VzIl0sInJlZ2lzdGVyZWRfZGlnZXN0IjoiNWYxZjI4ZmI2YjY2NjQ2ZmQ2MDRmYjlkMTI0ZjJjYmQ2ZDNkM2M1ZDhkYjE0Zjk2N2YyMjcyMWI4ZmJkMzdmNyIsImdlbmVyYXRpb24iOjF9.asds9AJeXPeegQ8dUR72k09K_lU9tMJIL2SGSSBtLHrJmR_TGrNpmyQOho7UnllvDcKDIbkYkC6YBk5CIDlMcg",
+      "expected": {
+        "verifier": "verifyInstallationGrant",
+        "maxTtlSeconds": 60
+      }
+    },
+    {
+      "id": "client-assertion-valid",
+      "signer": "deployment",
+      "protected": {
+        "alg": "ES256",
+        "typ": "ky-client-auth+jwt",
+        "kid": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0"
+      },
+      "payload": {
+        "iss": "deployment-vector-001",
+        "sub": "deployment-vector-001",
+        "aud": "https://agent.staging.example.com/api/app-contract/v2/oauth/token",
+        "iat": 1789344025,
+        "exp": 1789344085,
+        "jti": "client-auth-jti-001",
+        "iid": "ins-vector-001",
+        "key_id": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0"
+      },
+      "compact": "eyJhbGciOiJFUzI1NiIsInR5cCI6Imt5LWNsaWVudC1hdXRoK2p3dCIsImtpZCI6Ikl5c2kwRm1KVVlaZkM4Yl9FalVSSXFLNkVrdXJ2NXQwaGplRVVPZ1JuRzAifQ.eyJpc3MiOiJkZXBsb3ltZW50LXZlY3Rvci0wMDEiLCJzdWIiOiJkZXBsb3ltZW50LXZlY3Rvci0wMDEiLCJhdWQiOiJodHRwczovL2FnZW50LnN0YWdpbmcuZXhhbXBsZS5jb20vYXBpL2FwcC1jb250cmFjdC92Mi9vYXV0aC90b2tlbiIsImlhdCI6MTc4OTM0NDAyNSwiZXhwIjoxNzg5MzQ0MDg1LCJqdGkiOiJjbGllbnQtYXV0aC1qdGktMDAxIiwiaWlkIjoiaW5zLXZlY3Rvci0wMDEiLCJrZXlfaWQiOiJJeXNpMEZtSlVZWmZDOGJfRWpVUklxSzZFa3VydjV0MGhqZUVVT2dSbkcwIn0.C9zopmSqzAHl1Z0sdep7Pv6SS5usFNJmaI5NgdfA3Mn7Toe2YL0g1VYmwyE4HuBm9QI-3hRs6akzFgkOOpCqHw",
+      "expected": {
+        "verifier": "verifyClientAssertion",
+        "maxTtlSeconds": 60,
+        "replayKey": "BWe4CnFTkwCvc10uzbYhrTGB5SgevrSSNUpoS80YC_0:client-auth-jti-001"
+      }
+    },
+    {
+      "id": "workload-token-valid",
+      "signer": "platform",
+      "protected": {
+        "alg": "ES256",
+        "typ": "ky-workload-at+jwt",
+        "kid": "i9yUvo_UAHwWDmNZRrC2tCDPr8L841ktM3pde2vCfmI"
+      },
+      "payload": {
+        "iss": "https://agent.staging.example.com",
+        "sub": "ins-vector-001",
+        "aud": "ky-app-platform-api",
+        "iat": 1789344025,
+        "nbf": 1789344025,
+        "exp": 1789344325,
+        "jti": "workload-jti-001",
+        "tid": "tenant-vector-001",
+        "iid": "ins-vector-001",
+        "sid": "system-vector-001",
+        "client_id": "deployment-vector-001",
+        "scope": "directory.snapshot directory.changes",
+        "cnf": {
+          "jkt": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0"
+        },
+        "generation": 1
+      },
+      "compact": "eyJhbGciOiJFUzI1NiIsInR5cCI6Imt5LXdvcmtsb2FkLWF0K2p3dCIsImtpZCI6Imk5eVV2b19VQUh3V0RtTlpSckMydENEUHI4TDg0MWt0TTNwZGUydkNmbUkifQ.eyJpc3MiOiJodHRwczovL2FnZW50LnN0YWdpbmcuZXhhbXBsZS5jb20iLCJzdWIiOiJpbnMtdmVjdG9yLTAwMSIsImF1ZCI6Imt5LWFwcC1wbGF0Zm9ybS1hcGkiLCJpYXQiOjE3ODkzNDQwMjUsIm5iZiI6MTc4OTM0NDAyNSwiZXhwIjoxNzg5MzQ0MzI1LCJqdGkiOiJ3b3JrbG9hZC1qdGktMDAxIiwidGlkIjoidGVuYW50LXZlY3Rvci0wMDEiLCJpaWQiOiJpbnMtdmVjdG9yLTAwMSIsInNpZCI6InN5c3RlbS12ZWN0b3ItMDAxIiwiY2xpZW50X2lkIjoiZGVwbG95bWVudC12ZWN0b3ItMDAxIiwic2NvcGUiOiJkaXJlY3Rvcnkuc25hcHNob3QgZGlyZWN0b3J5LmNoYW5nZXMiLCJjbmYiOnsiamt0IjoiSXlzaTBGbUpVWVpmQzhiX0VqVVJJcUs2RWt1cnY1dDBoamVFVU9nUm5HMCJ9LCJnZW5lcmF0aW9uIjoxfQ.Mw9TGkkSI6WRgOwwDnHMHiNU4Yh3XDC-AA-dsFbVe2IlBf--MK0TB59cc--ECUIPfOv1yY9rS1NnAZOdYIGDAA",
+      "expected": {
+        "verifier": "verifyWorkloadAccessToken",
+        "maxTtlSeconds": 300,
+        "authorizationScheme": "DPoP"
+      }
+    },
+    {
+      "id": "dpop-token-endpoint-valid",
+      "signer": "deployment",
+      "protected": {
+        "alg": "ES256",
+        "typ": "dpop+jwt",
+        "jwk": {
+          "kty": "EC",
+          "x": "NVZXuD_TQ9I9gUiF5c7FzgBNMnEP2YeOg1TbZoNaoX8",
+          "y": "mKzoe6wdrV3s0G4g8iH_tFSMF0s9ZbtyNWQ_AjCywE8",
+          "crv": "P-256"
+        }
+      },
+      "payload": {
+        "htm": "POST",
+        "htu": "https://agent.staging.example.com/api/app-contract/v2/oauth/token",
+        "iat": 1789344030,
+        "jti": "dpop-jti-001",
+        "nonce": "platform-dpop-nonce-001"
+      },
+      "compact": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRwb3Arand0IiwiandrIjp7Imt0eSI6IkVDIiwieCI6Ik5WWlh1RF9UUTlJOWdVaUY1YzdGemdCTk1uRVAyWWVPZzFUYlpvTmFvWDgiLCJ5IjoibUt6b2U2d2RyVjNzMEc0ZzhpSF90RlNNRjBzOVpidHlOV1FfQWpDeXdFOCIsImNydiI6IlAtMjU2In19.eyJodG0iOiJQT1NUIiwiaHR1IjoiaHR0cHM6Ly9hZ2VudC5zdGFnaW5nLmV4YW1wbGUuY29tL2FwaS9hcHAtY29udHJhY3QvdjIvb2F1dGgvdG9rZW4iLCJpYXQiOjE3ODkzNDQwMzAsImp0aSI6ImRwb3AtanRpLTAwMSIsIm5vbmNlIjoicGxhdGZvcm0tZHBvcC1ub25jZS0wMDEifQ.hSO35_-FxGqx-jbjZmiZNBCcDqPTCf-Z9gOZ38qht7bR-7u5KSlvnKqaMCcmaL61BYSN3CRM6Lb1KW2cxVopkA",
+      "expected": {
+        "verifier": "verifyDpopProof",
+        "maxAgeSeconds": 60,
+        "replayKey": "BWe4CnFTkwCvc10uzbYhrTGB5SgevrSSNUpoS80YC_0:dpop-jti-001"
+      }
+    },
+    {
+      "id": "dpop-resource-valid",
+      "signer": "deployment",
+      "protected": {
+        "alg": "ES256",
+        "typ": "dpop+jwt",
+        "jwk": {
+          "kty": "EC",
+          "x": "NVZXuD_TQ9I9gUiF5c7FzgBNMnEP2YeOg1TbZoNaoX8",
+          "y": "mKzoe6wdrV3s0G4g8iH_tFSMF0s9ZbtyNWQ_AjCywE8",
+          "crv": "P-256"
+        }
+      },
+      "payload": {
+        "htm": "GET",
+        "htu": "https://agent.staging.example.com/api/app-contract/v2/directory/snapshot",
+        "iat": 1789344030,
+        "jti": "dpop-resource-jti-001",
+        "ath": "wF1CUk48ohekCbqsrafw3CYSMY68TAvYBIktWOyw3ag"
+      },
+      "compact": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRwb3Arand0IiwiandrIjp7Imt0eSI6IkVDIiwieCI6Ik5WWlh1RF9UUTlJOWdVaUY1YzdGemdCTk1uRVAyWWVPZzFUYlpvTmFvWDgiLCJ5IjoibUt6b2U2d2RyVjNzMEc0ZzhpSF90RlNNRjBzOVpidHlOV1FfQWpDeXdFOCIsImNydiI6IlAtMjU2In19.eyJodG0iOiJHRVQiLCJodHUiOiJodHRwczovL2FnZW50LnN0YWdpbmcuZXhhbXBsZS5jb20vYXBpL2FwcC1jb250cmFjdC92Mi9kaXJlY3Rvcnkvc25hcHNob3QiLCJpYXQiOjE3ODkzNDQwMzAsImp0aSI6ImRwb3AtcmVzb3VyY2UtanRpLTAwMSIsImF0aCI6IndGMUNVazQ4b2hla0NicXNyYWZ3M0NZU01ZNjhUQXZZQklrdFdPeXczYWcifQ.tZR_SQNfLe4sDILyz64B4nPgTl_UPcJCqRvDvDudhof8TSVWBYBGoW_ABr98dwsdO7hEcPhrqjcRIn4iF1vIEw",
+      "expected": {
+        "verifier": "verifyDpopProof",
+        "maxAgeSeconds": 60,
+        "requestUrlSource": "context.resourceRequestUrl",
+        "accessTokenSource": "workload-token-valid",
+        "replayKey": "lvYsCPhkihvWkq5hnoYcTzYrS1vMA0xFjqcsH5vXMe0:dpop-resource-jti-001"
+      }
+    },
+    {
+      "id": "attest-valid",
+      "signer": "deployment",
+      "protected": {
+        "alg": "ES256",
+        "typ": "ky-attest-v2+jwt",
+        "kid": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0"
+      },
+      "payload": {
+        "iss": "deployment-vector-001",
+        "sub": "ins-vector-001",
+        "aud": "https://agent.staging.example.com/ky-app-prober",
+        "iat": 1789344025,
+        "exp": 1789344085,
+        "jti": "attest-jti-001",
+        "tid": "tenant-vector-001",
+        "iid": "ins-vector-001",
+        "sid": "system-vector-001",
+        "deployment_id": "deployment-vector-001",
+        "key_id": "Iysi0FmJUYZfC8b_EjURIqK6Ekurv5t0hjeEUOgRnG0",
+        "generation": 1,
+        "nonce": "attest-nonce-001",
+        "manifest_digest": "5f1f28fb6b66646fd604fb9d124f2cbd6d3d3c5d8db14f967f22721b8fbd37f7",
+        "ready": true
+      },
+      "compact": "eyJhbGciOiJFUzI1NiIsInR5cCI6Imt5LWF0dGVzdC12Mitqd3QiLCJraWQiOiJJeXNpMEZtSlVZWmZDOGJfRWpVUklxSzZFa3VydjV0MGhqZUVVT2dSbkcwIn0.eyJpc3MiOiJkZXBsb3ltZW50LXZlY3Rvci0wMDEiLCJzdWIiOiJpbnMtdmVjdG9yLTAwMSIsImF1ZCI6Imh0dHBzOi8vYWdlbnQuc3RhZ2luZy5leGFtcGxlLmNvbS9reS1hcHAtcHJvYmVyIiwiaWF0IjoxNzg5MzQ0MDI1LCJleHAiOjE3ODkzNDQwODUsImp0aSI6ImF0dGVzdC1qdGktMDAxIiwidGlkIjoidGVuYW50LXZlY3Rvci0wMDEiLCJpaWQiOiJpbnMtdmVjdG9yLTAwMSIsInNpZCI6InN5c3RlbS12ZWN0b3ItMDAxIiwiZGVwbG95bWVudF9pZCI6ImRlcGxveW1lbnQtdmVjdG9yLTAwMSIsImtleV9pZCI6Ikl5c2kwRm1KVVlaZkM4Yl9FalVSSXFLNkVrdXJ2NXQwaGplRVVPZ1JuRzAiLCJnZW5lcmF0aW9uIjoxLCJub25jZSI6ImF0dGVzdC1ub25jZS0wMDEiLCJtYW5pZmVzdF9kaWdlc3QiOiI1ZjFmMjhmYjZiNjY2NDZmZDYwNGZiOWQxMjRmMmNiZDZkM2QzYzVkOGRiMTRmOTY3ZjIyNzIxYjhmYmQzN2Y3IiwicmVhZHkiOnRydWV9.aVb-1EUK4pL57Zzi4zTgdkr0rcCFt3WJhFv-IYPsRTplUwTuPPBBH0fNElz0AINIWcz8ZYFdSTITMJVtwzvoUw",
+      "expected": {
+        "verifier": "verifyAttestation",
+        "maxTtlSeconds": 60
+      }
+    }
+  ]
+}

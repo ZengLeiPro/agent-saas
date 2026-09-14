@@ -57,6 +57,13 @@ export interface LocalKeyRing {
   previousAcceptUntil?: number;
 }
 
+/**
+ * V2 本地登录密钥提供方。密钥由业务系统自身管理，与 DeploymentKeyStore 完全独立。
+ */
+export interface LocalAuthKeyProvider {
+  current(): Promise<LocalKeyRing>;
+}
+
 export interface CreateLocalKeyRingOptions {
   /** 轮换发生的时刻（毫秒）；默认取当前时间，即从进程启动起算 24 小时窗口。 */
   rotatedAt?: number;

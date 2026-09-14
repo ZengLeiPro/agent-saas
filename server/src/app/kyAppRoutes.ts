@@ -23,6 +23,12 @@ import { KyAppMemberImporter } from '../kyapp/delivery/memberImport.js';
 import { KyAppOnboardService } from '../kyapp/delivery/onboard.js';
 import { createKyAppDeliveryRouter } from '../kyapp/routes/delivery.js';
 import { createKyAppExistingOnboardRouter } from '../kyapp/routes/existingOnboard.js';
+import { createKyAppV2KeyLifecycleRouter } from '../kyapp/routes/keyLifecycle.js';
+import {
+  createKyAppEnrollmentRouter,
+  createKyAppV2ActivationRouter,
+  createKyAppV2TokenRouter,
+} from '../kyapp/routes/enrollment.js';
 import { PgKyAppConnectionSettingsStore } from '../kyapp/delivery/connectionSettings.js';
 import {
   createKyAppHandshakeRouter,
@@ -43,6 +49,7 @@ import { requirePlatformAdmin } from '../auth/middleware.js';
 
 /** §3.2：平台管理端点统一前缀。 */
 export const KY_APP_CONTRACT_BASE_PATH = '/api/app-contract/v1';
+export const KY_APP_CONTRACT_V2_BASE_PATH = '/api/app-contract/v2';
 
 /** 管理页通过稳定端点判断能力是否装配，不能用业务接口的 404 探测。 */
 export function registerKyAppAvailabilityRoute(app: Express, enabled: boolean): void {
@@ -157,6 +164,37 @@ export function registerKyAppRoutes(
     }),
   );
   app.use(
+    KY_APP_CONTRACT_V2_BASE_PATH,
+    createKyAppEnrollmentRouter({
+      systems: assembly.systems,
+      enrollment: assembly.enrollment,
+      issuer: assembly.issuer,
+      outbound: assembly.outbound,
+      platformIssuer: config.issuer,
+      reauthenticate: async (user, password) => {
+        if (!runtime.userStore || !user.username) return false;
+        const verified = await runtime.userStore.verifyPassword(user.username, password);
+        return verified?.id === user.sub;
+      },
+      ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
+      ...(runtime.tenantStore
+        ? { tenantName: (tenantId: string) => runtime.tenantStore!.findByIdStrict(tenantId)?.name }
+        : {}),
+    }),
+  );
+  app.use(
+    KY_APP_CONTRACT_V2_BASE_PATH,
+    createKyAppV2TokenRouter({ enrollment: assembly.enrollment }),
+  );
+  app.use(
+    KY_APP_CONTRACT_V2_BASE_PATH,
+    createKyAppV2ActivationRouter({ activation: assembly.activation }),
+  );
+  app.use(
+    KY_APP_CONTRACT_V2_BASE_PATH,
+    createKyAppV2KeyLifecycleRouter({ lifecycle: assembly.keyLifecycle }),
+  );
+  app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppInstallationsRouter({
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
@@ -165,6 +203,8 @@ export function registerKyAppRoutes(
       installations: assembly.installations,
       credentials: assembly.credentials,
       runtimeStore: assembly.runtimeStore,
+      useV2: (systemId) =>
+        config.enrollmentV2.enabled && config.enrollmentV2.allowedSystemIds.includes(systemId),
       ...(accessOverview ? { accessOverview } : {}),
     }),
   );
@@ -205,6 +245,8 @@ export function registerKyAppRoutes(
           toolRegistrationDryRun:
             options.toolRegistrationDryRun ?? createKyAppToolRegistrationDryRun(),
           runSmoke: (installationId, fixture) => assembly.diagnostics.run(installationId, fixture),
+          useV2: (systemId) =>
+            config.enrollmentV2.enabled && config.enrollmentV2.allowedSystemIds.includes(systemId),
           verifyTenantSkills: async (tenantId, manifest) => {
             const installed: string[] = [];
             const missing: string[] = [];
@@ -258,6 +300,8 @@ export function registerKyAppRoutes(
           return Boolean(set?.assignments.some((rule) => rule.effect === 'allow'));
         },
         runSmoke: (installationId, fixture) => assembly.diagnostics.run(installationId, fixture),
+        useV2: (systemId) =>
+          config.enrollmentV2.enabled && config.enrollmentV2.allowedSystemIds.includes(systemId),
       }),
     );
   }
@@ -308,6 +352,11 @@ export function registerKyAppRoutes(
         getInstallation: (installationId) => assembly.systems.getInstallation(installationId),
         snapshots: assembly.directorySnapshots,
         changes: assembly.directoryChangeLog,
+        v2: {
+          authenticator: assembly.v2Authenticator,
+          apiBaseUrl: new URL(config.jwksUrl).origin,
+          pageTokenKeys: (installationId) => assembly.keys.directoryPageTokenKeys(installationId),
+        },
       }),
     );
   }

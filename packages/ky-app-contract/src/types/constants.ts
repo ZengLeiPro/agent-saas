@@ -2,6 +2,57 @@ import type { AppErrorCode } from './errors.js';
 
 /** 契约版本。壳只接受 1，其他值一律错误页「系统版本不兼容」（§8.3）。 */
 export const CONTRACT_VERSION = 1 as const;
+/** 非对称部署身份协议版本；V1 导出保持不变。 */
+export const CONTRACT_VERSION_V2 = 2 as const;
+export const SUPPORTED_CONTRACT_VERSIONS = [CONTRACT_VERSION_V2, CONTRACT_VERSION] as const;
+
+/** 从双方都支持的版本中选择最高版本；没有交集时 fail closed。 */
+export function negotiateContractVersion(peerVersions: readonly number[]): 1 | 2 | null {
+  for (const version of SUPPORTED_CONTRACT_VERSIONS) {
+    if (peerVersions.includes(version)) return version;
+  }
+  return null;
+}
+
+/** V2 JWT 类型严格互斥，调用方必须按用途选择专用 verifier。 */
+export const V2_JWT_TYP = {
+  enrollmentRequest: 'ky-enrollment-request+jwt',
+  installationGrant: 'ky-installation-grant+jwt',
+  clientAssertion: 'ky-client-auth+jwt',
+  workloadAccessToken: 'ky-workload-at+jwt',
+  attest: 'ky-attest-v2+jwt',
+  dpop: 'dpop+jwt',
+} as const;
+
+export const V2_TTL_SECONDS = {
+  enrollmentRequest: 10 * 60,
+  authorizationCode: 60,
+  clientAssertion: 60,
+  workloadAccessToken: 5 * 60,
+  attest: 60,
+  dpopProof: 60,
+  clockTolerance: 10,
+} as const;
+
+export const V2_WORKLOAD_AUDIENCE = 'ky-app-platform-api' as const;
+export const V2_CALLBACK_PATH = '/ky/v2/enrollment/callback' as const;
+export const V2_SCOPES = [
+  'installation.activate',
+  'directory.snapshot',
+  'directory.changes',
+  'installation.keys.rotate',
+] as const;
+
+export const V2_ENDPOINTS = {
+  enrollmentOperations: '/api/app-contract/v2/installations/:iid/enrollment-operations',
+  enrollmentOperation: '/api/app-contract/v2/enrollment-operations/:operationId',
+  approveEnrollment: '/api/app-contract/v2/enrollment-operations/:operationId/approve',
+  token: '/api/app-contract/v2/oauth/token',
+  activate: '/api/app-contract/v2/installations/:iid/activate',
+  prepareKey: '/api/app-contract/v2/installations/:iid/keys/prepare',
+  commitKey: '/api/app-contract/v2/installations/:iid/keys/commit',
+  revokeDeployment: '/api/app-contract/v2/installations/:iid/revoke-deployment',
+} as const;
 
 /** JWT header `typ`（§3.1、§3.2）。验签时必须显式比对，不接受缺省。 */
 export const JWT_TYP = {

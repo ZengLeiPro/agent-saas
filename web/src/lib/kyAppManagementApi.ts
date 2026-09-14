@@ -40,6 +40,35 @@ export async function kyAppRequest<T>(path: string, options: RequestInit = {}): 
     );
   return body as T;
 }
+export async function kyAppV2Request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await authFetch(`/api/app-contract/v2${path}`, {
+    ...options,
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new KyAppManagementError(
+      response.status,
+      body?.error?.code ?? 'unknown',
+      body?.error?.message ?? `请求失败 (${response.status})`,
+      body?.error?.requestId ?? '',
+      body?.error?.retryable === true,
+    );
+  }
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new KyAppManagementError(
+      response.status,
+      'invalid_response',
+      '自动接入服务未返回有效结果，请查询原接入进度。',
+      '',
+      true,
+    );
+  }
+  return body as T;
+}
+export const kyAppV2Post = <T>(path: string, body: unknown = {}) =>
+  kyAppV2Request<T>(path, { method: 'POST', body: JSON.stringify(body) });
 export const kyAppPost = <T>(path: string, body: unknown = {}) =>
   kyAppRequest<T>(path, { method: 'POST', body: JSON.stringify(body) });
 export const installationPath = (id: string, suffix = '') =>

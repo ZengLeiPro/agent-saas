@@ -7,6 +7,7 @@
 export { USAGE, main, parseDotEnv } from './cli.js';
 export { runDoctor, loadProjectFiles, resolveDatabase, defaultPgMode } from './doctor/run.js';
 export { DoctorContext } from './doctor/context.js';
+export { probeV2Adapter, type V2DoctorCheck } from './doctor/v2.js';
 export { createMockShell, type MockShell, type MockShellOptions } from './mockShell/server.js';
 export { createMockSigner, type MockSigner } from './mockShell/keys.js';
 export { createMockDirectory, type MockDirectory } from './mockShell/directory.js';

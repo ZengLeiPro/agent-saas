@@ -397,18 +397,16 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           )}
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "global" | "user")} className="flex min-h-0 flex-1 flex-col">
-            <div className="shrink-0 rounded-lg border bg-card p-1 shadow-sm">
-              <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0 text-muted-foreground">
-                <TabsTrigger value="global" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
+            <TabsList variant="secondary">
+                <TabsTrigger value="global">
                   {isTenantMode ? "组织技能" : "平台技能"}
                   <span className="ml-1.5 text-xs font-normal">({activePoolSkillsCount})</span>
                 </TabsTrigger>
-                <TabsTrigger value="user" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">
+                <TabsTrigger value="user">
                   用户技能
                   <span className="ml-1.5 text-xs font-normal">({userSkillCount})</span>
                 </TabsTrigger>
-              </TabsList>
-            </div>
+            </TabsList>
 
             <div className="min-h-0 flex-1 overflow-auto pt-4">
               <TabsContent value="global" forceMount className="mt-0">

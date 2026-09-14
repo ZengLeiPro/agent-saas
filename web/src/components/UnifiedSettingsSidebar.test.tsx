@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { SETTINGS_SIDEBAR_WIDTH } from "@/components/SettingsCenter/settingsLayout";
 import { UnifiedSettingsSidebar } from "./UnifiedSettingsSidebar";
 
 function access(
@@ -14,15 +15,12 @@ function access(
 function renderSidebar(currentAccess: ManagementSettingsAccess) {
   return render(
     <UnifiedSettingsSidebar
-      width={280}
       hidden={false}
       access={currentAccess}
       personalAgentEnabled
       target="personal"
       activeSection="account-security"
       onNavigate={vi.fn()}
-      onResizeMouseDown={vi.fn()}
-      onResizeDoubleClick={vi.fn()}
       footer={<div>footer</div>}
     />,
   );
@@ -37,11 +35,18 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(screen.queryByText("平台运营")).toBeNull();
   });
 
-  it("分组间距清晰且激活项不显示左侧竖线", () => {
+  it("使用固定宽度、无任何收缩和拖拽入口，分组由横线隔开", () => {
     renderSidebar(access("ready", true, true));
 
     const navigation = screen.getByLabelText("设置导航");
-    expect(navigation.querySelector("nav")?.className).toContain("gap-6");
+    const sidebar = screen.getByTestId("unified-settings-sidebar");
+    expect(sidebar.style.width).toBe(`${SETTINGS_SIDEBAR_WIDTH}px`);
+    expect(sidebar.getAttribute("data-layout-width")).toBe(String(SETTINGS_SIDEBAR_WIDTH));
+    expect(screen.queryByTitle("收起侧边栏")).toBeNull();
+    expect(screen.queryByTitle(/拖动调整侧边栏宽度/)).toBeNull();
+    expect(navigation.querySelector('[aria-expanded]')).toBeNull();
+    expect(navigation.querySelector('svg.lucide-chevron-down')).toBeNull();
+    expect(navigation.querySelectorAll("nav > div.border-t")).toHaveLength(3);
     const activeItem = navigation.querySelector('[aria-current="page"]');
     expect(activeItem?.className).toContain("bg-brand-accent-soft");
     expect(activeItem?.className).not.toContain("before:bg-brand-accent");
@@ -54,15 +59,12 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
 
     rerender(
       <UnifiedSettingsSidebar
-        width={280}
         hidden={false}
         access={access("ready", false, true)}
         personalAgentEnabled
         target="personal"
         activeSection="account-security"
         onNavigate={vi.fn()}
-        onResizeMouseDown={vi.fn()}
-        onResizeDoubleClick={vi.fn()}
         footer={<div>footer</div>}
       />,
     );
@@ -102,20 +104,21 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(screen.getByRole("button", { name: "模板" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "业务系统" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "系统交付" })).toBeNull();
-    expect(screen.getByLabelText("设置导航").querySelectorAll('button:not([aria-expanded])')).toHaveLength(21);
+    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(21);
   });
 
-  it("组织分组展示 18 个真实页面及四个配置分组", () => {
+  it("组织分组保留真实页面，并用分隔线替代小标题", () => {
     renderSidebar(access("ready", true, false));
 
     for (const label of ["构建 · 调用资产", "运行", "治理 · 边界", "组织设置"]) {
-      expect(screen.getByText(label)).toBeTruthy();
+      expect(screen.queryByText(label)).toBeNull();
     }
-    expect(screen.getByLabelText("设置导航").querySelectorAll('button:not([aria-expanded])')).toHaveLength(26);
+    expect(screen.getByLabelText("设置导航").querySelectorAll('[aria-hidden="true"].border-t')).toHaveLength(6);
+    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(26);
     expect(screen.queryByRole("button", { name: "进入组织治理" })).toBeNull();
   });
 
-  it("支持在授权范围内搜索并折叠设置分组", () => {
+  it("支持在授权范围内搜索，分组始终展开", () => {
     renderSidebar(access("ready", true, true));
 
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索设置" }), { target: { value: "成员" } });
@@ -123,8 +126,7 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(screen.queryByRole("button", { name: "网络出口" })).toBeNull();
 
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索设置" }), { target: { value: "" } });
-    const platformGroup = screen.getByRole("button", { name: /平台运营/ });
-    fireEvent.click(platformGroup);
-    expect(platformGroup.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByText("平台运营").closest("button")).toBeNull();
+    expect(screen.getByRole("button", { name: "网络出口" })).toBeTruthy();
   });
 });

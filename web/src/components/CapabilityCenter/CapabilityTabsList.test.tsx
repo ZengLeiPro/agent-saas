@@ -33,8 +33,8 @@ describe("能力中心标签栏", () => {
       "专家",
     ]);
     expect(container.querySelector("svg")).toBeNull();
-    expect(screen.getByRole("tablist").className).toContain("bg-brand-50");
-    expect(screen.getByRole("tablist").className).toContain("h-10");
+    expect(screen.getByRole("tablist").className).toContain("bg-card");
+    expect(screen.getByRole("tablist").className).toContain("h-11");
   });
 
   it("未开放个人通用 Agent 时不显示工作流", () => {
@@ -53,18 +53,14 @@ describe("能力中心标签栏", () => {
     ]);
   });
 
-  it("切换标签时移动同一个选中指示层", async () => {
+  it("切换标签时使用统一的选中背景", async () => {
     const user = userEvent.setup();
-    const { container } = render(<ControlledCapabilityTabs />);
-    const indicator = container.querySelector<HTMLElement>("[data-capability-tab-indicator]");
-
-    expect(indicator?.style.transform).toBe("translateX(0%)");
-    expect(indicator?.className).toContain("transition-transform");
+    render(<ControlledCapabilityTabs />);
+    expect(screen.getByRole("tab", { name: "工作流" }).getAttribute("data-state")).toBe("active");
 
     await user.click(screen.getByRole("tab", { name: "连接器" }));
 
-    const movedIndicator = container.querySelector<HTMLElement>("[data-capability-tab-indicator]");
-    expect(movedIndicator).toBe(indicator);
-    expect(movedIndicator?.style.transform).toBe("translateX(200%)");
+    expect(screen.getByRole("tab", { name: "连接器" }).getAttribute("data-state")).toBe("active");
+    expect(screen.getByRole("tablist").getAttribute("data-active-tab")).toBe("connectors");
   });
 });

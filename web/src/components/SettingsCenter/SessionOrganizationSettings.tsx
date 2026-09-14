@@ -4,11 +4,13 @@ import { Loader2, RotateCcw, Save } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegistry';
 import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
+import { settingsPageWidthClass } from '@/components/SettingsCenter/settingsLayout';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { saveUserPreferences } from '@agent/shared';
+import { cn } from '@/lib/utils';
 
 const MAX_PROMPT_LENGTH = 2000;
 
@@ -105,7 +107,7 @@ export function SessionOrganizationSettings() {
   });
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+    <div className={cn('flex h-full min-h-0 flex-col', settingsPageWidthClass('compact'))}>
       <SettingsPanelHeader
         title="会话智能整理"
         description="设置个人标题风格和智能分组习惯。个人要求会追加在平台规则之后。"

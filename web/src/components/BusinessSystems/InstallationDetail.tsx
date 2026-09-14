@@ -155,7 +155,7 @@ export function InstallationDetail({
         </div>
       </header>
       <Tabs value={tab} onValueChange={setTab} className="space-y-5">
-        <TabsList aria-label="业务系统实例管理" className="grid w-full max-w-sm grid-cols-2">
+        <TabsList aria-label="业务系统实例管理" variant="primary">
           <TabsTrigger value="overview">接入概览</TabsTrigger>
           <TabsTrigger value="access">访问授权</TabsTrigger>
         </TabsList>

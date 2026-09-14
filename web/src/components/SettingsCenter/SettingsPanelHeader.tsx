@@ -3,19 +3,7 @@ import { createPortal } from "react-dom";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-
-/**
- * 设置类面板的内容区宽度。
- *
- * 抽成常量而不是各处写 `max-w-5xl`：改造前 AdminShells、SystemSettingsPanel、
- * UsageDashboard 三处各写一遍，改宽度得记得同时改三处，漏一处就会出现同一个
- * 抽屉里两块内容左右边界对不齐。
- *
- * 默认取 6xl（72rem）：在 1366px 及以上桌面多利用一档横向空间，同时小屏仍由
- * 外层 padding 和 w-full 自适应。表单内部继续自行约束字段宽度，避免输入框无意义拉长。
- * 数据密集型页面（列表 / 看板 / trace）不适用，那些走 fullWidth。
- */
-export const SETTINGS_CONTENT_WIDTH = "mx-auto w-full max-w-6xl";
+export { SETTINGS_CONTENT_WIDTH } from "@/components/SettingsCenter/settingsLayout";
 
 interface SettingsPanelHeaderProps {
   title: string;

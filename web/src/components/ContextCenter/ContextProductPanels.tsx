@@ -407,7 +407,7 @@ function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort
       <Degraded show={detail.degraded} />
       {error && <p role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger-ink">{error}</p>}
       <Tabs defaultValue="profile" onValueChange={value => { if (value === "timeline" && !timeline) void loadTimeline(); if (value === "relations" && !relations) void loadRelations(); }}>
-        <div className="overflow-x-auto"><TabsList aria-label="实体详情区域" className="min-w-max"><TabsTrigger value="profile">画像</TabsTrigger><TabsTrigger value="timeline">Timeline</TabsTrigger><TabsTrigger value="relations">关系</TabsTrigger><TabsTrigger value="corrections">纠正记录</TabsTrigger></TabsList></div>
+        <TabsList aria-label="实体详情区域" variant="secondary"><TabsTrigger value="profile">画像</TabsTrigger><TabsTrigger value="timeline">Timeline</TabsTrigger><TabsTrigger value="relations">关系</TabsTrigger><TabsTrigger value="corrections">纠正记录</TabsTrigger></TabsList>
         <TabsContent value="profile" className="mt-4"><EntityProfileView profile={profile} openEvidence={openEvidence} /></TabsContent>
         <TabsContent value="timeline" className="mt-4">
           <Degraded show={Boolean(timeline?.degraded)} exhausted={Boolean(timeline?.degraded && !timeline.nextCursor)} />

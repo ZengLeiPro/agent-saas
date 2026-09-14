@@ -801,15 +801,13 @@ export function PlatformBillingManager({ tenantId: fixedTenantId }: { tenantId?:
           <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />
 
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as PlatformTab)} className="flex min-h-0 flex-1 flex-col">
-            <div className="shrink-0 rounded-lg border bg-card p-1 shadow-sm">
-              <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0 text-muted-foreground md:grid-cols-3 xl:grid-cols-5">
-                <TabsTrigger value="overview" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">账户与策略</TabsTrigger>
-                <TabsTrigger value="ledger" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">流水</TabsTrigger>
-                {canReadFinance && <TabsTrigger value="usage-events" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">用量事件</TabsTrigger>}
-                {canReadFinance && <TabsTrigger value="pricing-versions" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">价格版本</TabsTrigger>}
-                {canReadFinance && <TabsTrigger value="audit" className="h-9 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none">平台审计</TabsTrigger>}
-              </TabsList>
-            </div>
+            <TabsList variant="primary">
+              <TabsTrigger value="overview">账户与策略</TabsTrigger>
+              <TabsTrigger value="ledger">流水</TabsTrigger>
+              {canReadFinance && <TabsTrigger value="usage-events">用量事件</TabsTrigger>}
+              {canReadFinance && <TabsTrigger value="pricing-versions">价格版本</TabsTrigger>}
+              {canReadFinance && <TabsTrigger value="audit">平台审计</TabsTrigger>}
+            </TabsList>
 
             <div className="min-h-0 flex-1 overflow-auto pt-4">
               <TabsContent value="overview" className="mt-0 space-y-4">

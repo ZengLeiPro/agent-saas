@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { TaskBoard, TaskBoardExecutionPurpose, TaskBoardStageModels, TaskBoardTask } from "@agent/shared";
 import {
-  BRAND_SEGMENTED_TABS_LIST_CLASS,
-  BRAND_SEGMENTED_TAB_TRIGGER_CLASS,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -87,15 +85,9 @@ export function TaskDetailTabs({
 }) {
   return (
     <Tabs value={value} onValueChange={(next) => onChange(next as TaskDetailTab)} className="shrink-0 border-b px-4 py-2 sm:px-6">
-      <TabsList aria-label="任务详情分区" className={`${BRAND_SEGMENTED_TABS_LIST_CLASS} relative grid grid-cols-2`}>
-        <span
-          aria-hidden="true"
-          data-task-detail-tab-indicator
-          className="pointer-events-none absolute inset-y-1 left-1 rounded-[7px] bg-background shadow-[0_1px_4px_rgba(15,23,42,0.10)] transition-transform duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
-          style={{ width: "calc((100% - 0.5rem) / 2)", transform: `translateX(${value === "details" ? 0 : 100}%)` }}
-        />
-        <TabsTrigger value="details" className={`${BRAND_SEGMENTED_TAB_TRIGGER_CLASS} relative z-10`}>详细信息</TabsTrigger>
-        <TabsTrigger value="discussion" className={`${BRAND_SEGMENTED_TAB_TRIGGER_CLASS} relative z-10`}>讨论（{commentCount}）</TabsTrigger>
+      <TabsList aria-label="任务详情分区" variant="secondary">
+        <TabsTrigger value="details">详细信息</TabsTrigger>
+        <TabsTrigger value="discussion">讨论（{commentCount}）</TabsTrigger>
       </TabsList>
     </Tabs>
   );

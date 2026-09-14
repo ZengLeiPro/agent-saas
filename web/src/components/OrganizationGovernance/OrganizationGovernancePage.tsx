@@ -571,12 +571,12 @@ export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string
   }, [tenantId]);
   return (
     <Tabs value={locationState.view} onValueChange={value => navigate(value as MemoryKnowledgeView)} className="min-h-0">
-      <TabsList aria-label="记忆与知识区域" className="h-auto w-full flex-nowrap justify-start overflow-x-auto sm:flex-wrap">
-        <TabsTrigger value="governance" className="shrink-0">资源治理</TabsTrigger>
-        <TabsTrigger value="context-center" className="shrink-0">Context Center</TabsTrigger>
-        <TabsTrigger value="timeline" className="shrink-0">Timeline</TabsTrigger>
-        <TabsTrigger value="entities" className="shrink-0">实体</TabsTrigger>
-        <TabsTrigger value="reviews" className="shrink-0">待审核</TabsTrigger>
+      <TabsList aria-label="记忆与知识区域" variant="primary">
+        <TabsTrigger value="governance">资源治理</TabsTrigger>
+        <TabsTrigger value="context-center">Context Center</TabsTrigger>
+        <TabsTrigger value="timeline">Timeline</TabsTrigger>
+        <TabsTrigger value="entities">实体</TabsTrigger>
+        <TabsTrigger value="reviews">待审核</TabsTrigger>
       </TabsList>
       <TabsContent value="governance" className="mt-4"><MemoryKnowledgeGovernance tenantId={tenantId} onNavigate={target => navigate(target === "center" ? "context-center" : target)} /></TabsContent>
       <TabsContent value="context-center" className="mt-4 min-h-0"><ContextCenterPage api={scopedContextApi} /></TabsContent>

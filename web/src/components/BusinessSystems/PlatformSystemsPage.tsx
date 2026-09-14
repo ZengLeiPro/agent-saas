@@ -166,7 +166,7 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
           window.history.replaceState(window.history.state, '', url);
         }}
       >
-        <TabsList aria-label="业务系统管理" className="grid w-full max-w-sm grid-cols-2">
+        <TabsList aria-label="业务系统管理" variant="primary">
           <TabsTrigger value="config">系统配置</TabsTrigger>
           <TabsTrigger value="installations">组织接入</TabsTrigger>
         </TabsList>

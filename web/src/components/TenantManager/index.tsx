@@ -981,23 +981,20 @@ export function TenantManager() {
             </div>
           ) : (
           <Tabs value={activeDetailTab} onValueChange={(value) => setActiveDetailTab(value as TenantDetailTab)} className="flex min-h-0 flex-1 flex-col">
-            <div className="rounded-lg border bg-card p-1 shadow-sm">
-              <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-transparent p-0 text-muted-foreground sm:grid-cols-4">
+            <TabsList variant="primary">
                 {tenantDetailTabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
                     <TabsTrigger
                       key={tab.id}
                       value={tab.id}
-                      className="h-9 gap-2 rounded-md px-3 data-[state=active]:bg-brand-accent-soft data-[state=active]:text-foreground data-[state=active]:shadow-none"
                     >
                       <Icon className="size-3.5 shrink-0" />
                       <span className="truncate">{tab.label}</span>
                     </TabsTrigger>
                   );
                 })}
-              </TabsList>
-            </div>
+            </TabsList>
 
             <div className="min-h-0 flex-1 overflow-auto pt-4">
             <TabsContent value="config" forceMount className="mt-0">

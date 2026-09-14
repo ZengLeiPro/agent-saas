@@ -60,6 +60,7 @@ import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
 import type { DesktopSessionSidebarProps } from "./desktopSessionSidebarTypes";
 import { SessionRow } from "./DesktopSessionSidebarRow";
+import { DESKTOP_PRIMARY_SIDEBAR_WIDTH } from "./SettingsCenter/settingsLayout";
 import { DesktopWorkspaceSwitcher } from '@/components/AppsSidebarPanel';
 import { DesktopBusinessWorkspaceSidebar } from '@/components/BusinessSystems/DesktopBusinessWorkspaceSidebar';
 import { useMySystems } from '@/hooks/useMySystems';
@@ -674,15 +675,14 @@ export function DesktopSessionSidebar({
   const [subPanelOpen, setSubPanelOpen] = useState(
     () => activeTab === "chat" && !!activeSessionId,
   );
-
-  // 主栏宽度可拖动调整 + 持久化(双击拖动条恢复默认 160)
+  // 主栏宽度可拖动调整 + 持久化；默认与设置工作区一致。
   const {
     width: mainPanelWidth,
     onMouseDown: onMainResizeMouseDown,
     onDoubleClick: onMainResizeDoubleClick,
   } = useResizableWidth({
     storageKey: "sidebar-mainpanel-width",
-    defaultWidth: 160,
+    defaultWidth: DESKTOP_PRIMARY_SIDEBAR_WIDTH,
     minWidth: 140,
     maxWidth: 320,
   });
@@ -699,15 +699,15 @@ export function DesktopSessionSidebar({
     maxWidth: 600,
   });
 
-  // 单栏模式整体宽度可拖动调整 + 持久化(双击拖动条恢复默认 280)
+  // 单栏模式整体宽度可拖动调整 + 持久化；默认与设置工作区一致。
   const {
     width: singlePanelWidth,
     onMouseDown: onSingleResizeMouseDown,
     onDoubleClick: onSingleResizeDoubleClick,
   } = useResizableWidth({
     storageKey: "sidebar-singlepanel-width",
-    defaultWidth: 280,
-    minWidth: 260,
+    defaultWidth: DESKTOP_PRIMARY_SIDEBAR_WIDTH,
+    minWidth: 240,
     maxWidth: 640,
   });
 
@@ -1293,9 +1293,7 @@ export function DesktopSessionSidebar({
   }
 
   if (settingsMode) {
-    const hasSecondPanel = subPanelOpen || showTrash;
     return <DeferredUnifiedSettingsSidebar
-        width={sidebarLayout === "single" ? singlePanelWidth : (hasSecondPanel ? mainPanelWidth + subPanelWidth : mainPanelWidth)}
         hidden={hidden}
         className={className}
         access={settingsAccess}
@@ -1304,9 +1302,6 @@ export function DesktopSessionSidebar({
         activeSection={activeSettingsSection}
         onNavigate={onSettingsNavigate}
         onClose={onCloseSettings}
-        onCollapse={onCollapse}
-        onResizeMouseDown={sidebarLayout === "single" ? onSingleResizeMouseDown : (hasSecondPanel ? onSubResizeMouseDown : onMainResizeMouseDown)}
-        onResizeDoubleClick={sidebarLayout === "single" ? onSingleResizeDoubleClick : (hasSecondPanel ? onSubResizeDoubleClick : onMainResizeDoubleClick)}
         footer={sidebarFooter}
       />;
   }

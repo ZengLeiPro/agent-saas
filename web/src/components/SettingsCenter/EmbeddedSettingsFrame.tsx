@@ -5,6 +5,8 @@ import {
   SETTINGS_CONTENT_WIDTH,
   SettingsPanelHeaderStickyProvider,
 } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { SETTINGS_PRODUCT_SURFACE_CLASS } from "@/components/SettingsCenter/settingsLayout";
+import { cn } from "@/lib/utils";
 
 export function EmbeddedSettingsFrame({
   content,
@@ -18,7 +20,7 @@ export function EmbeddedSettingsFrame({
   avatarUploading: boolean;
 }) {
   return (
-    <div className="h-full overflow-y-auto bg-card p-4 md:p-8 md:pt-5" data-testid="personal-settings-content">
+    <div className={cn("h-full overflow-y-auto bg-card p-4 md:p-8 md:pt-5", SETTINGS_PRODUCT_SURFACE_CLASS)} data-testid="personal-settings-content">
       <div className={`${SETTINGS_CONTENT_WIDTH} min-h-full`}>
         <SettingsPanelHeaderStickyProvider>{content}</SettingsPanelHeaderStickyProvider>
       </div>

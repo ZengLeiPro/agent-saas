@@ -68,9 +68,18 @@ export interface WsServerConfig {
     authEpochAuthority?: AuthEpochAuthority;
 }
 
-export function isWebSocketOriginAllowed(origin: string | undefined, allowedOrigins?: string[]): boolean {
+export function isWebSocketOriginAllowed(
+    origin: string | undefined,
+    allowedOrigins?: string[],
+    requestHost?: string,
+): boolean {
     if (!origin || !allowedOrigins?.length) return true;
-    return allowedOrigins.includes(origin);
+    if (allowedOrigins.includes(origin)) return true;
+    // Native iOS/Android WebSocket Origin is the API host (wss URL), not the Web app origin.
+    const host = requestHost?.split(':')[0]?.trim().toLowerCase();
+    if (!host) return false;
+    const normalized = origin.trim().toLowerCase();
+    return normalized === `https://${host}` || normalized === `http://${host}`;
 }
 
 export class WsServer {
@@ -128,7 +137,11 @@ export class WsServer {
             }
 
             const origin = typeof request.headers.origin === 'string' ? request.headers.origin : undefined;
-            if (!isWebSocketOriginAllowed(origin, this.config.allowedOrigins)) {
+            const requestHost = typeof request.headers.host === 'string' ? request.headers.host : undefined;
+            if (!isWebSocketOriginAllowed(origin, this.config.allowedOrigins, requestHost)) {
+                chatLogger.warn(
+                    `WS origin rejected origin=${origin ?? ''} host=${requestHost ?? ''} ip=${this.resolveClientIp(request) ?? ''}`,
+                );
                 socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
                 socket.destroy();
                 return;

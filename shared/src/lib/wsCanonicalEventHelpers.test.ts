@@ -263,4 +263,61 @@ describe('WS canonical event integration', () => {
       content: '交互未完成：Workflow approval unavailable',
     }));
   });
+
+  it('回放的完整 text 块按 runId+正文认领 transcript，不在新消息下方再追加一份', () => {
+    const previous = '上一轮最终回复要我现在把 agent-saas 也快进一次吗？';
+    const ctrl = makeController([
+      { id: 'line-10', type: 'user', content: '上一问' },
+      { id: 'line-11', type: 'text', content: previous, runId: 'run-1' },
+      { id: 'line-12', type: 'user', content: '继续' },
+    ]);
+    const context = makeContext(ctrl);
+    const block: WsBlockState = { currentBlockIndex: -1, currentBlockType: null };
+    const projection = {
+      domain: 'message' as const,
+      runId: 'run-1',
+      messageId: 'assistant:run-1',
+      blockId: 'block:event-2386:text',
+    };
+    const dispatch = (frame: WsEvent) => processWsEvent(frame, context, block, { value: null }, null);
+    dispatch({
+      type: 'block_start',
+      blockType: 'text',
+      runId: 'run-1',
+      projection: { ...projection, eventId: 'event-2386:0' },
+    });
+    dispatch({
+      type: 'text',
+      content: previous,
+      projection: { ...projection, eventId: 'event-2386:1' },
+    });
+    dispatch({
+      type: 'block_end',
+      blockType: 'text',
+      projection: { ...projection, eventId: 'event-2386:2' },
+    });
+    expect(ctrl.messages.filter((message) => message.type === 'text')).toEqual([
+      expect.objectContaining({ id: 'line-11', type: 'text', content: previous, runId: 'run-1' }),
+    ]);
+    expect(ctrl.messages.map((message) => message.id)).toEqual(['line-10', 'line-11', 'line-12']);
+  });
+
+  it('不同 run 的相同正文仍是两条独立回复', () => {
+    const ctrl = makeController([
+      { id: 'line-11', type: 'text', content: '同样的话', runId: 'run-1' },
+    ]);
+    processWsEvent({
+      type: 'block_start',
+      blockType: 'text',
+      runId: 'run-2',
+      projection: {
+        eventId: 'event-new:0',
+        domain: 'message',
+        runId: 'run-2',
+        messageId: 'assistant:run-2',
+        blockId: 'block:event-new:text',
+      },
+    }, makeContext(ctrl), { currentBlockIndex: -1, currentBlockType: null }, { value: null }, null);
+    expect(ctrl.messages).toHaveLength(2);
+  });
 });

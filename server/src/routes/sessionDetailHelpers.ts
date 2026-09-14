@@ -162,6 +162,15 @@ export interface LastRunState {
   quotaResetAt?: string;
   finishedAt?: string;
   liveness?: RunLiveness;
+  /** 该 run_state_changed 的 durable 会话游标，供客户端刷新后推进 lastEventCursor。 */
+  eventCursor?: string;
+}
+
+function durableCursorOf(event: PlatformEvent): string | undefined {
+  const sequence = (event as PlatformEvent & { sequence?: unknown }).sequence;
+  if (typeof sequence === 'number' && Number.isFinite(sequence)) return String(sequence);
+  if (typeof sequence === 'string' && sequence.trim()) return sequence;
+  return event.id;
 }
 
 export async function getLastRunState(
@@ -190,6 +199,7 @@ export async function getLastRunState(
     }
     const last = collected.at(-1);
     if (!last || last.type !== 'run_state_changed') return undefined;
+    const eventCursor = durableCursorOf(last);
     return {
       runId: last.runId,
       status: last.status,
@@ -198,6 +208,7 @@ export async function getLastRunState(
       ...(last.recoveryAction ? { recoveryAction: last.recoveryAction } : {}),
       ...(last.quotaResetAt ? { quotaResetAt: last.quotaResetAt } : {}),
       ...(last.timestamp ? { finishedAt: last.timestamp } : {}),
+      ...(eventCursor ? { eventCursor } : {}),
     };
   } catch {
     return undefined;

@@ -224,6 +224,26 @@ describe('mergeServerMessagesWithLocalTail', () => {
     ]);
   });
 
+  it('preserveTail 不把已落盘的上一轮完整回复按不同 id 再追加到新消息下方', () => {
+    const previous = '上一轮最终回复要我现在把 agent-saas 也快进一次吗？';
+    const server = [
+      user('line-10', '上一问'),
+      runText('line-11', previous, 'run-1'),
+      user('line-12', '继续'),
+      runText('line-13', '两件事', 'run-2'),
+    ];
+    const local = [
+      ...server.slice(0, 3),
+      runText('block:event-2386:text', previous, 'run-1'),
+      runText('stream-new', '两件事', 'run-2'),
+      tool('tool-live', 'run-2', 'todo-1'),
+    ];
+    expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([
+      ...server,
+      local[5],
+    ]);
+  });
+
   it('相同工具 ID 属于不同 Run 时仍保留本地未落盘尾部', () => {
     const server = [
       runText('line-1', '上一轮', 'run-old'),

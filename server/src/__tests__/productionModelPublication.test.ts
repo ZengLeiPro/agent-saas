@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
   atomicWrite,
@@ -44,6 +45,20 @@ describe('production model configuration publication', () => {
       expect(rig.appliedPhases).toContain(`${node.target.role}:committed:${state.revision}`);
       expect(node.view.isExecutionAllowed()).toBe(true);
     }
+    const env = Object.fromEntries(
+      readFileSync(join(rig.root, 'server-green.release.env'), 'utf8')
+        .split(/\r?\n/u)
+        .filter((line) => line.includes('='))
+        .map((line) => {
+          const at = line.indexOf('=');
+          return [line.slice(0, at), line.slice(at + 1)];
+        }),
+    );
+    expect(env.AGENT_SAAS_CONFIG_IDENTITY_DIGEST).toBe(state.identity.digest);
+    expect(env.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST).toBe(
+      state.identity.credentialVersionDigest,
+    );
+    expect(env.AGENT_SAAS_CONFIG_IDENTITY_DIGEST).not.toBe(rig.expected.digest);
   });
 
   it('blocks new model resolution during an applying transaction', async () => {

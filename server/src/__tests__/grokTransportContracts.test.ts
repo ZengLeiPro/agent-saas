@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GrokSubscriptionResponsesTransport } from '../runtime/responses/grokSubscriptionResponsesTransport.js';
 import { GrokModelCatalogService } from '../runtime/responses/grokModelCatalog.js';
-import { GROK_RESPONSES_ENDPOINT } from '../runtime/responses/grokProtocol.js';
+import { GROK_RESPONSES_ENDPOINT, GrokProtocolError } from '../runtime/responses/grokProtocol.js';
 import { normalizeGrokRequest } from '../runtime/responses/grokRequestNormalization.js';
+import {
+  isPermanentGrokProtocolError,
+  isPermanentTransportError,
+} from '../runtime/responses/permanentTransportError.js';
 import { createModelAdapterForProtocol } from '../runtime/modelAdapterFactory.js';
 import { isProxyRequiredEgressRequest } from '../runtime/egressRequestPolicy.js';
 import { grokFixture, jsonResponse } from './grokTestFixtures.js';
@@ -277,6 +281,41 @@ describe('Grok ordered subscription transport T01-T07, T25, T27-T28, T33', () =>
     expect(() =>
       normalizeGrokRequest({ model: 'test', input: [], reasoning: { effort: 'high' } }, true),
     ).toThrow('reasoning_effort_capability_unverified');
+  });
+
+  it('sends documented grok-4.6 images when the subscription catalog omits input modalities', () => {
+    const imageInput = [
+      { role: 'user', content: [{ type: 'input_image', image_url: 'data:image/png;base64,Zg==' }] },
+    ];
+    const normalized = normalizeGrokRequest(
+      { model: 'grok-4.6', input: imageInput },
+      true,
+      { id: 'grok-4.6', source: 'subscription_catalog' },
+    );
+    expect(normalized.input).toEqual(imageInput);
+    expect(() =>
+      normalizeGrokRequest(
+        { model: 'grok-4.6', input: imageInput },
+        true,
+        { id: 'grok-4.6', source: 'subscription_catalog', inputModalities: ['text'] },
+      ),
+    ).toThrow('image_capability_unverified');
+    expect(() =>
+      normalizeGrokRequest({ model: 'test', input: imageInput }, true, {
+        id: 'test',
+        source: 'subscription_catalog',
+      }),
+    ).toThrow('image_capability_unverified');
+  });
+
+  it('treats Grok capability protocol errors as permanent transport failures', () => {
+    expect(isPermanentGrokProtocolError(new GrokProtocolError('image_capability_unverified'))).toBe(
+      true,
+    );
+    expect(isPermanentTransportError(new GrokProtocolError('image_capability_unverified'))).toBe(true);
+    expect(
+      isPermanentTransportError(new GrokProtocolError('billing_request_failed', undefined, true)),
+    ).toBe(false);
   });
 
   it('sends documented Grok reasoning effort even when the subscription catalog omits capability metadata', () => {

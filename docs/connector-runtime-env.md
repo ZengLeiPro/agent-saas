@@ -8,12 +8,12 @@
 |---|---|---|
 | GitHub | `gh` / `git` | `GH_TOKEN`、`GITHUB_TOKEN`、隔离 Git credential helper |
 | Notion | `ntn` | `NOTION_API_TOKEN` |
-| Google Workspace | `gws` | `GOOGLE_WORKSPACE_CLI_TOKEN` |
+| Google Workspace | `gws` | `GOOGLE_WORKSPACE_CLI_TOKEN`、`GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file`、`GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/workspace/.gws` |
 | 钉钉 | `dws` | `DWS_CONFIG_DIR=/workspace/.dws` |
 | 飞书 | `lark-cli` | `LARKSUITE_CLI_APP_ID`、短期 `LARKSUITE_CLI_USER_ACCESS_TOKEN` |
 | 阿里云 | `aliyun` | 短期 STS 三件套、`ALIBABA_CLOUD_REGION_ID` |
 
-Notion、Google Workspace、飞书、阿里云的长期凭据由 SecretVault 持久化；Google 与飞书 refresh token 永不进入运行时 env，每次运行只注入有效的短期 access token。阿里云源 AK/SK 只用于 Server 端 `AssumeRole`，运行时只注入短期 STS，不创建共享 `~/.aliyun/config.json`。钉钉继续使用官方 CLI 的用户级 profile/keychain，认证目录位于当前用户独立 workspace。
+Notion、Google Workspace、飞书、阿里云的长期凭据由 SecretVault 持久化；Google 与飞书 refresh token 永不进入运行时 env，每次运行只注入有效的短期 access token。阿里云源 AK/SK 只用于 Server 端 `AssumeRole`，运行时只注入短期 STS，不创建共享 `~/.aliyun/config.json`。钉钉继续使用官方 CLI 的用户级 profile/keychain，认证目录位于当前用户独立 workspace。`gws` 默认把加密密钥放在容器 OS keyring，sandbox 重建后无法解密 `/workspace/.gws` 里的凭据；镜像与 run env 因此固定 `GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file`，让 `credentials.enc` 与 `.encryption_key` 都落在当前用户 workspace。
 
 ## 运行链路
 

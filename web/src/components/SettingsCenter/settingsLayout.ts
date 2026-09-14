@@ -17,7 +17,7 @@ export type SettingsPageWidth = 'compact' | 'standard' | 'wide';
  * 页面宽度按信息密度分级；同一页面的标题、标签和内容必须放在同一个容器内。
  */
 export function settingsPageWidthClass(width: SettingsPageWidth) {
-  if (width === 'compact') return 'mx-auto w-full max-w-5xl';
-  if (width === 'standard') return 'mx-auto w-full max-w-6xl';
+  if (width === 'compact') return 'mx-auto w-full max-w-6xl';
+  if (width === 'standard') return 'mx-auto w-full max-w-7xl';
   return 'w-full';
 }

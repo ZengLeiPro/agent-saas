@@ -28,7 +28,7 @@ describe("我的 Agent", () => {
     expect(screen.getByRole("tab", { name: "资料" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "长期 Memory" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Persona" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "我的 Agent" }).closest(".max-w-6xl")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "我的 Agent" }).closest(".max-w-7xl")).toBeTruthy();
   });
 });
 

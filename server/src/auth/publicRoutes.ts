@@ -52,6 +52,11 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { method: 'GET', path: '/app-contract/v1/directory/changes' },
   // V2 token 端点由 private_key_jwt + DPoP 自鉴权，不接受会话 JWT 或 client secret。
   { method: 'POST', path: '/app-contract/v2/oauth/token' },
+  // V2 激活与密钥轮换端点使用短时 DPoP access token 自鉴权。全局中间件只负责
+  // 放行，token、proof、scope、安装状态与重放仍由各自 router 完整校验。
+  { method: 'POST', path: /^\/app-contract\/v2\/installations\/[^/]+\/activate$/ },
+  { method: 'POST', path: /^\/app-contract\/v2\/installations\/[^/]+\/keys\/prepare$/ },
+  { method: 'POST', path: /^\/app-contract\/v2\/installations\/[^/]+\/keys\/commit$/ },
 ];
 
 export function isPublicRoute(req: Request): boolean {

@@ -4,13 +4,19 @@ import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { GovernanceAuditStore } from '../../data/governance-audit/types.js';
+import { createAuthMiddleware } from '../../auth/middleware.js';
+import type { KyAppV2ActivationService } from '../enrollment/activation.js';
 import type { KyAppEnrollmentService } from '../enrollment/service.js';
 import type { EnrollmentOperation } from '../enrollment/types.js';
 import type { KyAppOutbound } from '../outbound.js';
 import type { KyAppSatIssuer } from '../sat/issuer.js';
 import type { PgKyAppSystemStore } from '../systems/store.js';
 import type { KyAppInstallation } from '../systems/types.js';
-import { createKyAppEnrollmentRouter, createKyAppV2TokenRouter } from './enrollment.js';
+import {
+  createKyAppEnrollmentRouter,
+  createKyAppV2ActivationRouter,
+  createKyAppV2TokenRouter,
+} from './enrollment.js';
 
 const user = {
   sub: 'platform-admin',
@@ -134,6 +140,47 @@ function start(router: express.Router, authenticated = true) {
 }
 
 describe('KY App V2 enrollment routes', () => {
+  it('全局登录鉴权放行 DPoP 激活请求，再由 V2 Router 自行鉴权', async () => {
+    const activate = vi.fn().mockResolvedValue({ ...installation, status: 'enabled' });
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAuthMiddleware('session-secret'));
+    app.use(
+      '/api/app-contract/v2',
+      createKyAppV2ActivationRouter({
+        activation: { activate } as unknown as KyAppV2ActivationService,
+      }),
+    );
+    const server = app.listen(0);
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/app-contract/v2/installations/install-demo/activate`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'DPoP workload-access-token',
+          dpop: 'signed-dpop-proof',
+        },
+        body: JSON.stringify({
+          manifestDigest: 'a'.repeat(64),
+          appVersion: '1.0.0',
+          keyId: 'k'.repeat(43),
+          generation: 1,
+        }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(activate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        installationId: 'install-demo',
+        accessToken: 'workload-access-token',
+        dpopProof: 'signed-dpop-proof',
+      }),
+    );
+  });
+
   it('创建 operation 后安全取得 challenge，响应只含脱敏身份', async () => {
     const deps = dependencies();
     const base = start(

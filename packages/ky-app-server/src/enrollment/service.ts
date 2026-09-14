@@ -23,7 +23,7 @@ import type {
 } from './types.js';
 
 export interface EnrollmentServiceOptions {
-  enabled: boolean;
+  enabled: boolean | (() => Promise<boolean> | boolean);
   systemId: string;
   origin: string;
   platformIssuer: string;
@@ -52,7 +52,11 @@ export class V2EnrollmentService {
     input: EnrollmentChallengeInput,
     platformSat: string,
   ): Promise<{ enrollmentRequest: string; state: string }> {
-    if (!this.options.enabled) throw new Error('enrollment_disabled');
+    const enabled =
+      typeof this.options.enabled === 'function'
+        ? await this.options.enabled()
+        : this.options.enabled;
+    if (!enabled) throw new Error('enrollment_disabled');
     if (
       input.platformIssuer !== this.options.platformIssuer ||
       input.systemId !== this.options.systemId ||
@@ -216,7 +220,6 @@ export class V2EnrollmentService {
         definitiveFailure = response.status >= 400 && response.status < 500;
         throw new Error(`token_exchange_${response.status}`);
       }
-      definitiveFailure = true;
       const body = (await response.json()) as {
         installation_grant?: unknown;
         installationGrant?: unknown;

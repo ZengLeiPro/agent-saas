@@ -156,6 +156,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     issuer: config.issuer,
     tokenEndpoint: new URL(V2_ENDPOINTS.token, new URL(config.jwksUrl).origin).toString(),
     installations: systems,
+    deploymentKeys,
     platformKeys: signingKeyStore,
     replays: workloadReplays,
     now,

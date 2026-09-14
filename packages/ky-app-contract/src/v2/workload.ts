@@ -9,6 +9,7 @@ import {
   asClaims,
   assertEqual,
   assertExactClaims,
+  assertIntegerClaim,
   assertStringClaim,
   assertTokenTime,
   parseScope,
@@ -23,7 +24,16 @@ import {
 import { v2Fail } from './errors.js';
 import { assertJoseHeader, decodeV2Jws, verifyV2Signature } from './jws.js';
 
-const CLIENT_ASSERTION_CLAIMS = ['iss', 'sub', 'aud', 'iat', 'exp', 'jti', 'iid', 'key_id'] as const;
+const CLIENT_ASSERTION_CLAIMS = [
+  'iss',
+  'sub',
+  'aud',
+  'iat',
+  'exp',
+  'jti',
+  'iid',
+  'key_id',
+] as const;
 
 export interface ClientAssertionVerificationOptions {
   deploymentPublicJwk: P256PublicJwk;
@@ -91,7 +101,8 @@ export function verifyWorkloadAccessToken(
   compact: string,
   options: WorkloadTokenVerificationOptions,
 ): WorkloadAccessTokenClaims {
-  if ((options.authorizationScheme ?? 'DPoP') !== 'DPoP') return v2Fail('dpop_required', 'request_auth');
+  if ((options.authorizationScheme ?? 'DPoP') !== 'DPoP')
+    return v2Fail('dpop_required', 'request_auth');
   const decoded = decodeV2Jws(compact);
   assertJoseHeader(decoded.protectedHeader, V2_JWT_TYP.workloadAccessToken, 'kid');
   if (decoded.protectedHeader.kid !== options.platformKeyId) {
@@ -104,11 +115,27 @@ export function verifyWorkloadAccessToken(
   assertEqual(claims.iss, options.platformIssuer, 'invalid_issuer');
   assertEqual(claims.aud, V2_WORKLOAD_AUDIENCE, 'invalid_audience');
   assertEqual(claims.tid, options.tenantId, 'installation_binding_mismatch', 'resource_binding');
-  assertEqual(claims.iid, options.installationId, 'installation_binding_mismatch', 'resource_binding');
-  assertEqual(claims.sub, options.installationId, 'installation_binding_mismatch', 'resource_binding');
+  assertEqual(
+    claims.iid,
+    options.installationId,
+    'installation_binding_mismatch',
+    'resource_binding',
+  );
+  assertEqual(
+    claims.sub,
+    options.installationId,
+    'installation_binding_mismatch',
+    'resource_binding',
+  );
   assertEqual(claims.sid, options.systemId, 'installation_binding_mismatch', 'resource_binding');
-  assertEqual(claims.client_id, options.deploymentId, 'installation_binding_mismatch', 'resource_binding');
-  if (!claims.cnf || claims.cnf.jkt !== options.keyId) return v2Fail('dpop_key_mismatch', 'resource_binding');
+  assertEqual(
+    claims.client_id,
+    options.deploymentId,
+    'installation_binding_mismatch',
+    'resource_binding',
+  );
+  if (!claims.cnf || claims.cnf.jkt !== options.keyId)
+    return v2Fail('dpop_key_mismatch', 'resource_binding');
   assertEqual(claims.generation, options.generation, 'key_generation_mismatch', 'resource_binding');
   if (options.installationStatus && options.installationStatus !== 'enabled') {
     return v2Fail('installation_inactive', 'resource_binding');
@@ -136,7 +163,10 @@ export function assertReplayReservation(
   kind: 'client_assertion' | 'dpop',
 ): void {
   if (!reserved) {
-    return v2Fail(kind === 'client_assertion' ? 'assertion_replayed' : 'dpop_replayed', 'replay_store');
+    return v2Fail(
+      kind === 'client_assertion' ? 'assertion_replayed' : 'dpop_replayed',
+      'replay_store',
+    );
   }
 }
 
@@ -153,10 +183,12 @@ export function verifyDpopProof(
   assertStringClaim(claims.jti);
   assertStringClaim(claims.htm);
   assertStringClaim(claims.htu);
+  assertIntegerClaim(claims.iat);
   if (Math.abs(options.now - claims.iat) > V2_TTL_SECONDS.dpopProof) {
     return v2Fail('invalid_token_time', 'claims');
   }
-  if (claims.htm !== options.method.toUpperCase()) return v2Fail('invalid_dpop_proof', 'request_binding');
+  if (claims.htm !== options.method.toUpperCase())
+    return v2Fail('invalid_dpop_proof', 'request_binding');
   if (claims.htu.includes('?') || claims.htu.includes('#')) {
     return v2Fail('invalid_dpop_proof', 'request_binding');
   }

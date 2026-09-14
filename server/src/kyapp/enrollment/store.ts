@@ -104,7 +104,7 @@ export class PgEnrollmentStore {
   async getLatestExchanged(installationId: string): Promise<EnrollmentOperation | null> {
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.operationsTable}
-       WHERE installation_id=$1 AND status IN ('exchanged','activating','ready')
+       WHERE installation_id=$1 AND status IN ('exchanged','activating','failed_retryable','ready')
        ORDER BY code_consumed_at DESC NULLS LAST, updated_at DESC LIMIT 1`,
       [installationId],
     );
@@ -116,12 +116,28 @@ export class PgEnrollmentStore {
       `UPDATE ${this.operationsTable} SET status='ready',result_json=result_json || $2::jsonb,
          version=version+1,updated_at=clock_timestamp()
        WHERE operation_id=(SELECT operation_id FROM ${this.operationsTable}
-         WHERE installation_id=$1 AND status IN ('exchanged','activating','ready')
+         WHERE installation_id=$1 AND status IN ('exchanged','activating','failed_retryable','ready')
          ORDER BY code_consumed_at DESC NULLS LAST,updated_at DESC LIMIT 1)
        RETURNING operation_id`,
       [installationId, JSON.stringify(result)],
     );
     if (!updated.rows[0]) throw new EnrollmentStoreError('找不到待生效的授权', 'invalid_state');
+  }
+
+  async markActivationFailure(input: {
+    installationId: string;
+    status: 'failed_retryable' | 'needs_human';
+    errorCode: string;
+    diagnosticId: string;
+  }): Promise<void> {
+    await this.options.pool.query(
+      `UPDATE ${this.operationsTable} SET status=$2,last_error_code=$3,diagnostic_id=$4,
+         version=version+1,updated_at=clock_timestamp()
+       WHERE operation_id=(SELECT operation_id FROM ${this.operationsTable}
+         WHERE installation_id=$1 AND status IN ('exchanged','activating','failed_retryable','needs_human')
+         ORDER BY code_consumed_at DESC NULLS LAST,updated_at DESC LIMIT 1)`,
+      [input.installationId, input.status, input.errorCode, input.diagnosticId],
+    );
   }
 
   async createOrGet(input: {
@@ -252,7 +268,7 @@ export class PgEnrollmentStore {
       }
       const updated = await client.query(
         `UPDATE ${this.operationsTable} SET
-          status='exchanged',code_consumed_at=clock_timestamp(),grant_jti=$2,
+          status='activating',code_consumed_at=clock_timestamp(),grant_jti=$2,
           result_json=$3::jsonb,version=version+1,updated_at=clock_timestamp()
          WHERE operation_id=$1 RETURNING *`,
         [operation.operationId, input.grantJti, JSON.stringify(input.result)],

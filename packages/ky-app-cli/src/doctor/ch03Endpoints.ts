@@ -5,6 +5,7 @@
 import { assert, expectStatus, newRequestId, rawCall } from '../harness/http.js';
 import { randomNonce } from '../mockShell/sat.js';
 import { disableBreakGlass, enableBreakGlass, loginAsEmployee } from './breakGlass.js';
+import { probeV2Adapter } from './v2.js';
 import {
   adminApiPath,
   firstValidInput,
@@ -232,6 +233,12 @@ export async function chapter03(ctx: DoctorContext): Promise<void> {
     const result = await ctx.testHook('clock', { offsetMs: 0 });
     expectStatus(result, 200, 'POST /ky/v1/test/clock');
   });
+
+  for (const check of await probeV2Adapter(ctx.baseUrl)) {
+    await reporter.check(check.name, () => {
+      assert(check.ok, check.detail);
+    });
+  }
 
   await disableBreakGlass(ctx);
   await reporter.check('兜底关闭后 local_admin 令牌立即失效（模式级撤销）', async () => {

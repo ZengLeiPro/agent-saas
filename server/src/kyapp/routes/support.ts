@@ -70,6 +70,11 @@ export function sendKyAppError(req: Request, res: Response, code: string, messag
 /** 已知业务异常 → 错误码。未知异常一律 `internal`，细节只进日志。 */
 export function kyAppErrorCode(error: unknown): string {
   const name = error instanceof Error ? error.name : '';
+  if (name === 'V2ContractError') {
+    const code = String((error as { code?: unknown }).code ?? 'unauthorized');
+    if (code === 'insufficient_scope' || code === 'installation_inactive') return 'forbidden';
+    return 'unauthorized';
+  }
   if (name === 'KyAppSystemNotFoundError') return 'not_found';
   if (name === 'KyAppSystemConflictError') return 'conflict';
   if (name === 'KyAppOnboardConflictError') return 'conflict';

@@ -8,12 +8,13 @@
  * 1. **载荷只有 `{tid, seq, page, exp}` 四个键**（§3.6 原文的 `{tid, snapshotSeq, page, exp=10min}`）。
  *    `tid` 是组织的不透明 id，**不是组织名称**；载荷里没有任何用户数据、没有任何显示名。
  *    多一个键、少一个键、类型不对，一律判为无效 token（见 `parseClaims`）。
- * 2. **签名材料复用已在 vault 的安装密钥**，零新 vault kind、零新 env。用 HKDF 派生一把
+ * 2. **签名材料来自调用方已有的密钥体系**：V1 使用 vault 中的安装密钥，V2 使用平台签名
+ *    密钥按 installationId 派生的 32 字节材料；两者都不增加 vault kind 或 env。再用 HKDF 派生
  *    用途独立的子密钥（salt 与 attest 同源，info 换成 `directory-page-token`），
  *    避免和 attest 的 HS256 子密钥交叉复用同一把字节。
  *    子密钥的 info 值**刻意不进 `@kaiyan/ky-app-contract`**：pageToken 对定制项目完全不透明，
  *    消费端永远不需要派生它，放进共享契约反而会让它看起来像是双方约定。
- * 3. **按安装实例隔离**：密钥来自该实例的安装密钥，A 实例的 token 在 B 实例验不过。
+ * 3. **按安装实例隔离**：调用方必须提供该实例专属材料，A 实例的 token 在 B 实例验不过。
  *    轮换窗口内 current / previous 都试（口径同 `attest/verify.ts`），
  *    token 只活 10 分钟，轮换不会打断正在翻页的消费端。
  */
@@ -45,7 +46,7 @@ export interface DirectoryPageTokenClaims {
   exp: number;
 }
 
-/** 一代安装密钥。形状与 `attest/verify.ts` 的 `KyAppInstallationKeyMaterial` 一致。 */
+/** 一代分页签名材料；V1 为安装密钥，V2 为平台侧按安装实例派生的 32 字节材料。 */
 export interface DirectoryPageTokenKeyMaterial {
   keyVersion: string;
   installationKey: Uint8Array;
@@ -62,7 +63,7 @@ export class DirectoryPageTokenError extends Error {
   }
 }
 
-/** 由安装密钥派生 pageToken 专用子密钥。 */
+/** 由调用方提供的 32 字节材料派生 pageToken 专用子密钥。 */
 export function deriveDirectoryPageTokenKey(installationKey: Uint8Array): Buffer {
   if (installationKey.length !== INSTALLATION_KEY_HKDF.length) {
     throw new DirectoryPageTokenError(

@@ -105,14 +105,16 @@ export interface KyAppRouterConfig {
   onLog?: (entry: KyLogEntry) => void;
   now?: () => number;
   /** V2 adapter 可选且常驻；缺省时 V1 行为完全不变。 */
-  v2?: {
-    enabled: boolean;
-    enrollment: V2EnrollmentService;
-    bindings: InstallationBindingProvider;
-    keys: DeploymentKeyStore;
-    /** 本地业务管理员鉴权；不得复用部署私钥。 */
-    authorizeStatus: (authorization: string | null) => Promise<boolean>;
-  };
+  v2?: KyAppV2RouterOptions;
+}
+
+export interface KyAppV2RouterOptions {
+  enabled: boolean;
+  enrollment: V2EnrollmentService;
+  bindings: InstallationBindingProvider;
+  keys: DeploymentKeyStore;
+  /** 本地业务管理员鉴权；不得复用部署私钥。 */
+  authorizeStatus: (authorization: string | null) => Promise<boolean>;
 }
 
 /** Hono 的 `Variables` 声明，供应用侧 `new Hono<{ Variables: KyAppVariables }>()` 复用。 */

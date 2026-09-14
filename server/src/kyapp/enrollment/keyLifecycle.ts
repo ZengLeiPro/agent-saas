@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 
 import {
   V2_ENDPOINTS,
+  decodeV2Jws,
   p256JwkThumbprint,
   verifyV2Attestation,
   type P256PublicJwk,
@@ -79,10 +80,21 @@ export class KyAppV2KeyLifecycleService {
       requiredScope: 'installation.keys.rotate',
     });
     const current = await this.options.keys.current(input.installationId);
+    const nextKeyId = p256JwkThumbprint(input.nextPublicJwk);
+    if (current && current.keyId === nextKeyId && input.generation === current.generation) {
+      await this.options.authenticator.authenticateTokenRequest({
+        installationId: installation.installationId,
+        deploymentId: current.deploymentId,
+        keyId: current.keyId,
+        publicJwk: current.publicJwk,
+        clientAssertion: input.nextClientAssertion,
+        dpopProof: input.nextDpopProof,
+      });
+      return current;
+    }
     if (!current || input.generation !== current.generation + 1) {
       throw new KyAppKeyLifecycleError('轮换代次已变化', 'key_generation_mismatch');
     }
-    const nextKeyId = p256JwkThumbprint(input.nextPublicJwk);
     await this.options.authenticator.authenticateTokenRequest({
       installationId: installation.installationId,
       deploymentId: current.deploymentId,
@@ -122,6 +134,31 @@ export class KyAppV2KeyLifecycleService {
       this.options.keys.current(input.installationId),
       this.options.keys.next(input.installationId),
     ]);
+    const assertedNextKeyId = next
+      ? null
+      : decodeV2Jws(input.nextClientAssertion).protectedHeader.kid;
+    if (
+      current &&
+      !next &&
+      assertedNextKeyId === current.keyId &&
+      current.generation === input.generation
+    ) {
+      await this.options.authenticator.authenticateTokenRequest({
+        installationId: input.installationId,
+        deploymentId: current.deploymentId,
+        keyId: current.keyId,
+        publicJwk: current.publicJwk,
+        clientAssertion: input.nextClientAssertion,
+        dpopProof: input.nextDpopProof,
+      });
+      this.assertAllInstancesReady(
+        input.expectedInstanceIds,
+        input.observations,
+        current.keyId,
+        current.generation,
+      );
+      return current;
+    }
     if (!current || !next || next.generation !== input.generation) {
       throw new KyAppKeyLifecycleError('找不到待切换密钥', 'key_prepare_required');
     }

@@ -68,7 +68,9 @@ export class KyAppV2ActivationService {
       method: 'POST',
       requestUrl: new URL(path, apiBase).toString(),
       requiredScope: 'installation.activate',
-      allowedStatuses: ['pending'],
+      // 激活响应丢失后，客户端会以同一 operation 重试；已启用实例必须可重放完整证明，
+      // 最终的 markReady 与安装状态更新均是幂等的。
+      allowedStatuses: ['pending', 'enabled'],
     });
     const installation = authenticated.installation;
     if (installation.installationId !== input.installationId) {
@@ -226,5 +228,25 @@ export class KyAppV2ActivationService {
       generation: input.generation,
     });
     return current;
+  }
+
+  async recordFailure(installationId: string, error: unknown): Promise<void> {
+    const reason =
+      error instanceof Error && 'reason' in error
+        ? String((error as { reason: unknown }).reason)
+        : 'activation_internal';
+    const needsHuman = new Set([
+      'installation_binding_mismatch',
+      'key_generation_mismatch',
+      'manifest_digest_mismatch',
+      'key_id_mismatch',
+      'system_not_published',
+    ]).has(reason);
+    await this.options.operations.markActivationFailure({
+      installationId,
+      status: needsHuman ? 'needs_human' : 'failed_retryable',
+      errorCode: reason,
+      diagnosticId: randomUUID(),
+    });
   }
 }

@@ -11,6 +11,7 @@ import {
 } from '@kaiyan/ky-app-contract';
 
 import type { KyAppInstallation, KyAppSystemStore } from '../systems/types.js';
+import type { DeploymentKeyRecord } from '../enrollment/types.js';
 import type { ReplayReservationStore } from './replayStore.js';
 
 export interface PlatformVerificationKeyProvider {
@@ -25,6 +26,9 @@ export class KyAppV2Authenticator {
       issuer: string;
       tokenEndpoint: string;
       installations: KyAppSystemStore;
+      deploymentKeys: {
+        listAccepted(installationId: string, now: Date): Promise<DeploymentKeyRecord[]>;
+      };
       platformKeys: PlatformVerificationKeyProvider;
       replays: ReplayReservationStore;
       now?: () => number;
@@ -91,9 +95,11 @@ export class KyAppV2Authenticator {
     if (typeof kid !== 'string' || typeof installationId !== 'string') {
       v2Fail('invalid_claims', 'claims', 'workload token 缺少 kid/iid');
     }
-    const [platformKey, installation] = await Promise.all([
+    const nowMs = this.now();
+    const [platformKey, installation, acceptedKeys] = await Promise.all([
       this.options.platformKeys.get(kid),
       this.options.installations.getInstallation(installationId),
+      this.options.deploymentKeys.listAccepted(installationId, new Date(nowMs)),
     ]);
     if (!platformKey || platformKey.status === 'revoked' || !installation) {
       v2Fail('invalid_key_source', 'signature', 'workload token 引用的身份不存在');
@@ -110,7 +116,21 @@ export class KyAppV2Authenticator {
     if (!statuses.includes(installation.status)) {
       v2Fail('installation_inactive', 'resource_binding', '安装实例当前不可用');
     }
-    const nowSeconds = Math.floor(this.now() / 1000);
+    const tokenConfirmation = decoded.payload.cnf as Record<string, unknown> | undefined;
+    const tokenKeyId =
+      tokenConfirmation && typeof tokenConfirmation.jkt === 'string' ? tokenConfirmation.jkt : null;
+    const tokenGeneration = decoded.payload.generation;
+    const deploymentKey = acceptedKeys.find(
+      (candidate) =>
+        candidate.status !== 'next' &&
+        candidate.keyId === tokenKeyId &&
+        candidate.generation === tokenGeneration &&
+        candidate.deploymentId === installation.deploymentId,
+    );
+    if (!deploymentKey) {
+      v2Fail('invalid_key_source', 'resource_binding', 'workload token 引用的部署密钥不可用');
+    }
+    const nowSeconds = Math.floor(nowMs / 1000);
     const claims = verifyWorkloadAccessToken(input.accessToken, {
       platformPublicJwk: platformKey.publicJwk as unknown as P256PublicJwk,
       platformKeyId: kid,
@@ -119,8 +139,8 @@ export class KyAppV2Authenticator {
       installationId: installation.installationId,
       systemId: installation.systemId,
       deploymentId: installation.deploymentId,
-      keyId: installation.currentKeyId,
-      generation: installation.identityGeneration,
+      keyId: deploymentKey.keyId,
+      generation: deploymentKey.generation,
       requiredScope: input.requiredScope,
       authorizationScheme: 'DPoP',
       now: nowSeconds,
@@ -129,7 +149,7 @@ export class KyAppV2Authenticator {
       method: input.method,
       requestUrl: input.requestUrl,
       accessToken: input.accessToken,
-      expectedKeyId: installation.currentKeyId,
+      expectedKeyId: deploymentKey.keyId,
       now: nowSeconds,
     });
     const reserved = await this.options.replays.reserve({

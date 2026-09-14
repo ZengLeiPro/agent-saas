@@ -23,6 +23,19 @@ cp .env.example .env
 `AGENT_INTEGRATION_ENABLED=false` 是默认值。业务管理员先在“组织接入”页面允许接入，
 再由平台管理员完成网页授权；不需要重启业务系统。
 
+准备开放自动接入时，部署人员只需一次性配置业务系统自己的固定身份：
+
+| 变量                                    | 说明                                                     |
+| --------------------------------------- | -------------------------------------------------------- |
+| `AGENT_INTEGRATION_ENABLED=true`        | 让常驻接入口可用；是否接受授权仍由业务管理页控制         |
+| `KY_ENV` / `KY_SYSTEM_ID` / `KY_ORIGIN` | 平台环境、系统标识和本系统公开地址                       |
+| `KY_DEPLOYMENT_MODE=single_tenant`      | 当前参考项目只开放单组织部署                             |
+| `KY_KEY_STORE_PROVIDER=encrypted_pg`    | 私钥以密文保存到共享 PostgreSQL                          |
+| `KY_DEPLOYMENT_KEY_ENCRYPTION_KEY`      | 部署级 32 字节主密钥，由 Secret 管理注入，不属于任何组织 |
+| `KY_PLATFORM_API_BASE_URL`              | 平台 API 地址                                            |
+
+这些值不会随着接入哪个组织而变化。以后新增、恢复或移除组织，都通过页面完成，不再改环境变量。
+
 只有兼容旧 V1 接入时才填写以下内容：
 
 | 变量                                                  | 说明                                                       |

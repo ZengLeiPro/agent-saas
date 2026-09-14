@@ -68,7 +68,8 @@ export class KyAppConfigError extends Error {
 export type EnvSource = Record<string, string | undefined>;
 
 export type KyDeploymentMode = 'single_tenant' | 'multi_tenant';
-export type KyKeyStoreProvider = 'aliyun_kms' | 'aws_kms' | 'gcp_kms' | 'test_memory';
+export type KyKeyStoreProvider =
+  'aliyun_kms' | 'aws_kms' | 'gcp_kms' | 'encrypted_pg' | 'test_memory';
 
 /**
  * V2 启动配置不包含组织身份或安装秘密。关闭集成时只读取开关，业务服务可独立启动。
@@ -172,7 +173,9 @@ export function loadKyAppIntegrationConfig(env: EnvSource = process.env): KyAppI
     throw new KyAppConfigError('KY_DEPLOYMENT_MODE 只能是 single_tenant|multi_tenant');
   }
   const keyStoreProvider = optional(env, 'KY_KEY_STORE_PROVIDER') ?? 'aliyun_kms';
-  if (!['aliyun_kms', 'aws_kms', 'gcp_kms', 'test_memory'].includes(keyStoreProvider)) {
+  if (
+    !['aliyun_kms', 'aws_kms', 'gcp_kms', 'encrypted_pg', 'test_memory'].includes(keyStoreProvider)
+  ) {
     throw new KyAppConfigError('KY_KEY_STORE_PROVIDER 不受支持');
   }
   const endpoints = resolveEndpoints(env, kyEnv);

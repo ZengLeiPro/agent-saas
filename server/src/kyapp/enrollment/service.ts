@@ -250,9 +250,21 @@ export class KyAppEnrollmentService {
       throw new EnrollmentServiceError('V2 token 签发尚未开启', 'feature_disabled');
     }
     const installation = await this.requireV2Installation(input.installationId);
-    const key = await this.options.deploymentKeys.current(input.installationId);
-    if (!key || key.keyId !== installation.currentKeyId) {
-      throw new EnrollmentServiceError('当前部署公钥不可用', 'key_id_mismatch');
+    const decodedAssertion = decodeV2Jws(input.clientAssertion);
+    const assertedKeyId = decodedAssertion.protectedHeader.kid;
+    if (typeof assertedKeyId !== 'string') {
+      throw new EnrollmentServiceError('client assertion 缺少 kid', 'invalid_claims');
+    }
+    const key = (
+      await this.options.deploymentKeys.listAccepted(input.installationId, new Date(this.now()))
+    ).find(
+      (candidate) =>
+        candidate.status !== 'next' &&
+        candidate.keyId === assertedKeyId &&
+        candidate.deploymentId === installation.deploymentId,
+    );
+    if (!key) {
+      throw new EnrollmentServiceError('部署公钥不可用或已超过轮换窗口', 'key_id_mismatch');
     }
     const enrollment = await this.options.operations.getLatestExchanged(input.installationId);
     if (!enrollment) {
@@ -322,7 +334,7 @@ export class KyAppEnrollmentService {
       !installation.deploymentId ||
       !installation.currentKeyId ||
       !installation.identityGeneration ||
-      installation.status !== 'enabled'
+      (installation.status !== 'pending' && installation.status !== 'enabled')
     ) {
       throw new EnrollmentServiceError('安装实例不是已启用 V2 身份', 'installation_inactive');
     }

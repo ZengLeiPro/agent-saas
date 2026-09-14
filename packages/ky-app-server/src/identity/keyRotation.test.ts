@@ -117,4 +117,76 @@ describe('V2DeploymentKeyRotation', () => {
     ]);
     expect(clear).toHaveBeenCalledWith('inst-1');
   });
+
+  it('平台已切换但本地提交前崩溃时，重跑同一候选密钥可继续完成', async () => {
+    const current = {
+      deploymentId: 'deployment-1',
+      keyId: 'A'.repeat(43),
+      keyRef: 'kms:current',
+      publicJwk: publicJwk('a'.repeat(43), 'b'.repeat(43)),
+    };
+    const next = {
+      deploymentId: 'deployment-1',
+      keyId: 'B'.repeat(43),
+      keyRef: 'kms:next',
+      publicJwk: publicJwk('c'.repeat(43), 'd'.repeat(43)),
+    };
+    let activeKey = current;
+    let commitAttempts = 0;
+    const keys: DeploymentKeyStore = {
+      current: async () => activeKey,
+      sign: async () => new Uint8Array(64),
+      prepareRotation: async () => next,
+      commitRotation: async () => {
+        commitAttempts += 1;
+        if (commitAttempts === 1) throw new Error('process_crashed_after_platform_commit');
+        activeKey = next;
+      },
+    };
+    const bindings = new MemoryInstallationBindingProvider();
+    const initial: InstallationBinding = {
+      installationId: 'inst-1',
+      tenantId: 'tenant-1',
+      systemId: 'system-1',
+      deploymentId: current.deploymentId,
+      origin: 'https://business.example.com',
+      platformIssuer: 'https://platform.example.com',
+      platformApiBaseUrl: 'https://api.example.com',
+      keyId: current.keyId,
+      grantedScopes: ['installation.keys.rotate'],
+      registeredDigest: 'a'.repeat(64),
+      generation: 1,
+      state: 'connected',
+      updatedAt: new Date().toISOString(),
+    };
+    await bindings.stage(initial);
+    await bindings.activate(initial.installationId, 1);
+    const runtimes = new InstallationRuntimeManager(bindings, async () => ({
+      validate: async () => undefined,
+      start: async () => undefined,
+      drain: async () => undefined,
+    }));
+    const request = vi.fn(async () => new Response('{}', { status: 200 }));
+    const rotation = new V2DeploymentKeyRotation({
+      keys,
+      bindings,
+      runtimes,
+      workload: { request, clear: vi.fn() } as never,
+      instanceObservations: async () => ({
+        expectedInstanceIds: ['pod-a'],
+        observations: [{ instanceId: 'pod-a', keyId: next.keyId, generation: 2 }],
+      }),
+    });
+
+    await expect(rotation.rotate('inst-1')).rejects.toThrow(
+      'process_crashed_after_platform_commit',
+    );
+    expect((await bindings.get('inst-1'))?.keyId).toBe(current.keyId);
+    await expect(rotation.rotate('inst-1')).resolves.toMatchObject({
+      keyId: next.keyId,
+      generation: 2,
+      state: 'connected',
+    });
+    expect(commitAttempts).toBe(2);
+  });
 });

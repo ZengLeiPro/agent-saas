@@ -25,6 +25,7 @@ import { Router } from 'express';
 import type { KyAppCredentialScope } from '../installations/credentialStore.js';
 import type { KyAppCredentialManager } from '../installations/credentials.js';
 import type { KyAppInstallation } from '../systems/types.js';
+import type { KyAppV2Authenticator } from '../workload/authenticator.js';
 import {
   DIRECTORY_CHANGES_MAX_LIMIT,
   type ListDirectoryChangesResult,
@@ -64,6 +65,12 @@ export interface KyAppDirectoryRouterOptions {
   getInstallation(installationId: string): Promise<KyAppInstallation | null>;
   snapshots: DirectorySnapshotSource;
   changes: DirectoryChangeReader;
+  /** V2 调用使用 DPoP 自鉴权；未装配时仍完整保留 V1 服务凭据行为。 */
+  v2?: {
+    authenticator: KyAppV2Authenticator;
+    apiBaseUrl: string | (() => string);
+    pageTokenKeys(installationId: string): Promise<DirectoryPageTokenKeyMaterial[]>;
+  };
   now?: () => number;
   /** 测试注入：把页大小调小以逼出分页。 */
   pageSize?: number;
@@ -73,6 +80,7 @@ export interface KyAppDirectoryRouterOptions {
 interface AuthorizedCaller {
   tenantId: string;
   installationId: string;
+  authMode: 'v1' | 'v2';
 }
 
 /** 附录 L 的 410 体。**刻意不复用 `sendKyAppError`**（形态不同，见文件头第 3 条）。 */
@@ -105,6 +113,45 @@ export function createKyAppDirectoryRouter(options: KyAppDirectoryRouterOptions)
     scope: KyAppCredentialScope,
   ): Promise<AuthorizedCaller | null> {
     const header = req.header('authorization') ?? '';
+    if (header.startsWith('DPoP ') && options.v2) {
+      const accessToken = header.slice(5).trim();
+      const dpopProof = req.header('dpop')?.trim() ?? '';
+      if (!accessToken || !dpopProof) {
+        sendKyAppError(req, res, 'unauthorized', '缺少 DPoP 凭据');
+        return null;
+      }
+      try {
+        const authenticated = await options.v2.authenticator.authenticateResource({
+          accessToken,
+          dpopProof,
+          method: req.method,
+          requestUrl: new URL(
+            req.originalUrl,
+            typeof options.v2.apiBaseUrl === 'function'
+              ? options.v2.apiBaseUrl()
+              : options.v2.apiBaseUrl,
+          ).toString(),
+          requiredScope: scope === 'snapshot' ? 'directory.snapshot' : 'directory.changes',
+          // 授权码已消费、正在激活的实例需要先同步联系人目录，平台随后才能完成
+          // `/me` 身份确认。V1 pending 仍不放行，V2 只接受已签名且具备目录 scope 的请求。
+          allowedStatuses: ['pending', 'enabled'],
+        });
+        const decision = limiter.take(authenticated.installation.tenantId, now());
+        if (!decision.allowed) {
+          res.setHeader('Retry-After', String(decision.retryAfterSeconds));
+          sendKyAppError(req, res, 'rate_limited', '目录接口每分钟最多 60 次');
+          return null;
+        }
+        return {
+          tenantId: authenticated.installation.tenantId,
+          installationId: authenticated.installation.installationId,
+          authMode: 'v2',
+        };
+      } catch (error) {
+        sendKyAppFailure(req, res, error);
+        return null;
+      }
+    }
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
     if (token === '') {
       sendKyAppError(req, res, 'unauthorized', '缺少服务凭据');
@@ -140,7 +187,11 @@ export function createKyAppDirectoryRouter(options: KyAppDirectoryRouterOptions)
       sendKyAppError(req, res, 'rate_limited', '目录接口每分钟最多 60 次');
       return null;
     }
-    return { tenantId: installation.tenantId, installationId: record.installationId };
+    return {
+      tenantId: installation.tenantId,
+      installationId: record.installationId,
+      authMode: 'v1',
+    };
   }
 
   /**
@@ -148,8 +199,10 @@ export function createKyAppDirectoryRouter(options: KyAppDirectoryRouterOptions)
    * 排序，因此第 0 把是 current；即便将来排序变了也只影响「用哪把签」——
    * 验签侧逐把试，10 分钟 TTL 内不会因为一次轮换而失效。
    */
-  async function pageTokenKeys(installationId: string): Promise<DirectoryPageTokenKeyMaterial[]> {
-    return options.credentials.listAcceptableInstallationKeys(installationId);
+  async function pageTokenKeys(caller: AuthorizedCaller): Promise<DirectoryPageTokenKeyMaterial[]> {
+    return caller.authMode === 'v2'
+      ? (options.v2?.pageTokenKeys(caller.installationId) ?? Promise.resolve([]))
+      : options.credentials.listAcceptableInstallationKeys(caller.installationId);
   }
 
   router.get('/directory/snapshot', async (req, res) => {
@@ -160,7 +213,7 @@ export function createKyAppDirectoryRouter(options: KyAppDirectoryRouterOptions)
       if (raw !== undefined && typeof raw !== 'string') {
         return sendKyAppError(req, res, 'invalid_input', 'pageToken 非法');
       }
-      const keys = await pageTokenKeys(caller.installationId);
+      const keys = await pageTokenKeys(caller);
       let page = 0;
       let expectedSeq: number | null = null;
       if (raw !== undefined && raw !== '') {

@@ -1,9 +1,4 @@
-import {
-  generateKeyPairSync,
-  sign,
-  type JsonWebKey,
-  type KeyObject,
-} from 'node:crypto';
+import { generateKeyPairSync, sign, type JsonWebKey, type KeyObject } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
@@ -11,7 +6,11 @@ import { describe, expect, it } from 'vitest';
 import type { P256PublicJwk } from '../types/enrollment.js';
 import { accessTokenHash, p256JwkThumbprint, verifyPkceS256 } from './crypto.js';
 import { V2ContractError } from './errors.js';
-import { verifyEnrollmentRequest, verifyInstallationGrant, verifyV2Attestation } from './enrollment.js';
+import {
+  verifyEnrollmentRequest,
+  verifyInstallationGrant,
+  verifyV2Attestation,
+} from './enrollment.js';
 import {
   assertReplayReservation,
   verifyClientAssertion,
@@ -64,7 +63,9 @@ const rewriteIdentity = (value: unknown): unknown => {
     if (record.kty === 'EC' && record.crv === 'P-256' && record.x && record.y) {
       return { ...keys.deployment.publicJwk };
     }
-    return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, rewriteIdentity(item)]));
+    return Object.fromEntries(
+      Object.entries(record).map(([key, item]) => [key, rewriteIdentity(item)]),
+    );
   }
   return value;
 };
@@ -156,7 +157,8 @@ function verifyNegative(testCase: NegativeCase): void {
         nonce: 'platform-challenge-nonce-001',
         now,
       });
-      if (context.codeVerifier) verifyPkceS256(String(context.codeVerifier), result.claims.code_challenge);
+      if (context.codeVerifier)
+        verifyPkceS256(String(context.codeVerifier), result.claims.code_challenge);
       return;
     }
     case 'installation-grant-valid':
@@ -243,7 +245,8 @@ function workloadOptions(context: Record<string, unknown> = {}) {
     deploymentId: common.deploymentId!,
     keyId: keys.deployment.keyId,
     generation: Number(context.currentGeneration ?? 1),
-    installationStatus: (context.installationStatus ?? 'enabled') as 'enabled' | 'disabled' | 'revoked',
+    installationStatus: (context.installationStatus ?? 'enabled') as
+      'enabled' | 'disabled' | 'revoked',
     authorizationScheme: String(context.authorizationScheme ?? 'DPoP'),
     now,
   };
@@ -259,5 +262,25 @@ describe('38 个冻结负向向量由 V2 verifier fail closed', () => {
       expect((error as V2ContractError).code, testCase.id).toBe(testCase.expectedError);
       expect((error as V2ContractError).stage, testCase.id).toBe(testCase.stage);
     }
+  });
+});
+
+describe('DPoP iat 类型安全', () => {
+  it('拒绝签名有效但 iat 为字符串的 proof', () => {
+    const source = runtimeVectors.get('dpop-token-endpoint-valid')!;
+    const compact = signCompact(
+      source.protected,
+      { ...source.payload, iat: 'not-a-time' },
+      keys.deployment.privateKey,
+    );
+
+    expect(() =>
+      verifyDpopProof(compact, {
+        method: 'POST',
+        requestUrl: common.tokenEndpoint!,
+        nonce: 'platform-dpop-nonce-001',
+        now,
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_claims', stage: 'claims' }));
   });
 });

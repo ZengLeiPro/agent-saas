@@ -24,6 +24,7 @@ import {
   createLocalKeyRing,
   type DirectoryClient,
   type ManagedDirectorySync,
+  type KyAppWorkloadClient,
 } from '@kaiyan/ky-app-server';
 import {
   contentSecurityPolicyForEnv,
@@ -34,6 +35,7 @@ import {
   type KyRequestIdentity,
 } from '@kaiyan/ky-app-server/hono';
 import type { Pool } from 'pg';
+import type { InstallationBinding } from '@kaiyan/ky-app-contract';
 
 import { createCapabilityRuntime, buildContext, type CapabilityDeps } from './capabilities.js';
 import { createPool, runMigrations, waitForDatabase } from './db.js';
@@ -73,7 +75,10 @@ export function contentSecurityPolicy(
   return csp.replace(`frame-ancestors ${origin}`, `frame-ancestors ${origin} ${shellOrigin}`);
 }
 
-export async function buildApp(config: AppConfig): Promise<BuiltApp> {
+export async function buildApp(
+  config: AppConfig,
+  dynamicV2?: { binding: InstallationBinding; workload: KyAppWorkloadClient },
+): Promise<BuiltApp> {
   if (!config.ky) throw new Error('旧版 KY 配置缺失，应使用独立启动路径');
   const ky = config.ky;
   const manifest = JSON.parse(
@@ -98,12 +103,20 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
 
   const localKeys = createLocalKeyRing(ky, { now });
 
-  const directory = createDirectoryClient({
-    config: ky,
-    store: directoryStore,
-    baseUrl: config.directoryUrl,
-    now,
-  });
+  const directory = dynamicV2
+    ? createDirectoryClient({
+        binding: dynamicV2.binding,
+        workload: dynamicV2.workload,
+        store: directoryStore,
+        baseUrl: config.directoryUrl,
+        now,
+      })
+    : createDirectoryClient({
+        config: ky,
+        store: directoryStore,
+        baseUrl: config.directoryUrl,
+        now,
+      });
   // SDK 托管首轮同步、五分钟兜底、失败退避与多实例互斥；业务项目不再自写 Cron。
   const directorySync = createManagedDirectorySync({
     client: directory,
@@ -184,9 +197,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
       },
       state: () => eventsStore.getState(),
     },
-    localKeys,
-    attestation,
-    breakGlass,
+    // V2 运行时只接受平台签发的非对称身份；不要同时暴露旧版本地证明与紧急登录端点。
+    ...(dynamicV2 ? {} : { localKeys, attestation, breakGlass }),
     directoryStaleness: () => directory.staleness(),
     directorySync: async () => {
       const checkpoint = await directoryStore.getCheckpoint();

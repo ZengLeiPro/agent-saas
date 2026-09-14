@@ -5,6 +5,7 @@
  * 用其他框架的项目按线协议自实现即可，主入口不受影响。
  */
 export { createKyAppRouter, type KyAppRouter } from './router.js';
+export { createKyAppV2Router } from './v2Router.js';
 export {
   errorResponder,
   permVersionHeader,

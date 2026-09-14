@@ -7,7 +7,10 @@ KY_ENV=
 KY_SYSTEM_ID=
 KY_ORIGIN=
 KY_DEPLOYMENT_MODE=single_tenant
-KY_KEY_STORE_PROVIDER=aliyun_kms
+KY_KEY_STORE_PROVIDER=encrypted_pg
+# 部署时生成一次：openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+# 它只保护本业务系统自己的部署私钥，未来接入/移除组织不需要改动。
+KY_DEPLOYMENT_KEY_ENCRYPTION_KEY=
 KY_PLATFORM_API_BASE_URL=
 
 # --- 仅旧 V1 系统兼容需要；V2 自动接入不要填写 ---

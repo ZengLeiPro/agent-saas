@@ -1,8 +1,19 @@
 import type { KyAppConfig } from '../config/index.js';
+import { exportJWK } from 'jose';
+import type { P256PublicJwk } from '@kaiyan/ky-app-contract';
 import type { JwksClient } from '../jwks/client.js';
 import type { JtiStore } from '../sat/jtiStore.js';
 import { verifySat } from '../sat/verify.js';
 import type { EnrollmentChallengeInput, PlatformChallengeVerifier } from './types.js';
+import type { PlatformKeyResolver } from '../identity/types.js';
+
+export class JwksPlatformKeyResolver implements PlatformKeyResolver {
+  constructor(private readonly jwks: JwksClient) {}
+
+  async resolve(_issuer: string, keyId: string): Promise<P256PublicJwk> {
+    return (await exportJWK(await this.jwks.getKey(keyId))) as P256PublicJwk;
+  }
+}
 
 /**
  * enrollment challenge 使用平台短期 SAT，复用成熟的 ES256/JWKS、claim 矩阵、时钟和 jti 消费。

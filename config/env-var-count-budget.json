@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "Ratchet prune: deployment/scripts removed: RUNNER_TEMP",
-  "updatedAt": "2026-09-13",
+  "reason": "KY App V2 encrypts deployment keys with one deployment-level secret; organization enrollment adds no per-organization environment variables",
+  "updatedAt": "2026-09-14",
   "domains": {
     "server": {
       "budget": 65,
@@ -207,9 +207,10 @@
       ]
     },
     "packages": {
-      "budget": 19,
+      "budget": 20,
       "names": [
         "DATABASE_URL",
+        "KY_DEPLOYMENT_KEY_ENCRYPTION_KEY",
         "KY_DIRECTORY_URL",
         "KY_ENV",
         "KY_INSTALLATION_ID",

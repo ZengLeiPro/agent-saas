@@ -352,6 +352,11 @@ export function registerKyAppRoutes(
         getInstallation: (installationId) => assembly.systems.getInstallation(installationId),
         snapshots: assembly.directorySnapshots,
         changes: assembly.directoryChangeLog,
+        v2: {
+          authenticator: assembly.v2Authenticator,
+          apiBaseUrl: new URL(config.jwksUrl).origin,
+          pageTokenKeys: (installationId) => assembly.keys.directoryPageTokenKeys(installationId),
+        },
       }),
     );
   }

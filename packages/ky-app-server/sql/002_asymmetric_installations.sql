@@ -13,6 +13,11 @@ CREATE TABLE IF NOT EXISTS ky_app_deployment_key_refs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ky_app_deployment_key_refs_current_idx
   ON ky_app_deployment_key_refs (deployment_id) WHERE status = 'current';
+CREATE UNIQUE INDEX IF NOT EXISTS ky_app_deployment_key_refs_next_idx
+  ON ky_app_deployment_key_refs (deployment_id) WHERE status = 'next';
+ALTER TABLE ky_app_deployment_key_refs
+  ADD COLUMN IF NOT EXISTS public_jwk_json JSONB,
+  ADD COLUMN IF NOT EXISTS encrypted_private_key TEXT;
 
 CREATE TABLE IF NOT EXISTS ky_app_installation_bindings (
   installation_id TEXT PRIMARY KEY,
@@ -48,6 +53,22 @@ CREATE TABLE IF NOT EXISTS ky_app_enrollment_attempts (
 );
 CREATE INDEX IF NOT EXISTS ky_app_enrollment_attempts_expiry_idx
   ON ky_app_enrollment_attempts (expires_at);
+ALTER TABLE ky_app_enrollment_attempts
+  ADD COLUMN IF NOT EXISTS tenant_id TEXT,
+  ADD COLUMN IF NOT EXISTS system_id TEXT,
+  ADD COLUMN IF NOT EXISTS key_id TEXT,
+  ADD COLUMN IF NOT EXISTS deployment_id TEXT,
+  ADD COLUMN IF NOT EXISTS public_jwk_json JSONB;
+
+CREATE TABLE IF NOT EXISTS ky_app_enrollment_secrets (
+  secret_ref TEXT PRIMARY KEY,
+  encrypted_value TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ky_app_enrollment_secrets_expiry_idx
+  ON ky_app_enrollment_secrets (expires_at);
 
 -- V2 数据从第一天按 installation_id 分区；旧 V1 单例表保持不变。
 CREATE TABLE IF NOT EXISTS ky_app_v2_installation_state (

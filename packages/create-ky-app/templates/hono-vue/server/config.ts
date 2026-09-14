@@ -3,6 +3,7 @@
  * 本文件只补本项目自己的三项：数据库、端口、mock 壳 origin 与目录接口地址。
  */
 import {
+  decodeEncryptionKey,
   loadKyAppConfig,
   loadKyAppIntegrationConfig,
   type KyAppConfig,
@@ -17,6 +18,8 @@ export interface AppConfig {
   databaseUrl: string;
   /** 组织目录接口基址（§3.6）。 */
   directoryUrl: string;
+  /** 部署级密钥，只加密业务系统自己的 V2 私钥；不随组织接入变化。 */
+  deploymentEncryptionKey?: Uint8Array;
   /**
    * 本地 mock 壳的 origin。只在 `KY_ENV ∈ local|test` 下生效：把它加进
    * CSP 的 `frame-ancestors`，否则本地壳的跨源 iframe 加载不了（§5.1）。
@@ -52,11 +55,22 @@ export function loadConfig(argv?: string[]): AppConfig {
   const ky = legacyConfigured ? loadKyAppConfig() : undefined;
   const shellOrigin = process.env.KY_SHELL_ORIGIN;
   const directoryUrl = process.env.KY_DIRECTORY_URL;
+  if (integration.enabled && integration.keyStoreProvider !== 'encrypted_pg') {
+    throw new Error('参考项目当前要求 KY_KEY_STORE_PROVIDER=encrypted_pg');
+  }
+  if (integration.enabled && integration.deploymentMode !== 'single_tenant') {
+    throw new Error('参考项目当前只开放 single_tenant，不能声明尚未验证的多组织模式');
+  }
+  const encryptionValue = process.env.KY_DEPLOYMENT_KEY_ENCRYPTION_KEY?.trim();
+  if (integration.enabled && !encryptionValue) {
+    throw new Error('开启自动接入时缺少 KY_DEPLOYMENT_KEY_ENCRYPTION_KEY');
+  }
   return {
     integration,
     ...(ky ? { ky } : {}),
     port: resolvePort(argv),
     databaseUrl: requireEnv('DATABASE_URL'),
+    ...(encryptionValue ? { deploymentEncryptionKey: decodeEncryptionKey(encryptionValue) } : {}),
     directoryUrl:
       directoryUrl ??
       (ky ? new URL(ky.jwksUrl).origin : (integration.platformApiBaseUrl ?? 'http://127.0.0.1')),

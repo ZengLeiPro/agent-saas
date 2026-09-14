@@ -386,6 +386,7 @@ export function createKyAppV2ActivationRouter(options: {
         status: installation.status,
       });
     } catch (error) {
+      await options.activation.recordFailure(installationId.data, error).catch(() => undefined);
       const reason =
         error instanceof Error && 'reason' in error
           ? String((error as { reason: unknown }).reason)

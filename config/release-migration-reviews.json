@@ -630,9 +630,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -795,7 +795,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -1848,9 +1848,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -2142,7 +2142,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -3013,9 +3013,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -3287,7 +3287,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -4137,9 +4137,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -4395,7 +4395,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -5245,9 +5245,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -5503,7 +5503,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -6339,9 +6339,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -6589,7 +6589,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -7425,9 +7425,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -7675,7 +7675,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -8511,9 +8511,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -8761,7 +8761,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -9842,9 +9842,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -10104,7 +10104,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -10947,9 +10947,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -11217,7 +11217,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -12074,9 +12074,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -12336,7 +12336,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -13193,9 +13193,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -13455,7 +13455,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -14270,9 +14270,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -14516,7 +14516,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -15331,9 +15331,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -15577,7 +15577,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -16392,9 +16392,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -16638,7 +16638,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -17453,9 +17453,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -17699,7 +17699,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -18500,9 +18500,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -18742,7 +18742,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -19543,9 +19543,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -19785,7 +19785,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -20537,9 +20537,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -20759,7 +20759,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -21511,9 +21511,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -21729,7 +21729,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -22481,9 +22481,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -22691,7 +22691,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -23443,9 +23443,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -23653,7 +23653,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -24405,9 +24405,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -24615,7 +24615,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -25339,9 +25339,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -25541,7 +25541,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -26251,9 +26251,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -26461,7 +26461,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -27143,9 +27143,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -27337,7 +27337,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -28019,9 +28019,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -28213,7 +28213,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -28867,9 +28867,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -29045,7 +29045,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -29699,9 +29699,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -29869,7 +29869,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -30509,9 +30509,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -30667,7 +30667,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -31307,9 +31307,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -31461,7 +31461,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -32101,9 +32101,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/workload/deploymentKeyStore.ts",
@@ -32259,7 +32259,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -32892,9 +32892,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -33049,7 +33049,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -33682,9 +33682,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -33839,7 +33839,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -34472,9 +34472,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -34625,7 +34625,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -35258,9 +35258,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -35423,7 +35423,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -36056,9 +36056,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -36221,7 +36221,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -36854,9 +36854,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -37019,7 +37019,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -37624,9 +37624,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -37729,7 +37729,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -38362,9 +38362,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -38511,7 +38511,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -38780,9 +38780,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -38885,7 +38885,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -39147,9 +39147,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -39236,7 +39236,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -39491,9 +39491,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -39576,7 +39576,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -39824,9 +39824,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -39905,7 +39905,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -40146,9 +40146,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -40223,7 +40223,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -40422,9 +40422,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -40483,7 +40483,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -40682,9 +40682,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -40743,7 +40743,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -40935,9 +40935,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -40988,7 +40988,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -41159,9 +41159,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -41204,7 +41204,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -41291,9 +41291,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -41336,7 +41336,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -41402,9 +41402,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -41443,7 +41443,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -41530,9 +41530,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -41587,7 +41587,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -41625,9 +41625,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，包含授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -41658,7 +41658,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     },
@@ -41689,9 +41689,9 @@
         {
           "path": "server/src/kyapp/enrollment/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:1e97119970cf2f5d4f729ca9c0eedba2d50fcd0a9bb051c512322cd4723cbe59",
+          "targetDigest": "sha256:7a8d3820ec156ed04af32cedb3bfc854177edcd1018810c10050cb008d93c117",
           "classification": "no-schema-change",
-          "reason": "读写 V48 授权操作表，新增授权过期收口和激活 ready 状态写入；不执行启动 DDL。"
+          "reason": "读写 V48 授权操作表，增加 activating、failed_retryable、needs_human 的恢复状态收口与幂等 ready 写入；复用既有列，不执行启动 DDL。"
         },
         {
           "path": "server/src/kyapp/systems/store.ts",
@@ -41730,7 +41730,7 @@
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
-          "digest": "sha256:b49f5d6c7bac6bb2f66aca681adb2a7321884dd87e20d7dd58b561f46251754a"
+          "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
         }
       ]
     }

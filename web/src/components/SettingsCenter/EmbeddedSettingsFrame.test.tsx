@@ -18,7 +18,9 @@ describe('EmbeddedSettingsFrame 统一布局', () => {
 
     const frame = screen.getByTestId('personal-settings-content');
     expect(frame.className).toContain('overflow-y-auto');
-    expect(frame.firstElementChild?.className).toContain('max-w-6xl');
+    expect(frame.className).toContain('settings-product-surface');
+    expect(frame.firstElementChild?.className).toContain('w-full');
+    expect(frame.firstElementChild?.className).not.toContain('max-w-6xl');
     expect(frame.firstElementChild?.className).toContain('min-h-full');
     expect(screen.getByText('个人设置内容')).toBeTruthy();
   });

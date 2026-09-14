@@ -331,6 +331,15 @@
   }
 }
 
+/*
+ * 设置中心的卡片遵循“账户与安全”基准：统一大圆角、边框和轻阴影。
+ * 仅作用于设置工作区，避免影响聊天、登录页和弹窗里的普通卡片。
+ */
+.settings-product-surface :is(.rounded-lg, .rounded-xl, .rounded-2xl).border.bg-card {
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+
 @layer components {
   /* 内容区域居中容器 - 消息列表、输入框、文件上传共用。
      留白随主对话区域宽度变化，在受挤压时仍保留舒适边距。 */

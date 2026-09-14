@@ -1293,9 +1293,7 @@ export function DesktopSessionSidebar({
   }
 
   if (settingsMode) {
-    const hasSecondPanel = subPanelOpen || showTrash;
     return <DeferredUnifiedSettingsSidebar
-        width={sidebarLayout === "single" ? singlePanelWidth : (hasSecondPanel ? mainPanelWidth + subPanelWidth : mainPanelWidth)}
         hidden={hidden}
         className={className}
         access={settingsAccess}
@@ -1304,9 +1302,6 @@ export function DesktopSessionSidebar({
         activeSection={activeSettingsSection}
         onNavigate={onSettingsNavigate}
         onClose={onCloseSettings}
-        onCollapse={onCollapse}
-        onResizeMouseDown={sidebarLayout === "single" ? onSingleResizeMouseDown : (hasSecondPanel ? onSubResizeMouseDown : onMainResizeMouseDown)}
-        onResizeDoubleClick={sidebarLayout === "single" ? onSingleResizeDoubleClick : (hasSecondPanel ? onSubResizeDoubleClick : onMainResizeDoubleClick)}
         footer={sidebarFooter}
       />;
   }

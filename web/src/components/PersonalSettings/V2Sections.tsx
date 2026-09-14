@@ -49,7 +49,7 @@ export function MyAgentSection({
   }, []);
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+    <div className="flex h-full min-h-0 w-full flex-col">
       <SettingsPanelHeader title="我的 Agent" description="在资料与长期 Memory 之间切换；深链刷新会保留当前 Tab。" />
       <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList className={PAGE_TABS_LIST_CLASS}>
@@ -71,7 +71,7 @@ export function MyPermissionsSection() {
   const request = useEffectiveResources();
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+    <div className="flex h-full min-h-0 w-full flex-col">
       <SettingsPanelHeader
         title="我的权限"
         description="查看当前账号已经获得并可直接使用的 Agent、技能和其他能力。"
@@ -86,7 +86,7 @@ export function MyPermissionsSection() {
 
 export function FilesStorageSection({ renderFiles }: { renderFiles?: () => ReactNode }) {
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+    <div className="flex h-full min-h-0 w-full flex-col">
       <SettingsPanelHeader
         title="文件与存储"
         description="浏览个人文件、查看存储用量并管理附件。"

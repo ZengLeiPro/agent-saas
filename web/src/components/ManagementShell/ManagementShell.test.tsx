@@ -56,9 +56,11 @@ describe('ManagementShell 统一布局', () => {
     expect(shell.getAttribute('data-layout')).toBe('dashboard');
     expect(shell.getAttribute('data-scroll-container')).toBe('true');
     expect(shell.className).toContain('overflow-y-auto');
-    expect(screen.getByTestId('management-page-content').parentElement?.className).not.toContain(
-      'max-w-6xl',
-    );
+    expect(shell.className).toContain('settings-product-surface');
+    const widthBoundary = screen.getByTestId('settings-page-width-boundary');
+    expect(widthBoundary.className).toContain('w-full');
+    expect(widthBoundary.className).not.toContain('max-w-6xl');
+    expect(screen.getByTestId('management-page-content').parentElement).toBe(widthBoundary);
     expect(screen.getByTestId('management-page-content').className).toContain('[&>*]:max-w-none');
     expect(screen.queryByRole('banner')).toBeNull();
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
@@ -74,6 +76,7 @@ describe('ManagementShell 统一布局', () => {
     );
 
     const content = screen.getByTestId('management-page-content');
+    expect(content.parentElement).toBe(screen.getByTestId('settings-page-width-boundary'));
     expect(content.className).toContain('[&>*]:mx-0');
     expect(content.className).toContain('[&>*]:max-w-none');
   });

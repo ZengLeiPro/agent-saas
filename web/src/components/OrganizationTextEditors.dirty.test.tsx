@@ -68,7 +68,6 @@ function renderEditor(Editor: ComponentType<EditorProps>, _activeSection: "compa
         <>
           <Editor tenantId="acme" tenantName="Acme" />
           <UnifiedSettingsSidebar
-            width={280}
             hidden={false}
             access={access}
             personalAgentEnabled
@@ -76,8 +75,6 @@ function renderEditor(Editor: ComponentType<EditorProps>, _activeSection: "compa
             activeSection="settings"
             onNavigate={(_target, section) => requestNavigation(() => onSwitchLeaf(section))}
             onClose={() => requestNavigation(onClose)}
-            onResizeMouseDown={vi.fn()}
-            onResizeDoubleClick={vi.fn()}
             footer={<div />}
           />
         </>

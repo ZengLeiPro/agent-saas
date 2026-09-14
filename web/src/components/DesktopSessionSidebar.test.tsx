@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
 import { governanceRoute } from "@/lib/governanceNavigation";
 import type { AppTab, ChatSessionIndexItem } from "@/types/sidebar";
+import { SETTINGS_SIDEBAR_WIDTH } from "@/components/SettingsCenter/settingsLayout";
 
 const authState = vi.hoisted(() => ({ sessionOrganizationEnabled: false }));
 
@@ -369,7 +370,7 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
   it.each(["single", "double"] as const)("%s 布局进入设置后整块替换常规侧边栏", async (sidebarLayout) => {
     const onCloseSettings = vi.fn();
     const onSettingsNavigate = vi.fn();
-    renderSidebar("chat", [session], sidebarLayout, {
+    const { rerenderSidebar } = renderSidebar("chat", [session], sidebarLayout, {
       isAdmin: true,
       isPlatformAdmin: true,
       settingsAccess: {
@@ -383,7 +384,8 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
     });
 
     const shell = screen.getByTestId("deferred-settings-sidebar-shell");
-    expect(Number.parseFloat(shell.style.width)).toBeGreaterThan(0);
+    expect(shell.style.width).toBe(`${SETTINGS_SIDEBAR_WIDTH}px`);
+    expect(shell.getAttribute("data-layout-width")).toBe(String(SETTINGS_SIDEBAR_WIDTH));
     const settingsSidebar = await screen.findByTestId("unified-settings-sidebar");
     expect(settingsSidebar.classList.contains("border-r")).toBe(false);
     expect(screen.queryByText("新建会话")).toBeNull();
@@ -393,6 +395,12 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
     expect(screen.getAllByText("组织管理").length).toBeGreaterThan(0);
     expect(screen.getByText("平台运营")).toBeTruthy();
     expect(screen.getByRole("button", { name: "模型" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.queryByTitle("收起侧边栏")).toBeNull();
+    expect(screen.queryByTitle(/拖动调整侧边栏宽度/)).toBeNull();
+
+    rerenderSidebar({ settingsTarget: "tenant", activeSettingsSection: "org-members" });
+    expect(screen.getByTestId("deferred-settings-sidebar-shell")).toBe(shell);
+    expect(shell.style.width).toBe(`${SETTINGS_SIDEBAR_WIDTH}px`);
 
     fireEvent.click(screen.getByRole("button", { name: "系统配置" }));
     expect(onSettingsNavigate).toHaveBeenCalledWith("platform", "platform-system");

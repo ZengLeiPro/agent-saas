@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgKyAppSystemStore } from '../systems/store.js';
 import { PgReplayReservationStore } from '../workload/replayStore.js';
+import { PgDeploymentKeyStore } from '../workload/deploymentKeyStore.js';
 import { PgEnrollmentStore } from './store.js';
 
 const { Pool } = pg;
@@ -18,12 +19,14 @@ describePg('KY App V2 enrollment PostgreSQL 原子性', () => {
   let systems: PgKyAppSystemStore;
   let operations: PgEnrollmentStore;
   let replays: PgReplayReservationStore;
+  let deploymentKeys: PgDeploymentKeyStore;
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 8 });
     systems = new PgKyAppSystemStore({ pool, tablePrefix: prefix });
     operations = new PgEnrollmentStore({ pool, tablePrefix: prefix });
     replays = new PgReplayReservationStore({ pool, tablePrefix: prefix });
+    deploymentKeys = new PgDeploymentKeyStore({ pool, tablePrefix: prefix });
     await systems.init();
     const registered = await systems.registerVersion({
       systemId: 'demo-erp',
@@ -156,6 +159,41 @@ describePg('KY App V2 enrollment PostgreSQL 原子性', () => {
       [keyId],
     );
     expect(count.rows[0]?.count).toBe('2');
+  });
+
+  it('next 公钥先登记，多实例就绪后再原子切换并保留 previous 窗口', async () => {
+    const nextKeyId = 'B'.repeat(43);
+    await deploymentKeys.prepareNext({
+      installationId: 'install-v2-demo',
+      keyId: nextKeyId,
+      deploymentId: 'dep-demo-01',
+      publicJwk: { kty: 'EC', crv: 'P-256', x: 'a'.repeat(43), y: 'b'.repeat(43) },
+      generation: 2,
+    });
+    const acceptUntil = new Date(Date.now() + 24 * 60 * 60_000);
+    await deploymentKeys.commitNext({
+      installationId: 'install-v2-demo',
+      currentKeyId: keyId,
+      nextKeyId,
+      generation: 2,
+      previousAcceptUntil: acceptUntil,
+    });
+    await expect(deploymentKeys.current('install-v2-demo')).resolves.toMatchObject({
+      keyId: nextKeyId,
+      status: 'current',
+      generation: 2,
+    });
+    await expect(systems.getInstallation('install-v2-demo')).resolves.toMatchObject({
+      currentKeyId: nextKeyId,
+      identityGeneration: 2,
+    });
+    const previous = await deploymentKeys.get('install-v2-demo', keyId);
+    expect(previous).toMatchObject({ status: 'previous', generation: 1 });
+    expect(new Date(previous!.acceptUntil!).getTime()).toBe(acceptUntil.getTime());
+    expect(await deploymentKeys.revokePrevious('install-v2-demo')).toBe(1);
+    await expect(deploymentKeys.get('install-v2-demo', keyId)).resolves.toMatchObject({
+      status: 'revoked',
+    });
   });
 
   it('数据库结构不提供授权码明文、token 或私钥字段', async () => {

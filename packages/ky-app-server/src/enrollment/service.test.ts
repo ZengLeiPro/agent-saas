@@ -43,7 +43,12 @@ class TestKeys implements DeploymentKeyStore {
   }
 
   async prepareRotation() {
-    return { keyId: this.keyId, publicJwk: this.publicJwk };
+    return {
+      deploymentId: this.deploymentId,
+      keyId: this.keyId,
+      keyRef: 'test:key',
+      publicJwk: this.publicJwk,
+    };
   }
   async commitRotation(): Promise<void> {}
 }

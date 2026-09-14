@@ -9,7 +9,12 @@ export interface DeploymentKeyStore {
     publicJwk: P256PublicJwk;
   }>;
   sign(keyRef: string, payload: Uint8Array): Promise<Uint8Array>;
-  prepareRotation(): Promise<{ keyId: string; publicJwk: P256PublicJwk }>;
+  prepareRotation(): Promise<{
+    deploymentId: string;
+    keyId: string;
+    keyRef: string;
+    publicJwk: P256PublicJwk;
+  }>;
   commitRotation(keyId: string): Promise<void>;
 }
 

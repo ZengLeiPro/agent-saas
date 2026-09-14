@@ -42,6 +42,7 @@ export * from './identity/memory.js';
 export * from './identity/pgBindingProvider.js';
 export * from './identity/runtimeManager.js';
 export * from './identity/attest.js';
+export * from './identity/keyRotation.js';
 export * from './enrollment/types.js';
 export * from './enrollment/memory.js';
 export * from './enrollment/service.js';

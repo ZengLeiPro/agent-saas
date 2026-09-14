@@ -25,7 +25,12 @@ async function fixture() {
     }),
     sign: async (_ref, payload) =>
       sign('sha256', payload, { key: deploymentPair.privateKey, dsaEncoding: 'ieee-p1363' }),
-    prepareRotation: async () => ({ keyId, publicJwk: deploymentJwk }),
+    prepareRotation: async () => ({
+      deploymentId: 'deployment-1',
+      keyId,
+      keyRef: 'test:key',
+      publicJwk: deploymentJwk,
+    }),
     commitRotation: async () => undefined,
   };
   const platformPair = generateKeyPairSync('ec', { namedCurve: 'P-256' });

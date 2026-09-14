@@ -23,6 +23,7 @@ import { KyAppMemberImporter } from '../kyapp/delivery/memberImport.js';
 import { KyAppOnboardService } from '../kyapp/delivery/onboard.js';
 import { createKyAppDeliveryRouter } from '../kyapp/routes/delivery.js';
 import { createKyAppExistingOnboardRouter } from '../kyapp/routes/existingOnboard.js';
+import { createKyAppV2KeyLifecycleRouter } from '../kyapp/routes/keyLifecycle.js';
 import {
   createKyAppEnrollmentRouter,
   createKyAppV2ActivationRouter,
@@ -188,6 +189,10 @@ export function registerKyAppRoutes(
   app.use(
     KY_APP_CONTRACT_V2_BASE_PATH,
     createKyAppV2ActivationRouter({ activation: assembly.activation }),
+  );
+  app.use(
+    KY_APP_CONTRACT_V2_BASE_PATH,
+    createKyAppV2KeyLifecycleRouter({ lifecycle: assembly.keyLifecycle }),
   );
   app.use(
     KY_APP_CONTRACT_BASE_PATH,

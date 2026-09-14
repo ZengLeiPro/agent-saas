@@ -44,6 +44,7 @@ import { KyAppSigningKeyService } from './keys/service.js';
 import { PgEnrollmentStore } from './enrollment/store.js';
 import { KyAppEnrollmentService } from './enrollment/service.js';
 import { KyAppV2ActivationService } from './enrollment/activation.js';
+import { KyAppV2KeyLifecycleService } from './enrollment/keyLifecycle.js';
 import { PgDeploymentKeyStore } from './workload/deploymentKeyStore.js';
 import { PgReplayReservationStore } from './workload/replayStore.js';
 import { KyAppV2Authenticator } from './workload/authenticator.js';
@@ -86,6 +87,7 @@ export interface KyAppAssembly {
   v2Tokens: KyAppV2TokenIssuer;
   enrollment: KyAppEnrollmentService;
   activation: KyAppV2ActivationService;
+  keyLifecycle: KyAppV2KeyLifecycleService;
   issuer: KyAppSatIssuer;
   suspensions: KyAppSuspensionRegistry;
   credentials: KyAppCredentialManager;
@@ -229,6 +231,16 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     runtimeStore,
     installations,
     now,
+  });
+  const keyLifecycle = new KyAppV2KeyLifecycleService({
+    config,
+    systems,
+    keys: deploymentKeys,
+    authenticator: v2Authenticator,
+    installations,
+    outbound,
+    now,
+    ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
   });
   const handshake = new KyAppHandshakeService({
     config,
@@ -519,6 +531,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     v2Tokens,
     enrollment,
     activation,
+    keyLifecycle,
     issuer,
     suspensions,
     credentials,

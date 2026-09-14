@@ -136,16 +136,21 @@ export class KyAppWorkloadClient {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error(`token_request_${response.status}`);
-    const body = (await response.json()) as { accessToken?: unknown; expiresIn?: unknown };
-    if (typeof body.accessToken !== 'string') throw new Error('invalid_token_response');
-    const decoded = decodeV2Jws(body.accessToken);
+    const body = (await response.json()) as {
+      access_token?: unknown;
+      accessToken?: unknown;
+      expires_in?: unknown;
+    };
+    const accessToken = body.access_token ?? body.accessToken;
+    if (typeof accessToken !== 'string') throw new Error('invalid_token_response');
+    const decoded = decodeV2Jws(accessToken);
     const platformKid = decoded.protectedHeader.kid;
     if (typeof platformKid !== 'string') throw new Error('token_missing_kid');
     const platformJwk = await this.options.platformKeys.resolve(
       binding.platformIssuer,
       platformKid,
     );
-    const claims = verifyWorkloadAccessToken(body.accessToken, {
+    const claims = verifyWorkloadAccessToken(accessToken, {
       platformPublicJwk: platformJwk,
       platformKeyId: platformKid,
       platformIssuer: binding.platformIssuer,
@@ -159,7 +164,7 @@ export class KyAppWorkloadClient {
       authorizationScheme: 'DPoP',
       now: Math.floor(this.now() / 1000),
     });
-    this.cache.set(key, { token: body.accessToken, expiresAt: claims.exp * 1000 });
-    return body.accessToken;
+    this.cache.set(key, { token: accessToken, expiresAt: claims.exp * 1000 });
+    return accessToken;
   }
 }

@@ -278,16 +278,16 @@ function AccountCard({
       data-testid={`quota-account-${snapshot.accountKey}`}
     >
       <CardHeader className="pb-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1">
+          {dragHandle}
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {dragHandle}
             <CardTitle className="break-all text-base">{snapshot.accountLabel}</CardTitle>
             <ProviderQuotaPlanBadge sourceKind={snapshot.sourceKind} planType={snapshot.plan?.type}>{subtitle}</ProviderQuotaPlanBadge>
             {!isCodex && snapshot.plan?.status && snapshot.plan.status !== 'Running' && (
               <Badge variant="warning" className="px-1.5 py-0 text-2xs">{snapshot.plan.status}</Badge>
             )}
           </div>
-          <div className="col-start-2 row-start-1 flex items-center justify-end">
+          <div className="flex items-center justify-end">
             {!isPushOnly ? (
               <Button
                 variant="ghost"
@@ -307,7 +307,7 @@ function AccountCard({
               <span className="size-7 shrink-0" aria-hidden="true" />
             )}
           </div>
-          <div className="col-start-1 row-start-2 col-span-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" title={isCodex && credential?.expiresAt ? `凭据到期 ${formatMinuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
+          <div className="col-start-2 col-span-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" title={isCodex && credential?.expiresAt ? `凭据到期 ${formatMinuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
             <ProviderPlanExpiryEditor snapshot={snapshot} onSaved={onExpirySaved} />
             {showCredits && <span className="whitespace-nowrap tabular-nums text-muted-foreground">Credits {credits!.balance}</span>}
           </div>
@@ -491,34 +491,36 @@ export function ProviderQuotaPage() {
           <span>{collector?.enabled ? `每 ${Math.round(collector.intervalMs / 60_000)} 分钟自动采集。` : '本进程按需采集。'}切回前台自动刷新；「刷新」读取最新数据，「采集」触发采集。</span>
         }
         actions={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {criticalCount > 0 && <Badge variant="danger" title={`额度耗尽 ${statusCounts.exhausted} · 凭据不可用 ${statusCounts.credentialUnavailable}`}>{criticalCount} 个异常</Badge>}
             {statusCounts.warning > 0 && <Badge variant="warning">{statusCounts.warning} 个需关注</Badge>}
-            <Button
-              className="min-w-16"
-              variant="outline"
-              size="sm"
-              onClick={() => void load('reload')}
-              disabled={refreshing}
-              aria-busy={refreshMode === 'reload'}
-            >
-              刷新
-            </Button>
-            <Button
-              className="min-w-16"
-              variant="outline"
-              size="sm"
-              onClick={() => void load('collect')}
-              disabled={refreshing}
-              aria-busy={refreshMode === 'collect'}
-            >
-              采集
-            </Button>
-            {collectedAt && (
-              <span className="whitespace-nowrap text-xs font-normal tabular-nums text-muted-foreground">
-                采集 {formatMinuteTime(collectedAt)}
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              <Button
+                className="min-w-16"
+                variant="outline"
+                size="sm"
+                onClick={() => void load('reload')}
+                disabled={refreshing}
+                aria-busy={refreshMode === 'reload'}
+              >
+                刷新
+              </Button>
+              <Button
+                className="min-w-16"
+                variant="outline"
+                size="sm"
+                onClick={() => void load('collect')}
+                disabled={refreshing}
+                aria-busy={refreshMode === 'collect'}
+              >
+                采集
+              </Button>
+              {collectedAt && (
+                <span className="whitespace-nowrap text-xs font-normal tabular-nums text-muted-foreground">
+                  {formatMinuteTime(collectedAt)}
+                </span>
+              )}
+            </div>
           </div>
         }
       />

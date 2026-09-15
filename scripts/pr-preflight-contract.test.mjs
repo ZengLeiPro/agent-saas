@@ -286,9 +286,10 @@ test('Mobile gate 固定工具链、全量跑一遍且只上传失败日志', ()
   assert.ok(match, 'mobile_contract job is missing');
   const job = match[0];
   for (const marker of [
-    'node-version: ${{ env.NODE_VERSION }}',
-    'cache: pnpm',
-    'cache-dependency-path: pnpm-lock.yaml',
+    // 工具链由 container 镜像固定（自建 runner 上 actions/setup-node 要从 GitHub 拉 383MB，
+    // 走代理实测 6 分钟，会把 job 拖过超时），改为断言镜像 tag 与容器内版本校验。
+    'container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1',
+    'test "$actual" = "v${NODE_VERSION}"',
     'pnpm install --frozen-lockfile',
     'pnpm -F @agent/shared typecheck && pnpm -F mobile typecheck',
     'pnpm -F mobile lint:maestro && pnpm -F mobile lint:m70-01 && pnpm -F mobile lint:m70-02',

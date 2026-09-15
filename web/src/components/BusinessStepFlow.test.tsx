@@ -98,7 +98,7 @@ describe("BusinessStepFlow 主导航卡", () => {
     expect(container.querySelector("header svg")).toBeNull();
   });
 
-  it("主行只显示 content、状态和两位序号，不泄露 activeForm 或详情字段", () => {
+  it("主行只显示 content、状态、可选耗时和两位序号，不泄露 activeForm 或详情字段", () => {
     render(<BusinessStepFlow event={event()} sessionId="session-1" selected={null} onSelect={() => undefined} />);
 
     expect(screen.getByText("核验订单")).toBeTruthy();
@@ -111,6 +111,31 @@ describe("BusinessStepFlow 主导航卡", () => {
     expect(screen.getByText("02")).toBeTruthy();
     expect(screen.getByText("03")).toBeTruthy();
     expect(screen.queryByText("2/3")).toBeNull();
+    expect(document.querySelectorAll("[data-business-step-duration]")).toHaveLength(0);
+  });
+
+  it("标题右侧展示墙钟耗时，字体与序号一致，并写入 aria-label", () => {
+    const timingByTodoKey = new Map([
+      ["id:read", { durationMs: 12_400 }],
+      ["id:verify", { durationMs: 90_000, liveStartedAtMs: 1, timingMeasuredAtMs: Date.now() }],
+    ]);
+    render(
+      <BusinessStepFlow
+        event={event()}
+        sessionId="session-1"
+        selected={null}
+        timingByTodoKey={timingByTodoKey}
+        onSelect={() => undefined}
+      />,
+    );
+
+    const durations = document.querySelectorAll("[data-business-step-duration]");
+    expect(durations).toHaveLength(2);
+    expect(durations[0].textContent).toBe("12s");
+    expect(durations[0].className).toContain("text-2xs");
+    expect(durations[0].className).toContain("tabular-nums");
+    expect(durations[0].className).toContain("text-muted-foreground/60");
+    expect(screen.getByRole("button", { name: /读取订单/ }).getAttribute("aria-label")).toContain("12s");
   });
 
   it("completed 标题保持正文色，只有 pending 使用 muted，长标题采用两行截断", () => {

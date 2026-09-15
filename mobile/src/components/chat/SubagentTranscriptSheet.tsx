@@ -1,11 +1,6 @@
 /**
- * 子任务完整过程（对齐 `web/src/components/SubagentTranscriptPanel.tsx`，
- * Web 在 MobileLayout 里用 SlidePanel 全屏覆盖，这里用全屏 Modal）。
- *
- * 取数与 Web 同一条：`GET /api/sessions/:childSessionId?silent=1` 拿
- * ApiSessionDetail；Web 直接铺 transcript blocks，移动端复用 MessageList
- * 渲染同一份 mapSessionDetailToMessages 产物，子会话与主会话的气泡口径一致
- * （呈现门禁、原始 payload 可见性同样由 RawPresentationGate/debugMode 决定）。
+ * 子任务完整过程（对齐 `web/src/components/SubagentTranscriptPanel.tsx`）。
+ * Phone: 全屏 Modal；md+: 由父级 SideOverlayPanel 承载（variant=`overlay` 只渲染 body）。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -36,6 +31,11 @@ export interface SubagentTranscriptSheetProps {
   /** 子任务类型，用于标题 */
   title: string;
   onClose: () => void;
+  /**
+   * `modal` (default) = phone full-screen Modal.
+   * `body` = content only for md+ SideOverlayPanel host.
+   */
+  variant?: 'modal' | 'body';
 }
 
 export function SubagentTranscriptSheet({
@@ -43,13 +43,13 @@ export function SubagentTranscriptSheet({
   childSessionId,
   title,
   onClose,
+  variant = 'modal',
 }: SubagentTranscriptSheetProps) {
   const colors = useColors();
   const typo = useChatTypography();
   const insets = useSafeAreaInsets();
   const [detail, setDetail] = useState<ApiSessionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // MessageList 的滚动策略引用：子会话是只读回放，进来直接停在末尾。
   const shouldScrollRef = useRef(true);
   const isNearBottomRef = useRef(true);
 
@@ -154,6 +154,16 @@ export function SubagentTranscriptSheet({
       </>
     );
   }, [colors.mutedForeground, detail, error, messages, styles]);
+
+  if (!visible) return null;
+
+  if (variant === 'body') {
+    return (
+      <View style={styles.container} testID="subagent-transcript-body">
+        {renderBody()}
+      </View>
+    );
+  }
 
   return (
     <Modal

@@ -25,6 +25,10 @@ import { ExpertWelcome } from './ExpertWelcome';
 import { useScenarioDeepLink } from '../../hooks/useScenarioDeepLink';
 import { resolveActiveExpertPresentation } from '../../lib/activeExpertPresentation';
 import { SubagentTranscriptSheet } from './SubagentTranscriptSheet';
+import { MarkdownPreviewBody, markdownPreviewTitle } from './MarkdownPreviewBody';
+import { SideOverlayPanel } from '../layout';
+import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { chatTranscriptMaxWidthStyle } from '../../lib/layoutDensity';
 import {
   SubagentTranscriptProvider,
   type SubagentTranscriptTarget,
@@ -97,6 +101,9 @@ export function ChatSessionScreen({
   const [activeUsageCard, setActiveUsageCard] = useState<'context' | 'billing' | null>(null);
   // 子任务完整过程：面板挂在会话页（这里才拿得到 MessageList），块内只发起打开请求
   const [transcriptTarget, setTranscriptTarget] = useState<SubagentTranscriptTarget | null>(null);
+  /** md+ single right-slot: markdown preview (subagent shares the same overlay host). */
+  const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
+  const { isMdUp } = useBreakpoint();
   const defaultBottomPadding = 56 + insets.bottom;
   const [composerHeight, setComposerHeight] = useState(defaultBottomPadding);
   const lastComposerHeightRef = useRef(defaultBottomPadding);
@@ -368,8 +375,13 @@ export function ChatSessionScreen({
       Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。请让发送方通过 Artifact viewer 正式交付。');
       return;
     }
+    if (isMdUp) {
+      setTranscriptTarget(null);
+      setPreviewFilePath(filePath);
+      return;
+    }
     router.push({ pathname: '/chat/markdown-preview', params: { filePath, ...(sessionOwner ? { owner: sessionOwner } : {}) } });
-  }, [router, sessionOwner]);
+  }, [router, sessionOwner, isMdUp]);
 
   useEffect(() => {
     const nextDefaultPadding = 56 + insets.bottom;
@@ -460,7 +472,12 @@ export function ChatSessionScreen({
   const showEmptyState = chat.messages.length === 0 && !chat.isLoadingMessages && !chat.loading;
 
   const transcriptValue = useMemo(
-    () => ({ openTranscript: (target: SubagentTranscriptTarget) => setTranscriptTarget(target) }),
+    () => ({
+      openTranscript: (target: SubagentTranscriptTarget) => {
+        setPreviewFilePath(null);
+        setTranscriptTarget(target);
+      },
+    }),
     [],
   );
 
@@ -566,6 +583,7 @@ export function ChatSessionScreen({
       ) : null}
       <MessageFeedbackProvider sessionId={chat.sessionId}>
       <SubagentTranscriptProvider value={transcriptValue}>
+      <View style={[{ flex: 1 }, chatTranscriptMaxWidthStyle(screenWidth)]}>
       <MessageList
         headerPadding={0}
         bottomPadding={Platform.OS === 'ios' ? composerHeight - (isKeyboardOpen ? insets.bottom : 0) : defaultBottomPadding}
@@ -587,6 +605,7 @@ export function ChatSessionScreen({
         isLoadingEarlier={chat.isLoadingEarlier}
         onLoadEarlier={chat.loadEarlierMessages}
       />
+      </View>
       </SubagentTranscriptProvider>
       </MessageFeedbackProvider>
       </KeyboardAvoidingView>
@@ -693,15 +712,44 @@ export function ChatSessionScreen({
         />
       ) : null}
 
-      {/* 子任务完整过程：全屏覆盖，复用 MessageList 渲染子会话回放 */}
-      {transcriptTarget && (
+      {/* 右栏单槽：md+ SideOverlay；phone 仍用全屏 Modal / push */}
+      {isMdUp && transcriptTarget ? (
+        <SideOverlayPanel
+          title={`子任务完整过程 · ${transcriptTarget.title}`}
+          subtitle={transcriptTarget.childSessionId}
+          onClose={() => setTranscriptTarget(null)}
+          testID="chat-right-subagent"
+        >
+          <SubagentTranscriptSheet
+            visible
+            variant="body"
+            childSessionId={transcriptTarget.childSessionId}
+            title={transcriptTarget.title}
+            onClose={() => setTranscriptTarget(null)}
+          />
+        </SideOverlayPanel>
+      ) : null}
+      {!isMdUp && transcriptTarget ? (
         <SubagentTranscriptSheet
           visible
           childSessionId={transcriptTarget.childSessionId}
           title={transcriptTarget.title}
           onClose={() => setTranscriptTarget(null)}
         />
-      )}
+      ) : null}
+      {isMdUp && previewFilePath ? (
+        <SideOverlayPanel
+          title={markdownPreviewTitle(previewFilePath)}
+          onClose={() => setPreviewFilePath(null)}
+          testID="chat-right-preview"
+        >
+          <MarkdownPreviewBody
+            filePath={previewFilePath}
+            {...(sessionOwner ? { owner: sessionOwner } : {})}
+            onNavigatePreview={(next) => setPreviewFilePath(next)}
+          />
+        </SideOverlayPanel>
+      ) : null}
     </View>
   );
 }

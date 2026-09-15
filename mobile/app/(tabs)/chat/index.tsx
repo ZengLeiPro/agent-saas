@@ -4,13 +4,13 @@
  * 本文件只做「屏幕编排」：状态、导航、以及把列表 / pill 行 / FAB / 面板拼起来；
  * 列表行、滑动动作、分组对话框、回收站等都在 `src/components/sessions/` 下。
  *
- * P0 iPad / 宽屏（md≥768）：单栏会话 chrome + 列表|详情 master-detail（头像默认显示）；
- * 窄屏仍走 push `/chat/[sessionId]` 栈。不托管业务系统/apps。
+ * P0–P4 iPad / 宽屏（md≥768）：单栏会话 chrome + 列表|详情 master-detail（头像默认显示）；
+ * 窄主栏保护可折叠/汉堡唤起列表（`sidebar-collapsed`）；窄屏仍 push 栈。不托管 apps。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, InteractionManager, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, InteractionManager, LayoutChangeEvent, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import { Plus } from 'lucide-react-native';
+import { Menu, PanelLeftClose, Plus } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SessionGroup } from '@agent/shared';
 import {
@@ -47,7 +47,10 @@ import { useColors, fontScale, spacing, radius, shadows } from '../../../src/the
 import { FLOATING_MAIN_INSET, MASTER_LIST_WIDTH } from '../../../src/lib/layoutDensity';
 import { EmptyState } from '../../../src/components/ui';
 import { useBreakpoint } from '../../../src/hooks/useBreakpoint';
+import { useMasterListCollapse } from '../../../src/hooks/useMasterListCollapse';
+import { MasterListOverlay } from '../../../src/components/layout';
 import { ChatSessionScreen } from '../../../src/components/chat/ChatSessionScreen';
+import { ICON_SIZE, ICON_STROKE } from '../../../src/lib/icons';
 
 /** 分组定时刷新周期（ms），与会话轮询保持一致 */
 const GROUPS_REFRESH_MS = 30_000;
@@ -67,9 +70,18 @@ export default function SessionListScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
 
-  const { isMdUp } = useBreakpoint();
+  const { isMdUp, width: breakpointWidth } = useBreakpoint();
   // md+ master-detail selection (null = empty pane「请选择会话」)
   const [paneSessionId, setPaneSessionId] = useState<string | null>(null);
+  const [splitWidth, setSplitWidth] = useState(0);
+  const collapse = useMasterListCollapse({
+    enabled: isMdUp,
+    containerWidth: splitWidth > 0 ? splitWidth : breakpointWidth,
+  });
+  const handleSplitLayout = useCallback((event: LayoutChangeEvent) => {
+    const next = Math.round(event.nativeEvent.layout.width);
+    setSplitWidth((prev) => (Math.abs(prev - next) < 1 ? prev : next));
+  }, []);
 
   // FlashList 的 imperative 句柄，只用来恢复滚动位置。
   const listRef = useRef<any>(null);
@@ -174,11 +186,12 @@ export default function SessionListScreen() {
       chat.selectSession(sessionId);
       if (isMdUp) {
         setPaneSessionId(sessionId);
+        collapse.onMasterItemSelected();
         return;
       }
       router.push(`/chat/${sessionId}`);
     },
-    [chat, router, closeOpenSwipeable, isMdUp],
+    [chat, router, closeOpenSwipeable, isMdUp, collapse],
   );
 
   const handleGroupClick = useCallback(
@@ -324,8 +337,10 @@ export default function SessionListScreen() {
           flex: 1,
           paddingVertical: FLOATING_MAIN_INSET,
           paddingRight: FLOATING_MAIN_INSET,
+          paddingLeft: collapse.hideMaster ? FLOATING_MAIN_INSET : 0,
           backgroundColor: colors.background,
         },
+        headerLeftRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         detailPane: {
           flex: 1,
           borderRadius: radius.xl,
@@ -343,17 +358,49 @@ export default function SessionListScreen() {
         },
         headerText: { ...fontScale.base, color: colors.foreground },
       }),
-    [colors],
+    [colors, collapse.hideMaster],
   );
 
-  const headerLeft = () => (
-    <TouchableOpacity
-      onPress={selection.isSelectMode ? selection.exitSelectMode : selection.enterSelectMode}
-      activeOpacity={0.7}
-    >
-      <Text style={styles.headerText}>{selection.isSelectMode ? '完成' : '选择'}</Text>
-    </TouchableOpacity>
-  );
+  const headerLeft = () => {
+    if (isMdUp && collapse.hideMaster) {
+      return (
+        <TouchableOpacity
+          onPress={collapse.onHamburgerPress}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="打开会话列表"
+          testID="chat-master-hamburger"
+        >
+          <Menu size={ICON_SIZE.feature} color={colors.foreground} strokeWidth={ICON_STROKE.default} />
+        </TouchableOpacity>
+      );
+    }
+    const selectBtn = (
+      <TouchableOpacity
+        onPress={selection.isSelectMode ? selection.exitSelectMode : selection.enterSelectMode}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.headerText}>{selection.isSelectMode ? '完成' : '选择'}</Text>
+      </TouchableOpacity>
+    );
+    if (isMdUp && !selection.isSelectMode) {
+      return (
+        <View style={styles.headerLeftRow}>
+          <TouchableOpacity
+            onPress={collapse.togglePersistent}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="折叠会话列表"
+            testID="chat-master-collapse"
+          >
+            <PanelLeftClose size={ICON_SIZE.feature} color={colors.foreground} strokeWidth={ICON_STROKE.default} />
+          </TouchableOpacity>
+          {selectBtn}
+        </View>
+      );
+    }
+    return selectBtn;
+  };
 
   const headerRight = () =>
     selection.isSelectMode ? (
@@ -434,8 +481,8 @@ export default function SessionListScreen() {
       />
 
       {isMdUp ? (
-        <View style={styles.split} testID="chat-master-detail">
-          <View style={styles.listPaneWide}>{listBody}</View>
+        <View style={styles.split} testID="chat-master-detail" onLayout={handleSplitLayout}>
+          {collapse.hideMaster ? null : <View style={styles.listPaneWide}>{listBody}</View>}
           <View style={styles.detailHost}>
             <View style={styles.detailPane}>
               {paneSessionId ? (
@@ -452,6 +499,13 @@ export default function SessionListScreen() {
               )}
             </View>
           </View>
+          <MasterListOverlay
+            visible={collapse.masterOverlayOpen}
+            onDismiss={collapse.dismissMasterOverlay}
+            testID="chat-master-overlay"
+          >
+            {listBody}
+          </MasterListOverlay>
         </View>
       ) : (
         <View style={styles.listPane}>{listBody}</View>

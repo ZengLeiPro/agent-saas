@@ -32,6 +32,8 @@ interface SessionRowProps {
   agentAvatar?: string;
   agentAvatarVersion?: number;
   agentAvatarUsername?: string;
+  /** md+ master list: slightly tighter row. Phone keeps default. */
+  dense?: boolean;
 }
 
 /**
@@ -39,7 +41,7 @@ interface SessionRowProps {
  * 隐藏头像会与分组行错位；移动端不再读取 Web 共享偏好
  * `showSessionListAvatar`，该偏好仅继续影响 Web 端侧边栏。
  */
-export const SessionRow = React.memo(function SessionRow({ session, actions, openRowRef, onPress, enableBackGesture, showOwner, selectMode, selected, onSelectToggle, active, agentAvatar, agentAvatarVersion, agentAvatarUsername }: SessionRowProps) {
+export const SessionRow = React.memo(function SessionRow({ session, actions, openRowRef, onPress, enableBackGesture, showOwner, selectMode, selected, onSelectToggle, active, agentAvatar, agentAvatarVersion, agentAvatarUsername, dense }: SessionRowProps) {
   const colors = useColors();
 
   const styles = useMemo(() => StyleSheet.create({
@@ -49,10 +51,10 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
     sessionRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      minHeight: 62,
+      minHeight: dense ? 56 : 62,
       paddingLeft: spacing.md,
       paddingRight: spacing.md,
-      paddingVertical: 10,
+      paddingVertical: dense ? 8 : 10,
       backgroundColor: colors.card,
     },
     sessionRowPressed: {
@@ -154,7 +156,7 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
       backgroundColor: colors.destructive,
       marginRight: spacing.xs,
     },
-  }), [colors]);
+  }), [colors, dense]);
 
   const waitingLabel = getSessionWaitingLabel(session.runtimeStatus);
   const isRunning = session.isRunning === true && !waitingLabel;
@@ -264,6 +266,7 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
     prev.selected === next.selected &&
     prev.active === next.active &&
     prev.agentAvatar === next.agentAvatar &&
-    prev.agentAvatarVersion === next.agentAvatarVersion
+    prev.agentAvatarVersion === next.agentAvatarVersion &&
+    prev.dense === next.dense
   );
 });

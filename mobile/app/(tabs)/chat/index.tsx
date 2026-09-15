@@ -43,7 +43,9 @@ import { glassFree } from '../../../src/lib/headerItems';
 import { hapticLight, hapticWarning } from '../../../src/lib/haptics';
 import { readSessionListAnchor } from '../../../src/lib/sessionListAnchor';
 import { toSidebarSessions } from '../../../src/lib/sessionListAdapter';
-import { useColors, fontScale, spacing } from '../../../src/theme';
+import { useColors, fontScale, spacing, radius, shadows } from '../../../src/theme';
+import { FLOATING_MAIN_INSET, MASTER_LIST_WIDTH } from '../../../src/lib/layoutDensity';
+import { EmptyState } from '../../../src/components/ui';
 import { useBreakpoint } from '../../../src/hooks/useBreakpoint';
 import { ChatSessionScreen } from '../../../src/components/chat/ChatSessionScreen';
 
@@ -281,6 +283,7 @@ export default function SessionListScreen() {
           selected={selection.selectedIds.has(item.session.id)}
           onSelectToggle={() => selection.toggleSelect(item.session.id)}
           active={isMdUp && paneSessionId === item.session.id}
+          dense={isMdUp}
           agentAvatar={ownerAvatar?.avatar}
           agentAvatarVersion={ownerAvatar?.avatarVersion}
           agentAvatarUsername={ownerUsername}
@@ -311,21 +314,33 @@ export default function SessionListScreen() {
         split: { flex: 1, flexDirection: 'row' },
         listPane: { flex: 1, backgroundColor: colors.card },
         listPaneWide: {
-          width: 340,
+          width: MASTER_LIST_WIDTH,
           maxWidth: '42%',
           borderRightWidth: StyleSheet.hairlineWidth,
           borderRightColor: colors.border,
           backgroundColor: colors.card,
         },
-        detailPane: { flex: 1, backgroundColor: colors.background },
+        detailHost: {
+          flex: 1,
+          paddingVertical: FLOATING_MAIN_INSET,
+          paddingRight: FLOATING_MAIN_INSET,
+          backgroundColor: colors.background,
+        },
+        detailPane: {
+          flex: 1,
+          borderRadius: radius.xl,
+          overflow: 'hidden',
+          backgroundColor: colors.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          ...shadows.card,
+        },
         emptyPane: {
           flex: 1,
           alignItems: 'center',
           justifyContent: 'center',
           padding: spacing.lg,
-          backgroundColor: colors.background,
         },
-        emptyPaneText: { ...fontScale.base, color: colors.mutedForeground },
         headerText: { ...fontScale.base, color: colors.foreground },
       }),
     [colors],
@@ -421,19 +436,21 @@ export default function SessionListScreen() {
       {isMdUp ? (
         <View style={styles.split} testID="chat-master-detail">
           <View style={styles.listPaneWide}>{listBody}</View>
-          <View style={styles.detailPane}>
-            {paneSessionId ? (
-              <ChatSessionScreen
-                sessionId={paneSessionId}
-                presentation="pane"
-                onClosePane={() => setPaneSessionId(null)}
-                onSessionNavigate={(id) => setPaneSessionId(id)}
-              />
-            ) : (
-              <View style={styles.emptyPane} testID="chat-pane-empty">
-                <Text style={styles.emptyPaneText}>请选择会话</Text>
-              </View>
-            )}
+          <View style={styles.detailHost}>
+            <View style={styles.detailPane}>
+              {paneSessionId ? (
+                <ChatSessionScreen
+                  sessionId={paneSessionId}
+                  presentation="pane"
+                  onClosePane={() => setPaneSessionId(null)}
+                  onSessionNavigate={(id) => setPaneSessionId(id)}
+                />
+              ) : (
+                <View style={styles.emptyPane} testID="chat-pane-empty">
+                  <EmptyState title="请选择会话" description="从左侧列表打开会话，或新建一个对话。" />
+                </View>
+              )}
+            </View>
           </View>
         </View>
       ) : (

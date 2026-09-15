@@ -1,16 +1,19 @@
 /**
  * Generic list|detail split for md+ shells (chat / files / cron).
- * Phone callers keep their existing stack; this is only the wide layout chrome.
+ * Phone callers keep their existing stack; this is the wide layout chrome:
+ * master list ~320–380 + floating main card (web DesktopLayout inset).
  */
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import { useColors, fontScale, spacing } from '../../theme';
-import { MASTER_LIST_WIDTH } from '../../lib/layoutDensity';
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useColors, radius, shadows, spacing } from '../../theme';
+import { FLOATING_MAIN_INSET, MASTER_LIST_WIDTH } from '../../lib/layoutDensity';
+import { EmptyState } from '../ui';
 
 export type MasterDetailSplitProps = {
   master: React.ReactNode;
   detail: React.ReactNode | null;
   emptyLabel?: string;
+  emptyDescription?: string;
   masterWidth?: number;
   testID?: string;
   style?: StyleProp<ViewStyle>;
@@ -20,6 +23,7 @@ export function MasterDetailSplit({
   master,
   detail,
   emptyLabel = '请选择',
+  emptyDescription,
   masterWidth = MASTER_LIST_WIDTH,
   testID = 'master-detail-split',
   style,
@@ -28,7 +32,7 @@ export function MasterDetailSplit({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        split: { flex: 1, flexDirection: 'row' },
+        split: { flex: 1, flexDirection: 'row', backgroundColor: colors.background },
         master: {
           width: masterWidth,
           maxWidth: '42%',
@@ -36,15 +40,27 @@ export function MasterDetailSplit({
           borderRightColor: colors.border,
           backgroundColor: colors.card,
         },
-        detail: { flex: 1, backgroundColor: colors.background },
+        detailHost: {
+          flex: 1,
+          paddingVertical: FLOATING_MAIN_INSET,
+          paddingRight: FLOATING_MAIN_INSET,
+          backgroundColor: colors.background,
+        },
+        detailCard: {
+          flex: 1,
+          borderRadius: radius.xl,
+          overflow: 'hidden',
+          backgroundColor: colors.card,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          ...shadows.card,
+        },
         empty: {
           flex: 1,
           alignItems: 'center',
           justifyContent: 'center',
           padding: spacing.lg,
-          backgroundColor: colors.background,
         },
-        emptyText: { ...fontScale.base, color: colors.mutedForeground },
       }),
     [colors, masterWidth],
   );
@@ -52,12 +68,14 @@ export function MasterDetailSplit({
   return (
     <View style={[styles.split, style]} testID={testID}>
       <View style={styles.master}>{master}</View>
-      <View style={styles.detail}>
-        {detail ?? (
-          <View style={styles.empty} testID={`${testID}-empty`}>
-            <Text style={styles.emptyText}>{emptyLabel}</Text>
-          </View>
-        )}
+      <View style={styles.detailHost}>
+        <View style={styles.detailCard}>
+          {detail ?? (
+            <View style={styles.empty} testID={`${testID}-empty`}>
+              <EmptyState title={emptyLabel} description={emptyDescription} />
+            </View>
+          )}
+        </View>
       </View>
     </View>
   );

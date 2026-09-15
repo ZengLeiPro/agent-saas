@@ -87,6 +87,7 @@ export default function CronListScreen() {
       onToggle={toggleJob}
       activeJobId={isMdUp ? paneJobId : null}
       contentPaddingBottom={insets.bottom}
+      dense={isMdUp}
     />
   );
 
@@ -102,6 +103,7 @@ export default function CronListScreen() {
         <MasterDetailSplit
           testID="cron-master-detail"
           emptyLabel="请选择任务"
+          emptyDescription="从左侧列表打开任务详情。"
           master={listBody}
           detail={
             paneJobId ? (

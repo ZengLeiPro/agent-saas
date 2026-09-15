@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { ChevronDown, Volume2, VolumeX } from 'lucide-react-native';
+import { ChevronDown, FolderOpen, Volume2, VolumeX } from 'lucide-react-native';
 import type { ContextUsageData, TokenUsage } from '@agent/shared';
 import { useColors, spacing, fontScale, fontWeight } from '../../theme';
 import { ICON_SIZE, ICON_STROKE } from '../../lib/icons';
@@ -101,6 +101,10 @@ export interface ChatHeaderRightProps {
   ttsAvailable: boolean;
   ttsAutoPlay: boolean;
   onToggleTtsAutoPlay: () => void;
+  /** md+: open workspace file browser in the right slot. */
+  showFileBrowser?: boolean;
+  fileBrowserActive?: boolean;
+  onToggleFileBrowser?: () => void;
 }
 
 export function ChatHeaderRight({
@@ -114,10 +118,29 @@ export function ChatHeaderRight({
   ttsAvailable,
   ttsAutoPlay,
   onToggleTtsAutoPlay,
+  showFileBrowser,
+  fileBrowserActive,
+  onToggleFileBrowser,
 }: ChatHeaderRightProps) {
   const colors = useColors();
   return (
     <View style={styles.rightRow}>
+      {showFileBrowser && onToggleFileBrowser ? (
+        <Pressable
+          testID="chat-header-file-browser"
+          accessibilityRole="button"
+          accessibilityState={{ selected: !!fileBrowserActive }}
+          accessibilityLabel={fileBrowserActive ? '关闭文件浏览' : '打开文件浏览'}
+          hitSlop={8}
+          onPress={onToggleFileBrowser}
+        >
+          <FolderOpen
+            size={ICON_SIZE.feature}
+            color={fileBrowserActive ? colors.primary : colors.mutedForeground}
+            strokeWidth={ICON_STROKE.default}
+          />
+        </Pressable>
+      ) : null}
       {showContextTokens && tokenUsage ? (
         <TokenDetailTrigger
           tokenUsage={tokenUsage}

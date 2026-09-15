@@ -4,7 +4,7 @@ import { showTextPrompt } from '../../lib/prompt';
 import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronDown } from 'lucide-react-native';
-import { type RenderItem, type MessageItem, getPreviewFileType, useGroups, fetchAgentProfile, getSortedGroupItems, mergeIncomingShareText } from '@agent/shared';
+import { type RenderItem, type MessageItem, getPreviewFileType, useGroups, fetchAgentProfile, getSortedGroupItems, mergeIncomingShareText, DEFAULT_TENANT_SETTINGS } from '@agent/shared';
 import { BackButton } from '../BackButton';
 import type { PickerExtraSection } from './ModelPicker';
 import type { DrillDownPage } from '../overlays/DropdownMenu';
@@ -44,6 +44,10 @@ import { ChatInput } from './ChatInput';
 import { ConnectionBanner } from '../ConnectionBanner';
 import { TokenDetailOverlay } from './TokenDetail';
 import { ChatHeaderRight, ChatHeaderTitle } from './ChatSessionHeader';
+import { ChatFileBrowserPane } from './ChatFileBrowserPane';
+import { isFilesEntryVisible } from '../../lib/filesEntry';
+import { isV1RouteAllowed } from '../../v1/v1Capabilities';
+import { getV1BuildProfile } from '../../v1/v1Runtime';
 import { BillingDetailOverlay, useBillingBadgeData } from './BillingMiniBadge';
 import { OrgAgentPickerSheet } from './OrgAgentPickerSheet';
 import { AgentSwitchConfirmation } from './AgentSwitchConfirmation';
@@ -107,7 +111,17 @@ export function ChatSessionScreen({
   const [transcriptTarget, setTranscriptTarget] = useState<SubagentTranscriptTarget | null>(null);
   /** md+ single right-slot: file preview (subagent shares the same overlay host). */
   const [rightPreview, setRightPreview] = useState<ChatRightFilePreviewRequest | null>(null);
+  /** md+ right-slot: workspace file browser (web FolderOpen header entry). */
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const { isMdUp, width: breakpointWidth } = useBreakpoint();
+  const filesVisible = useMemo(
+    () =>
+      isFilesEntryVisible({
+        filesEnabled: (authUser?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features).filesEnabled,
+        routeAllowed: isV1RouteAllowed('files', getV1BuildProfile()),
+      }),
+    [authUser?.tenantFeatures],
+  );
   const [hostWidth, setHostWidth] = useState(0);
   const overlayProtectRef = useRef(false);
   const overlayWidth = useMemo(() => {
@@ -400,11 +414,24 @@ export function ChatSessionScreen({
         return true;
       }
       setTranscriptTarget(null);
+      setFileBrowserOpen(false);
       setRightPreview(request);
       return true;
     },
     [isMdUp],
   );
+
+  const toggleFileBrowser = useCallback(() => {
+    if (!isMdUp) return;
+    setFileBrowserOpen((open) => {
+      const next = !open;
+      if (next) {
+        setTranscriptTarget(null);
+        setRightPreview(null);
+      }
+      return next;
+    });
+  }, [isMdUp]);
 
   const rightSlotValue = useMemo(
     () => ({ openFilePreview: openRightFilePreview }),
@@ -509,6 +536,7 @@ export function ChatSessionScreen({
   useEffect(() => {
     setRightPreview(null);
     setTranscriptTarget(null);
+    setFileBrowserOpen(false);
   }, [sessionId]);
 
   const showEmptyState = chat.messages.length === 0 && !chat.isLoadingMessages && !chat.loading;
@@ -517,6 +545,7 @@ export function ChatSessionScreen({
     () => ({
       openTranscript: (target: SubagentTranscriptTarget) => {
         setRightPreview(null);
+        setFileBrowserOpen(false);
         setTranscriptTarget(target);
       },
     }),
@@ -534,12 +563,14 @@ export function ChatSessionScreen({
   // 顶栏左键三态：子任务面板打开时先关面板，否则退回会话列表。
   const handleHeaderBack = useCallback(() => {
     if (transcriptTarget) { setTranscriptTarget(null); return; }
+    if (fileBrowserOpen) { setFileBrowserOpen(false); return; }
+    if (rightPreview) { setRightPreview(null); return; }
     if (isPane) {
       onClosePane?.();
       return;
     }
     router.back();
-  }, [transcriptTarget, router, isPane, onClosePane]);
+  }, [transcriptTarget, fileBrowserOpen, rightPreview, router, isPane, onClosePane]);
 
   const headerTitleNode = (
     <ChatHeaderTitle
@@ -564,6 +595,9 @@ export function ChatSessionScreen({
       ttsAvailable={tts.available}
       ttsAutoPlay={tts.autoPlay}
       onToggleTtsAutoPlay={tts.toggleAutoPlay}
+      showFileBrowser={isMdUp && filesVisible}
+      fileBrowserActive={fileBrowserOpen}
+      onToggleFileBrowser={toggleFileBrowser}
     />
   );
 
@@ -811,6 +845,21 @@ export function ChatSessionScreen({
             size={rightPreview.size ?? 0}
             modifiedAt={rightPreview.modifiedAt ?? 0}
             {...(sessionOwner ? { owner: sessionOwner } : {})}
+          />
+        </SideOverlayPanel>
+      ) : null}
+      {isMdUp && fileBrowserOpen ? (
+        <SideOverlayPanel
+          title="文件"
+          onClose={() => setFileBrowserOpen(false)}
+          width={overlayWidth}
+          testID="chat-right-file-browser"
+        >
+          <ChatFileBrowserPane
+            owner={sessionOwner}
+            onOpenPreview={(request) => {
+              openRightFilePreview(request);
+            }}
           />
         </SideOverlayPanel>
       ) : null}

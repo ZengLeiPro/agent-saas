@@ -237,6 +237,10 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     expect(tile.textContent).toContain('09/10 周四 12:34');
     expect(tile.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(within(card).queryByText(/采集 /)).toBeNull();
-    expect(screen.getByText(/采集 /).textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
+    const collect = screen.getByRole('button', { name: '采集' });
+    const timestamp = collect.nextElementSibling as HTMLElement | null;
+    expect(timestamp?.textContent).toMatch(/\d{2}\/\d{2} \d{2}:\d{2}$/);
+    expect(timestamp?.textContent).not.toContain('采集');
+    expect(timestamp?.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
   });
 });

@@ -269,7 +269,7 @@ describe('ProviderQuotaPage', () => {
     expect(screen.queryByText('已耗尽')).toBeNull();
   });
 
-  it('单个主额度占满一行、卡片采用工作流同款渐变底色，采集时间在页头刷新按钮右侧', async () => {
+  it('单个主额度占满一行、卡片采用工作流同款渐变底色，采集时间在页头按钮右侧且无「采集」前缀', async () => {
     render(<ProviderQuotaPage />);
     const card = await screen.findByTestId('quota-account-codex:c1');
     const tile = screen.getByTestId('quota-window-primary');
@@ -284,7 +284,8 @@ describe('ProviderQuotaPage', () => {
     const pageRefresh = screen.getByRole('button', { name: /^刷新$/u });
     const collectButton = screen.getByRole('button', { name: '采集' });
     const timestamp = collectButton.nextElementSibling as HTMLElement | null;
-    expect(timestamp?.textContent).toBe(`采集 ${minuteTime('2026-09-05T06:30:00.000Z')}`);
+    expect(timestamp?.textContent).toBe(minuteTime('2026-09-05T06:30:00.000Z'));
+    expect(timestamp?.textContent).not.toContain('采集');
     expect(timestamp?.className).toContain('tabular-nums');
     expect(timestamp?.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(timestamp?.className).not.toContain('text-danger');
@@ -316,11 +317,12 @@ describe('ProviderQuotaPage', () => {
     const refreshButton = within(card).getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' });
     expect(refreshButton.className).toContain('text-danger');
     expect(refreshButton.getAttribute('title')).toContain('Codex usage HTTP 401');
-    expect(screen.getByText(`采集 ${minuteTime('2026-09-05T06:30:00.000Z')}`)).toBeTruthy();
+    expect(screen.getByText(minuteTime('2026-09-05T06:30:00.000Z'))).toBeTruthy();
+    expect(screen.queryByText(`采集 ${minuteTime('2026-09-05T06:30:00.000Z')}`)).toBeNull();
     expect(within(card).getByTestId('quota-window-primary').textContent).not.toContain('采集');
   });
 
-  it('零重置券隐藏，采集与到期统一为两个字标签、相同字号与等宽数字', async () => {
+  it('零重置券隐藏，到期统一为两个字标签、相同字号与等宽数字', async () => {
     api.providerQuota.mockResolvedValue({ ...overview, items: overview.items.map(item => ({ ...item, resetCredits: 0 })) });
     render(<ProviderQuotaPage />);
     await screen.findByText('Codex 订阅 · Pro');
@@ -330,6 +332,10 @@ describe('ProviderQuotaPage', () => {
     expect(expiry.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(expiry.className).toContain('text-xs');
     expect(expiry.className).toContain('tabular-nums');
+    const volcCard = screen.getByTestId('quota-account-volcengine:ark');
+    const expiryRow = within(volcCard).getByText(/^到期 /).closest('div.col-start-2');
+    expect(expiryRow?.className).toContain('col-start-2');
+    expect(expiryRow?.className).toContain('col-span-2');
     expect(screen.queryByText(/^套餐到期 /)).toBeNull();
     expect(screen.queryByText(/采集于|采集失败于/u)).toBeNull();
     expect(screen.queryByText('套餐状态')).toBeNull();
@@ -409,7 +415,8 @@ describe('ProviderQuotaPage', () => {
     expect(valueRow.textContent).not.toContain('（');
     expect([...card.querySelectorAll('span')].filter((el) => /^采集 /u.test(el.textContent ?? '')))
       .toHaveLength(0);
-    expect(screen.getByText(`采集 ${minuteTime('2026-09-05T06:30:00.000Z')}`)).toBeTruthy();
+    expect(screen.getByText(minuteTime('2026-09-05T06:30:00.000Z'))).toBeTruthy();
+    expect(screen.queryByText(`采集 ${minuteTime('2026-09-05T06:30:00.000Z')}`)).toBeNull();
   });
 
   it('Grok 无冷却信息时不渲染占位块，卡内间距与其他卡一致', async () => {

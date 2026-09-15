@@ -7,7 +7,12 @@ import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 
-const ALLOWED_FILES = new Set(['server-bundle.tgz', 'acs-orchestrator.tgz']);
+const ALLOWED_FILES = new Set([
+  'server-bundle.tgz',
+  'acs-orchestrator.tgz',
+  'web-assets.tgz',
+  'staging-runtime-assets.tgz',
+]);
 const INTERNAL_OSS_HOST = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.oss-cn-shenzhen-internal\.aliyuncs\.com$/u;
 
 export function reusableArtifactPlan(manifest) {

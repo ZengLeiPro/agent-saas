@@ -136,7 +136,7 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(workflow, /publish-release-record\.mjs/u);
   assert.match(workflow, /\.artifacts\.stagingRuntimeAssets\.path/u);
   assert.match(workflow, /test "\$staging_runtime_path" = staging-runtime-assets\.tgz/u);
-  assert.match(workflow, /STAGING_RUNTIME_ASSETS_PATH='\$remote\/staging-runtime-assets\.tgz'/u);
+  assert.match(workflow, /STAGING_RUNTIME_ASSETS_PATH='\$remote\/artifacts\/staging-runtime-assets\.tgz'/u);
   assert.match(workflow, /--argjson runtimeSummary/u);
   assert.match(workflow, /stagingRuntimeAssetsDigest/u);
   assert.ok(
@@ -198,6 +198,25 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
     /--arg releaseSha "\$\(jq -r \.components\.web\.sourceSha "\$RUNNER_TEMP\/manifest\.json"\)"/u,
   );
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
+});
+
+test('测试环境载荷不把制品绕美国 runner：ECS 按预签名 URL 从深圳 OSS 内网直拉', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const upload = workflow
+    .split('- name: 部署精确的测试环境 API、Worker 与 ACS 产物\n')[1]
+    .split('\n      - name:')[0];
+  assert.match(upload, /sign-promotion-artifact-urls\.mjs/u);
+  assert.match(upload, /staging-artifact-fetch-plan\.json/u);
+  assert.match(upload, /staging-oss-sign-credentials\.json/u);
+  assert.match(upload, /umask 077/u);
+  assert.match(upload, /hydrate '\$remote\/staging-artifact-fetch-plan\.json'/u);
+  assert.match(upload, /RELEASE_DIR='\$remote\/artifacts'/u);
+  assert.doesNotMatch(upload, /selected\/"\*\.tgz/u);
+  assert.doesNotMatch(upload, /cp .*staging-oss-sign-credentials/u);
+  const webPublish = workflow
+    .split('- name: 最后发布精确的测试环境 Web 产物')[1]
+    .split('\n      - name:')[0];
+  assert.match(webPublish, /selected\/web-assets\.tgz/u);
 });
 
 test('预发固定使用稳态基线，拒绝配置身份缺失与漂移', async () => {

@@ -88,6 +88,7 @@ export interface InstallationItem {
   systemId: string;
   systemName: string;
   status: string;
+  authMode?: 'v1_symmetric' | 'v2_asymmetric';
   runtimeStatus: string;
   registeredDigest: string | null;
   publishedDigest: string | null;

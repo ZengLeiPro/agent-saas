@@ -498,6 +498,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     systems,
     installations,
     credentials,
+    deploymentKeys,
     issuer,
     outbound,
     logicalCalls,

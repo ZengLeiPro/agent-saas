@@ -229,6 +229,26 @@ describe('pathPrefixes 内业务路由', () => {
 });
 
 describe('agent 行', () => {
+  it('V2 manifest、ready、me 和能力端点可独立使用', async () => {
+    expect((await request('platform', 'GET', '/ky/v2/manifest')).status).toBe(200);
+    expect((await request('platform', 'GET', '/ky/v2/health/ready')).status).toBe(200);
+    expect((await request('user_admin', 'GET', '/ky/v2/me')).status).toBe(200);
+    const response = await request('agent', 'POST', '/ky/v2/capabilities/order.search', {
+      cap: 'order.search',
+      lcid: 'lc_v2',
+      headers: { [HTTP_HEADERS.idempotencyKey]: 'lc_v2' },
+      body: { input: { keyword: 'V2' } },
+    });
+    expect(response.status).toBe(200);
+    const execution = await request(
+      'agent',
+      'GET',
+      '/ky/v2/capabilities/order.search/executions/lc_v2',
+      { cap: 'order.search', lcid: 'lc_v2' },
+    );
+    expect(execution.status).toBe(200);
+  });
+
   it('能力调用与执行查询只对 agent 开放', async () => {
     const response = await request('agent', 'POST', '/ky/v1/capabilities/order.search', {
       cap: 'order.search',

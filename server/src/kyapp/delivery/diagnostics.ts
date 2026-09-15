@@ -1,6 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
-import { toolName, validateMe, type Manifest } from '@kaiyan/ky-app-contract';
+import {
+  decodeV2Jws,
+  toolName,
+  validateMe,
+  verifyV2Attestation,
+  type Manifest,
+} from '@kaiyan/ky-app-contract';
 
 import { verifyKyAppAttestation } from '../attest/verify.js';
 import type { AppLogicalCallRunner } from '../gateway/lcid.js';
@@ -8,8 +14,10 @@ import type { AppCapabilityEntry } from '../gateway/snapshot.js';
 import type { KyAppCredentialManager } from '../installations/credentials.js';
 import type { KyAppInstallationService } from '../installations/service.js';
 import type { KyAppOutbound } from '../outbound.js';
+import { kyAppRuntimePaths } from '../protocol.js';
 import type { KyAppSatIssuer } from '../sat/issuer.js';
 import type { PgKyAppSystemStore } from '../systems/store.js';
+import type { PgDeploymentKeyStore } from '../workload/deploymentKeyStore.js';
 
 export type KyAppDiagnosticStatus = 'passed' | 'failed';
 
@@ -37,6 +45,7 @@ export interface KyAppDiagnosticsOptions {
   systems: PgKyAppSystemStore;
   installations: KyAppInstallationService;
   credentials: KyAppCredentialManager;
+  deploymentKeys: Pick<PgDeploymentKeyStore, 'listAccepted'>;
   issuer: KyAppSatIssuer;
   outbound: KyAppOutbound;
   logicalCalls: AppLogicalCallRunner;
@@ -59,6 +68,17 @@ function readAttestation(payload: unknown): string | null {
   return typeof value === 'string' && value !== '' ? value : null;
 }
 
+function upstreamProblem(payload: unknown): string {
+  if (typeof payload !== 'object' || payload === null) return '';
+  const error = (payload as { error?: unknown }).error;
+  if (typeof error !== 'object' || error === null) return '';
+  const value = error as { code?: unknown; message?: unknown };
+  const code = typeof value.code === 'string' ? value.code : '';
+  const message = typeof value.message === 'string' ? value.message : '';
+  const detail = [code, message].filter(Boolean).join('：');
+  return detail ? `（${detail.slice(0, 240)}）` : '';
+}
+
 /** WP5 一键诊断：每项都打真实对端，不以数据库旧状态或 UI 状态代替。 */
 export class KyAppDiagnostics {
   private readonly now: () => number;
@@ -79,6 +99,7 @@ export class KyAppDiagnostics {
     const version = await this.options.systems.getVersion(installation.systemId, registeredDigest);
     if (!version) throw new Error('找不到安装实例登记的 manifest 版本');
     const manifest = version.manifest as unknown as Manifest;
+    const paths = kyAppRuntimePaths(installation.authMode);
     const checks: KyAppDiagnosticCheck[] = [];
     const record = async (
       id: KyAppDiagnosticCheck['id'],
@@ -107,21 +128,24 @@ export class KyAppDiagnostics {
       return `${result.method} 已验证`;
     });
 
-    await record('live', 'live', async () => {
+    await record('live', '页面服务', async () => {
       const result = await this.options.outbound.request({
         baseUrl: installation.baseUrl,
-        path: '/ky/v1/health/live',
+        path: paths.live,
         method: 'GET',
         requestId: randomUUID(),
       });
-      const status = (result.json as { status?: unknown } | null)?.status;
+      const body = result.json as { status?: unknown; ok?: unknown } | null;
+      const status = paths.version === 'v2' ? (body?.ok === true ? 'ok' : body?.ok) : body?.status;
       if (result.status !== 200 || (status !== 'ok' && status !== 'maintenance')) {
-        throw new Error(`live 返回 HTTP ${result.status}，status=${String(status)}`);
+        throw new Error(
+          `live 返回 HTTP ${result.status}，status=${String(status)}${upstreamProblem(result.json)}`,
+        );
       }
       return status === 'maintenance' ? '可达，当前维护中' : '可达';
     });
 
-    await record('ready_digest', 'ready 与 digest', async () => {
+    await record('ready_digest', 'Agent 服务与版本', async () => {
       const requestId = randomUUID();
       const sat = await this.options.issuer.issue({
         act: 'platform',
@@ -132,14 +156,16 @@ export class KyAppDiagnostics {
       });
       const result = await this.options.outbound.request({
         baseUrl: installation.baseUrl,
-        path: '/ky/v1/health/ready',
+        path: paths.ready,
         method: 'GET',
         requestId,
         headers: { Authorization: `Bearer ${sat.token}` },
       });
       const body = result.json as { status?: unknown; manifestDigest?: unknown } | null;
       if (result.status !== 200 || body?.status !== 'ok') {
-        throw new Error(`ready 返回 HTTP ${result.status}，status=${String(body?.status)}`);
+        throw new Error(
+          `ready 返回 HTTP ${result.status}，status=${String(body?.status)}${upstreamProblem(result.json)}`,
+        );
       }
       if (body.manifestDigest !== registeredDigest) {
         throw new Error('ready 上报 digest 与平台登记值不一致');
@@ -151,24 +177,57 @@ export class KyAppDiagnostics {
       const nonce = randomBytes(16).toString('base64url');
       const result = await this.options.outbound.request({
         baseUrl: installation.baseUrl,
-        path: `/ky/v1/attest?nonce=${encodeURIComponent(nonce)}`,
+        path: paths.attest(installationId, nonce),
         method: 'GET',
         requestId: randomUUID(),
       });
       const attestation = readAttestation(result.json);
       if (result.status !== 200 || !attestation)
         throw new Error(`attest 返回 HTTP ${result.status}`);
-      const keys = await this.options.credentials.listAcceptableInstallationKeys(installationId);
-      if (keys.length === 0) throw new Error('平台没有可用于验签的安装密钥');
-      await verifyKyAppAttestation({
-        token: attestation,
-        installationId,
-        expectedOrigin: installation.origin,
-        audience: this.options.audience,
-        nonce,
-        keys,
-        nowMs: this.now(),
-      });
+      if (paths.version === 'v2') {
+        if (!installation.deploymentId || !installation.currentKeyId) {
+          throw new Error('部署身份尚未完整生效');
+        }
+        const decoded = decodeV2Jws(attestation);
+        const kid = decoded.protectedHeader.kid;
+        if (typeof kid !== 'string' || kid === '') throw new Error('安装证明缺少密钥标识');
+        const accepted = await this.options.deploymentKeys.listAccepted(
+          installationId,
+          new Date(this.now()),
+        );
+        const key = accepted.find(
+          (candidate) =>
+            candidate.status !== 'next' &&
+            candidate.keyId === kid &&
+            candidate.deploymentId === installation.deploymentId,
+        );
+        if (!key) throw new Error('安装证明引用的部署公钥不可用');
+        verifyV2Attestation(attestation, {
+          deploymentPublicJwk: key.publicJwk,
+          deploymentId: key.deploymentId,
+          keyId: key.keyId,
+          platformAudience: this.options.audience,
+          tenantId: installation.tenantId,
+          installationId,
+          systemId: installation.systemId,
+          generation: key.generation,
+          nonce,
+          manifestDigest: registeredDigest,
+          now: Math.floor(this.now() / 1000),
+        });
+      } else {
+        const keys = await this.options.credentials.listAcceptableInstallationKeys(installationId);
+        if (keys.length === 0) throw new Error('平台没有可用于验签的安装密钥');
+        await verifyKyAppAttestation({
+          token: attestation,
+          installationId,
+          expectedOrigin: installation.origin,
+          audience: this.options.audience,
+          nonce,
+          keys,
+          nowMs: this.now(),
+        });
+      }
       return '签名、nonce、origin 与安装实例均匹配';
     });
 
@@ -176,7 +235,7 @@ export class KyAppDiagnostics {
       .isTenantAdmin({ tenantId: installation.tenantId, userId: fixture.adminUserId })
       .catch(() => false);
     let adminMe: unknown = null;
-    await record('admin_me', '管理员 /me', async () => {
+    await record('admin_me', '管理员身份', async () => {
       if (!tenantAdmin) throw new Error('诊断用户不是该组织的有效管理员');
       const sat = await this.options.issuer.issue({
         act: 'user',
@@ -190,12 +249,13 @@ export class KyAppDiagnostics {
       });
       const result = await this.options.outbound.request({
         baseUrl: installation.baseUrl,
-        path: '/ky/v1/me',
+        path: paths.me,
         method: 'GET',
         requestId: randomUUID(),
         headers: { Authorization: `Bearer ${sat.token}` },
       });
-      if (result.status !== 200) throw new Error(`/me 返回 HTTP ${result.status}`);
+      if (result.status !== 200)
+        throw new Error(`/me 返回 HTTP ${result.status}${upstreamProblem(result.json)}`);
       const validation = validateMe(result.json, manifest);
       if (!validation.ok) throw new Error(`/me 不合契约：${validation.errors.join('；')}`);
       const user = (result.json as { user?: { id?: unknown; roles?: unknown } }).user;
@@ -231,6 +291,7 @@ export class KyAppDiagnostics {
         ...(capability.resultLink ? { resultLink: capability.resultLink } : {}),
         registeredDigest,
         baseUrl: installation.baseUrl,
+        authMode: installation.authMode,
       };
       const outcome = await this.options.logicalCalls.run({
         entry,

@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { KyAppInstallationDirectory } from '../installations/queries.js';
 import type { KyAppOutbound } from '../outbound.js';
+import { kyAppRuntimePaths } from '../protocol.js';
 import type { KyAppSatIssuer } from '../sat/issuer.js';
-import { KY_APP_EVENTS_PATH } from '../events/dispatcher.js';
 import type { DirectoryReconcileResult } from './projection.js';
 
 export const DIRECTORY_CHANGED_FEATURE = 'directory.changed.v1';
@@ -69,7 +69,7 @@ export class DirectoryChangeNotifier {
         });
         const response = await this.options.outbound.request({
           baseUrl: installation.baseUrl,
-          path: KY_APP_EVENTS_PATH,
+          path: kyAppRuntimePaths(installation.authMode).events,
           method: 'POST',
           requestId,
           headers: { authorization: `Bearer ${sat.token}` },

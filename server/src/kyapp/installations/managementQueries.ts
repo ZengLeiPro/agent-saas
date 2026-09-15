@@ -271,7 +271,7 @@ export class KyAppManagementQueries {
     }
     params.push(filter.limit + 1);
     const result = await this.pool.query(
-      `SELECT i.installation_id,i.tenant_id,i.system_id,i.status,i.registered_digest,i.domain_verified_at,i.updated_at,
+      `SELECT i.installation_id,i.tenant_id,i.system_id,i.status,i.auth_mode,i.registered_digest,i.domain_verified_at,i.updated_at,
       to_char(i.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at,
       d.name,d.published_digest,v.manifest_json->>'icon' AS icon,r.live_status,r.ready_status,r.manifest_digest,
       e.status AS delivery_status,${this.eventsTable ? 'u.last_usage_at' : 'NULL'} AS last_usage_at FROM ${this.systems.installationsTable} i
@@ -293,6 +293,7 @@ export class KyAppManagementQueries {
         systemName: String(row.name),
         icon: row.icon ?? null,
         status: row.status,
+        authMode: row.auth_mode === 'v2_asymmetric' ? 'v2_asymmetric' : 'v1_symmetric',
         registeredDigest: row.registered_digest,
         publishedDigest: row.published_digest,
         domainVerifiedAt: date(row.domain_verified_at),

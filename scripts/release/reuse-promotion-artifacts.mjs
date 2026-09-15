@@ -29,6 +29,14 @@ export function reusableArtifactPlan(manifest) {
     const digest = selected[field].slice(7);
     plan.push({ filename, digest, source: join(root, digest, '.release', filename) });
   }
+  // Production Web has no digest-addressed host cache; hydrate from release OSS when deploying.
+  const web = manifest.components?.web;
+  if (web && web.action !== 'keep') {
+    if (web.action !== 'deploy' || !/^sha256:[a-f0-9]{64}$/u.test(web.artifactDigest ?? '')) {
+      throw new Error('Invalid reusable artifact identity: web');
+    }
+    plan.push({ filename: 'web-assets.tgz', digest: web.artifactDigest.slice(7) });
+  }
   return plan;
 }
 

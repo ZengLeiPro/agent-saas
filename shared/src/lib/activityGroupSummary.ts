@@ -221,3 +221,13 @@ function durationField(items: readonly MessageItem[]): { durationMs?: number } {
   const durationMs = getActivityDurationMs(items);
   return durationMs === undefined ? {} : { durationMs };
 }
+
+export {
+  activityLeafInterval,
+  activityWallClockDurationMs,
+  collectActivityTimingLeaves,
+  earliestLiveStartedAtMs,
+  mergeIntervalDurationMs,
+  orphanDurationFallbackMs,
+} from './wallClockDuration';
+export type { ActivityTimingLeaf, TimeInterval } from './wallClockDuration';

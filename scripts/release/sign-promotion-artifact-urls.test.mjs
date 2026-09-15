@@ -54,6 +54,35 @@ test('按 Manifest 为需部署组件签发内网 GET URL，keep 的组件不进
   assert.match(plan.artifacts[0].source, /\/opt\/agent-saas-app\/releases\/b{64}\/\.release\/server-bundle\.tgz/u);
 });
 
+
+test('Web deploy 时生产拉取计划包含 web-assets.tgz 内网 URL', () => {
+  const webDigest = 'd'.repeat(64);
+  const value = {
+    components: {
+      api: { action: 'keep' },
+      acs: { action: 'keep' },
+      web: { action: 'deploy', artifactDigest: `sha256:${webDigest}` },
+    },
+    artifacts: {
+      webAssets: {
+        digest: `sha256:${webDigest}`,
+        size: 99,
+        uri: 'oss://agent-saas-release-records/rc-20260915-149/web-assets.tgz',
+      },
+    },
+  };
+  const plan = buildFetchPlan(value, (uri) => {
+    assert.equal(uri, 'oss://agent-saas-release-records/rc-20260915-149/web-assets.tgz');
+    return 'https://agent-saas-release-records.oss-cn-shenzhen-internal.aliyuncs.com/rc-20260915-149/web-assets.tgz';
+  });
+  assert.equal(plan.artifacts.length, 1);
+  assert.equal(plan.artifacts[0].filename, 'web-assets.tgz');
+  assert.equal(plan.artifacts[0].digest, webDigest);
+  assert.equal(plan.artifacts[0].size, 99);
+  assert.equal(plan.artifacts[0].source, undefined);
+  assert.match(plan.artifacts[0].url, /oss-cn-shenzhen-internal/);
+});
+
 test('摘要或体积与 Manifest 不一致时拒绝签发', () => {
   const value = manifest();
   value.artifacts.serverBundle.size = '12';

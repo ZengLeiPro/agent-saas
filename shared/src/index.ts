@@ -791,20 +791,15 @@ export type {
 
 // Lib - Agent 活动分组折叠摘要 / runtime_status 中文标签
 export {
-  getActiveItemIndex,
-  getActivityDurationMs,
-  getCompletedGroupTitle,
-  getRuntimeStatusLabel,
-  getRuntimeStatusMeta,
-  getRuntimeStatusTone,
-  isActiveActivity,
-  isWaitingForUserAction,
-  selectActivityGroupSummary,
+  getActiveItemIndex, getActivityDurationMs, getCompletedGroupTitle,
+  getRuntimeStatusLabel, getRuntimeStatusMeta, getRuntimeStatusTone,
+  isActiveActivity, isWaitingForUserAction, selectActivityGroupSummary,
+  activityLeafInterval, activityWallClockDurationMs, collectActivityTimingLeaves,
+  earliestLiveStartedAtMs, mergeIntervalDurationMs, orphanDurationFallbackMs,
 } from './lib/activityGroupSummary';
 export type {
-  GroupSummaryInfo,
-  RuntimeStatus,
-  RuntimeStatusIcon,
+  GroupSummaryInfo, RuntimeStatus, RuntimeStatusIcon,
+  ActivityTimingLeaf, TimeInterval,
 } from './lib/activityGroupSummary';
 
 // Lib - 业务步骤状态语义（步骤流 / 时间线 / 详情面板共用）

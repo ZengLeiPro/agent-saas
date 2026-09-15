@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  pickSoleReadyTenantHandId,
   selectRuntimeHandRoute,
   type HandRecord,
 } from '../runtime/handStore.js';
@@ -23,20 +22,24 @@ function makeHand(overrides: Partial<HandRecord>): HandRecord {
   };
 }
 
-describe('pickSoleReadyTenantHandId (B2)', () => {
-  it('returns undefined for an empty hand list', () => {
-    expect(pickSoleReadyTenantHandId([])).toBeUndefined();
+describe('selectRuntimeHandRoute (B2)', () => {
+  it('returns none for an empty hand list', () => {
+    expect(selectRuntimeHandRoute([])).toEqual({ kind: 'none' });
   });
 
   it('picks the only ready tenant remote hand', () => {
     const hand = makeHand({ handId: 'session-1:tenant-ecs' });
-    expect(pickSoleReadyTenantHandId([hand])).toBe('session-1:tenant-ecs');
+    expect(selectRuntimeHandRoute([hand])).toEqual({
+      kind: 'ready',
+      handId: 'session-1:tenant-ecs',
+      attested: false,
+    });
   });
 
-  it('returns undefined when more than one ready tenant hand exists', () => {
+  it('blocks when more than one ready tenant hand exists', () => {
     const a = makeHand({ handId: 'session-1:tenant-a', metadata: { tenantRemoteHandId: 'tenant-a' } });
     const b = makeHand({ handId: 'session-1:tenant-b', metadata: { tenantRemoteHandId: 'tenant-b' } });
-    expect(pickSoleReadyTenantHandId([a, b])).toBeUndefined();
+    expect(selectRuntimeHandRoute([a, b])).toEqual({ kind: 'blocked', message: 'RUNTIME_HAND_AMBIGUOUS' });
   });
 
   it('ignores non-server-remote hands (e.g. workspace default or client)', () => {
@@ -51,25 +54,37 @@ describe('pickSoleReadyTenantHandId (B2)', () => {
       type: 'client',
       metadata: { tenantRemoteHandId: 'should-not-match-non-server-remote' },
     });
-    expect(pickSoleReadyTenantHandId([workspaceHand, tenantHand, clientHand])).toBe('session-1:tenant-ecs');
+    expect(selectRuntimeHandRoute([workspaceHand, tenantHand, clientHand])).toEqual({
+      kind: 'ready',
+      handId: 'session-1:tenant-ecs',
+      attested: false,
+    });
   });
 
   it('ignores hands without tenantRemoteHandId metadata', () => {
     const regularServerRemote = makeHand({ handId: 'session-1:plain', metadata: {} });
     const tenantHand = makeHand({ handId: 'session-1:tenant-ecs' });
-    expect(pickSoleReadyTenantHandId([regularServerRemote, tenantHand])).toBe('session-1:tenant-ecs');
+    expect(selectRuntimeHandRoute([regularServerRemote, tenantHand])).toEqual({
+      kind: 'ready',
+      handId: 'session-1:tenant-ecs',
+      attested: false,
+    });
   });
 
   it('ignores hands whose status is not ready', () => {
     const unhealthy = makeHand({ handId: 'session-1:tenant-a', status: 'unhealthy', metadata: { tenantRemoteHandId: 'tenant-a' } });
     const ready = makeHand({ handId: 'session-1:tenant-b', metadata: { tenantRemoteHandId: 'tenant-b' } });
-    expect(pickSoleReadyTenantHandId([unhealthy, ready])).toBe('session-1:tenant-b');
-    expect(pickSoleReadyTenantHandId([unhealthy])).toBeUndefined();
+    expect(selectRuntimeHandRoute([unhealthy, ready])).toEqual({
+      kind: 'ready',
+      handId: 'session-1:tenant-b',
+      attested: false,
+    });
+    expect(selectRuntimeHandRoute([unhealthy])).toEqual({ kind: 'none' });
   });
 
   it('treats empty tenantRemoteHandId string as not a candidate', () => {
     const blank = makeHand({ handId: 'session-1:blank', metadata: { tenantRemoteHandId: '' } });
-    expect(pickSoleReadyTenantHandId([blank])).toBeUndefined();
+    expect(selectRuntimeHandRoute([blank])).toEqual({ kind: 'none' });
   });
 
   it('fails closed when a ready-looking hand still has an unresolved provision failure', () => {
@@ -80,7 +95,7 @@ describe('pickSoleReadyTenantHandId (B2)', () => {
         provisionFailure: 'ACS SNAT managed entry quota exceeded: 28/28',
       },
     });
-    expect(pickSoleReadyTenantHandId([failed])).toBeUndefined();
+    expect(selectRuntimeHandRoute([failed])).toEqual({ kind: 'none' });
 
     const retryFailed = makeHand({
       handId: 'session-1:tenant-retry-failed',
@@ -89,7 +104,7 @@ describe('pickSoleReadyTenantHandId (B2)', () => {
         provision: { lastStatus: 'error', lastError: 'reprovision failed' },
       },
     });
-    expect(pickSoleReadyTenantHandId([retryFailed])).toBeUndefined();
+    expect(selectRuntimeHandRoute([retryFailed])).toEqual({ kind: 'none' });
   });
 
   it('blocks legacy default transport fallback when its default hand is unavailable', () => {

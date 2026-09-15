@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -60,14 +60,13 @@ describe('Runtime Worker 生产部署契约', () => {
       join(repoRoot, 'daemon-packaging/systemd/agent-saas-runtime-worker@.service.template'),
       'utf-8',
     );
-    const legacyWebUnit = await readFile(
-      join(repoRoot, 'daemon-packaging/systemd/agent-saas-server.service.template'),
-      'utf-8',
-    );
     const nginxNasDropIn = await readFile(
       join(repoRoot, 'daemon-packaging/systemd/nginx-agent-saas-nas.conf'),
       'utf-8',
     );
+    await expect(access(join(repoRoot, 'daemon-packaging/systemd/agent-saas-server.service.template'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
     // Retain historical rollback invariants after the unreachable ECS job was removed.
     const workflow = await readFile(join(repoRoot, 'scripts/release/fixtures/legacy-ecs-workflow.yml'), 'utf-8');
     const activeWorkflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
@@ -100,7 +99,6 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(webUnit).toContain('ExecStart=/usr/bin/node --enable-source-maps dist/index.js');
     expect(webUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only');
     expect(webUnit).toContain('AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-server-%i.draining');
-    expect(legacyWebUnit).toContain('Environment=AGENT_SAAS_ENVIRONMENT=production');
     expect(webUnit).toContain(
       'ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining',
     );
@@ -137,9 +135,6 @@ describe('Runtime Worker 生产部署契约', () => {
     );
     expect(workerUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production')).toBeGreaterThan(
       workerUnit.lastIndexOf('EnvironmentFile='),
-    );
-    expect(legacyWebUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production')).toBeGreaterThan(
-      legacyWebUnit.lastIndexOf('EnvironmentFile='),
     );
     expect(webUnit.indexOf('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only')).toBeGreaterThan(
       webUnit.lastIndexOf('EnvironmentFile='),

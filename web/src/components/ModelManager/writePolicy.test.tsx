@@ -14,6 +14,12 @@ vi.mock('./CodexSubscriptionCard', () => ({
     <button disabled={readOnly}>独立订阅授权</button>
   ),
 }));
+// Grok mounts only after models load and would otherwise steal a models-only 503 mock.
+vi.mock('./GrokSubscriptionCard', () => ({
+  GrokSubscriptionCard: ({ readOnly }: { readOnly: boolean }) => (
+    <button disabled={readOnly}>Grok 订阅鉴权</button>
+  ),
+}));
 
 const models = {
   default: 'main/gpt',
@@ -163,7 +169,27 @@ describe('ModelManager write capability', () => {
     const user = userEvent.setup();
     render(<ModelManager />);
     await screen.findByText(/当前为测试环境/);
-    vi.mocked(authFetch).mockResolvedValueOnce(json({ error: '读取失败' }, 503));
+    // Scope the 503 to models GET only — never let sibling authFetch calls consume it.
+    let failModelsOnce = true;
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (init?.method === 'PUT') {
+        if (denySave)
+          return json(
+            {
+              error: '生产配置不能直接在线保存，请通过受控配置发布流程变更',
+              code: 'PRODUCTION_CONFIG_PUBLISH_REQUIRED',
+            },
+            409,
+          );
+        const payload = JSON.parse(String(init.body));
+        return json({ ...view(), models: payload.models, revision: 'rev-2' });
+      }
+      if (failModelsOnce && String(path) === '/api/admin/models') {
+        failModelsOnce = false;
+        return json({ error: '读取失败' }, 503);
+      }
+      return json(view());
+    });
     await user.click(screen.getByRole('button', { name: '刷新' }));
     await waitFor(() => {
       expect(screen.getByText(/尚未取得服务端配置写入策略/)).toBeTruthy();

@@ -3,7 +3,7 @@ import { importGrokCatalogModels } from './grokCatalogImport';
 import { changeGroupTransport, changeModelTransport, isSubscriptionTransport, subscriptionTransportNotice } from './subscriptionModelForm';
 import { DEFAULT_PROTOCOL, INHERIT_PROTOCOL, moveItem, nextCopyValue, nextCopyId, emptyModel, emptyGroup, emptyPricing, defaultMemoryIndex, stringifyJson, parseOptionalJsonObject, parseOptionalJson, normalizePricing, resolveModelProtocol, resolveGroupReasoningEffort, resolveModelReasoningEffort, resolveModelImageInput, resolveResponsesTransport, formatEffectiveValue } from "./modelManagerEditing";
 import { GrokSubscriptionCard } from "./GrokSubscriptionCard";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, CircleCheck, Copy, Database, GripVertical, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { authFetch } from "@/lib/authFetch";
 import { refreshAll } from "@/lib/refreshBus";
@@ -25,7 +25,6 @@ import type {
   EditableGroup, EditableModelsConfig, EditableMemoryIndexConfig, AdminModelsResponse,
 } from "./modelConfigTypes";
 import { useModelWritePolicy } from "./useModelWritePolicy";
-
 
 type SelectedPanel =
   | { type: "general" }
@@ -84,31 +83,32 @@ export function ModelManager() {
     setAdvancedText(entries);
   }, []);
 
+  const acceptResponseRef = useRef(acceptResponse); acceptResponseRef.current = acceptResponse;
+  const applyUtilityResponseRef = useRef(titleSettings.applyResponse); applyUtilityResponseRef.current = titleSettings.applyResponse;
+  const refreshSeqRef = useRef(0); // stable refresh; ignore stale overlapping responses
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setSavedAt(null);
+    const seq = ++refreshSeqRef.current;
+    setLoading(true); setSavedAt(null);
     try {
       const res = await authFetch("/api/admin/models");
       const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string; code?: string };
       if (!res.ok || !data.revision || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
-      acceptResponse(data);
+      if (seq !== refreshSeqRef.current) return;
+      acceptResponseRef.current(data);
       setRevision(data.revision); setModels(data.models);
       setMemoryIndex(data.memoryIndex ?? null);
-      titleSettings.applyResponse(data as AdminModelsResponse);
+      applyUtilityResponseRef.current(data as AdminModelsResponse);
       setSelectedPanel((prev) => {
         if (prev.type === "group" && data.models!.groups.some((group) => group.id === prev.groupId)) return prev;
         if (prev.type === "model" && data.models!.groups.some((group) => group.id === prev.groupId && group.models.some((model) => model.id === prev.modelId))) return prev;
         return { type: "general" };
       });
-      hydrateAdvancedText(data.models);
-      setError(null);
+      hydrateAdvancedText(data.models); setError(null);
     } catch (err) {
-      acceptResponse({});
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [acceptResponse, hydrateAdvancedText, titleSettings.applyResponse]);
+      if (seq !== refreshSeqRef.current) return;
+      acceptResponseRef.current({}); setError(err instanceof Error ? err.message : String(err));
+    } finally { if (seq === refreshSeqRef.current) setLoading(false); }
+  }, [hydrateAdvancedText]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
     if (loading) return;

@@ -1,6 +1,5 @@
 export { ContextCenterPage } from "./ContextCenterPage";
 export { ContextEntitiesPanel, ContextReviewsPanel, ContextTimelinePanel } from "./ContextProductPanels";
-export { EvidenceDrawer, type EvidenceDrawerProps } from "./EvidenceDrawer";
 export { useContextCenter } from "./useContextCenter";
 export type {
   BackfillCoverage,

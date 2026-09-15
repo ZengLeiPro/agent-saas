@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Save } from 'lucide-react';
+import { TriangleAlert, Save } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -126,7 +126,7 @@ export function PlatformDemoShell({ onClose, fallbackFromRealAdmin = false }: Pl
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950">
-        <AlertTriangle className="h-4 w-4 shrink-0" />
+        <TriangleAlert className="h-4 w-4 shrink-0" />
         <span className="font-medium">{PLATFORM_DEMO_BANNER}</span>
         <Badge variant="secondary" className="ml-auto">{PLATFORM_DEMO_MENU_LABEL}</Badge>
       </div>

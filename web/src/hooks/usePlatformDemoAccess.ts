@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   PLATFORM_DEMO_BANNER,
   PLATFORM_DEMO_MENU_LABEL,
-  fetchPlatformDemoAccess,
-} from '@agent/shared/lib/platformDemoApi';
+} from '@agent/shared/lib/platformDemoConstants';
 
 export interface PlatformDemoAccessState {
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -43,7 +42,8 @@ export function usePlatformDemoAccess(options: {
     }
     let current = true;
     setState((existing) => ({ ...existing, status: 'loading' }));
-    void fetchPlatformDemoAccess()
+    void import('@agent/shared/lib/platformDemoApi')
+      .then(({ fetchPlatformDemoAccess }) => fetchPlatformDemoAccess())
       .then((response) => {
         if (!current) return;
         setState({

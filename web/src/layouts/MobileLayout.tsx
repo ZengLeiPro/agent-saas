@@ -14,7 +14,7 @@ import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
-import { usePlatformDemoAccess } from "@/hooks/usePlatformDemoAccess";
+import { usePlatformDemoEntryAllowed } from "@/hooks/usePlatformDemoEntryAllowed";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
@@ -88,7 +88,7 @@ export function MobileLayout(props: LayoutProps) {
   const managementAccess = useManagementSettingsAccess({
     user: authUser, authLoading, authEnabled, active: accessTarget !== null,
   });
-  const platformDemoAccess = usePlatformDemoAccess({ active: true, authEnabled, authLoading, userId: authUser?.id });
+  const platformDemoEntryAllowed = usePlatformDemoEntryAllowed({ active: true, authEnabled, authLoading, userId: authUser?.id });
   const handleReturnPersonalSettings = useCallback(() => {
     openSettings(settingsSection);
   }, [openSettings, settingsSection]);
@@ -288,7 +288,7 @@ export function MobileLayout(props: LayoutProps) {
         <ManagementWorkspaceContent
           route={governanceRoute}
           access={managementAccess}
-          platformDemoEntryAllowed={platformDemoAccess.allowed}
+          platformDemoEntryAllowed={platformDemoEntryAllowed}
           onReturnPersonal={handleReturnPersonalSettings}
           platformAdminSection={platformAdminSection}
           platformAdminEntityId={platformAdminEntityId}
@@ -639,7 +639,7 @@ export function MobileLayout(props: LayoutProps) {
           managementStatus={managementAccess.status}
           tenantEntryAllowed={managementAccess.tenantEntryAllowed}
           platformEntryAllowed={managementAccess.platformEntryAllowed}
-          platformDemoEntryAllowed={platformDemoAccess.allowed}
+          platformDemoEntryAllowed={platformDemoEntryAllowed}
           organizationTargetId={organizationSettingsTargetId.current}
         />
       </Suspense>

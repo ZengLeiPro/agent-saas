@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { managementPagesFor } from "@/lib/managementNavigation";
-import { PLATFORM_DEMO_MENU_LABEL } from "@agent/shared/lib/platformDemoApi";
+import { PLATFORM_DEMO_MENU_LABEL } from "@agent/shared/lib/platformDemoConstants";
 
 const MANAGEMENT_ICONS: Readonly<Record<string, LucideIcon>> = {
   bot: EntityIcons.expert,

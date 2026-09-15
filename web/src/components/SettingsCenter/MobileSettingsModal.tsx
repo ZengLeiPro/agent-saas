@@ -8,7 +8,7 @@ import { navigateSettingsRoute } from '@/lib/urlSync';
 import type { GovernanceRouteState } from '@/lib/governanceNavigation';
 import type { SettingsModalProps } from './SettingsModal';
 import { SettingsModal } from './SettingsEntry';
-import { PLATFORM_DEMO_MENU_LABEL } from '@agent/shared/lib/platformDemoApi';
+import { PLATFORM_DEMO_MENU_LABEL } from '@agent/shared/lib/platformDemoConstants';
 
 interface MobileSettingsModalProps extends Omit<SettingsModalProps, 'managementGroups'> {
   governanceRoute: GovernanceRouteState | null;

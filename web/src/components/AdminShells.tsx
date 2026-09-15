@@ -39,7 +39,7 @@ import {
   PlatformOrganizationGovernance,
   PlatformTemplateCatalogPage,
 } from "@/components/PlatformGovernance/PlatformGovernancePage";
-import { PlatformDemoAccessPage } from "@/components/PlatformDemo/PlatformDemoAccessPage";
+const PlatformDemoAccessPage = lazy(() => import("@/components/PlatformDemo/PlatformDemoAccessPage").then((m) => ({ default: m.PlatformDemoAccessPage })));
 
 // 直接内嵌而不走 render prop：本面板只依赖 tenantId/tenantName，走 prop 就得在
 // Desktop 两处 + Mobile 两处各传一遍，漏一处该 section 会空白（见 renderOrgAgents 注释）。
@@ -648,7 +648,7 @@ export function PlatformAdminShell({
       case "platform.org-business.platform-admins":
         return <PlatformAdminsPage />;
       case "platform.org-business.demo-access":
-        return <PlatformDemoAccessPage />;
+        return <Suspense fallback={<SettingsSectionFallback />}><PlatformDemoAccessPage /></Suspense>;
       case "platform.resource-center.agent-templates":
         return <PlatformTemplateCatalogPage kind="agent" />;
       case "platform.resource-center.environment-templates":

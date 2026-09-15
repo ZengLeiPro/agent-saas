@@ -738,7 +738,6 @@ export const MessageItem = memo(function MessageItem({
               已排队，将在当前步骤结束后插入
             </div>
           )}
-          {/* 失败态副文案 + 重试按钮 */}
           {isFailed && (
             <div className="mt-1 flex items-center justify-end gap-2 text-xs">
               <span className="text-destructive">
@@ -754,12 +753,13 @@ export const MessageItem = memo(function MessageItem({
               )}
             </div>
           )}
-          <div className="relative h-0">
-            <div className={cn(
-              "absolute right-0 top-0.5 flex items-center gap-0.5 transition-opacity",
-              "opacity-100 md:opacity-0 md:group-hover:opacity-100",
-            )}>
-              {onFork && !isFirstUser && !isLoading && !isFailed && message.id.startsWith('line-') && (
+          {/* In-flow footer so hover under the bubble stays inside `.group`. */}
+          {!isFailed && (
+            <div
+              data-testid="user-message-actions"
+              className={cn("flex items-center justify-end gap-0.5 pt-0.5 transition-opacity", "opacity-100 md:opacity-0 md:group-hover:opacity-100")}
+            >
+              {onFork && !isFirstUser && !isLoading && message.id.startsWith('line-') && (
                 <button
                   onClick={() => onFork(message)}
                   className="rounded-md p-1 text-muted-foreground/50 transition-colors hover:text-muted-foreground"
@@ -768,17 +768,15 @@ export const MessageItem = memo(function MessageItem({
                   <GitFork className="size-3.5" />
                 </button>
               )}
-              {!isFailed && (
-                <ActionButtons
-                  text={message.content}
-                  ttsState={ttsState}
-                  showTts={showTts}
-                  onTtsPlay={() => tts?.play(msgKey, message.content)}
-                  onTtsTogglePause={() => tts?.togglePause(msgKey)}
-                />
-              )}
+              <ActionButtons
+                text={message.content}
+                ttsState={ttsState}
+                showTts={showTts}
+                onTtsPlay={() => tts?.play(msgKey, message.content)}
+                onTtsTogglePause={() => tts?.togglePause(msgKey)}
+              />
             </div>
-          </div>
+          )}
         </div>
       </div>
     );

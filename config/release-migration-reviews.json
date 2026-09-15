@@ -682,6 +682,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -832,6 +853,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -1929,6 +1954,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -2215,6 +2261,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -3130,6 +3180,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -3396,6 +3467,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -4290,6 +4365,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -4540,6 +4636,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -5434,6 +5534,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -5684,6 +5805,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -6564,6 +6689,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -6806,6 +6952,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -7686,6 +7836,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -7928,6 +8099,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -8808,6 +8983,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -9050,6 +9246,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -10175,6 +10375,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -10429,6 +10650,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -11316,6 +11541,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -11578,6 +11824,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -12479,6 +12729,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -12733,6 +13004,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -13634,6 +13909,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -13888,6 +14184,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -14747,6 +15047,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -14985,6 +15306,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -15844,6 +16169,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -16082,6 +16428,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -16941,6 +17291,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -17179,6 +17550,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -18038,6 +18413,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -18276,6 +18672,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -19121,6 +19521,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -19355,6 +19776,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -20200,6 +20625,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -20434,6 +20880,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -21230,6 +21680,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -21444,6 +21915,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -22240,6 +22715,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -22450,6 +22946,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -23246,6 +23746,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -23448,6 +23969,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -24244,6 +24769,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -24446,6 +24992,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -25242,6 +25792,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -25444,6 +26015,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -26212,6 +26787,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -26406,6 +27002,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -27160,6 +27760,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -27362,6 +27983,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -28088,6 +28713,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -28274,6 +28920,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -29000,6 +29650,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -29186,6 +29857,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -29884,6 +30559,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -30054,6 +30750,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -30752,6 +31452,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -30914,6 +31635,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -31598,6 +32323,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -31748,6 +32494,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -32432,6 +33182,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -32578,6 +33349,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -33262,6 +34037,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -33412,6 +34208,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -34096,6 +34896,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -34238,6 +35059,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -34922,6 +35747,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -35064,6 +35910,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -35748,6 +36598,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -35886,6 +36757,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -36570,6 +37445,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -36720,6 +37616,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -37404,6 +38304,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -37554,6 +38475,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -38238,6 +39163,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -38388,6 +39334,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -39044,6 +39994,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -39134,6 +40105,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -39818,6 +40793,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -39952,6 +40948,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -40272,6 +41272,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -40362,6 +41383,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -40675,6 +41700,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -40749,6 +41795,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -41055,6 +42105,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -41125,6 +42196,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -41424,6 +42499,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -41490,6 +42586,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -41782,6 +42882,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -41844,6 +42965,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42094,6 +43219,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42140,6 +43286,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42390,6 +43540,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42436,6 +43607,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42679,6 +43854,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42717,6 +43913,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42939,6 +44139,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42969,6 +44190,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -43107,6 +44332,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -43137,6 +44383,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -43254,6 +44504,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -43280,6 +44551,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -43418,6 +44693,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -43460,6 +44756,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -43549,6 +44849,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -43567,6 +44888,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -43649,6 +44974,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -43675,6 +45021,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -43722,6 +45072,27 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -43732,6 +45103,10 @@
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
           "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -43765,6 +45140,27 @@
           "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
           "classification": "no-schema-change",
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -43775,6 +45171,10 @@
         {
           "path": "server/src/data/governance-schema/v49PlatformDemoMigration.test.ts",
           "digest": "sha256:f2092bd9bc4cfddffe3f27281949a86835467abc903649ab16e2b95d39f74574"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     }

@@ -3,9 +3,10 @@ import { View, StyleSheet, Text, ActivityIndicator, Animated } from 'react-nativ
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import type { AskUserAnswers, MessageItem, RenderItem, AgentProfile, RawPresentationGate, RenderModel } from '@agent/shared';
-import { businessStepMainItems, groupMessages, isDebugModeAvailable, partitionAssistantTurn, selectRenderModel } from '@agent/shared';
+import { buildBusinessStepCatalog, businessStepMainItems, businessStepTimingByPlanId, groupMessages, isDebugModeAvailable, partitionAssistantTurn, selectRenderModel } from '@agent/shared';
 import { MessageItemView } from './MessageItem';
 import { TurnProcessFold } from './TurnProcessFold';
+import { BusinessStepTimingProvider } from './BusinessStepTimingContext';
 import { BlockActionProvider } from './blocks/BlockActionContext';
 import { CompactionDivider } from './CompactionDivider';
 import { isCompactionItem } from '../../lib/compaction';
@@ -482,6 +483,11 @@ export function MessageList({
     () => groupMessages(filteredMessages, loading, groupOptions),
     [filteredMessages, loading, groupOptions],
   );
+  // 与 Web 同源：完整投影建目录，主卡按 planId→todoKey 取墙钟耗时。
+  const timingByPlanId = useMemo(
+    () => businessStepTimingByPlanId(buildBusinessStepCatalog(renderItems)),
+    [renderItems],
+  );
   // 主区投影（与 Web 同源纯函数）：一个 Run 只留最新一张计划卡，
   // 长会话不再堆叠历史计划。步骤节在移动端就是详情载体，保留内联渲染。
   const mainThreadItems = useMemo(
@@ -720,6 +726,7 @@ export function MessageList({
     <View style={styles.container}>
       {/* 呈现块动作的回写通道：拿不到 interaction 回写函数时块内按钮保持 disabled。 */}
       <BlockActionProvider onPermissionResponse={onPermissionResponse}>
+      <BusinessStepTimingProvider value={timingByPlanId}>
       <FlashList
         ref={listRef as any}
         data={bubbleItems}
@@ -739,6 +746,7 @@ export function MessageList({
         onStartReachedThreshold={0.2}
         ListFooterComponent={syncFooter}
       />
+      </BusinessStepTimingProvider>
       </BlockActionProvider>
     </View>
   );

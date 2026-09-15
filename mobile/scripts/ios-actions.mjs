@@ -9,6 +9,10 @@ import {
 } from './ios-actions-policy.mjs';
 import { readJson, sealBundle, verifyBundle } from './ios-actions-artifacts.mjs';
 import { assertPinnedArtifact, resolveReleaseInputs, waitForCi } from './ios-release-inputs.mjs';
+import { AppStoreClient } from './app-store-connect.mjs';
+import {
+  applyMarketingVersionToManifest, resolveReleaseMarketingVersion,
+} from './ios-marketing-version.mjs';
 
 const env = process.env;
 const repository = env.GITHUB_REPOSITORY;
@@ -119,6 +123,21 @@ function verifyManifest(sourceSha) {
   return JSON.parse(result);
 }
 
+function createAscClientFromEnv() {
+  const credentials = {
+    keyId: env.APP_STORE_CONNECT_API_KEY_ID,
+    issuerId: env.APP_STORE_CONNECT_ISSUER_ID,
+    privateKey: env.APP_STORE_CONNECT_API_KEY_P8,
+  };
+  assert.ok(
+    credentials.privateKey?.includes('BEGIN PRIVATE KEY'),
+    'APP_STORE_CONNECT_API_KEY_P8 is required to resolve the iOS marketing version from App Store Connect',
+  );
+  assert.ok(credentials.keyId, 'APP_STORE_CONNECT_API_KEY_ID is required');
+  assert.ok(credentials.issuerId, 'APP_STORE_CONNECT_ISSUER_ID is required');
+  return new AppStoreClient(credentials);
+}
+
 async function plan() {
   const event = readJson(env.GITHUB_EVENT_PATH);
   const selected = await resolveReleaseInputs({
@@ -132,6 +151,22 @@ async function plan() {
   const buildNumber = selected.operation === 'testflight'
     ? ''
     : allocateBuildNumber(manifest.version.iosBuildNumber, selected.buildRunId, selected.buildAttempt);
+
+  let marketingVersion = '';
+  let marketingSource = '';
+  let publishedNote = 'n/a (retry locks IPA identity)';
+  if (selected.operation !== 'testflight') {
+    const resolved = await resolveReleaseMarketingVersion(selected.marketingVersionInput, {
+      client: createAscClientFromEnv(),
+      appId: manifest.identity.iosAscAppId,
+    });
+    marketingVersion = resolved.marketingVersion;
+    marketingSource = resolved.source;
+    publishedNote = resolved.published
+      ? `${resolved.published.version} (${resolved.published.source})`
+      : 'none (first release seed from form)';
+  }
+
   output({
     source_sha: selected.sourceSha,
     do_build: selected.operation !== 'testflight',
@@ -140,11 +175,20 @@ async function plan() {
     build_run_attempt: selected.buildAttempt,
     artifact_name: artifactName(selected.sourceSha, selected.buildRunId, selected.buildAttempt),
     build_number: buildNumber,
+    marketing_version: marketingVersion,
+    marketing_version_source: marketingSource,
     retry_artifact_id: selected.artifactId || '',
     retry_artifact_digest: selected.artifactDigest || '',
     retry_workflow_sha: selected.workflowSha || '',
   });
-  summary(`### iOS TestFlight plan\n\nSource: \`${selected.sourceSha}\`\n\nOperation: \`${selected.operation}\` · main CI: ${ci.runId}/${ci.attempt}\n\nBuild run: ${selected.buildRunId}, attempt: ${selected.buildAttempt}${buildNumber ? ` · build number: ${buildNumber}` : ''}\n\nThe manual dispatch is the normal release authorization. No second environment approval is required.`);
+  summary(`### iOS TestFlight plan\n\nSource: \`${selected.sourceSha}\`\n\nOperation: \`${selected.operation}\` · main CI: ${ci.runId}/${ci.attempt}\n\nBuild run: ${selected.buildRunId}, attempt: ${selected.buildAttempt}${buildNumber ? ` · build number: ${buildNumber}` : ''}\n\nMarketing version: ${marketingVersion || '(locked in IPA)'}${marketingSource ? ` · resolution: \`${marketingSource}\`` : ''}\n\nASC published short version: ${publishedNote}\n\nThe manual dispatch is the normal release authorization. No second environment approval is required. Marketing version is not written back to git.`);
+}
+
+function applyMarketingVersion() {
+  const version = env.MOBILE_MARKETING_VERSION;
+  assert.ok(version, 'MOBILE_MARKETING_VERSION is required');
+  const result = applyMarketingVersionToManifest(root, version);
+  summary(`### Applied iOS marketing version\n\nWorking-tree only: \`${result.marketingVersion}\` written to \`mobile/release-manifest.json\` (latestPublished.marketingVersion cleared for this checkout). androidVersionCode / iosBuildNumber base unchanged. No git writeback.`);
 }
 
 async function guard(stage) {
@@ -253,13 +297,14 @@ function receipt() {
 try {
   switch (process.argv[2]) {
     case 'plan': await plan(); break;
+    case 'apply-marketing-version': applyMarketingVersion(); break;
     case 'guard-build': await guard('build'); break;
     case 'guard-testflight': await guard('testflight'); break;
     case 'resolve-artifact': await resolveArtifact(); break;
     case 'seal': seal(); break;
     case 'verify': verify(); break;
     case 'receipt': receipt(); break;
-    default: throw new Error('Expected plan, guard-build, guard-testflight, resolve-artifact, seal, verify or receipt');
+    default: throw new Error('Expected plan, apply-marketing-version, guard-build, guard-testflight, resolve-artifact, seal, verify or receipt');
   }
 } catch (error) {
   console.error(`[iOS Actions] ${error.message}`);

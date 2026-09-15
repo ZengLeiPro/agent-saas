@@ -12,11 +12,10 @@ import type { RenderItem } from './types';
 import {
   buildBusinessStepCatalog,
   businessStepSelectionKey,
-  businessStepTimingByTodoKey,
+  businessStepTimingByPlanId,
   findBusinessStepDetail,
   type BusinessStepFollowMode,
   type BusinessStepSelection,
-  type BusinessStepTodoTiming,
 } from './businessStepViewModel';
 
 export type BusinessStepDetailMode = 'desktop' | 'mobile';
@@ -183,13 +182,7 @@ export function useBusinessStepDetail({
     setFollowMode('follow');
   }, [selectedPlan, selection]);
 
-  const timingByPlanId = useMemo(() => {
-    const maps = new Map<string, Map<string, BusinessStepTodoTiming>>();
-    for (const plan of catalog.plans) {
-      maps.set(plan.event.id, businessStepTimingByTodoKey(plan));
-    }
-    return maps;
-  }, [catalog]);
+  const timingByPlanId = useMemo(() => businessStepTimingByPlanId(catalog), [catalog]);
 
   return {
     catalog,

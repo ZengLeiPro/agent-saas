@@ -30,6 +30,32 @@ function runtimeWithModels(): AppRuntime {
 }
 
 describe('runtime entitlement model resolver', () => {
+  it('允许为同租户已发布的企业专家配置 Assignment，不把停用误判为资源不存在', async () => {
+    const resources = new Map([
+      ['enabled-agent', { kind: 'org_agent', status: 'enabled' }],
+      ['disabled-agent', { kind: 'org_agent', status: 'disabled' }],
+      ['draft-agent', { kind: 'org_agent', status: 'draft' }],
+      ['archived-agent', { kind: 'org_agent', status: 'archived' }],
+      ['personal-agent', { kind: 'personal_agent', status: 'enabled' }],
+    ]);
+    const runtime = {
+      config: {},
+      agentResourceStore: {
+        getForTenant: async (tenantId: string, agentId: string) => tenantId === 'tenant-a'
+          ? resources.get(agentId) ?? null
+          : null,
+      },
+    } as unknown as AppRuntime;
+    const resolve = createAssignmentResourceResolver(runtime);
+
+    await expect(resolve('tenant-a', 'org_agent', 'enabled-agent')).resolves.toBe('valid');
+    await expect(resolve('tenant-a', 'org_agent', 'disabled-agent')).resolves.toBe('valid');
+    await expect(resolve('tenant-a', 'org_agent', 'draft-agent')).resolves.toBe('not_found');
+    await expect(resolve('tenant-a', 'org_agent', 'archived-agent')).resolves.toBe('not_found');
+    await expect(resolve('tenant-a', 'org_agent', 'personal-agent')).resolves.toBe('not_found');
+    await expect(resolve('tenant-b', 'org_agent', 'enabled-agent')).resolves.toBe('not_found');
+  });
+
   it('向治理 Scope 提供平台模型目录', async () => {
     const resolveCatalog = createEntitlementResourceCatalogResolver(runtimeWithModels());
 

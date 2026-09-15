@@ -107,13 +107,13 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(21);
   });
 
-  it("组织分组保留真实页面，并用分隔线替代小标题", () => {
+  it("组织分组保留真实页面，组内不再用分隔线切碎", () => {
     renderSidebar(access("ready", true, false));
 
     for (const label of ["构建 · 调用资产", "运行", "治理 · 边界", "组织设置"]) {
       expect(screen.queryByText(label)).toBeNull();
     }
-    expect(screen.getByLabelText("设置导航").querySelectorAll('[aria-hidden="true"].border-t')).toHaveLength(6);
+    expect(screen.getByLabelText("设置导航").querySelectorAll('[aria-hidden="true"].border-t')).toHaveLength(0);
     expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(26);
     expect(screen.queryByRole("button", { name: "进入组织治理" })).toBeNull();
   });

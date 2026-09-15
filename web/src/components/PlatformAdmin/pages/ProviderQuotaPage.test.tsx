@@ -172,9 +172,9 @@ describe('ProviderQuotaPage', () => {
     expect(screen.queryByText(/最后一次成功数据/u)).toBeNull();
     expect(screen.queryByText(/24h [+-]/u)).toBeNull();
     expect(screen.queryByText('已撞限')).toBeNull();
-    expect(screen.getByText(/每 5 分钟自动采集/u)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
-    expect(screen.getByRole('dialog').textContent).toContain('每 5 分钟自动采集');
+    expect(screen.queryByText(/每 5 分钟自动采集/u)).toBeNull();
+    fireEvent.pointerEnter(screen.getByRole('button', { name: '查看说明' }));
+    expect(screen.getByRole('tooltip').textContent).toContain('每 5 分钟自动采集');
     expect(screen.getByText(/1 个异常/u)).toBeTruthy();
     expect(screen.getByTitle('额度耗尽 1 · 凭据不可用 0')).toBeTruthy();
     expect(screen.getByText(/1 个需关注/u)).toBeTruthy();
@@ -262,8 +262,8 @@ describe('ProviderQuotaPage', () => {
     expect(summary.closest('details')?.open).toBe(false);
     expect(screen.getByText('1 个窗口已耗尽')).toBeTruthy();
     expect(screen.queryByText('已撞限')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
-    expect(screen.getByRole('dialog').textContent).toContain('切回前台自动刷新');
+    fireEvent.pointerEnter(screen.getByRole('button', { name: '查看说明' }));
+    expect(screen.getByRole('tooltip').textContent).toContain('切回前台自动刷新');
     expect(screen.queryByText(/页面不自动刷新/u)).toBeNull();
     expect(screen.queryByText('可用')).toBeNull();
     expect(screen.queryByText('已耗尽')).toBeNull();

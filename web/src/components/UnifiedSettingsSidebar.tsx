@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   ChevronLeft, CircleAlert, Database, FileStack, Globe2, KeyRound, Layers3,
   Loader2, LockKeyhole, Palette, Search, Settings2, SlidersHorizontal,
@@ -150,22 +150,14 @@ export function UnifiedSettingsSidebar({
                   {group.label}
                 </div>
                 <div className="flex flex-col gap-1">
-                  {group.items.map((item, index) => {
+                  {group.items.map((item) => {
                     const Icon = item.icon;
                     const active = target === group.id && activeSection === item.id;
-                    const itemGroup = 'group' in item ? item.group : null;
-                    const previous = index > 0 ? group.items[index - 1] : null;
-                    const previousGroup = previous && 'group' in previous ? previous.group : null;
                     return (
-                      <Fragment key={`${group.id}:${item.id}`}>
-                        {index > 0 && itemGroup && itemGroup !== previousGroup ? (
-                          <div className="mx-2 my-2 border-t" aria-hidden="true" />
-                        ) : null}
-                        <button type="button" className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium transition-colors", active ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED)} aria-current={active ? "page" : undefined} onClick={() => onNavigate?.(group.id, item.id)}>
-                          <Icon className="size-4 shrink-0" />
-                          <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                        </button>
-                      </Fragment>
+                      <button key={`${group.id}:${item.id}`} type="button" className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium transition-colors", active ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED)} aria-current={active ? "page" : undefined} onClick={() => onNavigate?.(group.id, item.id)}>
+                        <Icon className="size-4 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      </button>
                     );
                   })}
                 </div>

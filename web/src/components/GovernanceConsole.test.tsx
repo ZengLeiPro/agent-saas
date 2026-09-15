@@ -67,7 +67,7 @@ describe("GovernanceConsole", () => {
     expect(screen.getByTestId("governance-page-loading")).toBeTruthy();
   });
 
-  it("平台管理员未选择组织时保持空作用域，不自动回退目录首项", async () => {
+  it("平台管理员未选择组织时保持空作用域，不自动回退目录首项，且不渲染子导航", async () => {
     auth.isPlatformAdmin = true;
     window.history.replaceState({}, "", "/tenant-admin/overview");
     render(
@@ -80,7 +80,12 @@ describe("GovernanceConsole", () => {
       </GovernanceConsole>,
     );
 
-    expect(screen.getByText(/正在以平台管理员身份管理：请选择组织/)).toBeTruthy();
+    expect(screen.getByText("请选择要管理的组织")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "请先选择要管理的组织" })).toBeTruthy();
+    expect(screen.getByTestId("organization-scope-gate")).toBeTruthy();
+    expect(screen.queryByText("只读")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: /本地导航/ })).toBeNull();
+    expect(screen.queryByText("请选择组织后显示内容")).toBeNull();
     expect(screen.getByRole("combobox", { name: "切换组织" }).textContent).toContain("请选择目标组织");
     await waitFor(() => expect(window.location.search).toBe(""));
   });
@@ -98,10 +103,12 @@ describe("GovernanceConsole", () => {
       </GovernanceConsole>,
     );
 
-    expect(screen.getByText("正在以平台管理员身份管理：Acme")).toBeTruthy();
+    expect(screen.getByText("正在管理：Acme")).toBeTruthy();
     const switcher = screen.getByRole("combobox", { name: "切换组织" });
     expect(switcher.textContent).toContain("Acme");
     expect(document.body.textContent).not.toContain("Pantheon");
+    expect(screen.getByRole("navigation", { name: /本地导航/ })).toBeTruthy();
+    expect(screen.getByText("组织概览")).toBeTruthy();
     await waitFor(() => expect(window.location.search).toBe("?org=acme"));
   });
 });

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { governanceRoute } from '@/lib/governanceNavigation';
 import type { ManagementSettingsAccess } from '@/hooks/useManagementSettingsAccess';
@@ -8,9 +8,19 @@ import { ManagementShell } from './ManagementShell';
 
 const navigationMocks = vi.hoisted(() => ({ navigateGovernance: vi.fn() }));
 
+const authState = vi.hoisted(() => ({ isPlatformAdmin: false }));
+
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ isPlatformAdmin: authState.isPlatformAdmin, user: { tenantId: 'acme' } }),
+}));
 vi.mock('@/components/GovernanceConsole', () => ({
   OrganizationScopeBanner: ({ className }: { className?: string }) => (
     <div className={className} data-testid="organization-scope-banner" />
+  ),
+  GovernanceCapabilityNotice: ({ title, mode }: { title: string; mode?: string }) => (
+    <div data-testid="organization-scope-gate" data-mode={mode}>
+      <h2>{title}</h2>
+    </div>
   ),
 }));
 vi.mock('@/lib/urlSync', () => navigationMocks);
@@ -132,5 +142,42 @@ describe('ManagementShell 统一布局', () => {
     const tablist = screen.getByRole('tablist', { name: '技能页面切换' });
     expect(tablist.getAttribute('data-tabs-layout')).toBe('compact');
     expect(tablist.className).toContain('md:w-72');
+  });
+  beforeEach(() => {
+    authState.isPlatformAdmin = false;
+    navigationMocks.navigateGovernance.mockReset();
+  });
+
+  it('平台管理员未选择组织时只显示紧凑引导，不渲染子 Tab 与内容', () => {
+    authState.isPlatformAdmin = true;
+    render(
+      <ManagementShell
+        route={governanceRoute('organization.agents.business-systems')}
+        access={access}
+      >
+        <div>业务系统内容</div>
+      </ManagementShell>,
+    );
+    expect(screen.getByTestId('organization-scope-banner')).toBeTruthy();
+    expect(screen.getByTestId('organization-scope-gate')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '请先选择要管理的组织' })).toBeTruthy();
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByTestId('management-page-content')).toBeNull();
+    expect(screen.queryByText('业务系统内容')).toBeNull();
+  });
+
+  it('平台管理员选中组织后跨页面保留 org 并渲染内容与 Tab', () => {
+    authState.isPlatformAdmin = true;
+    render(
+      <ManagementShell
+        route={governanceRoute('organization.agents.skills', { orgId: 'kaiyan' })}
+        access={access}
+      >
+        <div>技能内容</div>
+      </ManagementShell>,
+    );
+    expect(screen.queryByTestId('organization-scope-gate')).toBeNull();
+    expect(screen.getByRole('tablist', { name: '技能页面切换' })).toBeTruthy();
+    expect(screen.getByText('技能内容')).toBeTruthy();
   });
 });

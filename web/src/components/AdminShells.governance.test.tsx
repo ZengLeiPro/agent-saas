@@ -131,12 +131,14 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
 
-    expect(screen.getByText("正在以平台管理员身份管理：请选择组织")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "请先选择目标组织" })).toBeTruthy();
+    expect(screen.getByText("请选择要管理的组织")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "请先选择要管理的组织" })).toBeTruthy();
+    expect(screen.getByTestId("organization-scope-gate")).toBeTruthy();
+    expect(screen.queryByText("只读")).toBeNull();
     expect(screen.queryByText(/组织预算面板 kaiyan-demo/)).toBeNull();
   });
 
-  it("嵌入统一管理壳时不重复渲染组织作用域提示", () => {
+  it("嵌入统一管理壳时未选组织不重复渲染壳级提示与门闩空态", () => {
     adminShellMocks.auth = { user: { id: "platform-admin-1", tenantId: "pantheon" }, isAdmin: true, isPlatformAdmin: true };
     adminShellMocks.tenants = [
       { id: "pantheon", name: "万神殿" },
@@ -151,8 +153,11 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
 
-    expect(screen.queryByText("正在以平台管理员身份管理：请选择组织")).toBeNull();
-    expect(screen.getByRole("heading", { name: "请先选择目标组织" })).toBeTruthy();
+    // 统一 ManagementShell 负责壳级选择器与紧凑引导；嵌入内容返回 null。
+    expect(screen.queryByText("请选择要管理的组织")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "请先选择要管理的组织" })).toBeNull();
+    expect(screen.queryByTestId("organization-scope-gate")).toBeNull();
+    expect(screen.queryByText(/组织预算面板 kaiyan-demo/)).toBeNull();
   });
 
   it("平台管理员必须显式选择组织后才显示旧设置页的添加成员入口", async () => {

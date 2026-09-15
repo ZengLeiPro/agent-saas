@@ -402,7 +402,7 @@ export function TenantAdminShell({
   ];
 
   const settingsContent = isPlatformAdmin && !explicitPlatformTenantId
-    ? <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />
+    ? <GovernanceCapabilityNotice title="请先选择要管理的组织" mode="gate" />
     : (
       <>
         {tenantSectionsToRender.map(({ id, node }) => {
@@ -436,16 +436,18 @@ export function TenantAdminShell({
 
   const governanceContent = (() => {
     if (!governanceRoute) return null;
-    if (!effectiveTenantId) return (
-      <div className="flex h-full min-h-0 flex-col bg-card">
-        {!governanceContentEmbedded && (
+    if (!effectiveTenantId) {
+      // 统一设置壳已渲染壳级选择器 + 紧凑引导；嵌入路径不再重复巨型空态。
+      if (governanceContentEmbedded) return null;
+      return (
+        <div className="flex h-full min-h-0 flex-col bg-card">
           <OrganizationScopeBanner route={governanceRoute} dirtyController={dirtyController} settingsMode />
-        )}
-        <div className="min-h-0 flex-1 overflow-auto">
-          <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <GovernanceCapabilityNotice title="请先选择要管理的组织" mode="gate" />
+          </div>
         </div>
-      </div>
-    );
+      );
+    }
     return (
       <OrganizationManagementContent
         route={governanceRoute}
@@ -479,7 +481,7 @@ export function TenantAdminShell({
   }
 
   const content = (() => {
-    if (!effectiveTenantId) return <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />;
+    if (!effectiveTenantId) return <GovernanceCapabilityNotice title="请先选择要管理的组织" mode="gate" />;
     if (active === "usage") return renderUsage(effectiveTenantId);
     if (active === "qa") return <QaConsole tenantId={effectiveTenantId} />;
     if (active === "audit") return <AuditEventsPanel scope="tenant" tenantId={effectiveTenantId} tenantName={currentTenant?.name} />;

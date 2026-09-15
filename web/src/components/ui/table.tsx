@@ -3,9 +3,10 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * `containerClassName` 可叠加 `max-h-* overflow-auto` 做内层滚动。
- * 默认只做横向溢出，让纵向交给外层主区；此时 `TableHeader` 的 sticky
- * 相对主区滚动容器生效（用户检索滚到底仍见列名）。
+ * 默认不设 overflow：避免中间层滚动容器打断 `TableHeader` 相对主区的 sticky。
+ * 需要内层滚动时由调用方通过 `containerClassName` 显式传入
+ * `max-h-* overflow-auto`（账单审计等固定高度面板）。
+ * 宽表横向滚动交给外层主区（ManagementShell `overflow-auto`）。
  *
  * `data-admin-table` 供 index.css 挂中英混排规则（th/td keep-all、th nowrap）。
  */
@@ -15,7 +16,7 @@ function Table({
   ...props
 }: React.ComponentProps<"table"> & { containerClassName?: string }) {
   return (
-    <div className={cn("relative w-full overflow-x-auto", containerClassName)}>
+    <div className={cn("relative w-full", containerClassName)}>
       <table
         data-admin-table=""
         className={cn("w-full caption-bottom text-sm", className)}

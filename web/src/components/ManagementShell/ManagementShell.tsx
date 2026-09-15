@@ -230,7 +230,7 @@ export function ManagementShell({
 
   return (
     <div
-      className={cn('h-full overflow-y-auto bg-muted/20', SETTINGS_PRODUCT_SURFACE_CLASS)}
+      className={cn('h-full overflow-auto bg-muted/20', SETTINGS_PRODUCT_SURFACE_CLASS)}
       data-testid="management-shell"
       data-surface={page.surface}
       data-layout={layout ?? undefined}

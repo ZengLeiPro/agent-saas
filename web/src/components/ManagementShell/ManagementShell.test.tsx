@@ -65,7 +65,7 @@ describe('ManagementShell 统一布局', () => {
     expect(shell.getAttribute('data-surface')).toBe('analytics');
     expect(shell.getAttribute('data-layout')).toBe('dashboard');
     expect(shell.getAttribute('data-scroll-container')).toBe('true');
-    expect(shell.className).toContain('overflow-y-auto');
+    expect(shell.className).toContain('overflow-auto');
     expect(shell.className).toContain('settings-product-surface');
     const widthBoundary = screen.getByTestId('settings-page-width-boundary');
     expect(widthBoundary.className).toContain('w-full');

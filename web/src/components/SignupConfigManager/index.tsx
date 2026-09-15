@@ -268,6 +268,9 @@ export function SignupConfigManager() {
   const secretPlaceholder = view?.smsSecretConfigured
     ? `已配置（来源：${view.smsSecretSource === "vault" ? "配置页" : "环境变量"}），留空则不修改`
     : "未配置，必填（aliyun 模式）";
+  // 空值必须可直接录入：脱敏态 readOnly +「显示」在空值时禁用会把首次配置卡死。
+  const accessKeyEmpty = !draft.sms.accessKeyId.trim();
+  const accessKeyEditable = accessKeyIdRevealed || accessKeyEmpty;
 
   if (loading && !view && !dirty) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
@@ -421,24 +424,31 @@ export function SignupConfigManager() {
                 <div className="flex items-center gap-2">
                   <Input
                     id="signup-sms-access-key-id"
-                    value={accessKeyIdRevealed ? draft.sms.accessKeyId : maskAccessKeyId(draft.sms.accessKeyId)}
-                    readOnly={!accessKeyIdRevealed}
-                    onChange={(event) => updateSms({ accessKeyId: event.target.value })}
+                    value={accessKeyEditable ? draft.sms.accessKeyId : maskAccessKeyId(draft.sms.accessKeyId)}
+                    readOnly={!accessKeyEditable}
+                    onChange={(event) => {
+                      // 从空值开始输入时立刻进入明文编辑态，避免首字符后 accessKeyEmpty=false 又退回脱敏只读。
+                      if (!accessKeyIdRevealed) setAccessKeyIdRevealed(true);
+                      updateSms({ accessKeyId: event.target.value });
+                    }}
                     autoComplete="off"
                     aria-label="AccessKey ID"
                     data-testid="signup-access-key-id"
+                    placeholder={accessKeyEmpty ? "LTAI..." : undefined}
                   />
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={!draft.sms.accessKeyId.trim()}
+                    disabled={accessKeyEmpty}
+                    aria-pressed={accessKeyIdRevealed}
+                    aria-label={accessKeyIdRevealed ? "隐藏 AccessKey ID" : "显示 AccessKey ID"}
                     onClick={() => setAccessKeyIdRevealed((current) => !current)}
                   >
                     {accessKeyIdRevealed ? "隐藏" : "显示"}
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">默认脱敏显示；仅在需要核对或修改时点「显示」。</p>
+                <p className="text-xs text-muted-foreground">默认脱敏显示；空值可直接填写，已有值需点「显示」后修改。</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="signup-sms-sign-name">短信签名</Label>

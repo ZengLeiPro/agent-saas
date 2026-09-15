@@ -51,7 +51,38 @@ describe('SignupConfigManager AccessKey 脱敏', () => {
     const input = await screen.findByTestId('signup-access-key-id');
     expect((input as HTMLInputElement).value).toBe('LTAI****mple');
     expect(screen.queryByDisplayValue('LTAI5tFullAccessKeyIdExample')).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: '显示' }));
+    await userEvent.click(screen.getByRole('button', { name: '显示 AccessKey ID' }));
     expect((input as HTMLInputElement).value).toBe('LTAI5tFullAccessKeyIdExample');
+  });
+
+  it('空 AccessKey ID 可直接录入，无需先点显示', async () => {
+    mocks.fetchSignupConfig.mockResolvedValueOnce({
+      revision: 'rev-1',
+      writePolicy: { environment: 'development', mode: 'online', canSave: true },
+      config: {
+        enabled: true,
+        grantCredits: 100,
+        maxRunCredits: 20,
+        sms: {
+          provider: 'aliyun',
+          accessKeyId: '',
+          signName: '开沿',
+          templateCode: 'SMS_1',
+        },
+      },
+      publicEnabled: true,
+      smsError: null,
+      smsSecretConfigured: false,
+      smsSecretSource: null,
+      effectiveAllowedModels: [],
+      updatedAt: null,
+      updatedBy: null,
+    });
+    const user = userEvent.setup();
+    render(<SignupConfigManager />);
+    const input = await screen.findByTestId('signup-access-key-id');
+    expect((input as HTMLInputElement).readOnly).toBe(false);
+    await user.type(input, 'LTAI5tNewKey0001');
+    expect((input as HTMLInputElement).value).toBe('LTAI5tNewKey0001');
   });
 });

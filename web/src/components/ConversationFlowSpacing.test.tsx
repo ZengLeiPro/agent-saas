@@ -36,6 +36,7 @@ describe('主会话非 Markdown 流向间距', () => {
         questions={[{
           question: '选择处理方式',
           header: '方式',
+          description: '当前设置存在冲突，需要确认后续处理方式。',
           multiSelect: false,
           options: [{ label: '继续', description: '保留当前设置继续执行' }],
         }]}
@@ -45,6 +46,9 @@ describe('主会话非 Markdown 流向间距', () => {
     );
 
     expectNoFlowMargin(container.firstElementChild);
+    const questionDescription = screen.getByText('当前设置存在冲突，需要确认后续处理方式。');
+    expect(questionDescription.className).toContain('text-xs');
+    expect(questionDescription.className).toContain('leading-5');
     const description = screen.getByText('保留当前设置继续执行');
     expect(description.className).toContain('text-2xs');
     expect(description.className).toContain('leading-4');

@@ -9,6 +9,7 @@ import type { AskUserAnswers } from "@agent/shared";
 export interface AskUserQuestion {
   question: string;
   header: string;
+  description?: string;
   options: Array<{ label: string; description: string }>;
   multiSelect: boolean;
 }
@@ -53,6 +54,9 @@ function QuestionSection({
           {q.multiSelect ? "多选" : "单选"}
         </span>
       </div>
+      {q.description && (
+        <p className="text-xs leading-5 text-muted-foreground">{q.description}</p>
+      )}
       <div className="flex flex-wrap gap-2">
         {q.options.map((opt) => (
           <button
@@ -191,6 +195,9 @@ export function AskUserBlock({ questions, status, answers, onSubmit }: AskUserBl
                   <Badge variant="secondary" className="text-xs">{q.header}</Badge>
                   <span className="text-sm">{q.question}</span>
                 </div>
+                {q.description && (
+                  <p className="text-xs leading-5 text-muted-foreground">{q.description}</p>
+                )}
                 <p className="text-sm text-muted-foreground pl-1">
                   {formatAskUserAnswer(answers?.[q.question])}
                 </p>

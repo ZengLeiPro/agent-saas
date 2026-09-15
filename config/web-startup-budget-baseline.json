@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 364554,
-    "startupCssGzipBytes": 35419,
-    "startupJsBrotliBytes": 290227,
-    "startupCssBrotliBytes": 28066,
-    "largestJsGzipBytes": 364554,
-    "largestCssGzipBytes": 35419,
-    "largestJsBrotliBytes": 290227,
-    "largestCssBrotliBytes": 28066,
-    "largestJs": "assets/index-Dl5WKSdb.js",
-    "largestCss": "assets/index-UwG_yUme.css"
+    "startupJsGzipBytes": 363420,
+    "startupCssGzipBytes": 35239,
+    "startupJsBrotliBytes": 291312,
+    "startupCssBrotliBytes": 27907,
+    "largestJsGzipBytes": 363420,
+    "largestCssGzipBytes": 35239,
+    "largestJsBrotliBytes": 291312,
+    "largestCssBrotliBytes": 27907,
+    "largestJs": "assets/index-BHqyGbsF.js",
+    "largestCss": "assets/index-ySkzYVYV.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "提问卡片新增自包含问题背景，Web 启动包需渲染当前及历史提问描述",
+  "reason": "platform demo 入口门闩与 main 合入后启动包略增，已 code-split 演示壳",
   "updatedAt": "2026-09-15"
 }

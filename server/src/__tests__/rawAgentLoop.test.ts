@@ -327,7 +327,7 @@ class AskUserOnlyAdapter implements ModelAdapter {
         arguments: JSON.stringify({
           questions: [{
             question: 'Which branch should I use?',
-            header: 'Branch',
+            header: 'Branch', description: 'Choose the branch that should receive the pending changes.',
             options: [
               { label: 'main', description: 'Use main' },
               { label: 'dev', description: 'Use dev' },
@@ -352,7 +352,7 @@ class AskUserAndReadAdapter implements ModelAdapter {
           arguments: JSON.stringify({
             questions: [{
               question: 'Which branch should I use?',
-              header: 'Branch',
+              header: 'Branch', description: 'Choose the branch that should receive the pending changes.',
               options: [
                 { label: 'main', description: 'Use main' },
                 { label: 'dev', description: 'Use dev' },

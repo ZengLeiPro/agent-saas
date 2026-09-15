@@ -71,6 +71,7 @@ describe('Workspace hand tools — provider 边界', () => {
       questions: [{
         question: '选一个？',
         header: '选择',
+        description: '需要确认接下来采用哪个方案。',
         options: [
           { label: 'A', description: '选 A' },
           { label: 'B', description: '选 B' },
@@ -78,6 +79,27 @@ describe('Workspace hand tools — provider 边界', () => {
       }],
     }) as { questions: Array<{ multiSelect: boolean }> };
     expect(parsed.questions[0]?.multiSelect).toBe(false);
+  });
+
+  it('AskUserQuestion requires self-contained question context', () => {
+    const input = {
+      questions: [{
+        question: '是否写入任务中心？',
+        header: '确认写入',
+        options: [
+          { label: '确认写入', description: '创建任务但不派发执行' },
+          { label: '取消', description: '不创建任务' },
+        ],
+      }],
+    };
+    expect(() => askUserQuestionToolDescriptor.schema.parse(input)).toThrow();
+    const parsed = askUserQuestionToolDescriptor.schema.parse({
+      questions: [{
+        ...input.questions[0],
+        description: '已识别密码修改流程中的三项问题；确认后只创建任务，不会立即执行。',
+      }],
+    }) as { questions: Array<{ description: string }> };
+    expect(parsed.questions[0]?.description).toContain('三项问题');
   });
 });
 

@@ -28,6 +28,30 @@ describe("AskUserPromptPanel", () => {
     });
   });
 
+  it("renders self-contained context below the question title", () => {
+    render(
+      <AskUserPromptPanel
+        questions={[{
+          question: "是否将这些待修复项写入任务中心？",
+          header: "确认写入",
+          description: "已识别密码修改流程中的三项问题；确认后只创建任务，不会立即派发执行。",
+          multiSelect: false,
+          options: [
+            { label: "确认写入", description: "创建任务但不派发执行" },
+            { label: "取消", description: "不创建任务" },
+          ],
+        }]}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    const title = screen.getByRole("heading", { name: "是否将这些待修复项写入任务中心？" });
+    const description = screen.getByText(
+      "已识别密码修改流程中的三项问题；确认后只创建任务，不会立即派发执行。",
+    );
+    expect(title.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("submits multi-select answers as an array", () => {
     const onSubmit = vi.fn();
     const questions: AskUserQuestion[] = [{

@@ -163,9 +163,16 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
   return (
     <div className="msg-user-text rounded-t-[1.75rem] rounded-b-none border-x border-t border-border/70 bg-card p-3 shadow-[0_8px_30px_-18px_rgba(15,23,42,0.35)] md:p-4">
       <div className="flex items-start gap-3 px-1 pb-3">
-        <h3 className="min-w-0 flex-1 text-[inherit] font-semibold leading-[inherit] text-foreground">
-          {question.question}
-        </h3>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[inherit] font-semibold leading-[inherit] text-foreground">
+            {question.question}
+          </h3>
+          {question.description && (
+            <p className="mt-1.5 text-[0.92em] leading-[1.55] text-muted-foreground">
+              {question.description}
+            </p>
+          )}
+        </div>
         <div className="flex shrink-0 items-center gap-2 text-[0.92em] text-muted-foreground">
           <button
             type="button"

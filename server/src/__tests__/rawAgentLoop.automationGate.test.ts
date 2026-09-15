@@ -205,7 +205,7 @@ describe('RawAgentLoop session automation live gate placement', () => {
     const adapter: ModelAdapter = { async *stream(): AsyncIterable<ModelEvent> {
       modelCalls += 1;
       if (modelCalls === 1) {
-        yield { type: 'completed', content: '', toolCalls: [{ id: 'call-ask', name: 'AskUserQuestion', arguments: '{"questions":[{"question":"Continue?","header":"Choice","options":[{"label":"Yes","description":"Continue"},{"label":"No","description":"Stop"}],"multiSelect":false}]}' }] };
+        yield { type: 'completed', content: '', toolCalls: [{ id: 'call-ask', name: 'AskUserQuestion', arguments: '{"questions":[{"question":"Continue?","header":"Choice","description":"Choose whether this operation should continue.","options":[{"label":"Yes","description":"Continue"},{"label":"No","description":"Stop"}],"multiSelect":false}]}' }] };
         return;
       }
       yield { type: 'completed', content: 'must not send', toolCalls: [] };

@@ -5,7 +5,7 @@
  * 列表行、滑动动作、分组对话框、回收站等都在 `src/components/sessions/` 下。
  *
  * P0–P5 iPad / 宽屏（md≥768）：单栏会话 chrome + 列表|详情 master-detail（头像默认显示）；
- * 窄主栏保护可折叠/汉堡唤起列表（`sidebar-collapsed`）；lg+ 右栏可 dock；窄屏仍 push 栈。不托管 apps。
+ * 窄主栏保护可折叠/汉堡唤起列表（`sidebar-collapsed`）；lg+ 右栏可 dock；分组钻取栏内展开；窄屏仍 push 栈。不托管 apps。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, InteractionManager, LayoutChangeEvent, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -51,6 +51,8 @@ import { useMasterListCollapse } from '../../../src/hooks/useMasterListCollapse'
 import { MasterListOverlay } from '../../../src/components/layout';
 import { ChatSessionScreen } from '../../../src/components/chat/ChatSessionScreen';
 import { ICON_SIZE, ICON_STROKE } from '../../../src/lib/icons';
+import { resolveGroupListNavigation } from '../../../src/lib/groupListNavigation';
+import { GroupSessionsPane } from '../../../src/components/sessions/GroupSessionsPane';
 
 /** 分组定时刷新周期（ms），与会话轮询保持一致 */
 const GROUPS_REFRESH_MS = 30_000;
@@ -73,6 +75,8 @@ export default function SessionListScreen() {
   const { isMdUp, width: breakpointWidth } = useBreakpoint();
   // md+ master-detail selection (null = empty pane「请选择会话」)
   const [paneSessionId, setPaneSessionId] = useState<string | null>(null);
+  /** md+ in-pane group drill (phone still stack-pushes /chat/group/:key). */
+  const [paneGroup, setPaneGroup] = useState<{ groupKey: string; name: string } | null>(null);
   const [splitWidth, setSplitWidth] = useState(0);
   const collapse = useMasterListCollapse({
     enabled: isMdUp,
@@ -207,11 +211,18 @@ export default function SessionListScreen() {
       }
       if (guard === 'suppress') return;
       hapticLight();
-      router.push(
-        `/(tabs)/chat/group/${group.groupKey}?name=${encodeURIComponent(group.name)}`,
-      );
+      const decision = resolveGroupListNavigation({
+        isMdUp,
+        groupKey: group.groupKey,
+        name: group.name,
+      });
+      if (decision.kind === 'pane') {
+        setPaneGroup({ groupKey: decision.groupKey, name: decision.name });
+        return;
+      }
+      router.push(decision.href as never);
     },
-    [router, closeOpenSwipeable],
+    [router, closeOpenSwipeable, isMdUp],
   );
 
   const handleDeleteSession = useCallback(
@@ -413,7 +424,7 @@ export default function SessionListScreen() {
       </TouchableOpacity>
     );
 
-  const listBody = (
+  const rootListBody = (
       <>
       <SessionListView
         listKey={`${selection.isSelectMode ? 'select' : 'list'}-${chat.sessionsHydrated ? 'hydrated' : 'cold'}`}
@@ -467,6 +478,21 @@ export default function SessionListScreen() {
       />
       </>
   );
+
+  const groupListBody = paneGroup ? (
+    <GroupSessionsPane
+      groupKey={paneGroup.groupKey}
+      name={paneGroup.name}
+      variant="embedded"
+      onBack={() => setPaneGroup(null)}
+      onSelectSession={(sessionId) => {
+        setPaneSessionId(sessionId);
+        collapse.onMasterItemSelected();
+      }}
+    />
+  ) : null;
+
+  const listBody = paneGroup ? groupListBody : rootListBody;
 
   return (
     <View style={styles.container} testID="chat-home-screen">

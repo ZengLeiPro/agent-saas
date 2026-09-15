@@ -86,7 +86,7 @@ bash mobile/scripts/init-ios-github-release.sh \
 
 这不会创建伪造的上传凭据，也不会触发上传。
 
-## 日常发布：两项表单，默认直接运行
+## 日常发布：三项表单，默认直接运行
 
 在 Actions 选择「iOS 构建与发布」，分支保留 `main`。只保留以下两项：
 
@@ -94,9 +94,19 @@ bash mobile/scripts/init-ios-github-release.sh \
 | --- | --- | --- |
 | 执行操作（`operation`） | 默认「构建并发布到 TestFlight」 | 选择「重试已有构建的发布」 |
 | 原构建运行链接或编号（`build_run`） | 留空 | 粘贴原构建运行链接或纯数字编号 |
+| 营销版本（`marketing_version`） | 留空=使用 ASC 当前短版本；或填写 ≥ ASC 的 SemVer | 必须留空（锁定原 IPA 身份） |
 
-另外保留「仅构建，不发布」，只生成并保存已签名 IPA。GitHub 表单仍会显示第二项，
+另外保留「仅构建，不发布」，只生成并保存已签名 IPA。GitHub 表单仍会显示 `build_run`，
 但仅重试时填写；系统会拒绝「新构建 + 原运行编号」以及「重试 + 未填原运行」的组合。
+
+### 营销版本决议
+
+- **留空**：从 App Store Connect 解析当前已发布短版本（优先 Live `READY_FOR_SALE`，否则取最新可用 TestFlight 短版本）。**不会**回退到 `mobile/release-manifest.json` 的 `marketingVersion`。
+- **填写**：必须是严格 SemVer，且 **≥** ASC 当前短版本（允许相等，便于同一营销版本追加构建号）。
+- **ASC 失败**：失败关闭，绝不使用仓库内过期 marketingVersion。
+- **首次发布**（ASC 尚无短版本）：留空会硬失败，要求在表单填写种子版本；不会静默使用 `1.0.0`。
+- **重试发布**：禁止填写营销版本；沿用原 IPA，不重新分配构建号。
+- 决议只写入构建用的工作区 `release-manifest.json`（并清空该次 checkout 的 `latestPublished.marketingVersion`），**不回写 git**；Android `androidVersionCode` 路径不受影响。
 
 新构建固定使用点击运行时的 `main` SHA，不再手填 `source_sha`。若该提交的 push-main CI
 尚未出现或未结束，准入步骤每 15 秒查询一次，最多等待 20 分钟（job 总超时 25 分钟）。

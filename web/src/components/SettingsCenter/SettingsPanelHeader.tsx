@@ -2,7 +2,6 @@ import { createContext, useContext, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 export { SETTINGS_CONTENT_WIDTH } from "@/components/SettingsCenter/settingsLayout";
 
 interface SettingsPanelHeaderProps {
@@ -64,38 +63,34 @@ export function DescriptionTip({ description }: { description: ReactNode }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <TooltipProvider delayDuration={0} disableHoverableContent>
-      <Tooltip
-        open={open}
-        onOpenChange={(next) => {
-          if (!next) setOpen(false);
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label="查看说明"
+        onPointerEnter={() => setOpen(true)}
+        onPointerLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onPointerDown={(event) => {
+          // 鼠标点击不要聚焦，避免指针离开后因 focus 残留而钉住说明。
+          event.preventDefault();
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
         }}
       >
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="查看说明"
-            onPointerEnter={() => setOpen(true)}
-            onPointerLeave={() => setOpen(false)}
-            onFocus={() => setOpen(true)}
-            onBlur={() => setOpen(false)}
-            onPointerDown={(event) => {
-              // 鼠标点击不要聚焦，避免指针离开后因 focus 残留而钉住说明。
-              event.preventDefault();
-            }}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-          >
-            <Info className="size-3.5" aria-hidden="true" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="right" align="center" className="w-max max-w-sm text-xs leading-5">
+        <Info className="size-3.5" aria-hidden="true" />
+      </button>
+      {open ? (
+        <span
+          role="tooltip"
+          className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 w-max max-w-sm -translate-y-1/2 rounded-md border bg-popover px-2.5 py-1.5 text-xs leading-5 text-popover-foreground shadow-md"
+        >
           {description}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+        </span>
+      ) : null}
+    </span>
   );
 }

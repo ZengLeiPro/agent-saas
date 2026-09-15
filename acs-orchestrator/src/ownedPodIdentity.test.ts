@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isUsablePodUid, ownedPodUidArg, pythonRunnerDaemonExecArgs } from './ownedPodIdentity.js';
+import { isUsablePodUid, ownedPodUidArg, pythonAttemptControlExecArgs, pythonRunnerDaemonExecArgs } from './ownedPodIdentity.js';
 
 describe('owned Pod identity', () => {
   it('rejects the ACS Downward API literal and empty values', () => {
@@ -54,6 +54,35 @@ describe('owned Pod identity', () => {
         sandboxName: 'as-one',
         containerName: 'sandbox',
         oneshot: true,
+        ownedPodUid: 'uid',
+      }),
+    ).not.toContain('--owned-pod-uid=uid');
+  });
+
+  it('injects the owned UID into attempt-control exec argv and rejects the Downward API literal', () => {
+    const uid = 'b1fb7965-e305-45f0-b035-269248211265';
+    expect(
+      pythonAttemptControlExecArgs({
+        sandboxName: 'as-one',
+        containerName: 'sandbox',
+        ownedPodUid: uid,
+      }),
+    ).toEqual([
+      'exec',
+      '-i',
+      'as-one',
+      '-c',
+      'sandbox',
+      '--',
+      '/usr/local/bin/python3',
+      '-I',
+      '/app/acs-orchestrator/dist/remote/attempt_control.py',
+      `--owned-pod-uid=${uid}`,
+    ]);
+    expect(
+      pythonAttemptControlExecArgs({
+        sandboxName: 'as-one',
+        containerName: 'sandbox',
         ownedPodUid: 'uid',
       }),
     ).not.toContain('--owned-pod-uid=uid');

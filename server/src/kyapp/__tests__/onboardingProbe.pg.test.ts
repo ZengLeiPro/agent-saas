@@ -14,7 +14,8 @@ describePg('首次接入探测 PostgreSQL 合约', () => {
   beforeAll(async () => {
     await pool.query(`CREATE TABLE ${table} (
       installation_id TEXT PRIMARY KEY,tenant_id TEXT,system_id TEXT,base_url TEXT,
-      origin TEXT,status TEXT,state_version INTEGER,registered_digest TEXT,domain_verified_at TIMESTAMPTZ)`);
+      origin TEXT,status TEXT,state_version INTEGER,registered_digest TEXT,domain_verified_at TIMESTAMPTZ,
+      auth_mode TEXT NOT NULL DEFAULT 'v1_symmetric')`);
     for (const [id, status, verified] of [
       ['enabled', 'enabled', true],
       ['pending', 'pending', true],

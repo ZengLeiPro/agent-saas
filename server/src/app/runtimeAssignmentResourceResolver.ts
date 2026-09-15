@@ -11,7 +11,10 @@ export function createAssignmentResourceResolver(runtime: AppRuntime) {
     if (resourceType === 'org_agent') {
       if (!runtime.agentResourceStore) return 'unavailable';
       const resource = await runtime.agentResourceStore.getForTenant(tenantId, resourceId);
-      return resource?.kind === 'org_agent' && resource.status === 'enabled' ? 'valid' : 'not_found';
+      return resource?.kind === 'org_agent'
+        && (resource.status === 'enabled' || resource.status === 'disabled')
+        ? 'valid'
+        : 'not_found';
     }
     if (resourceType === 'skill') {
       if (!runtime.skillGovernanceStore) return 'unavailable';

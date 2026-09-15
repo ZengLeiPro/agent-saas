@@ -265,13 +265,17 @@ test('PR 计划先检查真实变更路径的发布分类，失败传递到汇�
 
 test('pnpm 只从固定二进制安装，不再经过 npm registry 自举', () => {
   assert.doesNotMatch(workflow, /pnpm\/action-setup/u);
-  assert.match(workflow, /uses: \.\/\.github\/actions\/setup-pnpm/u);
+  // 自建 ACS runner（ARC 无共享卷模式）下 runner 侧没有 checkout，本地 composite action 读不到 action.yml，
+  // 因此引用同仓远程路径 ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main；本地路径写法仍兼容。
+  const setupPnpmRef = /uses: (?:\.\/|ZengLeiPro\/agent-saas\/)\.github\/actions\/setup-pnpm(?:@main)?/u;
+  assert.match(workflow, setupPnpmRef);
   // composite action 依赖已 checkout 的仓库文件，每个 job 里必须先 checkout。
   for (const job of workflow.split(/\n(?=  [a-z_-]+:\n)/u)) {
-    if (!job.includes('uses: ./.github/actions/setup-pnpm')) continue;
+    const ref = job.search(setupPnpmRef);
+    if (ref === -1) continue;
     assert.ok(
       job.indexOf('uses: actions/checkout@') > -1 &&
-        job.indexOf('uses: actions/checkout@') < job.indexOf('uses: ./.github/actions/setup-pnpm'),
+        job.indexOf('uses: actions/checkout@') < ref,
       `setup-pnpm runs before checkout in job:\n${job.slice(0, 80)}`,
     );
   }

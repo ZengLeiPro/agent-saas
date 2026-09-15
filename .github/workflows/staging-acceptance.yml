@@ -192,7 +192,7 @@ jobs:
           touch "$RUNNER_TEMP/staging-acceptance-fixtures-touched"
           node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
             > "$RUNNER_TEMP/staging-fixture-reset-before.json"
-          sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; pnpm exec playwright install --with-deps chromium
+          if [ -f /etc/apt/sources.list.d/debian.sources ]; then sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; fi; pnpm exec playwright install --with-deps chromium
 
       - name: 验收执行前立即复核精确 RC
         run: |

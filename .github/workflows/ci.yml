@@ -671,7 +671,7 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
       - name: 安装 Chromium
-        run: sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; pnpm exec playwright install --with-deps chromium
+        run: if [ -f /etc/apt/sources.list.d/debian.sources ]; then sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; fi; pnpm exec playwright install --with-deps chromium
       - name: 运行隔离应用壳协议烟测
         run: pnpm exec playwright test -c e2e/ky-app-shell.playwright.config.ts
       - name: 保存浏览器失败证据

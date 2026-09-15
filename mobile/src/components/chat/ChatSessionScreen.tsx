@@ -26,11 +26,15 @@ import { useScenarioDeepLink } from '../../hooks/useScenarioDeepLink';
 import { resolveActiveExpertPresentation } from '../../lib/activeExpertPresentation';
 import { SubagentTranscriptSheet } from './SubagentTranscriptSheet';
 import { MarkdownPreviewBody, markdownPreviewTitle } from './MarkdownPreviewBody';
+import { FilePreviewBody, filePreviewDisplayName } from '../files/preview/FilePreviewBody';
 import { SideOverlayPanel } from '../layout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
-import { chatTranscriptMaxWidthStyle } from '../../lib/layoutDensity';
+import { chatTranscriptMaxWidthStyle, MASTER_LIST_WIDTH, RIGHT_OVERLAY_WIDTH } from '../../lib/layoutDensity';
+import { resolveProtectedOverlayWidth } from '../../lib/layoutProtection';
 import {
+  ChatRightSlotProvider,
   SubagentTranscriptProvider,
+  type ChatRightFilePreviewRequest,
   type SubagentTranscriptTarget,
 } from './blocks';
 import { MessageFeedbackProvider } from '../../contexts/MessageFeedbackContext';
@@ -101,9 +105,27 @@ export function ChatSessionScreen({
   const [activeUsageCard, setActiveUsageCard] = useState<'context' | 'billing' | null>(null);
   // 子任务完整过程：面板挂在会话页（这里才拿得到 MessageList），块内只发起打开请求
   const [transcriptTarget, setTranscriptTarget] = useState<SubagentTranscriptTarget | null>(null);
-  /** md+ single right-slot: markdown preview (subagent shares the same overlay host). */
-  const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
-  const { isMdUp } = useBreakpoint();
+  /** md+ single right-slot: file preview (subagent shares the same overlay host). */
+  const [rightPreview, setRightPreview] = useState<ChatRightFilePreviewRequest | null>(null);
+  const { isMdUp, width: breakpointWidth } = useBreakpoint();
+  const [hostWidth, setHostWidth] = useState(0);
+  const overlayProtectRef = useRef(false);
+  const overlayWidth = useMemo(() => {
+    const host = hostWidth > 0
+      ? hostWidth
+      : Math.max(0, breakpointWidth - (isPane ? MASTER_LIST_WIDTH : 0));
+    const next = resolveProtectedOverlayWidth({
+      hostWidth: host,
+      desiredOverlayWidth: RIGHT_OVERLAY_WIDTH,
+      protectionActive: overlayProtectRef.current,
+    });
+    overlayProtectRef.current = next.protectionActive;
+    return next.width;
+  }, [hostWidth, breakpointWidth, isPane]);
+  const handleHostLayout = useCallback((event: LayoutChangeEvent) => {
+    const next = Math.round(event.nativeEvent.layout.width);
+    setHostWidth((prev) => (Math.abs(prev - next) < 1 ? prev : next));
+  }, []);
   const defaultBottomPadding = 56 + insets.bottom;
   const [composerHeight, setComposerHeight] = useState(defaultBottomPadding);
   const lastComposerHeightRef = useRef(defaultBottomPadding);
@@ -370,18 +392,33 @@ export function ChatSessionScreen({
     router.replace({ pathname: '/chat/[sessionId]' as any, params: { sessionId: newSessionId } });
   }, [chat.forkFromMessage, router, isPane, onSessionNavigate]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
+  const openRightFilePreview = useCallback(
+    (request: ChatRightFilePreviewRequest) => {
+      if (!isMdUp) return false;
+      if (getPreviewFileType(request.filePath) === 'html' || getPreviewFileType(request.name || request.filePath) === 'html') {
+        Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。请让发送方通过 Artifact viewer 正式交付。');
+        return true;
+      }
+      setTranscriptTarget(null);
+      setRightPreview(request);
+      return true;
+    },
+    [isMdUp],
+  );
+
+  const rightSlotValue = useMemo(
+    () => ({ openFilePreview: openRightFilePreview }),
+    [openRightFilePreview],
+  );
+
   const handlePreviewMd = useCallback((filePath: string) => {
     if (getPreviewFileType(filePath) === 'html') {
       Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。请让发送方通过 Artifact viewer 正式交付。');
       return;
     }
-    if (isMdUp) {
-      setTranscriptTarget(null);
-      setPreviewFilePath(filePath);
-      return;
-    }
+    if (openRightFilePreview({ route: '/chat/markdown-preview', filePath })) return;
     router.push({ pathname: '/chat/markdown-preview', params: { filePath, ...(sessionOwner ? { owner: sessionOwner } : {}) } });
-  }, [router, sessionOwner, isMdUp]);
+  }, [router, sessionOwner, openRightFilePreview]);
 
   useEffect(() => {
     const nextDefaultPadding = 56 + insets.bottom;
@@ -469,12 +506,17 @@ export function ChatSessionScreen({
     () => resolveActiveExpertPresentation(chat.agentTargetCatalog, headerAgentTarget),
     [chat.agentTargetCatalog, headerAgentTarget],
   );
+  useEffect(() => {
+    setRightPreview(null);
+    setTranscriptTarget(null);
+  }, [sessionId]);
+
   const showEmptyState = chat.messages.length === 0 && !chat.isLoadingMessages && !chat.loading;
 
   const transcriptValue = useMemo(
     () => ({
       openTranscript: (target: SubagentTranscriptTarget) => {
-        setPreviewFilePath(null);
+        setRightPreview(null);
         setTranscriptTarget(target);
       },
     }),
@@ -560,7 +602,7 @@ export function ChatSessionScreen({
   );
 
   return (
-    <View style={styles.container} testID={isPane ? 'chat-pane-screen' : 'chat-screen'}>
+    <View style={styles.container} testID={isPane ? 'chat-pane-screen' : 'chat-screen'} onLayout={handleHostLayout}>
       {isPane ? paneHeader : stackHeader}
 
       <ConnectionBanner connectionState={chat.connectionState} isOnline={isOnline} />
@@ -582,6 +624,7 @@ export function ChatSessionScreen({
         )
       ) : null}
       <MessageFeedbackProvider sessionId={chat.sessionId}>
+      <ChatRightSlotProvider value={rightSlotValue}>
       <SubagentTranscriptProvider value={transcriptValue}>
       <View style={[{ flex: 1 }, chatTranscriptMaxWidthStyle(screenWidth)]}>
       <MessageList
@@ -607,6 +650,7 @@ export function ChatSessionScreen({
       />
       </View>
       </SubagentTranscriptProvider>
+      </ChatRightSlotProvider>
       </MessageFeedbackProvider>
       </KeyboardAvoidingView>
       <KeyboardStickyView style={styles.inputOverlay} offset={{ closed: 0, opened: 0 }}>
@@ -718,6 +762,7 @@ export function ChatSessionScreen({
           title={`子任务完整过程 · ${transcriptTarget.title}`}
           subtitle={transcriptTarget.childSessionId}
           onClose={() => setTranscriptTarget(null)}
+          width={overlayWidth}
           testID="chat-right-subagent"
         >
           <SubagentTranscriptSheet
@@ -737,16 +782,35 @@ export function ChatSessionScreen({
           onClose={() => setTranscriptTarget(null)}
         />
       ) : null}
-      {isMdUp && previewFilePath ? (
+      {isMdUp && rightPreview?.route === '/chat/markdown-preview' ? (
         <SideOverlayPanel
-          title={markdownPreviewTitle(previewFilePath)}
-          onClose={() => setPreviewFilePath(null)}
+          title={markdownPreviewTitle(rightPreview.filePath)}
+          onClose={() => setRightPreview(null)}
+          width={overlayWidth}
           testID="chat-right-preview"
         >
           <MarkdownPreviewBody
-            filePath={previewFilePath}
+            filePath={rightPreview.filePath}
             {...(sessionOwner ? { owner: sessionOwner } : {})}
-            onNavigatePreview={(next) => setPreviewFilePath(next)}
+            onNavigatePreview={(next) =>
+              setRightPreview({ route: '/chat/markdown-preview', filePath: next })
+            }
+          />
+        </SideOverlayPanel>
+      ) : null}
+      {isMdUp && rightPreview?.route === '/files/preview' ? (
+        <SideOverlayPanel
+          title={filePreviewDisplayName(rightPreview.filePath, rightPreview.name)}
+          onClose={() => setRightPreview(null)}
+          width={overlayWidth}
+          testID="chat-right-file-preview"
+        >
+          <FilePreviewBody
+            filePath={rightPreview.filePath}
+            name={rightPreview.name}
+            size={rightPreview.size ?? 0}
+            modifiedAt={rightPreview.modifiedAt ?? 0}
+            {...(sessionOwner ? { owner: sessionOwner } : {})}
           />
         </SideOverlayPanel>
       ) : null}

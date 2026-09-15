@@ -234,9 +234,17 @@ test('M10-04 build wrapper requires distribution and contains no automatic sidel
   assert.match(buildScript, /production-store/);
   assert.match(buildScript, /production-enterprise/);
   assert.match(buildScript, /load-android-production-config\.sh/);
+  assert.match(buildScript, /build-android-native\.sh/);
+  assert.match(buildScript, /MOBILE_ANDROID_BUILD_ENGINE/);
   assert.match(buildScript, /No upload or overwrite was performed/);
   assert.doesNotMatch(buildScript, /aliyun\s+oss|--force/);
   assert.match(buildScript, /Refusing to overwrite existing Android versionCode/);
+
+  const gradleScript = readFileSync(resolve(HERE, 'build-android-native.sh'), 'utf8');
+  assert.match(gradleScript, /expo prebuild --clean --no-install --platform android/);
+  assert.match(gradleScript, /:app:assembleRelease/);
+  assert.match(gradleScript, /ANDROID_RELEASE_KEYSTORE_PATH/);
+  assert.doesNotMatch(gradleScript, /eas build/);
 });
 
 test('M10-04 repository static config cannot smuggle install capability into every flavor', () => {

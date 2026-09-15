@@ -1,7 +1,7 @@
 /**
  * Persona / MEMORY.md editor body.
- * - screen: Stack.Screen chrome (phone + md+ deep link)
- * - embedded: inline chrome for settings my-agent md+ detail pane
+ * - screen: Stack.Screen chrome (phone + md+ external deep link)
+ * - embedded: inline chrome for settings my-agent / agent-profile md+ detail pane
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {

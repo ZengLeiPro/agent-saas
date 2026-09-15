@@ -1,6 +1,7 @@
 /**
  * Stack route for persona / MEMORY.md editor.
- * md+ settings my-agent embeds PersonaEditorBody in-pane instead of pushing this route.
+ * md+ in-app settings (my-agent / agent-profile) embed PersonaEditorBody in-pane
+ * instead of pushing this route. External / deep-link opens stay full-screen.
  */
 import React from 'react';
 import { useLocalSearchParams } from 'expo-router';

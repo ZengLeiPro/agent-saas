@@ -1,6 +1,7 @@
 /**
  * Stack route for daily memory browser.
- * md+ settings my-agent embeds MemoryBrowserBody in-pane instead of pushing this route.
+ * md+ in-app settings (my-agent) embed MemoryBrowserBody in-pane instead of
+ * pushing this route. External / deep-link opens stay full-screen.
  */
 import React from 'react';
 import { useLocalSearchParams } from 'expo-router';

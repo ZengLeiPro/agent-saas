@@ -8,8 +8,9 @@
  *   同一 shared 端点：fetchPersona/updatePersona、fetchAgentMemory/updateAgentMemory），
  *   以及 `memory-browser`（按日归档的 memory 目录浏览，Web 侧无对应视图）。
  *
- * md+（settings master-detail detail pane）: persona / memory / memory-browser
- * 嵌在本 pane 内，避免再全屏 stack push。Phone <768 仍 push。
+ * md+（settings master-detail detail pane）: agent-profile / persona / memory /
+ * memory-browser 嵌在本 pane 内，避免再全屏 stack push。Phone <768 仍 push。
+ * Top-level deep links `/persona-editor` / `/memory-browser`（settings 外）仍全屏。
  */
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
@@ -21,11 +22,13 @@ import { ListRow } from '../../src/components/ui';
 import { SettingsGroup, SettingsScrollView } from '../../src/components/settings/SettingsSections';
 import { PersonaEditorBody } from '../../src/components/settings/PersonaEditorBody';
 import { MemoryBrowserBody } from '../../src/components/settings/MemoryBrowserBody';
+import { AgentProfileEditor } from '../../src/components/settings/AgentProfileEditor';
 import { useBreakpoint } from '../../src/hooks/useBreakpoint';
 
 const AVATAR_SIZE = 40;
 
 type NestedView =
+  | { kind: 'profile' }
   | { kind: 'persona'; mode: 'persona' | 'memory' }
   | { kind: 'browser'; path: string }
   | null;
@@ -49,6 +52,14 @@ export default function MyAgentSettingsScreen() {
       .catch(() => setProfile(null));
   }, [username]);
 
+  const openProfile = () => {
+    if (isMdUp) {
+      setNested({ kind: 'profile' });
+      return;
+    }
+    router.push('/settings/agent-profile');
+  };
+
   const openDoc = (mode: 'persona' | 'memory') => {
     if (!username) return;
     if (isMdUp) {
@@ -65,6 +76,17 @@ export default function MyAgentSettingsScreen() {
     }
     router.push({ pathname: '/memory-browser', params: { path: 'memory' } });
   };
+
+  if (nested?.kind === 'profile') {
+    return (
+      <AgentProfileEditor
+        title="我的 Agent"
+        activityDetail="我的 Agent"
+        embedded
+        onRequestClose={() => setNested(null)}
+      />
+    );
+  }
 
   if (nested?.kind === 'persona' && username) {
     return (
@@ -102,7 +124,7 @@ export default function MyAgentSettingsScreen() {
               version={profile?.avatarVersion}
             />
           }
-          onPress={() => router.push('/settings/agent-profile')}
+          onPress={openProfile}
         />
       </SettingsGroup>
 

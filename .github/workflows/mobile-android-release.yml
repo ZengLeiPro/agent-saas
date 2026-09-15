@@ -63,7 +63,21 @@ jobs:
           bash -n mobile/scripts/build.sh
           bash -n mobile/scripts/load-android-production-config.sh
       - name: 企业清洁预构建（无签名凭据）
+        # Policy gate only: prebuilds in a temp dir and does NOT leave mobile/android/.
         run: node mobile/scripts/run-native-prebuild-gate.mjs --profile enterprise
+      # prebuild-gate ≠ workspace android tree; materialize gradlew for the Gradle fail-closed check.
+      - name: 安装 JDK 17（Gradle 契约检查）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 物化 workspace Android 工程（无签名凭据）
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_V1_PROFILE: production
+          MOBILE_BUILD_PLATFORM: android
+          MOBILE_ANDROID_DISTRIBUTION: enterprise
+        run: pnpm exec expo prebuild --clean --no-install --platform android
       - name: Gradle release 缺凭据 fail-closed
         run: pnpm -F mobile test:android-signing:gradle
 

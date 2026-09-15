@@ -76,6 +76,11 @@ import { connectorSource, connectorStatus, EMPTY_SERVER, renderInstructions, SCO
 
 type ConnectorFilter = "all" | "enabled" | "platform" | "organization" | "personal";
 
+
+function autoTextareaRows(value: string, minRows = 4, maxRows = 24) {
+  const lines = value.length === 0 ? 1 : value.split("\n").length;
+  return Math.min(maxRows, Math.max(minRows, lines + 1));
+}
 export function McpManager({ embedded = false }: { embedded?: boolean }) {
   return <McpManagerInner mode="personal" embedded={embedded} />;
 }
@@ -588,7 +593,7 @@ function McpManagerInner({
           onFilterChange={setActiveFilter}
         />
 
-        <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
+        <div className="min-h-0 flex-1 pb-2">
           {error ? <div className="mb-4 rounded-xl border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
           {filteredServers.length === 0 && !showGithubCard && !showXCard && !showDingtalkCard && !showFeishuCard && !showNotionCard && !showGoogleWorkspaceCard && !showAliyunCard ? (
             <div className={cn("px-6 py-12 text-center text-sm text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
@@ -830,7 +835,7 @@ function McpManagerInner({
             </div>
             <div className="space-y-1.5">
               <div className="text-sm font-medium">连接配置</div>
-              <Textarea className="min-h-32 font-mono text-xs" value={personalConfigText} onChange={(event) => setPersonalConfigText(event.target.value)} />
+              <Textarea className="overflow-hidden font-mono text-xs" rows={autoTextareaRows(personalConfigText, 5, 20)} value={personalConfigText} onChange={(event) => setPersonalConfigText(event.target.value)} />
             </div>
             <div className="space-y-1.5">
               <div className="text-sm font-medium">密钥要求</div>
@@ -871,7 +876,7 @@ function McpManagerInner({
         }
       />
 
-      <div className="min-h-0 flex-1 space-y-6 overflow-auto">
+      <div className="space-y-6">
       {error && <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
 
       {/* admin 态不渲染「我的连接器」：个人账号连接（OAuth）/启用/个人 secret 绑定
@@ -942,8 +947,8 @@ function McpManagerInner({
                 </label>
               )}
             </div>
-            <Textarea className="min-h-40 font-mono text-xs" value={configText} onChange={e => setConfigText(e.target.value)} />
-            <Textarea className="min-h-24 font-mono text-xs" value={JSON.stringify(form.secretRequirements ?? [], null, 2)} onChange={e => { try { setForm(prev => ({ ...prev, secretRequirements: JSON.parse(e.target.value) })); } catch { /* keep typing */ } }} placeholder="secretRequirements JSON" />
+            <Textarea className="overflow-hidden font-mono text-xs" rows={autoTextareaRows(configText, 6, 24)} value={configText} onChange={e => setConfigText(e.target.value)} />
+            <Textarea className="overflow-hidden font-mono text-xs" rows={autoTextareaRows(JSON.stringify(form.secretRequirements ?? [], null, 2), 4, 20)} value={JSON.stringify(form.secretRequirements ?? [], null, 2)} onChange={e => { try { setForm(prev => ({ ...prev, secretRequirements: JSON.parse(e.target.value) })); } catch { /* keep typing */ } }} placeholder="secretRequirements JSON" />
 
             <div className="space-y-2">
               {(adminData?.servers ?? []).filter(server => !server.managedByConnectorId).map(server => {

@@ -3,9 +3,9 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * `containerClassName` 用于给滚动容器加 `max-h-*`。
- * 只有容器高度受限时 `TableHeader` 的 sticky 才会生效——不传就退化为整页滚动，
- * 行为与改造前完全一致。
+ * `containerClassName` 可叠加 `max-h-* overflow-auto` 做内层滚动。
+ * 默认只做横向溢出，让纵向交给外层主区；此时 `TableHeader` 的 sticky
+ * 相对主区滚动容器生效（用户检索滚到底仍见列名）。
  *
  * `data-admin-table` 供 index.css 挂中英混排规则（th/td keep-all、th nowrap）。
  */
@@ -15,7 +15,7 @@ function Table({
   ...props
 }: React.ComponentProps<"table"> & { containerClassName?: string }) {
   return (
-    <div className={cn("relative w-full overflow-auto", containerClassName)}>
+    <div className={cn("relative w-full overflow-x-auto", containerClassName)}>
       <table
         data-admin-table=""
         className={cn("w-full caption-bottom text-sm", className)}

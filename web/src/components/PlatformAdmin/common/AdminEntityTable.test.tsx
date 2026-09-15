@@ -252,3 +252,18 @@ describe("AdminEntityTable · 加载与空态", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 });
+
+
+describe("AdminEntityTable · sticky 表头与单滚动", () => {
+  it("表头带 sticky top-0，表格容器默认不做纵向内滚以便主区 sticky", () => {
+    const { container } = render(<AdminEntityTable rows={ROWS} columns={COLUMNS} rowKey={(row) => row.id} />);
+    const thead = container.querySelector("thead");
+    expect(thead?.className).toContain("sticky");
+    expect(thead?.className).toContain("top-0");
+    expect(thead?.className).toContain("z-10");
+    expect(thead?.className).toContain("bg-card");
+    const wrap = thead?.closest("[class*=\"overflow\"]") ?? thead?.parentElement?.parentElement;
+    expect(wrap?.className ?? "").toContain("overflow-x-auto");
+    expect(wrap?.className ?? "").not.toMatch(/(?:^|\s)overflow-auto(?:\s|$)/);
+  });
+});

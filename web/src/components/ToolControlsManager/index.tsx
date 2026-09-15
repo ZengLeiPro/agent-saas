@@ -474,7 +474,7 @@ export function ToolControlsManager(): JSX.Element {
         )}
       />
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-auto">
+      <div className="space-y-4">
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-950">
           保存后对后续 dispatch 热生效；已经开始的运行可能继续使用创建时的工具快照，直到该运行结束。关闭工具可能使依赖它的系统 Profile 失去能力，请到「Agent 运行配置」核对有效工具交集。
         </div>
@@ -531,7 +531,7 @@ export function ToolControlsManager(): JSX.Element {
             const Icon = group.icon;
             return (
               <Card key={group.id}>
-                <CardHeader className="pb-3">
+                <CardHeader className="sticky top-0 z-10 bg-card/95 pb-3 backdrop-blur supports-[backdrop-filter]:bg-card/80">
                   <CardTitle className="flex items-center gap-2 text-base"><Icon className="size-4" />{group.label}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">

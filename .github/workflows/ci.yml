@@ -1050,7 +1050,7 @@ jobs:
           set -euo pipefail
           curl -sL https://gosspublic.alicdn.com/ossutil/v2/2.1.2/ossutil-2.1.2-linux-amd64.zip -o /tmp/ossutil.zip
           unzip -o -q /tmp/ossutil.zip -d /tmp
-          install /tmp/ossutil-2.1.2-linux-amd64/ossutil /usr/local/bin/ossutil
+          sudo install /tmp/ossutil-2.1.2-linux-amd64/ossutil /usr/local/bin/ossutil
           ossutil version | grep -F '2.1.2'
           ossutil cp --help > "$RUNNER_TEMP/ossutil-cp-help.txt"
           ossutil stat --help > "$RUNNER_TEMP/ossutil-stat-help.txt"

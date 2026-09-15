@@ -796,7 +796,7 @@ jobs:
           set -euo pipefail
           curl -fsSL --connect-timeout 10 --max-time 120 https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
-          install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
       - name: 等待并按需恢复精确镜像
         id: image
         timeout-minutes: 46

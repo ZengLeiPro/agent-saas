@@ -84,7 +84,7 @@ export function ConversationBehaviorSettings() {
           ) : approvalSaved ? (
             <span className="shrink-0 text-xs text-success">已保存</span>
           ) : (
-            <span className="shrink-0 text-xs text-muted-foreground">更改后立即生效</span>
+            <span className="shrink-0 text-xs text-muted-foreground">更改即时保存</span>
           )}
         </div>
         <div

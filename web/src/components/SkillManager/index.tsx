@@ -18,6 +18,7 @@ import {
 } from "@agent/shared";
 import { governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -73,6 +74,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const [syncing, setSyncing] = useState(false);
   const [activeTab, setActiveTab] = useState<"global" | "user">("global");
   const [deleteTarget, setDeleteTarget] = useState<{ kind: "custom" | "tenantOwn" | "pool"; username: string; skillId: string; name: string; impact?: string } | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [editTarget, setEditTarget] = useState<{ kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string } | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -280,6 +282,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     }
     try {
       const impact = await fetchPoolSkillDeleteImpact(skill.id);
+      setDeleteConfirmId("");
       setDeleteTarget({
         kind: "pool",
         username: "",
@@ -306,6 +309,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
         await deleteCustomSkill(deleteTarget.username, deleteTarget.skillId);
       }
       setDeleteTarget(null);
+      setDeleteConfirmId("");
     } catch (err) {
       alert(err instanceof Error ? err.message : "删除失败");
     } finally {
@@ -491,7 +495,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                             className="h-7 px-2 text-xs text-destructive hover:text-destructive"
                             aria-label={`删除技能 ${skillDisplayName(skill)}`}
                             disabled={destructiveDisabled || writeDisabled}
-                            onClick={() => setDeleteTarget({ kind: "tenantOwn", username: "", skillId: skill.id, name: skillDisplayName(skill) })}
+                            onClick={() => { setDeleteConfirmId(""); setDeleteTarget({ kind: "tenantOwn", username: "", skillId: skill.id, name: skillDisplayName(skill) }); }}
                           >
                             <Trash2 className="size-3.5" />
                           </Button>
@@ -680,7 +684,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                                 className="h-7 px-2 text-xs text-destructive hover:text-destructive"
                                 aria-label={`删除技能 ${skill.name}`}
                                 disabled={userSupportDisabled}
-                                onClick={() => setDeleteTarget({ kind: "custom", username, skillId: skill.id, name: skill.name })}
+                                onClick={() => { setDeleteConfirmId(""); setDeleteTarget({ kind: "custom", username, skillId: skill.id, name: skill.name }); }}
                               >
                                 <Trash2 className="size-3.5" />
                               </Button>
@@ -740,7 +744,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
       />
 
       {/* Delete confirmation dialog */}
-      <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteConfirmId(""); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>确认删除</DialogTitle>
@@ -750,11 +754,30 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                 : `确定要删除${deleteTarget?.kind === "tenantOwn" ? "组织" : ` ${deleteTarget?.username} `}的技能“${deleteTarget?.name}”吗？此操作不可撤销。`}
             </DialogDescription>
           </DialogHeader>
+          {deleteTarget ? (
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="skill-delete-confirm-id">
+                请输入技能 ID <span className="font-mono text-xs text-muted-foreground">{deleteTarget.skillId}</span> 以确认
+              </label>
+              <Input
+                id="skill-delete-confirm-id"
+                value={deleteConfirmId}
+                onChange={(event) => setDeleteConfirmId(event.target.value)}
+                placeholder={deleteTarget.skillId}
+                autoComplete="off"
+                data-testid="skill-delete-confirm-id"
+              />
+            </div>
+          ) : null}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+            <Button variant="outline" onClick={() => { setDeleteTarget(null); setDeleteConfirmId(""); }}>
               取消
             </Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={destructiveDisabled || writeDisabled || deleting}>
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={destructiveDisabled || writeDisabled || deleting || deleteConfirmId.trim() !== (deleteTarget?.skillId ?? "")}
+            >
               {deleting && <Loader2 className="size-4 animate-spin" />}
               删除
             </Button>

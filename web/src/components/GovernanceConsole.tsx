@@ -68,21 +68,43 @@ export function GovernanceCapabilityNotice({
   description,
 }: {
   title: string;
-  mode?: "unavailable" | "readonly";
+  mode?: "unavailable" | "readonly" | "gate";
   description?: string;
 }) {
+  const gate = mode === "gate";
   const readOnly = mode === "readonly";
+  const defaultDescription = gate
+    ? "从上方选择组织后，即可管理成员、技能与工作流等配置。"
+    : readOnly
+      ? "当前能力仅提供只读查看，暂不支持在此修改。"
+      : "能力尚未接入。当前没有可用页面或 API，不会展示模拟数据或产生假成功。";
   return (
-    <div className="mx-auto flex min-h-[360px] max-w-2xl items-center justify-center p-6">
-      <div className="w-full rounded-2xl border border-dashed bg-card p-8 text-center shadow-sm">
-        <div className="mx-auto mb-4 flex size-11 items-center justify-center rounded-xl bg-muted text-muted-foreground">
-          {readOnly ? <LockKeyhole className="size-5" /> : <EntityIcons.toolControls className="size-5" />}
+    <div
+      className={cn(
+        "mx-auto flex max-w-2xl items-center justify-center",
+        gate ? "min-h-0 px-4 py-6" : "min-h-[360px] p-6",
+      )}
+      data-testid={gate ? "organization-scope-gate" : undefined}
+    >
+      <div className={cn(
+        "w-full rounded-2xl border border-dashed bg-card text-center shadow-sm",
+        gate ? "p-5" : "p-8",
+      )}>
+        <div className={cn(
+          "mx-auto flex items-center justify-center rounded-xl bg-muted text-muted-foreground",
+          gate ? "mb-3 size-9" : "mb-4 size-11",
+        )}>
+          {gate || readOnly
+            ? <LockKeyhole className={gate ? "size-4" : "size-5"} />
+            : <EntityIcons.toolControls className="size-5" />}
         </div>
         <h2 className="text-base font-semibold">{title}</h2>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {description ?? (readOnly ? "当前能力仅提供只读查看，暂不支持在此修改。" : "能力尚未接入。当前没有可用页面或 API，不会展示模拟数据或产生假成功。")}
+        <p className={cn("text-sm leading-6 text-muted-foreground", gate ? "mt-1.5" : "mt-2")}>
+          {description ?? defaultDescription}
         </p>
-        <Badge variant="outline" className="mt-4">{readOnly ? "只读" : "尚未接入"}</Badge>
+        {!gate && (
+          <Badge variant="outline" className="mt-4">{readOnly ? "只读" : "尚未接入"}</Badge>
+        )}
       </div>
     </div>
   );
@@ -111,7 +133,13 @@ export function OrganizationScopeBanner({
   return (
     <div className={cn("flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-300/70 bg-amber-50 px-4 py-2 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100", className)}>
       <EntityIcons.admin className="size-4 shrink-0" />
-      <span className="font-medium">正在以平台管理员身份管理：{current?.name ?? currentId ?? "请选择组织"}</span>
+      <span className="font-medium">
+        {current
+          ? `正在管理：${current.name}`
+          : currentId
+            ? `正在管理：${currentId}`
+            : "请选择要管理的组织"}
+      </span>
       <AdminSelect
         ariaLabel="切换组织"
         size="sm"
@@ -150,6 +178,7 @@ export function GovernanceConsole({
   dirtyController?: SettingsDirtyController;
   className?: string;
 }) {
+  const { isPlatformAdmin } = useAuth();
   const workspaces = GOVERNANCE_NAVIGATION[area];
   const workspace = workspaces.find((candidate) => candidate.id === route.workspace) ?? workspaces[0];
   const activeDefinition = workspace.routes.find((candidate) => candidate.id === route.routeId)
@@ -208,29 +237,37 @@ export function GovernanceConsole({
 
         {area === "organization" && <OrganizationScopeBanner route={route} dirtyController={dirtyController} />}
 
-        <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-3 py-2 md:px-5" aria-label={`${workspace.label}本地导航`}>
-          {workspace.routes.filter((definition) => definition.navigation !== "detail").map((definition) => {
-            const active = definition.id === route.routeId || definition.id === activeDefinition.parentId;
-            return (
-              <button
-                key={definition.id}
-                type="button"
-                className={cn(
-                  "whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors",
-                  active ? "bg-foreground font-medium text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-                aria-current={active ? "page" : undefined}
-                onClick={() => navigateWithinConsole(routeForDefinition(definition, route))}
-              >
-                {definition.label}
-              </button>
-            );
-          })}
-        </nav>
+        {area === "organization" && isPlatformAdmin && !route.orgId ? (
+          <main className="min-h-0 flex-1 overflow-auto">
+            <GovernanceCapabilityNotice title="请先选择要管理的组织" mode="gate" />
+          </main>
+        ) : (
+          <>
+            <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-3 py-2 md:px-5" aria-label={`${workspace.label}本地导航`}>
+              {workspace.routes.filter((definition) => definition.navigation !== "detail").map((definition) => {
+                const active = definition.id === route.routeId || definition.id === activeDefinition.parentId;
+                return (
+                  <button
+                    key={definition.id}
+                    type="button"
+                    className={cn(
+                      "whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors",
+                      active ? "bg-foreground font-medium text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => navigateWithinConsole(routeForDefinition(definition, route))}
+                  >
+                    {definition.label}
+                  </button>
+                );
+              })}
+            </nav>
 
-        <main className="min-h-0 flex-1 overflow-auto">
-          <Suspense fallback={<GovernancePageFallback />}>{children}</Suspense>
-        </main>
+            <main className="min-h-0 flex-1 overflow-auto">
+              <Suspense fallback={<GovernancePageFallback />}>{children}</Suspense>
+            </main>
+          </>
+        )}
       </section>
     </div>
   );

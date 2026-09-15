@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Boxes, TriangleAlert } from "lucide-react";
 
 import { TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
@@ -124,8 +124,8 @@ function Empty({ children }: { children: string }) {
   return <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">{children}</div>;
 }
 
-function Header({ title, description }: { title: string; description: string }) {
-  return <SettingsPanelHeader title={title} description={description} />;
+function Header({ title, description, actions }: { title: string; description: string; actions?: ReactNode }) {
+  return <SettingsPanelHeader title={title} description={description} actions={actions} />;
 }
 
 function Receipt({ value }: { value: GovernanceReceipt }) {
@@ -321,9 +321,22 @@ export function PlatformAdminsPage() {
   const { data, loading, error, retry } = useGovernanceRequest(request, "platform-admins");
   if (loading) return <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在读取平台管理员…</div>;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
-  return <div><Header title="平台管理员" description="该身份拥有完整平台控制面权限，不再展示失效的能力矩阵。" />
-    {!data?.platformAdmins.length ? <Empty>没有可展示的平台管理员记录。</Empty> : <div className="overflow-x-auto rounded-xl border bg-card" tabIndex={0}><table className="min-w-[680px] w-full text-sm"><thead className="bg-muted/50 text-left text-muted-foreground"><tr><th className="px-4 py-3">平台管理员</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">来源</th><th className="px-4 py-3">版本</th></tr></thead><tbody className="divide-y">{data.platformAdmins.map(item => <tr key={item.userId}><td className="px-4 py-3"><div className="font-medium">{item.directoryProfile?.displayName ?? "目录资料不可用"}</div><div className="text-xs text-muted-foreground">{item.directoryProfile?.username ?? "账号未知"} · <span className="font-mono">{item.userId}</span></div></td><td className="px-4 py-3"><Badge variant={item.status === "active" ? "secondary" : "outline"}>{localizedValue(item.status, statusLabels)}</Badge></td><td className="px-4 py-3">{localizedValue(item.source, sourceLabels)}</td><td className="px-4 py-3">v{item.version}</td></tr>)}</tbody></table></div>}
-    <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">新增、移除与恢复尚未绑定统一影响预览，因此本页保持只读。</div>
+  const apiBlockedReason = "服务端 PATCH /platform-admins/:userId 当前返回 503（GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE），暂不可执行新增/移除。";
+  return <div>
+    <Header
+      title="平台管理员"
+      description="该身份拥有完整平台控制面权限，不再展示失效的能力矩阵。"
+      actions={(
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" size="sm" disabled title={apiBlockedReason} aria-label="添加平台管理员（暂不可用）">添加平台管理员</Button>
+          <Button type="button" size="sm" variant="outline" disabled title={apiBlockedReason} aria-label="移除平台管理员（暂不可用）">移除</Button>
+        </div>
+      )}
+    />
+    {!data?.platformAdmins.length ? <Empty>没有可展示的平台管理员记录。</Empty> : <div className="overflow-x-auto rounded-xl border bg-card" tabIndex={0}><table className="min-w-[680px] w-full text-sm"><thead className="bg-muted/50 text-left text-muted-foreground"><tr><th className="px-4 py-3">平台管理员</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">来源</th><th className="px-4 py-3">版本</th><th className="px-4 py-3">操作</th></tr></thead><tbody className="divide-y">{data.platformAdmins.map(item => <tr key={item.userId}><td className="px-4 py-3"><div className="font-medium">{item.directoryProfile?.displayName ?? "目录资料不可用"}</div><div className="text-xs text-muted-foreground">{item.directoryProfile?.username ?? "账号未知"} · <span className="font-mono">{item.userId}</span></div></td><td className="px-4 py-3"><Badge variant={item.status === "active" ? "secondary" : "outline"}>{localizedValue(item.status, statusLabels)}</Badge></td><td className="px-4 py-3">{localizedValue(item.source, sourceLabels)}</td><td className="px-4 py-3">v{item.version}</td><td className="px-4 py-3"><Button type="button" size="sm" variant="ghost" disabled title={apiBlockedReason} aria-label={`移除 ${item.directoryProfile?.displayName ?? item.userId}`}>移除</Button></td></tr>)}</tbody></table></div>}
+    <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm" data-testid="platform-admins-api-gap">
+      已提供可发现的「添加 / 移除」入口，但服务端尚未开放带影响预览的权威写入（PATCH 返回 503），因此按钮保持不可用，避免假成功。
+    </div>
   </div>;
 }
 

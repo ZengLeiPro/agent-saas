@@ -24,7 +24,7 @@ const DEFAULT_SIDEBAR_WIDTH = 220;
  * 约束（曾磊 2026-06-24 拍板）：
  * - md 断点（≥768）切两列，小屏堆叠；
  * - 左栏固定宽度（默认 220px），通过 CSS 变量传入，避免 Tailwind JIT 不识别动态拼接 class；
- * - 左右栏各自 min-h-0 + overflow-auto 独立滚动；
+ * - 左栏限定 max-h 内滚；右栏跟随外层主区滚动（避免设置页双滚动条）；
  * - 列间 gap-4，**无 border-l 竖线**，走简约美学；
  * - 不强加 Card 包装，由调用方在 sidebar/children 槽内自决。
  *
@@ -53,7 +53,7 @@ export function SettingsTwoColumn({
     >
       <div
         className={cn(
-          "min-w-0 space-y-4 md:min-h-0 md:overflow-auto",
+          "min-w-0 space-y-4 md:max-h-[min(70vh,40rem)] md:overflow-auto",
           sidebarClassName,
         )}
       >
@@ -61,7 +61,7 @@ export function SettingsTwoColumn({
       </div>
       <div
         className={cn(
-          "min-w-0 space-y-4 md:min-h-0 md:overflow-auto",
+          "min-w-0 space-y-4",
           contentClassName,
         )}
       >

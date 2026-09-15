@@ -86,7 +86,7 @@ const RISK_META: Record<
 > = {
   safe: { label: "safe · 只读或自恢复", variant: "secondary" },
   workspace_write: { label: "workspace_write · 写工作区", variant: "outline" },
-  dangerous: { label: "dangerous · 需审批", variant: "destructive" },
+  dangerous: { label: "dangerous · 高风险需审批", variant: "destructive" },
 };
 
 const APPROVAL_META: Record<ToolCatalogItem["approvalMode"], string> = {
@@ -404,7 +404,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
             </CardHeader>
             <CardContent className="text-xs text-muted-foreground">
               {tool.risk === "dangerous"
-                ? "该工具会执行任意命令 / 副作用，运行前必须走 Web 审批（HITL）。关闭它前请确认没有场景强依赖。"
+                ? "危险工具：可执行任意命令或高副作用操作。开启前请确认影响面；运行前仍须走 Web 审批（HITL）。关闭前请确认没有场景强依赖。"
                 : "该工具会写入工作区或组织数据。关闭它前请确认没有场景强依赖。"}
             </CardContent>
           </Card>

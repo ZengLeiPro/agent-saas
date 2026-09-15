@@ -49,6 +49,29 @@ describe("UsersPage 添加成员入口", () => {
     expect(window.location.search).toBe("?org=acme");
   });
 
+
+  it("用户列表表头 sticky，滚动主区时仍能看见列名", async () => {
+    mocks.users.mockResolvedValue({
+      items: Array.from({ length: 3 }, (_, index) => ({
+        id: `user-${index}`,
+        username: `user${index}`,
+        realName: `用户${index}`,
+        tenantId: "acme",
+        role: "user",
+        position: "顾问",
+        disabled: false,
+        updatedAt: "2026-09-10T08:00:00.000Z",
+      })),
+      nextCursor: null,
+    });
+    const { container } = render(<UsersPage userId={null} />);
+    await screen.findByRole("columnheader", { name: /用户/ });
+    const thead = container.querySelector("thead");
+    expect(thead?.className).toContain("sticky");
+    expect(thead?.className).toContain("top-0");
+    expect(screen.getByRole("columnheader", { name: /组织|租户/ })).toBeTruthy();
+  });
+
   it("点击用户名称进入详情并保留检索条件", async () => {
     window.history.replaceState({}, "", "/platform-console/org-business/users?q=王&tenantId=acme");
     mocks.users.mockResolvedValue({

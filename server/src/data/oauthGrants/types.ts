@@ -44,3 +44,16 @@ export interface OAuthGrantProjectionInput {
   purpose: string;
   actorUserId: string;
 }
+
+/** Runtime may inject connector tokens only for grants that are active and not mid-revocation. */
+export function isOAuthGrantRuntimeUsable(
+  grant: Pick<OAuthGrant, 'status' | 'revocationStage' | 'expiresAt'> | null | undefined,
+  now = Date.now(),
+): boolean {
+  return Boolean(
+    grant
+    && grant.status === 'active'
+    && !grant.revocationStage
+    && (!grant.expiresAt || new Date(grant.expiresAt).getTime() > now),
+  );
+}

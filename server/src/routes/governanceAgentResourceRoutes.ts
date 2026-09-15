@@ -65,6 +65,17 @@ function definitionAvatarBelongsToAgent(
     && avatar.startsWith(`org-agent-avatars/${agentId}.`);
 }
 
+function dispatcherRuntimeUnavailableError(blockers: string[]): string {
+  if (blockers.some((blocker) => blocker.startsWith('DISPATCHER_WORKER_MODEL_UNAVAILABLE:'))) {
+    return (
+      '前台调度器 Worker 模型不可用：请为专家配置可用的 Worker 模型' +
+      '（fixed/default 的 modelRef 须能解析且模型组已配置 apiKey 或订阅传输），' +
+      '或将 Worker 策略改为“继承前台模型”'
+    );
+  }
+  return '前台调度器运行依赖不可用';
+}
+
 export function registerGovernanceAgentResourceRoutes(options: {
   router: Router;
   agents: PgAgentResourceStore;
@@ -282,7 +293,7 @@ export function registerGovernanceAgentResourceRoutes(options: {
         : ['DISPATCHER_RUNTIME_VALIDATOR_UNAVAILABLE'];
       if (blockers.length > 0) {
         return res.status(409).json({
-          error: '前台调度器运行依赖不可用',
+          error: dispatcherRuntimeUnavailableError(blockers),
           code: 'DISPATCHER_RUNTIME_UNAVAILABLE',
           blockers,
         });
@@ -433,7 +444,7 @@ export function registerGovernanceAgentResourceRoutes(options: {
           ? await options.validateDispatcherRuntime(tenantId, definition.data.runtime)
           : ['DISPATCHER_RUNTIME_VALIDATOR_UNAVAILABLE'];
         if (blockers.length > 0) {
-          return res.status(409).json({ error: '前台调度器运行依赖不可用', code: 'DISPATCHER_RUNTIME_UNAVAILABLE', blockers });
+          return res.status(409).json({ error: dispatcherRuntimeUnavailableError(blockers), code: 'DISPATCHER_RUNTIME_UNAVAILABLE', blockers });
         }
       }
     }

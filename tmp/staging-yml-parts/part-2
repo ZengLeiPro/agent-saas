@@ -1,0 +1,376 @@
+der pending job.
+    concurrency:
+      group: staging-runtime
+      cancel-in-progress: false
+      queue: max
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: staging
+    env:
+      RELEASE_SOURCE_SHA: ${{ needs.prepare-evidence.outputs.source_sha }}
+      AUTOMATIC_RELEASE: ${{ needs.prepare-evidence.outputs.automatic }}
+      APP_CI_RUN_ID: ${{ needs.prepare-evidence.outputs.app_ci_run_id }}
+      APP_CI_RUN_ATTEMPT: ${{ needs.prepare-evidence.outputs.app_ci_run_attempt }}
+      STAGING_E2E_USERNAME: ${{ secrets.STAGING_E2E_USERNAME }}
+      STAGING_E2E_PASSWORD: ${{ secrets.STAGING_E2E_PASSWORD }}
+      ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      STAGING_ECS_HOST: ${{ secrets.STAGING_ECS_HOST }}
+      STAGING_ECS_USER: ${{ secrets.STAGING_ECS_USER }}
+      STAGING_ECS_SSH_KEY: ${{ secrets.STAGING_ECS_SSH_KEY }}
+      RELEASE_EVIDENCE_TOKEN: ${{ secrets.RELEASE_EVIDENCE_TOKEN }}
+      STAGING_WEB_URL: https://staging-agent.kaiyan.net
+      STAGING_API_URL: https://staging-agent-api.kaiyan.net
+      RELEASE_EVIDENCE_URL: ${{ vars.RELEASE_EVIDENCE_URL }}
+      STAGING_ISOLATION_EVIDENCE_URL: ${{ vars.STAGING_ISOLATION_EVIDENCE_URL }}
+      STAGING_SSH_HOST_KEY_SHA256: ${{ vars.STAGING_SSH_HOST_KEY_SHA256 }}
+      STAGING_RELEASE_OSS_URI: ${{ vars.STAGING_RELEASE_OSS_URI }}
+      STAGING_WEB_OSS_URI: oss://agent-saas-web-staging
+      RELEASE_RECORD_OSS_REGION: cn-shenzhen
+      DISPATCH_REASON: ${{ inputs.reason || 'manual staging release' }}
+
+    steps:
+      - name: 锁定触发 SHA
+        id: lock_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$RELEASE_SOURCE_SHA" | grep -Eq '^[a-f0-9]{40}$'
+          test "$GITHUB_REF" = refs/heads/main
+          test "$STAGING_E2E_USERNAME" = staging-e2e-admin
+          : "${STAGING_E2E_PASSWORD:?Missing dedicated Staging smoke password}"
+          created_at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)"
+          created_at="$(node -e "process.stdout.write(new Date(process.argv[1]).toISOString())" "$created_at")"
+          release_date="${created_at:0:10}"
+          release_id="rc-${release_date//-/}-$(printf '%02d' "$GITHUB_RUN_NUMBER")"
+          expires_at="$(node -e "process.stdout.write(new Date(Date.parse(process.argv[1])+86400000).toISOString())" "$created_at")"
+          {
+            echo "STAGING_RELEASE_ID=$release_id"
+            echo "STAGING_RELEASE_SHA=$RELEASE_SOURCE_SHA"
+            echo "RELEASE_CREATED_AT=$created_at"
+            echo "RELEASE_EXPIRES_AT=$expires_at"
+          } >> "$GITHUB_ENV"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+      - name: 检出不可变触发版本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: 在准备变更前重新核验自动委派
+        if: inputs.automation_id != '' || inputs.automation_key != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/automatic-release-child.mjs deploy-staging.yml
+
+
+      - name: 确认 SHA 属于可信 main 历史
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git cat-file -e "$RELEASE_SOURCE_SHA^{commit}"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SOURCE_SHA" origin/main
+
+      - name: 确认测试环境资源已准备好首次部署
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const plan = JSON.parse(readFileSync('infra/staging/resource-plan.json', 'utf8'));
+          const blockers = Array.isArray(plan.blockingConditions) ? plan.blockingConditions : [];
+          if (
+            plan.environment !== 'staging' ||
+            plan.status !== 'provisioned' ||
+            plan.firstDeploymentReadiness !== 'ready' ||
+            blockers.length > 0
+          ) {
+            throw new Error(
+              `Staging first deployment is blocked: status=${plan.status}, readiness=${plan.firstDeploymentReadiness}, blockers=${blockers.join(',')}`,
+            );
+          }
+          NODE
+
+      - name: 记录实际部署引擎
+        run: node scripts/release/deployment-engine.mjs .github/workflows/deploy-staging.yml "$RUNNER_TEMP/deployment-engine.json"
+
+      - name: 配置 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装阿里云 CLI
+        run: |
+          set -euo pipefail
+          bash scripts/release/install-aliyun-cli.sh
+
+      - name: 任务重跑时恢复不可变 RC
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo 'REUSE_RC=false' >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/attestations"
+          if ! bash scripts/release/fetch-rc-evidence.sh "$STAGING_RELEASE_ID" "$RUNNER_TEMP/release"; then
+            exit 0
+          fi
+          mv "$RUNNER_TEMP/release/manifest.json" "$RUNNER_TEMP/manifest.json"
+          node scripts/release/attestation-snapshot.mjs select \
+            "$RUNNER_TEMP/release"/attestation-*.jsonl \
+            "$RUNNER_TEMP/attestations/$STAGING_RELEASE_ID.jsonl"
+          pnpm exec tsx server/src/release/validateReleaseManifestCli.ts \
+            "$RUNNER_TEMP/manifest.json" "$STAGING_RELEASE_ID"
+          test "$(jq -r .releaseSha "$RUNNER_TEMP/manifest.json")" = "$RELEASE_SOURCE_SHA"
+          manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
+          if git ls-remote --tags origin "refs/tags/$STAGING_RELEASE_ID" | grep -q .; then
+            git fetch --no-tags origin "refs/tags/$STAGING_RELEASE_ID:refs/tags/$STAGING_RELEASE_ID"
+            test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$RELEASE_SOURCE_SHA"
+            tag_object="$(git rev-parse "$STAGING_RELEASE_ID^{tag}")"
+            git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $manifest_digest"
+          fi
+          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$RELEASE_SOURCE_SHA" || {
+            destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
+            rm -rf "$RUNNER_TEMP/release" && mkdir -p "$RUNNER_TEMP/release"
+            aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release/" --recursive \
+              --region "$RELEASE_RECORD_OSS_REGION"
+            node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$RELEASE_SOURCE_SHA"
+          }
+          echo "MANIFEST_DIGEST=$manifest_digest" >> "$GITHUB_ENV"
+          echo 'REUSE_RC=true' >> "$GITHUB_ENV"
+
+      - name: 读取同一次自动刷新生成的独立权威证据
+        if: needs.prepare-evidence.outputs.automatic == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          artifact-ids: ${{ needs.prepare-evidence.outputs.evidence_artifact_id }}
+          path: ${{ runner.temp }}
+          merge-multiple: true
+      - name: 读取权威候选与生产证据
+        if: env.REUSE_RC != 'true'
+        run: |
+          set -euo pipefail
+          : "${RELEASE_EVIDENCE_URL:?Missing staging variable RELEASE_EVIDENCE_URL}"
+          : "${RELEASE_EVIDENCE_TOKEN:?Missing staging secret RELEASE_EVIDENCE_TOKEN}"
+          if [ "$AUTOMATIC_RELEASE" != true ]; then
+            curl -fsS --retry 3 \
+              -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
+              "$RELEASE_EVIDENCE_URL?sha=$RELEASE_SOURCE_SHA" > "$RUNNER_TEMP/authoritative-evidence.json"
+          fi
+          test "$(jq -r .releaseSha "$RUNNER_TEMP/authoritative-evidence.json")" = "$RELEASE_SOURCE_SHA"
+          test "$(jq -r .ok "$RUNNER_TEMP/authoritative-evidence.json")" = true
+          baseline="$(jq -r .productionBaseline.api.sourceSha "$RUNNER_TEMP/authoritative-evidence.json")"
+          git cat-file -e "$baseline^{commit}"
+          git merge-base --is-ancestor "$baseline" "$RELEASE_SOURCE_SHA"
+          node scripts/release/classify-components.mjs --baseline "$baseline" --target "$RELEASE_SOURCE_SHA" > "$RUNNER_TEMP/classification.json"
+          diff <(jq -S .components "$RUNNER_TEMP/classification.json") \
+               <(jq -S .affectedComponents "$RUNNER_TEMP/authoritative-evidence.json")
+          if ! node scripts/release/migration-plan.mjs --changed-paths "$RUNNER_TEMP/classification.json" \
+            --baseline "$baseline" --target "$RELEASE_SOURCE_SHA" > "$RUNNER_TEMP/migration-plan.json"; then
+            cat "$RUNNER_TEMP/migration-plan.json" >&2
+            exit 1
+          fi
+          diff <(jq -S .migrationPlan "$RUNNER_TEMP/migration-plan.json") \
+               <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
+      - name: 下载本次运行已验证的 ACS 镜像证据
+        if: env.REUSE_RC != 'true' && needs.prepare-acs.outputs.include_acs == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          # Failed-job reruns retain the successful producer's original attempt.
+          name: ${{ needs.prepare-acs.outputs.artifact_name }}
+          path: ${{ runner.temp }}
+      - name: 按需解析精确 ACS 镜像
+        if: env.REUSE_RC != 'true'
+        timeout-minutes: 3
+        env:
+          ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ACR_READ_ACCESS_KEY_ID }}
+          ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ACR_READ_ACCESS_KEY_SECRET }}
+        run: |
+          set -euo pipefail
+          include_acs=false
+          if jq -e '.affectedComponents | index("acs") != null' "$RUNNER_TEMP/authoritative-evidence.json" >/dev/null; then
+            : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing staging secret ACR_READ_ACCESS_KEY_ID}"
+            : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing staging secret ACR_READ_ACCESS_KEY_SECRET}"
+            include_acs=true
+            test -s "$RUNNER_TEMP/acs-image-prepared.json"
+            # Recheck immutable build identity immediately before mutation; no waiting
+            # or webhook writes while holding the Staging deployment slot.
+            ACR_SINGLE_PROBE=true RELEASE_SHA="$RELEASE_SOURCE_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image.json" \
+              timeout --kill-after=5s 120s bash scripts/release/wait-for-acr-image.sh
+            diff <(jq -S . "$RUNNER_TEMP/acs-image-prepared.json") \
+                 <(jq -S . "$RUNNER_TEMP/acs-image.json")
+          fi
+          echo "INCLUDE_ACS=$include_acs" >> "$GITHUB_ENV"
+
+      - name: 消费同一 main CI 已验证的不可变产物
+        if: env.REUSE_RC != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s:%s' "$APP_CI_RUN_ID" "$APP_CI_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*:[1-9][0-9]*$'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_CI_RUN_ID" > "$RUNNER_TEMP/producer-run.json"
+          jq -e --arg sha "$RELEASE_SOURCE_SHA" --argjson attempt "$APP_CI_RUN_ATTEMPT" '
+            .head_sha == $sha and .head_branch == "main" and .event == "push" and
+            .path == ".github/workflows/ci.yml" and .run_attempt == $attempt and
+            .status == "completed" and .conclusion == "success"
+          ' "$RUNNER_TEMP/producer-run.json" >/dev/null
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$APP_CI_RUN_ID/artifacts?per_page=100" > "$RUNNER_TEMP/producer-artifacts.json"
+          node scripts/release/select-prepared-release-artifact.mjs "$GITHUB_REPOSITORY" "$RELEASE_SOURCE_SHA" \
+            "$APP_CI_RUN_ID" "$APP_CI_RUN_ATTEMPT" "$RUNNER_TEMP/producer-artifacts.json" "$RUNNER_TEMP/prepared-selection.env"
+          source "$RUNNER_TEMP/prepared-selection.env"
+          gh run download "$APP_CI_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$PREPARED_ARTIFACT_NAME" \
+            --dir "$RUNNER_TEMP/prepared-release"
+          args=(--directory="$RUNNER_TEMP/prepared-release" --out="$RUNNER_TEMP/release" \
+            --sha="$RELEASE_SOURCE_SHA" --repository="$GITHUB_REPOSITORY" \
+            --run-id="$APP_CI_RUN_ID" --run-attempt="$PREPARED_RUN_ATTEMPT")
+          if [ "$INCLUDE_ACS" = true ]; then
+            args+=(--acs-image="$(jq -r .reference "$RUNNER_TEMP/acs-image.json")")
+          fi
+          node scripts/release/consume-prepared-release.mjs "${args[@]}"
+          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$RELEASE_SOURCE_SHA"
+
+      - name: 持久化内容寻址产物
+        if: env.REUSE_RC != 'true'
+        run: |
+          set -euo pipefail
+          : "${STAGING_RELEASE_OSS_URI:?Missing staging variable STAGING_RELEASE_OSS_URI}"
+          case "$STAGING_RELEASE_OSS_URI" in oss://*) ;; *) echo 'Release URI must be OSS'; exit 1 ;; esac
+          destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
+          bash scripts/release/publish-artifact-set.sh "$RUNNER_TEMP/release" "$destination" "$RELEASE_SOURCE_SHA"
+          rm -rf "$RUNNER_TEMP/release-saved"
+          mkdir -p "$RUNNER_TEMP/release-saved"
+          aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release-saved/" \
+            --recursive --region "$RELEASE_RECORD_OSS_REGION"
+          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release-saved/artifact-index.json" "$RELEASE_SOURCE_SHA"
+
+      - name: 创建规范发布清单
+        if: env.REUSE_RC != 'true'
+        run: |
+          set -euo pipefail
+          node scripts/release/assemble-release-evidence.mjs \
+            --authoritative "$RUNNER_TEMP/authoritative-evidence.json" \
+            --index "$RUNNER_TEMP/release/artifact-index.json" \
+            --sha "$RELEASE_SOURCE_SHA" --release-id "$STAGING_RELEASE_ID" \
+            --actor "$GITHUB_ACTOR" --created-at "$RELEASE_CREATED_AT" \
+            --expires-at "$RELEASE_EXPIRES_AT" --artifact-base-uri "$STAGING_RELEASE_OSS_URI" \
+            --output "$RUNNER_TEMP/release-evidence.json"
+          pnpm exec tsx server/src/release/createReleaseCandidateCli.ts \
+            --input "$RUNNER_TEMP/release-evidence.json" \
+            --output "$RUNNER_TEMP/manifest.json"
+          pnpm exec tsx server/src/release/validateReleaseManifestCli.ts \
+            "$RUNNER_TEMP/manifest.json" "$STAGING_RELEASE_ID"
+          manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
+          echo "MANIFEST_DIGEST=$manifest_digest" >> "$GITHUB_ENV"
+
+      - name: 实例化并校验清单选定产物
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/selected"
+          fetch() {
+            local uri="$1" target="$2"
+            case "$uri" in
+              oss://*) aliyun --secure oss cp "$uri" "$target" --region "$RELEASE_RECORD_OSS_REGION" ;;
+              https://*) curl -fsSL --retry 3 "$uri" -o "$target" ;;
+              *) echo "Unsupported immutable artifact URI: $uri" >&2; return 1 ;;
+            esac
+          }
+          for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
+            set -- $pair
+            uri="$(jq -r ".artifacts.$1.uri" "$RUNNER_TEMP/manifest.json")"
+            fetch "$uri" "$RUNNER_TEMP/selected/$2"
+          done
+          if [ "$(jq -r .schemaVersion "$RUNNER_TEMP/manifest.json")" = 2 ]; then
+            fetch "$(jq -r .artifacts.runtimeDependencies.server.uri "$RUNNER_TEMP/manifest.json")" \
+              "$RUNNER_TEMP/selected/runtime-dependencies-server.json"
+            fetch "$(jq -r .artifacts.runtimeDependencies.acs.uri "$RUNNER_TEMP/manifest.json")" \
+              "$RUNNER_TEMP/selected/runtime-dependencies-acs.json"
+          fi
+          node scripts/release/verify-selected-release-artifacts.mjs \
+            "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/selected"
+          staging_runtime_path="$(jq -r .artifacts.stagingRuntimeAssets.path "$RUNNER_TEMP/release/artifact-index.json")"
+          staging_runtime_digest="$(jq -r .artifacts.stagingRuntimeAssets.digest "$RUNNER_TEMP/release/artifact-index.json")"
+          test "$staging_runtime_path" = staging-runtime-assets.tgz
+          cp "$RUNNER_TEMP/release/$staging_runtime_path" \
+            "$RUNNER_TEMP/selected/staging-runtime-assets.tgz"
+          test "sha256:$(sha256sum "$RUNNER_TEMP/selected/staging-runtime-assets.tgz" | cut -d' ' -f1)" = \
+            "$staging_runtime_digest"
+          jq -n \
+            --arg releaseId "$STAGING_RELEASE_ID" \
+            --arg manifestDigest "$MANIFEST_DIGEST" \
+            --arg serverDigest "$(jq -r .components.api.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg webDigest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg acsOrchestratorDigest "$(jq -r .components.acs.orchestratorArtifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg acsImageDigest "$(jq -r .components.acs.sandboxImageDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg stagingRuntimeAssetsDigest "$staging_runtime_digest" \
+            '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,serverDigest:$serverDigest,webDigest:$webDigest,acsOrchestratorDigest:$acsOrchestratorDigest,acsImageDigest:$acsImageDigest,stagingRuntimeAssetsDigest:$stagingRuntimeAssetsDigest}' \
+            > "$RUNNER_TEMP/staging-runtime-summary.json"
+
+      - name: 创建源码与当前部署引擎的明确委派证明
+        if: env.AUTOMATIC_RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/release/automatic-release-child.mjs deploy-staging.yml "$RUNNER_TEMP/automation-context.json"
+          node scripts/release/staging-source-authority.mjs create "$RUNNER_TEMP" "$RUNNER_TEMP/manifest.json" "$GITHUB_REPOSITORY"
+
+      - name: 写入不可变 OSS 记录与构建证明
+        if: env.REUSE_RC != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --tags origin "refs/tags/$STAGING_RELEASE_ID" | grep -q .; then
+            git fetch --no-tags origin "refs/tags/$STAGING_RELEASE_ID:refs/tags/$STAGING_RELEASE_ID"
+            test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$RELEASE_SOURCE_SHA"
+            tag_object="$(git rev-parse "$STAGING_RELEASE_ID^{tag}")"
+            git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $MANIFEST_DIGEST"
+          fi
+          mkdir -p "$RUNNER_TEMP/attestations"
+          pnpm exec tsx server/src/release/releaseAttestationCli.ts \
+            --root "$RUNNER_TEMP/attestations" --release-id "$STAGING_RELEASE_ID" \
+            --digest "$MANIFEST_DIGEST" --state built \
+            --operation "build:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR" \
+            --reason "$DISPATCH_REASON"
+          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
+            "$RUNNER_TEMP/attestations/$STAGING_RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
+          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
+
+          records_root="$RUNNER_TEMP/immutable-release-records"
+          record_uri="$STAGING_RELEASE_OSS_URI/records/$STAGING_RELEASE_ID"
+          if aliyun --secure oss stat "$record_uri/record.json" \
+            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
+            mkdir -p "$records_root/$STAGING_RELEASE_ID"
+            aliyun --secure oss cp "$record_uri/" "$records_root/$STAGING_RELEASE_ID/" \
+              --recursive --region "$RELEASE_RECORD_OSS_REGION"
+          fi
+          node scripts/release/publish-release-record.mjs "$RUNNER_TEMP/manifest.json" \
+            "$RUNNER_TEMP/release/artifact-index.json" "$records_root" "$RUNNER_TEMP/selected"
+          for file in manifest.json artifact-index.json record.json; do
+            bash scripts/release/upload-oss-object-immutable.sh \
+              "$records_root/$STAGING_RELEASE_ID/$file" "$record_uri/$file"
+          done
+          bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
+            "$record_uri/attestations/$(basename "$snapshot_path")"
+          if [ "$AUTOMATIC_RELEASE" = true ]; then
+            for file in staging-source-binding.json authoritative-evidence.json; do
+              bash scripts/release/upload-oss-object-immutable.sh "$RUNNER_TEMP/$file" "$record_uri/$file"
+            done
+          fi
+
+      - name: 创建 GitHub 测试环境部署记录
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/release/migration-postconditions.mjs "$RUNNER_TEMP/manifest.json"

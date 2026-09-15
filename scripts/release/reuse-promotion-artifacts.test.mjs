@@ -44,6 +44,30 @@ test('只从 Manifest 摘要推导固定发布目录，非法标识不能进入 
   );
 });
 
+
+test('Web deploy 时纳入 web-assets.tgz（无本地缓存根，依赖内网 hydrate）', () => {
+  const digest = 'c'.repeat(64);
+  const plan = reusableArtifactPlan({
+    components: {
+      api: { action: 'keep' },
+      acs: { action: 'keep' },
+      web: { action: 'deploy', artifactDigest: 'sha256:' + digest },
+    },
+  });
+  assert.deepEqual(plan, [{ filename: 'web-assets.tgz', digest }]);
+  assert.throws(
+    () =>
+      reusableArtifactPlan({
+        components: {
+          api: { action: 'keep' },
+          acs: { action: 'keep' },
+          web: { action: 'deploy', artifactDigest: 'bad' },
+        },
+      }),
+    /Invalid reusable artifact identity: web/,
+  );
+});
+
 test('复制前后校验摘要，保留原制品，已上传的匹配制品无需再复制', async () => {
   const f = await fixture();
   assert.deepEqual(await hydrateArtifacts(f.plan, f.root), {

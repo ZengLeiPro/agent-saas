@@ -32,6 +32,7 @@ export async function getWebObject({
   output,
   accessKeyId,
   accessKeySecret,
+  internal = false,
 }) {
   const client = new OSS({
     accessKeyId: required(accessKeyId, 'accessKeyId'),
@@ -39,6 +40,7 @@ export async function getWebObject({
     bucket: required(bucket, 'bucket'),
     region: required(region, 'region').startsWith('oss-') ? region : `oss-${region}`,
     secure: true,
+    ...(internal ? { internal: true } : {}),
   });
   // The bucket serves a static-website fallback: GET of a missing key answers 200 with index.html
   // even on the API endpoint, while HEAD answers 404. HEAD first, then bind GET to the same ETag.
@@ -63,7 +65,8 @@ export async function getWebObject({
 async function main() {
   // Credentials come only from a runner-private credentials file (same contract as the put helper);
   // never from argv, and not from the environment so the deployment env-name budget stays untouched.
-  const [bucket, key, region, output, credentialsPath, modulePath = ''] = process.argv.slice(2);
+  const [bucket, key, region, output, credentialsPath, modulePath = '', internalFlag = ''] =
+    process.argv.slice(2);
   const credentials = JSON.parse(
     await readFile(required(credentialsPath, 'credentialsPath'), 'utf8'),
   );
@@ -76,6 +79,7 @@ async function main() {
     output,
     accessKeyId: credentials.accessKeyId,
     accessKeySecret: credentials.accessKeySecret,
+    internal: internalFlag === 'internal',
   });
   process.stdout.write(JSON.stringify(summary) + '\n');
 }

@@ -9,6 +9,7 @@ const requireFromServer = createRequire(fileURLToPath(new URL('../../server/pack
 const FILENAME_TO_ARTIFACT = {
   'server-bundle.tgz': 'serverBundle',
   'acs-orchestrator.tgz': 'acsOrchestrator',
+  'web-assets.tgz': 'webAssets',
 };
 const STAGING_MANIFEST_FILES = [
   ['server-bundle.tgz', 'serverBundle', 'api', 'artifactDigest'],

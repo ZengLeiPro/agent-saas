@@ -76,7 +76,8 @@ async function main() {
     contentType,
     contentEncoding,
     credentialsPath,
-    modulePath,
+    modulePath = '',
+    internalFlag = '',
   ] = process.argv.slice(2);
   const require = createRequire(new URL('../../server/package.json', import.meta.url));
   const OSS = require(modulePath ? resolve(modulePath) : 'ali-oss');
@@ -86,6 +87,7 @@ async function main() {
     bucket,
     region: `oss-${region.replace(/^oss-/, '')}`,
     secure: true,
+    ...(internalFlag === 'internal' ? { internal: true } : {}),
   });
   const expected = { 'Cache-Control': cacheControl, 'Content-Type': contentType };
   if (contentEncoding) expected['Content-Encoding'] = contentEncoding;

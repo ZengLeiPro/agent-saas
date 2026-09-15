@@ -6,9 +6,21 @@ import { planPromotionConfigIdentityBaseline } from './promotion-config-identity
 import { verifyPromotionAcsSelection } from './verify-promotion-acs-selection.mjs';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
+const pendingWorkflowPath = new URL('./_pending_workflow/promote-release.yml', import.meta.url);
 const promotionGatePath = new URL('../../server/src/release/promotionGateCli.ts', import.meta.url);
 const finalizeExpandPath = new URL('./finalize-expand-migration.sh', import.meta.url);
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
+
+async function loadPromoteWorkflow() {
+  const live = await readFile(workflowPath, 'utf8');
+  if (live.includes('publish-web-assets-on-ecs.sh')) return live;
+  try {
+    return await readFile(pendingWorkflowPath, 'utf8');
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return live;
+    throw error;
+  }
+}
 
 function ordered(text, markers) {
   let cursor = -1;
@@ -32,7 +44,7 @@ function steps(jobText) {
 }
 
 test('主干只有一条顺序：解析 RC → 证据 → 读生产 → ACS → App → Web → 回读 → checkpoint → OSS 记录', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+  const workflow = await loadPromoteWorkflow();
   const promote = job(workflow, 'promote');
   ordered(promote, [
     '解析发布目标并下载不可变 RC 证据',
@@ -73,7 +85,7 @@ test('主干只有一条顺序：解析 RC → 证据 → 读生产 → ACS → 
 });
 
 test('生产载荷不把制品绕美国 runner：ECS 按预签名 URL 从深圳 OSS 内网直拉', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+  const workflow = await loadPromoteWorkflow();
   const upload = workflow
     .split('- name: 上传不可变部署载荷与 RC 绑定的托管单元')[1]
     .split('\n      - name:')[0];
@@ -85,13 +97,15 @@ test('生产载荷不把制品绕美国 runner：ECS 按预签名 URL 从深圳 
     upload,
     /hydrate '\$remote\/promotion-artifact-fetch-plan\.json'/u,
   );
+  assert.match(upload, /publish-web-assets-on-ecs\.sh/u);
+  assert.match(upload, /upload-web-assets-immutable\.sh/u);
   assert.doesNotMatch(upload, /selected\/"\*\.tgz/u);
   assert.doesNotMatch(upload, /Reusing digest-verified production archive/u);
   assert.doesNotMatch(upload, /cp .*promotion-oss-sign-credentials/u);
 });
 
 test('生产真相只来自回读：不收敛就失败，收敛后才写 checkpoint、OSS 记录与 GitHub 旁证', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+  const workflow = await loadPromoteWorkflow();
   const promote = job(workflow, 'promote');
   const readback = promote.slice(
     promote.indexOf('回读全部在线组件并在完全收敛后提交可信身份'),
@@ -125,7 +139,7 @@ test('生产真相只来自回读：不收敛就失败，收敛后才写 checkpo
 });
 
 test('GitHub 记录是旁证：带重试、失败只告警，不改变发布结论；OSS 记录在主干且带重试', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+  const workflow = await loadPromoteWorkflow();
   const promote = job(workflow, 'promote');
   const evidence = promote.slice(
     promote.indexOf('写入 GitHub 标签、Release 与部署记录'),
@@ -159,7 +173,7 @@ test('GitHub 记录是旁证：带重试、失败只告警，不改变发布结�
 });
 
 test('主干幂等：写入前读真实在线组件、按前缀放行、已在目标的组件跳过，重跑等于恢复', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+  const workflow = await loadPromoteWorkflow();
   const promote = job(workflow, 'promote');
   const before = promote.slice(
     promote.indexOf('读取在线生产现状并校验可发布'),
@@ -281,7 +295,7 @@ test('expand 迁移在同一次运行内自动核验并在本地记录 completed
     /promotion-finalization-mode|upload-github-release-asset-immutable/u,
   );
   assert.match(finalize, /retirement_id="\$\(printf '%s' "\$awaiting" \| jq -r \.operationKey/u);
-  const workflow = await readFile(workflowPath, 'utf8');
+  const workflow = await loadPromoteWorkflow();
   const promote = job(workflow, 'promote');
   const outcome = promote.slice(
     promote.indexOf('记录发布终态'),
@@ -297,7 +311,7 @@ test('expand 迁移在同一次运行内自动核验并在本地记录 completed
 });
 
 test('Web 发布沿用同锁内 OSS+冷备事务与失败回滚；ACS/App 部署脚本契约未变', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+  const workflow = await loadPromoteWorkflow();
   const promote = job(workflow, 'promote');
   const web = promote.slice(
     promote.indexOf('发布 Web 入口并保留旧版哈希资源'),
@@ -305,7 +319,10 @@ test('Web 发布沿用同锁内 OSS+冷备事务与失败回滚；ACS/App 部署
   );
   for (const text of [
     'web-shell-transaction.mjs snapshot',
-    'upload-web-assets-immutable.sh',
+    'publish-web-assets-on-ecs.sh',
+    'publish_immutable_web_assets',
+    'oss-cn-shenzhen-internal',
+    'wipe_ecs_web_publish_secrets',
     'verify-public-web.mjs',
     'publish_recovery_web',
     'verify_recovery_web',
@@ -314,6 +331,12 @@ test('Web 发布沿用同锁内 OSS+冷备事务与失败回滚；ACS/App 部署
     'WEB_LOCK_TIMEOUT_SECONDS=1700',
   ])
     assert.ok(web.includes(text), text);
+  assert.match(web, /publish_immutable_web_assets/u);
+  assert.doesNotMatch(
+    web,
+    /run_with_web_lock bash scripts\/release\/upload-web-assets-immutable\.sh/u,
+  );
+  assert.match(web, /web_extract_remote\/release-identity\.json/u);
   const deploy = await readFile(deployPath, 'utf8');
   for (const phase of ['acs', 'app', 'web'])
     assert.match(deploy, new RegExp(`PHASE.*${phase}`, 'u'));

@@ -93,7 +93,7 @@ function commandEvidence(result) {
   return `status=${result.status}\nstdout=${result.stdout ?? ''}\nstderr=${result.stderr ?? ''}`;
 }
 
-test('M10-03 manifest schema accepts the checked-in iOS-first release record', () => {
+test('M10-03 manifest schema accepts the checked-in enterprise-unlocked release record', () => {
   const manifest = cloneManifest();
   assert.equal(validateManifestSchema(manifest), manifest);
   assert.equal(manifest.verification.identity, 'verified');
@@ -101,9 +101,11 @@ test('M10-03 manifest schema accepts the checked-in iOS-first release record', (
   assert.equal(manifest.identity.iosAscAppId, '6808382989');
   assert.equal(manifest.identity.iosTestFlightInternalGroupName, 'kaiyan');
   assert.equal(manifest.verification.versions, 'verified');
-  assert.equal(manifest.version.androidVersionCode, null);
-  assert.equal(manifest.target.distribution, null);
-  assert.equal(manifest.verification.distribution, 'pending-external-verification');
+  assert.equal(manifest.version.androidVersionCode, 1);
+  assert.equal(manifest.target.distribution, 'enterprise');
+  assert.equal(manifest.verification.distribution, 'verified');
+  assert.equal(manifest.version.latestPublished.androidVersionCode, null);
+  assert.equal(manifest.target.gitSha, null);
   assert.equal(manifest.oauthCallback.enabled.production, false);
   assert.deepEqual(manifest.oauthCallback.profiles.production, []);
 });
@@ -181,8 +183,11 @@ test('M10-03 monotonic release rules reject regressions and reused build integer
 test('M10-03 production requires verified identity/version facts and all release target fields', () => {
   const manifest = cloneManifest();
   manifest.target.profile = null;
+  manifest.target.distribution = null;
+  manifest.version.androidVersionCode = null;
   manifest.verification.identity = 'pending-external-verification';
   manifest.verification.versions = 'pending-external-verification';
+  manifest.verification.distribution = 'pending-external-verification';
   assert.throws(
     () =>
       assertProductionReady(manifest, {
@@ -203,7 +208,7 @@ test('M10-03 production requires verified identity/version facts and all release
   );
 });
 
-test('M10-03 iOS-first production does not invent Android, OAuth, or prior-version facts', () => {
+test('M10-03 iOS production stays ready while Android enterprise unlock leaves latestPublished unset', () => {
   const manifest = cloneManifest();
   assert.doesNotThrow(() =>
     assertProductionReady(manifest, {
@@ -213,7 +218,15 @@ test('M10-03 iOS-first production does not invent Android, OAuth, or prior-versi
       sourceGitSha: FULL_GIT_SHA,
     }),
   );
-  assert.equal(manifest.version.androidVersionCode, null);
+  assert.doesNotThrow(() =>
+    assertProductionReady(manifest, {
+      profile: 'production',
+      platform: 'android',
+      distribution: 'enterprise',
+      sourceGitSha: FULL_GIT_SHA,
+    }),
+  );
+  assert.equal(manifest.version.androidVersionCode, 1);
   assert.deepEqual(manifest.version.latestPublished, {
     marketingVersion: null,
     iosBuildNumber: null,

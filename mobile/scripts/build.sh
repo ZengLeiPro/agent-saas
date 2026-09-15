@@ -222,6 +222,11 @@ if $PLATFORM_ANDROID; then
     EXIT_CODE=1
   fi
 
+  # Export production API/WSS allowlists from eas.json (parity with iOS loader).
+  # Profile env alone is not enough for local Gradle/Expo config consumers.
+  # shellcheck source=load-android-production-config.sh
+  . "$MOBILE_DIR/scripts/load-android-production-config.sh"
+
   echo "Building Android ${ANDROID_DISTRIBUTION} artifact with ${ANDROID_EAS_PROFILE}..."
   if [ "$EXIT_CODE" -eq 0 ] && MOBILE_BUILD_PLATFORM=android MOBILE_ANDROID_DISTRIBUTION="$ANDROID_DISTRIBUTION" EAS_SKIP_AUTO_FINGERPRINT=1 pnpm exec eas build -p android -e "$ANDROID_EAS_PROFILE" --local --output "$ANDROID_ARTIFACT_PATH" --non-interactive && [ -f "$ANDROID_ARTIFACT_PATH" ]; then
     ANDROID_OK=true

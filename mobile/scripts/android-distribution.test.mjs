@@ -141,6 +141,19 @@ test('M10-04 EAS profiles map Store to AAB and Enterprise to APK while productio
   assert.equal(eas.build['production-enterprise'].android.buildType, 'apk');
   assert.equal(eas.build['production-enterprise'].android.credentialsSource, 'local');
   assert.equal(eas.build.production.env.MOBILE_ANDROID_DISTRIBUTION, undefined);
+  for (const key of [
+    'EXPO_PUBLIC_MOBILE_API_ORIGIN',
+    'EXPO_PUBLIC_MOBILE_API_ALLOWLIST',
+    'EXPO_PUBLIC_MOBILE_WS_ALLOWLIST',
+  ]) {
+    assert.equal(
+      eas.build['production-enterprise'].env[key],
+      eas.build.production.env[key],
+      `production-enterprise.env.${key} must match production`,
+    );
+    assert.equal(typeof eas.build['production-enterprise'].env[key], 'string');
+    assert.ok(eas.build['production-enterprise'].env[key].length > 0);
+  }
 
   const ambiguous = structuredClone(readJson(RELEASE_MANIFEST_PATH));
   ambiguous.version.iosBuildNumber = 85;
@@ -220,6 +233,7 @@ test('M10-04 build wrapper requires distribution and contains no automatic sidel
   const buildScript = readFileSync(resolve(HERE, 'build.sh'), 'utf8');
   assert.match(buildScript, /production-store/);
   assert.match(buildScript, /production-enterprise/);
+  assert.match(buildScript, /load-android-production-config\.sh/);
   assert.match(buildScript, /No upload or overwrite was performed/);
   assert.doesNotMatch(buildScript, /aliyun\s+oss|--force/);
   assert.match(buildScript, /Refusing to overwrite existing Android versionCode/);

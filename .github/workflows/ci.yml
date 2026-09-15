@@ -322,7 +322,7 @@ jobs:
     # 避免 Web/Shared 为未使用的数据库多付容器初始化时间。
     services:
       postgres:
-        image: ${{ matrix.workspace == 'server' && 'postgres:16-alpine' || '' }}
+        image: ${{ matrix.workspace == 'server' && 'agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/postgres:16-alpine' || '' }}
         env:
           POSTGRES_USER: agent_test
           POSTGRES_PASSWORD: ci-only-password

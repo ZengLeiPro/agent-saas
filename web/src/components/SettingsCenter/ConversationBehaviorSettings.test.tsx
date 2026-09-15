@@ -97,4 +97,11 @@ describe('ConversationBehaviorSettings', () => {
       }),
     );
   });
+
+  it("操作确认策略提示更改即时保存，无独立保存按钮", () => {
+    render(<ConversationBehaviorSettings />);
+    expect(screen.getByText("更改即时保存")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /保存并生效|保存配置|保存 Server/ })).toBeNull();
+  });
+
 });

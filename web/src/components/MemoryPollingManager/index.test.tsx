@@ -80,7 +80,7 @@ describe("MemoryPollingManager", () => {
     await user.clear(screen.getByLabelText("最大轮数"));
     await user.type(screen.getByLabelText("最大轮数"), "1000");
     await user.selectOptions(screen.getByLabelText("执行模型"), "openai/gpt-5.5");
-    await user.click(screen.getByRole("button", { name: "保存配置" }));
+    await user.click(screen.getByRole("button", { name: "保存并生效" }));
 
     expect(await screen.findByText("配置已保存并应用")).toBeTruthy();
     const putCall = vi.mocked(authFetch).mock.calls.find((call) =>
@@ -113,7 +113,7 @@ describe("MemoryPollingManager", () => {
     const spanInput = screen.getByLabelText("调度跨度（小时）");
     await user.clear(spanInput);
     await user.type(spanInput, "2");
-    await user.click(screen.getByRole("button", { name: "保存配置" }));
+    await user.click(screen.getByRole("button", { name: "保存并生效" }));
 
     expect(await screen.findByText("触发窗口不能跨越次日 00:00")).toBeTruthy();
     await waitFor(() => {

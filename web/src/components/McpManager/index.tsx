@@ -863,7 +863,7 @@ function McpManagerInner({
             {mode === "admin" && isAdmin && (
               <Button size="sm" onClick={() => void saveServer()} disabled={platformReadOnly || saving || !form.id.trim() || !form.name.trim()}>
                 <Save className="size-3.5" />
-                保存 Server
+                保存并生效
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => void diagnose(true)} disabled={saving || diagnosing}>

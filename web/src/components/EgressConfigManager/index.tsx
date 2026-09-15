@@ -199,7 +199,7 @@ export function EgressConfigManager() {
             </Button>
             <Button size="sm" onClick={() => void save()} disabled={platformReadOnly || busy || !dirty}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-              保存配置
+              保存并生效
             </Button>
           </div>
         }

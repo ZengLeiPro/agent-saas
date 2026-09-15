@@ -729,18 +729,24 @@ export class GoogleWorkspaceOAuthService {
   }
 }
 
+/** 强制 gws 把加密凭据写到 CONFIG_DIR，而不是容器 OS keyring。 */
+export const GOOGLE_WORKSPACE_PERSISTED_CLI_ENV = {
+  GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file',
+} as const;
+
 export async function resolveGoogleWorkspaceRuntimeEnv(
   service: GoogleWorkspaceOAuthService | undefined,
   context: { userId: string; username: string; tenantId: string },
   onError?: (error: Error) => void,
 ): Promise<Record<string, string>> {
-  if (!service) return {};
+  const persisted = { ...GOOGLE_WORKSPACE_PERSISTED_CLI_ENV };
+  if (!service) return persisted;
   try {
     const token = await service.accessToken(context.userId, context.username, context.tenantId);
-    return token ? { GOOGLE_WORKSPACE_CLI_TOKEN: token } : {};
+    return token ? { ...persisted, GOOGLE_WORKSPACE_CLI_TOKEN: token } : persisted;
   } catch (error) {
     onError?.(error instanceof Error ? error : new Error(String(error)));
-    return {};
+    return persisted;
   }
 }
 

@@ -114,7 +114,8 @@ describe('Zhipu quota dashboard card', () => {
     expect(screen.getByText('80.0%')).toBeTruthy();
     expect(screen.getByText('12.5万 / 40.0万')).toBeTruthy();
     expect(screen.queryByText(/积分|已用/u)).toBeNull();
-    expect(screen.getByText('接近上限')).toBeTruthy();
+    expect(screen.queryByText('接近上限')).toBeNull();
+    expect(screen.getByText('1 个需关注')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '刷新 智谱测试分组' }));
     await waitFor(() => expect(mocks.api.refreshProviderQuota).toHaveBeenCalledWith('zhipu:glm'));
     await waitFor(() => expect((screen.getByRole('button', { name: '采集' }) as HTMLButtonElement).disabled).toBe(false));
@@ -134,7 +135,8 @@ describe('Zhipu quota dashboard card', () => {
     expect(screen.queryByText(/最后一次成功数据/u)).toBeNull();
     expect(screen.queryByText(/智谱额度查询 HTTP 429/u)).toBeNull();
     expect(screen.queryByText(/个异常/u)).toBeNull();
-    expect(screen.getByText('接近上限')).toBeTruthy();
+    expect(screen.queryByText('接近上限')).toBeNull();
+    expect(screen.getByText('1 个需关注')).toBeTruthy();
     expect(screen.queryByText('0.0%')).toBeNull();
   });
 });

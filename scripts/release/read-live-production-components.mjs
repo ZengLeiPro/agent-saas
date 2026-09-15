@@ -16,6 +16,12 @@ function requiredString(value, label, pattern) {
   return value;
 }
 
+export function acsOrchestratorHealthUrl(override) {
+  if (typeof override === 'string' && override.length > 0) return override;
+  const base = String(process.env.ACS_ORCH_BASE_URL || 'http://127.0.0.1:3400').replace(/\/$/, '');
+  return `${base}/health`;
+}
+
 export function parseReleaseEnvironment(text) {
   const values = {};
   for (const raw of String(text).split(/\r?\n/u)) {
@@ -223,7 +229,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const [api, web, acs, privateConfigIdentity] = await Promise.all([
     readJson(options['api-url'] ?? 'https://api.agent.kaiyan.net/api/healthz/ready'),
     readJson(options['web-url'] ?? 'https://agent.kaiyan.net/release-identity.json'),
-    readJson(options['acs-url'] ?? 'http://127.0.0.1:3400/health', { cacheBust: false }),
+    readJson(acsOrchestratorHealthUrl(options['acs-url']), { cacheBust: false }),
     readPrivateConfigIdentitySnapshot(
       options['api-config-identity-file'] ??
         `/run/agent-saas-server-${apiUnit.color}.config-identity.json`,

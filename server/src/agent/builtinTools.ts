@@ -62,7 +62,7 @@ type TodoWriteInput = {
 };
 
 type AskUserQuestionInput = {
-  questions: AskUserQuestion[];
+  questions: Array<AskUserQuestion & { description: string }>;
 };
 
 const todoTextSchema = z.string().min(1).max(500);
@@ -221,6 +221,9 @@ export const askUserQuestionToolDescriptor: ToolDescriptor<AskUserQuestionInput>
         z.object({
           question: z.string().min(1),
           header: z.string().min(1).max(12).describe('显示为小标签（chip）的简短文字，最多 12 字符。'),
+          description: z.string().trim().min(1).max(500).describe(
+            '显示在问题标题下方的自包含背景；写清确认对象、原因和必要影响，不得依赖 TodoWrite 或其他过程记录。',
+          ),
           options: z
             .array(z.object({ label: z.string().min(1), description: z.string() }))
             .min(2)
@@ -237,7 +240,11 @@ export const askUserQuestionToolDescriptor: ToolDescriptor<AskUserQuestionInput>
   category: 'meta',
   label: '向用户提问',
   // 与 schema 的 multiSelect 默认值绑定：描述丢了这句，模型会以为必须显式传 false。
-  descriptionInvariants: ['运行时默认为 false'],
+  descriptionInvariants: [
+    '运行时默认为 false',
+    '`description` 提供标题下方的自包含背景',
+    '不得把这些过程记录当作提问上下文',
+  ],
 };
 
 export interface SessionTodoStore {

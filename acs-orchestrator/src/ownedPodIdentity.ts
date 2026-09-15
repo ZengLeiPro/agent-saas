@@ -1,6 +1,7 @@
 export const ACS_OWNED_POD_UID_ENV = 'ACS_OWNED_POD_UID';
 export const OWNED_POD_UID_FLAG = '--owned-pod-uid=';
 const RUNNER_DAEMON = '/app/acs-orchestrator/dist/remote/runner_daemon.py';
+const ATTEMPT_CONTROL = '/app/acs-orchestrator/dist/remote/attempt_control.py';
 
 /** ACS Downward API currently materializes fieldPath metadata.uid as this literal. */
 const UNUSABLE_POD_UIDS = new Set(['uid']);
@@ -45,5 +46,26 @@ export function pythonRunnerDaemonExecArgs(input: {
     '-I',
     RUNNER_DAEMON,
     ...extra,
+  ];
+}
+
+/** Status/cancel RPC. Must inject the owned Pod UID; Downward API currently projects the literal `uid`. */
+export function pythonAttemptControlExecArgs(input: {
+  sandboxName: string;
+  containerName: string;
+  ownedPodUid?: string;
+}): string[] {
+  const owned = ownedPodUidArg(input.ownedPodUid);
+  return [
+    'exec',
+    '-i',
+    input.sandboxName,
+    '-c',
+    input.containerName,
+    '--',
+    '/usr/local/bin/python3',
+    '-I',
+    ATTEMPT_CONTROL,
+    ...(owned ? [owned] : []),
   ];
 }

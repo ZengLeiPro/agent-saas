@@ -3,8 +3,9 @@ import { View, StyleSheet, Text, ActivityIndicator, Animated } from 'react-nativ
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import type { AskUserAnswers, MessageItem, RenderItem, AgentProfile, RawPresentationGate, RenderModel } from '@agent/shared';
-import { businessStepMainItems, groupMessages, isDebugModeAvailable, selectRenderModel } from '@agent/shared';
+import { businessStepMainItems, groupMessages, isDebugModeAvailable, partitionAssistantTurn, selectRenderModel } from '@agent/shared';
 import { MessageItemView } from './MessageItem';
+import { TurnProcessFold } from './TurnProcessFold';
 import { BlockActionProvider } from './blocks/BlockActionContext';
 import { CompactionDivider } from './CompactionDivider';
 import { isCompactionItem } from '../../lib/compaction';
@@ -223,6 +224,78 @@ const UserMessageHeader = React.memo(function UserMessageHeader({
   );
 });
 
+function renderAiBubbleItem(
+  subItem: RenderItem,
+  lastActivityGroupId: string | null,
+  onPermissionResponse: AiBubbleViewProps['onPermissionResponse'],
+  onAskUserResponse: AiBubbleViewProps['onAskUserResponse'],
+  onRetryMessage: AiBubbleViewProps['onRetryMessage'],
+  onPreviewMd: AiBubbleViewProps['onPreviewMd'],
+  onTtsPlay: AiBubbleViewProps['onTtsPlay'],
+  loading: boolean,
+  presentationGate?: RawPresentationGate,
+) {
+  return (
+    <MessageItemView
+      key={subItem.id}
+      item={subItem}
+      isLast={subItem.type === 'activity_group' && subItem.id === lastActivityGroupId}
+      skipAnimation
+      onPermissionResponse={onPermissionResponse}
+      onAskUserResponse={onAskUserResponse}
+      onRetryMessage={onRetryMessage}
+      onPreviewMd={onPreviewMd}
+      onTtsPlay={onTtsPlay}
+      isLoading={loading}
+      presentationGate={presentationGate}
+    />
+  );
+}
+
+function renderAiBubbleItems({
+  items,
+  lastActivityGroupId,
+  onPermissionResponse,
+  onAskUserResponse,
+  onRetryMessage,
+  onPreviewMd,
+  onTtsPlay,
+  loading,
+  presentationGate,
+}: {
+  items: RenderItem[];
+  lastActivityGroupId: string | null;
+  onPermissionResponse: AiBubbleViewProps['onPermissionResponse'];
+  onAskUserResponse: AiBubbleViewProps['onAskUserResponse'];
+  onRetryMessage: AiBubbleViewProps['onRetryMessage'];
+  onPreviewMd: AiBubbleViewProps['onPreviewMd'];
+  onTtsPlay: AiBubbleViewProps['onTtsPlay'];
+  loading: boolean;
+  presentationGate?: RawPresentationGate;
+}) {
+  const renderItem = (subItem: RenderItem) => renderAiBubbleItem(
+    subItem,
+    lastActivityGroupId,
+    onPermissionResponse,
+    onAskUserResponse,
+    onRetryMessage,
+    onPreviewMd,
+    onTtsPlay,
+    loading,
+    presentationGate,
+  );
+  const partition = partitionAssistantTurn(items);
+  if (!partition.shouldFold) return items.map(renderItem);
+  return (
+    <>
+      <TurnProcessFold items={partition.process} renderItem={renderItem} />
+      {partition.keepOut.map(renderItem)}
+      {partition.pierce.map(renderItem)}
+      {partition.final.map(renderItem)}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // AI Bubble View
 // ---------------------------------------------------------------------------
@@ -300,21 +373,17 @@ const AiBubbleView = React.memo(function AiBubbleView({
         />
       )}
       <Animated.View style={[{ opacity: fadeAnim }, bubbleStyle]}>
-        {group.items.map(subItem => (
-          <MessageItemView
-            key={subItem.id}
-            item={subItem}
-            isLast={subItem.type === 'activity_group' && subItem.id === lastActivityGroupId}
-            skipAnimation
-            onPermissionResponse={onPermissionResponse}
-            onAskUserResponse={onAskUserResponse}
-            onRetryMessage={onRetryMessage}
-            onPreviewMd={onPreviewMd}
-            onTtsPlay={onTtsPlay}
-            isLoading={loading}
-            presentationGate={presentationGate}
-          />
-        ))}
+        {renderAiBubbleItems({
+          items: group.items,
+          lastActivityGroupId,
+          onPermissionResponse,
+          onAskUserResponse,
+          onRetryMessage,
+          onPreviewMd,
+          onTtsPlay,
+          loading,
+          presentationGate,
+        })}
       </Animated.View>
     </>
   );

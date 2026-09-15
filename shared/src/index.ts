@@ -893,7 +893,7 @@ export type { GroupMessagesOptions } from './lib/groupMessages';
 // Lib - 主对话区投影（纯函数，Web/Mobile 同源）
 export { businessStepMainItems } from './lib/businessStepMainItems';
 export type { BusinessStepMainItemsOptions } from './lib/businessStepMainItems';
-
+export { partitionAssistantTurn, selectTurnProcessSummary, type AssistantTurnPartition, type TurnProcessSummary } from './lib/partitionAssistantTurn';
 // Lib - 插话队列条投影（纯函数）
 export { queuedMessageBarTitle, selectQueuedMessageEntries } from './lib/queuedMessageBar';
 export type { QueuedMessageEntry } from './lib/queuedMessageBar';

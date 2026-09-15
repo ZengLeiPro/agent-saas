@@ -122,4 +122,11 @@ describe('Tool descriptions', () => {
   it('AskUserQuestion description matches multiSelect schema default (drift guard)', () => {
     expect(askUserQuestionToolDescriptor.description).toContain('运行时默认为 false');
   });
+
+  it('AskUserQuestion requires self-contained context outside hidden process records', () => {
+    expect(askUserQuestionToolDescriptor.description).toContain('`description`');
+    expect(askUserQuestionToolDescriptor.description).toContain('标题下方的自包含背景');
+    expect(askUserQuestionToolDescriptor.description).toContain('不得把这些过程记录当作提问上下文');
+    expect(askUserQuestionToolDescriptor.description).toContain('以上问题');
+  });
 });

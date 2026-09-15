@@ -236,6 +236,7 @@ describe('ProviderQuotaPage snapshot refresh', () => {
     const tile = within(card).getByTestId(`quota-window-${id}`);
     expect(tile.textContent).toContain('09/10 周四 12:34');
     expect(tile.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
-    expect(within(card).getByText(/采集 /).textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
+    expect(within(card).queryByText(/采集 /)).toBeNull();
+    expect(screen.getByText(/采集 /).textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
   });
 });

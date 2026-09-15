@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reason": "KY App V2 encrypts deployment keys with one deployment-level secret; organization enrollment adds no per-organization environment variables",
+  "reason": "PREFLIGHT_DISK_PATHS lets production-preflight disk observation target host paths that exist; GitHub runners do not have /opt/agent-saas",
   "updatedAt": "2026-09-14",
   "domains": {
     "server": {
@@ -153,9 +153,10 @@
       "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
     },
     "deployment/scripts": {
-      "budget": 49,
+      "budget": 53,
       "names": [
         "ACS_ORCH_AUTH_TOKEN",
+        "ACS_ORCH_BASE_URL",
         "AGENT_SAAS_ADMIN_LAUNCH_NONCE",
         "AGENT_SAAS_ADMIN_RECEIPT_DIR",
         "AGENT_SAAS_EMBEDDED",
@@ -189,6 +190,9 @@
         "MP_TEST_DATABASE_URL",
         "MP_WORKER_PROCESS_ROLE",
         "PATH",
+        "PREFLIGHT_DISK_PATHS",
+        "PREFLIGHT_MIN_FREE_BYTES",
+        "PREFLIGHT_MIN_FREE_INODES",
         "RELEASE_EVIDENCE_HOST",
         "RELEASE_EVIDENCE_PORT",
         "RELEASE_EVIDENCE_READ_TOKEN",

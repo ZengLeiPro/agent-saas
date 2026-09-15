@@ -27,17 +27,23 @@ export function isNativeConnectorRuntimeEnabled(
 }
 
 /**
- * 钉钉、飞书会把授权保存在用户 workspace。暂停时必须覆盖 CLI 配置目录，
+ * 钉钉、飞书、gws 会把授权保存在用户 workspace。暂停时必须覆盖 CLI 配置目录，
  * 不能只省略 token env，否则 CLI 仍可能从持久化配置兜底读取授权。
  */
 export function pausedWorkspaceCliEnv(
-  connectorId: 'dws' | 'feishu',
+  connectorId: 'dws' | 'feishu' | 'google-workspace',
   userId: string,
 ): Record<string, string> {
   const ownerKey = userId.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 160) || 'unknown';
   const root = `/tmp/agent-saas-paused/${ownerKey}`;
   if (connectorId === 'dws') {
     return { DWS_CONFIG_DIR: `${root}/dws/config` };
+  }
+  if (connectorId === 'google-workspace') {
+    return {
+      GOOGLE_WORKSPACE_CLI_CONFIG_DIR: `${root}/gws`,
+      GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file',
+    };
   }
   return {
     LARKSUITE_CLI_CONFIG_DIR: `${root}/lark/config`,
@@ -64,7 +70,11 @@ export function applyNativeConnectorRuntimeState(
     }
   }
   if (!store.isRuntimeEnabled(identity.username, 'notion')) delete env.NOTION_API_TOKEN;
-  if (!store.isRuntimeEnabled(identity.username, 'google-workspace')) delete env.GOOGLE_WORKSPACE_CLI_TOKEN;
+  if (!store.isRuntimeEnabled(identity.username, 'google-workspace')) {
+    delete env.GOOGLE_WORKSPACE_CLI_TOKEN;
+    delete env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE;
+    Object.assign(env, pausedWorkspaceCliEnv('google-workspace', identity.userId));
+  }
   if (!store.isRuntimeEnabled(identity.username, 'aliyun')) {
     delete env.ALIBABA_CLOUD_ACCESS_KEY_ID;
     delete env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;

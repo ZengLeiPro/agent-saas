@@ -70,6 +70,11 @@ const kyAppV2ReviewPaths = [
   'server/src/kyapp/workload/replayStore.ts',
 ];
 const kyAppV2Evidence = 'docs/release/KY-App-V2-最终迁移复核-20260914.md';
+const gwsPersistReviewPaths = [
+  'server/src/connectors/googleWorkspace.ts',
+  'server/src/connectors/runtimeState.ts',
+];
+const gwsPersistEvidence = 'docs/release/gws凭据持久化无结构变更审核-20260914.md';
 const auditedPaths = [
   ...new Set([
     transport,
@@ -82,6 +87,7 @@ const auditedPaths = [
     ...grokEgressReviewPaths,
     taskboardReviewDispatch,
     ...kyAppV2ReviewPaths,
+    ...gwsPersistReviewPaths,
   ]),
 ];
 const evidencePaths = [
@@ -92,6 +98,7 @@ const evidencePaths = [
   subagentEvidence,
   grokEgressEvidence,
   kyAppV2Evidence,
+  gwsPersistEvidence,
 ];
 const expandPaths = [
   providerStore,
@@ -201,6 +208,7 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
         ...grokEgressReviewPaths,
         taskboardReviewDispatch,
         ...kyAppV2ReviewPaths,
+        ...gwsPersistReviewPaths,
       ]),
     ].sort(),
   );
@@ -226,6 +234,7 @@ test('PR642 baseline retains scope retirement plus the independently reviewed Gr
       ...grokEgressReviewPaths,
       taskboardReviewDispatch,
       ...kyAppV2ReviewPaths,
+      ...gwsPersistReviewPaths,
     ]),
   ];
   const loaded = loadMigrationReviews({

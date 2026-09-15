@@ -30,6 +30,7 @@ Staging 会在解析任何 Vault 引用前先安装无凭据、全代理、`fail
 3. CLI 只读取生产主机受控路径 `/etc/agent-saas/runtime-identity.json`，不接受调用方传入 identity 路径；该文件必须由部署过程写入并由主机权限保护。
 4. topology 的 `observedAt` 必须在 5 分钟内。API 与 Runtime Worker 分别读取自己的 active-color 文件；systemd `MainPID` 必须与 pidfile PID 完全相等，并与 release symlink 真实目标、进程 cgroup 相互绑定；Worker readyfile 按现行契约保存 PID并与 MainPID 一致，API 不虚构 readyfile。
 5. 使用 `git diff --name-status --find-renames --find-copies <baseline>...<target>` 读取变更；rename/copy 的旧、新路径均分类，任何未知路径阻断发布。
+6. 主机磁盘：对 `/`、`/opt/agent-saas`、`/opt/agent-saas-app`、`/var/lib/agent-saas` 分别做 `statfs`。任一路径 `availableBytes < 8 GiB` 或 `availableInodes < 250000`，或 `statfs` 失败，一律阻断。阈值可用 `PREFLIGHT_MIN_FREE_BYTES` / `PREFLIGHT_MIN_FREE_INODES` 覆盖。不自动清理。生产 promotion 走 `production-preflight.mjs`，同一套 `diskPreflightReasons`；reader 成功但磁盘不达标仍 fail-closed。
 
 | 路径前缀            | 组件                                 |
 | ------------------- | ------------------------------------ |

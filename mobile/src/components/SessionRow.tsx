@@ -30,15 +30,14 @@ interface SessionRowProps {
   agentAvatar?: string;
   agentAvatarVersion?: number;
   agentAvatarUsername?: string;
-  /**
-   * 是否显示头像列（个人偏好 `showSessionListAvatar`，与 Web 同一份偏好）。
-   * 关闭时整列不渲染，得到更紧凑的单行样式；缺省显示（见
-   * `app/settings/appearance-layout.tsx` 里关于默认值差异的说明）。
-   */
-  showAvatar?: boolean;
 }
 
-export const SessionRow = React.memo(function SessionRow({ session, actions, openRowRef, onPress, enableBackGesture, showOwner, selectMode, selected, onSelectToggle, agentAvatar, agentAvatarVersion, agentAvatarUsername, showAvatar = true }: SessionRowProps) {
+/**
+ * 头像列永远显示：会话分组行（SessionGroupRow）固定带图标，个人会话若
+ * 隐藏头像会与分组行错位；移动端不再读取 Web 共享偏好
+ * `showSessionListAvatar`，该偏好仅继续影响 Web 端侧边栏。
+ */
+export const SessionRow = React.memo(function SessionRow({ session, actions, openRowRef, onPress, enableBackGesture, showOwner, selectMode, selected, onSelectToggle, agentAvatar, agentAvatarVersion, agentAvatarUsername }: SessionRowProps) {
   const colors = useColors();
 
   const styles = useMemo(() => StyleSheet.create({
@@ -159,9 +158,9 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
   const hasAgentAvatar = agentAvatar !== undefined;
   const targetLabel = session.agentTargetSnapshot?.name ?? '绑定不可验证';
   const separatorLeft =
-    spacing.sm + (selectMode ? 24 + spacing.sm : 0) + (showAvatar ? 42 + spacing.md : 0);
+    spacing.sm + (selectMode ? 24 + spacing.sm : 0) + 42 + spacing.md;
 
-  const avatarElement = !showAvatar ? null : hasAgentAvatar ? (
+  const avatarElement = hasAgentAvatar ? (
     <View style={styles.avatarWrap}>
       <AgentAvatar avatar={agentAvatar} username={agentAvatarUsername} size={42} version={agentAvatarVersion} />
     </View>

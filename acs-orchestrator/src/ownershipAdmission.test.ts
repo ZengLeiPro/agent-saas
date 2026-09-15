@@ -38,6 +38,17 @@ describe('ownership admission is exclusive per sandbox, not per shared workspace
       .rejects.toBeInstanceOf(OwnershipBlockedError);
   });
 
+  it('begin() still rejects a second exclusive prepare owner on the same sandbox', async () => {
+    const againstProvision = new OwnedOperations();
+    await againstProvision.begin({ kind: 'ensure', invocationId: 'ensure:a', attemptId: 'ensure:a:1', scope: scopeA });
+    await expect(againstProvision.begin({ kind: 'provision', invocationId: 'provision:a', attemptId: 'provision:a:1', scope: scopeA }))
+      .rejects.toBeInstanceOf(OwnershipBlockedError);
+    const againstEnsure = new OwnedOperations();
+    await againstEnsure.begin({ kind: 'ensure', invocationId: 'ensure:a', attemptId: 'ensure:a:1', scope: scopeA });
+    await expect(againstEnsure.begin({ kind: 'ensure', invocationId: 'ensure:a2', attemptId: 'ensure:a:2', scope: scopeA }))
+      .rejects.toBeInstanceOf(OwnershipBlockedError);
+  });
+
   it('an unresolved sibling owner blocks only its own sandbox', async () => {
     const operations = new OwnedOperations();
     const stuck = await operations.begin({ kind: 'ensure', invocationId: 'ensure:a', attemptId: 'ensure:a:1', scope: scopeA });

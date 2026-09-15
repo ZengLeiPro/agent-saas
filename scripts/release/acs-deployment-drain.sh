@@ -17,9 +17,12 @@ ACS_DRAIN_DIAGNOSTICS_FAILURES=0
 ACS_DRAIN_WINDOW_SECONDS=1200
 # 留给终态取证与回执落盘的余量。
 ACS_DRAIN_DEADLINE_MARGIN_SECONDS=60
+ACS_ORCH_BASE_URL="${ACS_ORCH_BASE_URL:-http://127.0.0.1:3400}"
+ACS_ORCH_BASE_URL="${ACS_ORCH_BASE_URL%/}"
+ACS_HEALTH_URL="${ACS_HEALTH_URL:-$ACS_ORCH_BASE_URL/health}"
 
 acs_runtime_config_url() {
-  local health="${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}"
+  local health="${ACS_HEALTH_URL:-$ACS_ORCH_BASE_URL/health}"
   printf '%s' "${health%/health}/runtime-config"
 }
 
@@ -86,7 +89,7 @@ acs_drain_diagnostics_path() {
 }
 
 acs_drain_diagnostics_url() {
-  local health="${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}"
+  local health="$ACS_HEALTH_URL"
   printf '%s' "${health%/health}/diagnostics/drain"
 }
 
@@ -273,7 +276,7 @@ cancel_acs_deployment_drain() {
     }
     kill -USR1 "$ACS_DRAIN_PID" || return 1
     for _ in $(seq 1 10); do
-      if curl -fsS --max-time 3 "${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}" \
+      if curl -fsS --max-time 3 "$ACS_HEALTH_URL" \
         | jq -e --argjson pid "$ACS_DRAIN_PID" '.deploymentDrain.pid==$pid and .draining==false' >/dev/null; then
         acs_snapshot_drain_diagnostics recovered false || true
         return 0
@@ -287,7 +290,7 @@ cancel_acs_deployment_drain() {
   for _ in $(seq 1 30); do
     local restored_pid restored_health
     restored_pid="$(systemctl show "$ACS_SERVICE_NAME" --property=MainPID --value)" || return 1
-    restored_health="$(curl -fsS --max-time 3 "${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}" 2>/dev/null || true)"
+    restored_health="$(curl -fsS --max-time 3 "$ACS_HEALTH_URL" 2>/dev/null || true)"
     if [[ "$restored_pid" =~ ^[1-9][0-9]*$ ]] && printf '%s' "$restored_health" | jq -e \
       --argjson pid "$restored_pid" \
       '.draining==false and (.inflight | type=="number" and .>=0 and floor==.) and
@@ -308,7 +311,7 @@ drain_acs_before_cutover() {
   }
   ACS_DRAIN_PID="$(systemctl show "$ACS_SERVICE_NAME" --property=MainPID --value)"
   [[ "$ACS_DRAIN_PID" =~ ^[1-9][0-9]*$ ]] || return 1
-  health="$(curl -fsS --max-time 10 "${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}")" || return 1
+  health="$(curl -fsS --max-time 10 "$ACS_HEALTH_URL")" || return 1
   ACS_DRAIN_PROTOCOL="$(printf '%s' "$health" | jq -r '.deploymentDrain.protocolVersion // 0')"
   if [ "$ACS_DRAIN_PROTOCOL" = 1 ]; then
     printf '%s' "$health" | jq -e --argjson pid "$ACS_DRAIN_PID" '.deploymentDrain.pid==$pid and .draining==false' >/dev/null || return 1
@@ -386,7 +389,7 @@ drain_acs_before_cutover() {
     }
     if [ "$current_pid" = 0 ] || [ "$state" = deactivating ]; then sleep 1; continue; fi
     if [ "$ACS_DRAIN_PROTOCOL" = 1 ]; then
-      health="$(curl -fsS --max-time 5 "${ACS_HEALTH_URL:-http://127.0.0.1:3400/health}")" || { sleep 1; continue; }
+      health="$(curl -fsS --max-time 5 "$ACS_HEALTH_URL")" || { sleep 1; continue; }
       ACS_DRAIN_LAST_INFLIGHT="$(printf '%s' "$health" | jq -r '.inflight // "unknown"')"
       if printf '%s' "$health" | jq -e '.deploymentDrain.state=="timed_out" or .deploymentDrain.state=="cancelled"' >/dev/null; then
         printf 'ACS drain was cancelled or reached its safe deadline; old work was preserved (inflight=%s)\n' \

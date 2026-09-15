@@ -111,6 +111,18 @@ export function AskUserBlock({
               {q.header && q.question ? (
                 <Text style={{ ...typo.body, color: colors.foreground }}>{q.question}</Text>
               ) : null}
+              {q.description ? (
+                <Text
+                  style={{
+                    ...typo.caption,
+                    color: colors.mutedForeground,
+                    marginTop: spacing.xs,
+                    lineHeight: 20,
+                  }}
+                >
+                  {q.description}
+                </Text>
+              ) : null}
             </View>
             {q.options.map((opt, oi) => {
               const isSelected = selectedSet.has(opt.label);

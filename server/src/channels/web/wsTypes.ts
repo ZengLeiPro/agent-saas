@@ -216,6 +216,7 @@ export type WsBlockType = 'thinking' | 'text' | 'tool_use';
 export interface WsAskUserQuestion {
     question: string;
     header: string;
+    description?: string;
     options: Array<{ label: string; description: string }>;
     multiSelect: boolean;
 }

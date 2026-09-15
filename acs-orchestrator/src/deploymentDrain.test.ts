@@ -73,4 +73,25 @@ describe('deployment drain does not sacrifice accepted execution', () => {
     expect(f.drain.snapshot().state).toBe('idle');
     expect(f.errors).toHaveBeenCalledOnce();
   });
+  it('emits blocker details every 60 seconds while draining with inflight work', () => {
+    vi.useFakeTimers();
+    const describeBlockers = vi.fn(() => 'deployment_drain_blockers operation=op-drain-1 kind=invocation');
+    const drain = new DeploymentDrain({
+      pid: 123,
+      inflight: () => 1,
+      deadlineMs: () => 180_000,
+      publish: vi.fn(),
+      setAdmission: vi.fn(),
+      exit: vi.fn(),
+      describeBlockers,
+    });
+    drain.begin();
+    vi.advanceTimersByTime(59_000);
+    expect(describeBlockers).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1_000);
+    expect(describeBlockers).toHaveBeenCalledOnce();
+    expect(describeBlockers.mock.results[0]?.value).toContain('operation=op-drain-1');
+    vi.advanceTimersByTime(60_000);
+    expect(describeBlockers).toHaveBeenCalledTimes(2);
+  });
 });

@@ -29,7 +29,7 @@ export const GOVERNANCE_UI_DOMAINS = [
   'agent', 'skill', 'connector', 'memory', 'file', 'automation', 'model_tool', 'environment',
 ] as const;
 export type GovernanceUiDomain = typeof GOVERNANCE_UI_DOMAINS[number];
-export type GovernancePersona = 'platform_admin' | 'org_admin' | 'member';
+export type GovernancePersona = 'platform_admin' | 'org_admin' | 'member' | 'platform_demo';
 
 type ResourceInput = {
   type: string;

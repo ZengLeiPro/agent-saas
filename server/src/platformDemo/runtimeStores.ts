@@ -20,6 +20,15 @@ export function getPlatformDemoSessionStore(): PlatformDemoSessionStore {
   return sessionStore;
 }
 
+/** Wire PG-backed stores in production after governance migrations. */
+export function configurePlatformDemoRuntimeStores(options: {
+  capabilities: PlatformDemoCapabilityStore;
+  sessions: PlatformDemoSessionStore;
+}): void {
+  capabilityStore = options.capabilities;
+  sessionStore = options.sessions;
+}
+
 /** Test-only reset. */
 export function resetPlatformDemoRuntimeStoresForTests(): void {
   capabilityStore = new InMemoryPlatformDemoCapabilityStore();

@@ -80,6 +80,8 @@ describe('platform demo mode', () => {
         capabilities,
         sessions,
         getMembership: async (tenantId, userId) => memberships.get(`${tenantId}::${userId}`) ?? null,
+        listMemberships: async (tenantId) =>
+          [...memberships.values()].filter((item) => item.tenantId === tenantId),
         featureEnabled: () => options?.featureEnabled ?? true,
       }),
     );
@@ -267,5 +269,68 @@ describe('platform demo mode', () => {
     });
     expect(isPlatformDemoFeatureEnabled({ PLATFORM_DEMO_MODE_ENABLED: 'false' })).toBe(false);
     expect(isPlatformDemoFeatureEnabled({})).toBe(true);
+  });
+
+  it('lists grants across tenants and org_admin candidates; rejects non-org_admin grant', async () => {
+    memberships.set('acme::member-1', membership({ userId: 'member-1', persona: 'member', isOwner: false }));
+    memberships.set('beta::org-admin-9', membership({ tenantId: 'beta', userId: 'org-admin-9' }));
+    await capabilities.grant({ tenantId: 'acme', userId: 'org-admin-1', grantedBy: 'platform-1' });
+    await capabilities.grant({ tenantId: 'beta', userId: 'org-admin-9', grantedBy: 'platform-1' });
+
+    const listening = await listen(buildApp());
+    server = listening.server;
+
+    const listed = await fetch(`${listening.baseUrl}/api/platform-demo/grants`, {
+      headers: { 'x-test-user': 'platform-admin' },
+    });
+    expect(listed.status).toBe(200);
+    const listedBody = await listed.json();
+    expect(listedBody.grants).toHaveLength(2);
+    expect(listedBody.featureEnabled).toBe(true);
+    expect(listedBody.featureFlag.hardOffWhenFalse).toBe(true);
+
+    const candidates = await fetch(
+      `${listening.baseUrl}/api/platform-demo/grants/candidates?tenantId=acme`,
+      { headers: { 'x-test-user': 'platform-admin' } },
+    );
+    expect(candidates.status).toBe(200);
+    await expect(candidates.json()).resolves.toMatchObject({
+      tenantId: 'acme',
+      candidates: [{ userId: 'org-admin-1', persona: 'org_admin' }],
+    });
+
+    const invalid = await fetch(`${listening.baseUrl}/api/platform-demo/grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-user': 'platform-admin' },
+      body: JSON.stringify({ tenantId: 'acme', userId: 'member-1' }),
+    });
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toMatchObject({
+      code: 'PLATFORM_DEMO_GRANT_TARGET_INVALID',
+    });
+  });
+
+  it('capability store grant/revoke survives a fresh store instance when seeded', async () => {
+    const first = new InMemoryPlatformDemoCapabilityStore();
+    await first.grant({ tenantId: 'acme', userId: 'org-admin-1', grantedBy: 'platform-1' });
+    const snapshot = await first.listGrants();
+    expect(snapshot).toHaveLength(1);
+
+    const second = new InMemoryPlatformDemoCapabilityStore();
+    // Simulate restart hydration from durable snapshot.
+    for (const grant of snapshot) {
+      await second.grant({
+        tenantId: grant.tenantId,
+        userId: grant.userId,
+        grantedBy: grant.grantedBy,
+        now: new Date(grant.grantedAt),
+      });
+    }
+    await expect(second.getGrant('acme', 'org-admin-1')).resolves.toMatchObject({
+      userId: 'org-admin-1',
+      capability: PLATFORM_DEMO_CAPABILITY,
+    });
+    await second.revoke({ tenantId: 'acme', userId: 'org-admin-1', revokedBy: 'platform-1' });
+    await expect(second.getGrant('acme', 'org-admin-1')).resolves.toBeNull();
   });
 });

@@ -20,7 +20,8 @@ interface ManagementSettingsAccessGateProps {
 }
 
 export function ManagementSettingsAccessGate({
-  scope, target, access, onRetry, onReturnPersonal, persistAfterVisit = false, children,
+  scope, target, access, onRetry, onReturnPersonal, persistAfterVisit = false,
+  platformDemoEntryAllowed = false, children,
 }: ManagementSettingsAccessGateProps) {
   const active = target === scope;
   const [visited, setVisited] = useState(active);

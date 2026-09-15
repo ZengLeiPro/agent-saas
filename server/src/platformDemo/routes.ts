@@ -38,6 +38,7 @@ export interface PlatformDemoRouterDeps {
   capabilities: PlatformDemoCapabilityStore;
   sessions: PlatformDemoSessionStore;
   getMembership(tenantId: string, userId: string): Promise<TenantMembership | null>;
+  listMemberships?(tenantId: string): Promise<TenantMembership[]>;
   audit?: GovernanceAuditStore;
   featureEnabled?: () => boolean;
   now?: () => Date;
@@ -212,10 +213,53 @@ export function createPlatformDemoRouter(deps: PlatformDemoRouterDeps): Router {
       if (body) return res.status(body.status).json(body.body);
       return res.status(403).json({ error: 'Platform admin required' });
     }
-    const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : '';
-    if (!tenantId) return res.status(400).json({ error: 'tenantId required' });
+    const tenantId = typeof req.query.tenantId === 'string' && req.query.tenantId.trim()
+      ? req.query.tenantId.trim()
+      : undefined;
+    const featureEnabled = (deps.featureEnabled ?? isPlatformDemoFeatureEnabled)();
     const grants = await deps.capabilities.listGrants(tenantId);
-    return res.json({ grants });
+    return res.json({
+      grants,
+      featureEnabled,
+      featureFlag: {
+        envVar: 'PLATFORM_DEMO_MODE_ENABLED',
+        hardOffWhenFalse: true,
+        managedInPanel: false,
+        description:
+          '环境变量为硬关闭开关：设为 0/false/off 时演示入口关闭；开启时由本面板管理组织管理员授予。',
+      },
+    });
+  });
+
+  /** List active org_admin members of a tenant as grant candidates. */
+  router.get('/grants/candidates', async (req, res) => {
+    try {
+      await assertPlatformAdminCanManageDemoGrants(req);
+    } catch (error) {
+      const body = platformDemoAccessErrorBody(error);
+      if (body) return res.status(body.status).json(body.body);
+      return res.status(403).json({ error: 'Platform admin required' });
+    }
+    const tenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId.trim() : '';
+    if (!tenantId) return res.status(400).json({ error: 'tenantId required' });
+    if (!deps.listMemberships) {
+      return res.status(503).json({
+        error: 'Membership listing unavailable',
+        code: 'PLATFORM_DEMO_CANDIDATES_UNAVAILABLE',
+      });
+    }
+    const memberships = await deps.listMemberships(tenantId);
+    const candidates = memberships
+      .filter((item) => item.status === 'active' && item.persona === 'org_admin')
+      .map((item) => ({
+        tenantId: item.tenantId,
+        userId: item.userId,
+        persona: item.persona,
+        isOwner: item.isOwner,
+        status: item.status,
+      }))
+      .sort((a, b) => a.userId.localeCompare(b.userId));
+    return res.json({ tenantId, candidates });
   });
 
   router.post('/grants', async (req, res) => {

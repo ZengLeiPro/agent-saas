@@ -50,7 +50,9 @@ export interface PlatformDemoSaveResponse {
 
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
+    const body = (await response.json().catch(() => null)) as
+      | { error?: unknown; code?: unknown }
+      | null;
     const error = new Error(
       typeof body?.error === 'string' ? body.error : `Platform demo request failed (${response.status})`,
     ) as Error & { status?: number; code?: string };
@@ -89,6 +91,74 @@ export async function savePlatformDemoConfig(
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ draft }),
+  });
+  return readJson(response);
+}
+
+export interface PlatformDemoCapabilityGrant {
+  tenantId: string;
+  userId: string;
+  capability: 'platform_demo_access';
+  grantedBy: string;
+  grantedAt: string;
+  revokedAt?: string;
+  revokedBy?: string;
+}
+
+export interface PlatformDemoGrantCandidate {
+  tenantId: string;
+  userId: string;
+  persona: 'org_admin';
+  isOwner: boolean;
+  status: 'active' | 'disabled';
+}
+
+export interface PlatformDemoGrantsResponse {
+  grants: PlatformDemoCapabilityGrant[];
+  featureEnabled: boolean;
+  featureFlag: {
+    envVar: string;
+    hardOffWhenFalse: boolean;
+    managedInPanel: boolean;
+    description: string;
+  };
+}
+
+export async function fetchPlatformDemoGrants(tenantId?: string): Promise<PlatformDemoGrantsResponse> {
+  const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+  const response = await authFetch(`/api/platform-demo/grants${query}`);
+  return readJson(response);
+}
+
+export async function fetchPlatformDemoGrantCandidates(
+  tenantId: string,
+): Promise<{ tenantId: string; candidates: PlatformDemoGrantCandidate[] }> {
+  const response = await authFetch(
+    `/api/platform-demo/grants/candidates?tenantId=${encodeURIComponent(tenantId)}`,
+  );
+  return readJson(response);
+}
+
+export async function grantPlatformDemoAccess(
+  tenantId: string,
+  userId: string,
+): Promise<{ grant: PlatformDemoCapabilityGrant }> {
+  const response = await authFetch('/api/platform-demo/grants', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tenantId, userId }),
+  });
+  return readJson(response);
+}
+
+export async function revokePlatformDemoAccess(
+  tenantId: string,
+  userId: string,
+): Promise<{ grant: PlatformDemoCapabilityGrant }> {
+  const response = await authFetch('/api/platform-demo/grants', {
+    method: 'DELETE',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tenantId, userId }),
   });
   return readJson(response);
 }

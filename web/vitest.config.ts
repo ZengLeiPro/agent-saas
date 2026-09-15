@@ -21,6 +21,7 @@ export default defineConfig({
       // Keep runtime schema imports on the exact shared subpath, matching the production build.
       "@": fileURLToPath(new URL("./src", import.meta.url)),
       "@agent/shared/lib/governanceApi": fileURLToPath(new URL("../shared/src/lib/governanceApi.ts", import.meta.url)),
+      "@agent/shared/lib/platformDemoApi": fileURLToPath(new URL("../shared/src/lib/platformDemoApi.ts", import.meta.url)),
       "@agent/shared/types/governance": fileURLToPath(new URL("../shared/src/types/governance.ts", import.meta.url)),
       "@agent/shared/schemas/configIdentity": fileURLToPath(new URL("../shared/src/schemas/configIdentity.ts", import.meta.url)),
       "@agent/shared/scenarios": fileURLToPath(new URL("../shared/src/scenarios", import.meta.url)),

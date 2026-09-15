@@ -410,23 +410,6 @@ export { registerRefresh, unregisterRefresh, refreshAll } from './lib/refreshBus
 
 // Lib - auth fetch / resource fetch
 export { authFetch, authFetchResource, setOnUnauthorized } from './lib/authFetch';
-export {
-  PLATFORM_DEMO_BANNER,
-  PLATFORM_DEMO_MENU_LABEL,
-  fetchPlatformDemoAccess,
-  enterPlatformDemo,
-  fetchPlatformDemoAnalytics,
-  fetchPlatformDemoConfig,
-  savePlatformDemoConfig,
-} from './lib/platformDemoApi';
-export type {
-  PlatformDemoAccessResponse,
-  PlatformDemoAnalyticsResponse,
-  PlatformDemoConfigSection,
-  PlatformDemoConfigResponse,
-  PlatformDemoSaveResponse,
-} from './lib/platformDemoApi';
-
 // Lib - 安全 JSON 解析（content-type 非 JSON 时抛带上下文错误）
 export { parseJsonResponse } from './lib/parseJsonResponse';
 

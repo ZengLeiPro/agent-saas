@@ -4,7 +4,7 @@ import { compensateAutomationSession, ensureAutomationSession } from './sessionA
 import type { Express, Request, Response } from 'express';
 import type { AppRuntime } from './runtime.js'; import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
 import { publishAdminCommittedConfigIdentity, registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
-import { registerGovernanceRoutes } from './governanceRoutes.js';
+import { registerGovernanceRoutes } from './governanceRoutes.js'; import { registerPlatformDemoRoutes } from './platformDemoRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
 import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
 import { createContextAdminConsumerStore, createContextAdminTargetOrganizationAccess,
@@ -18,14 +18,6 @@ import {
 } from './models.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { enforcePlatformWritePolicy } from '../auth/platformGovernance.js';
-import {
-  createPlatformDemoRouter,
-  createRejectPlatformDemoProductionWrites,
-} from '../platformDemo/index.js';
-import {
-  getPlatformDemoCapabilityStore,
-  getPlatformDemoSessionStore,
-} from '../platformDemo/runtimeStores.js';
 import { createRuntimeTaskboardTitleGenerator } from '../taskboard/taskTitle.js';
 import { applyModelsHotUpdate } from './modelsHotUpdate.js';
 import {
@@ -960,23 +952,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         }),
       );
     }
-    registerGovernanceRoutes(app, runtime, { webChannel, executeUserOffboarding });
-    {
-      const platformDemoCapabilities = getPlatformDemoCapabilityStore();
-      const platformDemoSessions = getPlatformDemoSessionStore();
-      app.use('/api', createRejectPlatformDemoProductionWrites({ capabilities: platformDemoCapabilities }));
-      if (runtime.membershipStore) {
-        app.use(
-          '/api/platform-demo',
-          createPlatformDemoRouter({
-            capabilities: platformDemoCapabilities,
-            sessions: platformDemoSessions,
-            getMembership: (tenantId, userId) => runtime.membershipStore!.getMembership(tenantId, userId),
-            audit: runtime.governanceAuditStore,
-          }),
-        );
-      }
-    }
+    registerGovernanceRoutes(app, runtime, { webChannel, executeUserOffboarding }); registerPlatformDemoRoutes(app, runtime);
     if (
       runtime.governanceMigrationControlStore &&
       runtime.membershipStore &&

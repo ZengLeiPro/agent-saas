@@ -3,7 +3,7 @@ import { PLATFORM_DEMO_CAPABILITY } from './types.js';
 
 export interface PlatformDemoCapabilityStore {
   getGrant(tenantId: string, userId: string, capability?: PlatformDemoCapability): Promise<PlatformDemoCapabilityGrant | null>;
-  listGrants(tenantId: string): Promise<PlatformDemoCapabilityGrant[]>;
+  listGrants(tenantId?: string): Promise<PlatformDemoCapabilityGrant[]>;
   grant(input: {
     tenantId: string;
     userId: string;
@@ -38,11 +38,15 @@ export class InMemoryPlatformDemoCapabilityStore implements PlatformDemoCapabili
     return { ...grant };
   }
 
-  async listGrants(tenantId: string): Promise<PlatformDemoCapabilityGrant[]> {
+  async listGrants(tenantId?: string): Promise<PlatformDemoCapabilityGrant[]> {
     return [...this.grants.values()]
-      .filter((grant) => grant.tenantId === tenantId && !grant.revokedAt)
+      .filter((grant) => !grant.revokedAt && (tenantId === undefined || grant.tenantId === tenantId))
       .map((grant) => ({ ...grant }))
-      .sort((a, b) => a.userId.localeCompare(b.userId));
+      .sort((a, b) => {
+        const byTenant = a.tenantId.localeCompare(b.tenantId);
+        if (byTenant !== 0) return byTenant;
+        return a.userId.localeCompare(b.userId);
+      });
   }
 
   async grant(input: {

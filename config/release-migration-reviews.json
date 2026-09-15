@@ -203,9 +203,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -668,6 +668,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -814,6 +821,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -1103,9 +1114,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -1897,6 +1908,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -2179,6 +2197,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -2433,9 +2455,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -3080,6 +3102,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -3342,6 +3371,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -3596,9 +3629,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -4222,6 +4255,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -4468,6 +4508,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -4722,9 +4766,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -5348,6 +5392,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -5594,6 +5645,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -5841,9 +5896,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6460,6 +6515,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -6698,6 +6760,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -6945,9 +7011,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7564,6 +7630,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -7802,6 +7875,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -8049,9 +8126,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -8668,6 +8745,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -8906,6 +8990,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -9202,9 +9290,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -10017,6 +10105,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -10267,6 +10362,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -10528,9 +10627,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -11140,6 +11239,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -11398,6 +11504,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -11652,9 +11762,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -12285,6 +12395,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -12535,6 +12652,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -12789,9 +12910,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -13422,6 +13543,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -13672,6 +13800,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -13905,9 +14037,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -14517,6 +14649,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -14751,6 +14890,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -14984,9 +15127,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -15596,6 +15739,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -15830,6 +15980,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -16063,9 +16217,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -16675,6 +16829,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -16909,6 +17070,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -17142,9 +17307,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -17754,6 +17919,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -17988,6 +18160,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -18214,9 +18390,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -18819,6 +18995,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -19049,6 +19232,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -19275,9 +19462,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -19880,6 +20067,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -20110,6 +20304,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -20322,9 +20520,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -20892,6 +21090,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -21102,6 +21307,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -21314,9 +21523,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -21884,6 +22093,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -22090,6 +22306,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -22302,9 +22522,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -22872,6 +23092,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -23070,6 +23297,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -23282,9 +23513,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -23852,6 +24083,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -24050,6 +24288,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -24262,9 +24504,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -24832,6 +25074,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -25030,6 +25279,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -25242,9 +25495,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -25784,6 +26037,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -25974,6 +26234,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -26186,9 +26450,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -26714,6 +26978,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -26912,6 +27183,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -27124,9 +27399,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -27624,6 +27899,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -27806,6 +28088,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -28018,9 +28304,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -28518,6 +28804,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -28700,6 +28993,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -28905,9 +29202,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -29384,6 +29681,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -29550,6 +29854,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -29755,9 +30063,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -30234,6 +30542,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -30392,6 +30707,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -30597,9 +30916,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -31062,6 +31381,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -31208,6 +31534,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -31413,9 +31743,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -31878,6 +32208,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -32020,6 +32357,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -32225,9 +32566,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -32690,6 +33031,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -32836,6 +33184,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -33041,9 +33393,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -33506,6 +33858,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -33644,6 +34003,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -33849,9 +34212,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -34314,6 +34677,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -34452,6 +34822,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -34657,9 +35031,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -35122,6 +35496,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -35256,6 +35637,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -35461,9 +35846,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -35926,6 +36311,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -36072,6 +36464,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -36277,9 +36673,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -36742,6 +37138,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -36888,6 +37291,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -37093,9 +37500,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -37558,6 +37965,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -37704,6 +38118,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -37895,9 +38313,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅按序追加 V47 provider；V1-V46 的内容和顺序不变，DDL 由 V47 文件单独审核。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -38346,6 +38764,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -38432,6 +38857,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -38658,9 +39087,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:8e55c3c1c2b676a3354117daf2e277bbd2ad9d2074c821d932f3eaa1caced7b9",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "Migration registry wiring only; V47 owns the additive DDL and its exact postcondition."
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -39102,6 +39531,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -39232,6 +39668,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -39479,7 +39919,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -39538,6 +39978,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -39624,6 +40071,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -39864,7 +40315,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -39923,6 +40374,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -39993,6 +40451,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -40226,7 +40688,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -40285,6 +40747,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -40351,6 +40820,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -40577,7 +41050,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -40636,6 +41109,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -40698,6 +41178,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -40917,7 +41401,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -40976,6 +41460,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -41034,6 +41525,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -41211,7 +41706,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -41270,6 +41765,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -41312,6 +41814,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -41489,7 +41995,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -41548,6 +42054,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -41590,6 +42103,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -41760,7 +42277,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -41819,6 +42336,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -41853,6 +42377,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -42002,7 +42530,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -42061,6 +42589,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -42087,6 +42622,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -42152,7 +42691,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -42211,6 +42750,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -42237,6 +42783,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -42281,7 +42831,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -42340,6 +42890,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -42362,6 +42919,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -42427,7 +42988,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -42486,6 +43047,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -42524,6 +43092,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -42540,7 +43112,7 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
           "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
@@ -42599,6 +43171,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -42613,6 +43192,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -42622,9 +43205,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:2680d49597ae776e78c00421b6357237110c0d02aa140315f91cff6d003ab1cb",
-          "targetDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
           "classification": "no-schema-change",
-          "reason": "仅把 V48 追加到迁移序列；旧版本顺序与语义不变。"
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -42681,6 +43264,13 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
         }
       ],
       "evidence": [
@@ -42703,6 +43293,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
         }
       ]
     },
@@ -42728,6 +43322,42 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        }
+      ]
+    },
+    {
+      "baselineSha": "5351a0493d82d22a979757a84c7cce1e59d72891",
+      "files": [
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
+          "classification": "no-schema-change",
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.test.ts",
+          "digest": "sha256:f2092bd9bc4cfddffe3f27281949a86835467abc903649ab16e2b95d39f74574"
         }
       ]
     }

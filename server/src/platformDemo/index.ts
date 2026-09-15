@@ -14,9 +14,17 @@ export {
   type PlatformDemoCapabilityStore,
 } from './capabilityStore.js';
 export {
+  PgPlatformDemoCapabilityStore,
+  type PgPlatformDemoCapabilityStoreOptions,
+} from './pgCapabilityStore.js';
+export {
   InMemoryPlatformDemoSessionStore,
   type PlatformDemoSessionStore,
 } from './demoSessionStore.js';
+export {
+  PgPlatformDemoSessionStore,
+  type PgPlatformDemoSessionStoreOptions,
+} from './pgSessionStore.js';
 export {
   platformDemoAnalyticsFixture,
   platformDemoConfigFixture,
@@ -35,6 +43,7 @@ export {
 export { createPlatformDemoRouter, type PlatformDemoRouterDeps } from './routes.js';
 
 export {
+  configurePlatformDemoRuntimeStores,
   getPlatformDemoCapabilityStore,
   getPlatformDemoSessionStore,
   resetPlatformDemoRuntimeStoresForTests,

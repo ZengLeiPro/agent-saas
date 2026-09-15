@@ -1,3 +1,5 @@
+// release-migration: expand
+/** Platform demo grants + demo_session tables. Expand-only. */
 export function governanceV49PlatformDemoStatements(prefix: string): string[] {
   const grants = `${prefix}_membership_capability_grants`;
   const sessions = `${prefix}_platform_demo_sessions`;

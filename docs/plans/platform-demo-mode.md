@@ -32,7 +32,8 @@
 | GET | `/analytics` | fixture 分析序列 |
 | GET | `/config` / `/config/:sectionId` | fixture 配置形状 + 本会话草稿 |
 | PUT | `/config/:sectionId` | Save → `demo_session`（TTL ~24h） |
-| GET/POST/DELETE | `/grants` | 平台管理员授予/列表/撤销 |
+| GET/POST/DELETE | `/grants` | 平台管理员授予/列表/撤销（GET 可省略 tenantId 列出全部；响应含 featureFlag） |
+| GET | `/grants/candidates?tenantId=` | 某组织的有效 `org_admin` 候选 |
 
 **禁止**复用：`adminConfigOperations`、signed config publish、Vault、ACS control、以及其他 `/api/admin/*` 生产写路径。
 
@@ -55,6 +56,7 @@
 - 持久横幅：`演示模式 · 数据与操作为示例，不会影响平台`
 - 入口：统一设置侧栏 / 移动设置菜单（当无真实 `settings.platform.view` 但有 demo 能力时）
 - 演示身份打开真实平台管理深链：`ManagementSettingsAccessGate` 回退到 `PlatformDemoShell`
+- **平台管理 → 访问控制 → 演示访问**（仅 `platform_admin`）：全局开关只读（env 硬开关）+ 授予列表 + 选组织后仅列出该组织 `org_admin` 再授予/撤销
 
 ## 安全护栏
 
@@ -63,7 +65,8 @@
 
 ## Feature flag
 
-环境变量 `PLATFORM_DEMO_MODE_ENABLED`：设为 `0` / `false` / `off` 时关闭演示入口（默认开启）。
+环境变量 `PLATFORM_DEMO_MODE_ENABLED`：设为 `0` / `false` / `off` 时**硬关闭**演示入口（默认开启）。
+硬关闭时面板仍只读展示状态，但无法靠面板改写；环境开启后由平台管理「演示访问」面板管理授予。
 
 ## 审计
 
@@ -71,8 +74,10 @@
 
 ## 存储
 
-- 进程内 InMemory stores（capability + demo_session）用于运行与单测
-- Schema v49：`*_membership_capability_grants`、`*_platform_demo_sessions`（expand-only，供后续 PG 实现接入）
+- Schema v49：`*_membership_capability_grants`、`*_platform_demo_sessions`（expand-only）
+- 生产路径：`PgPlatformDemoCapabilityStore` / `PgPlatformDemoSessionStore`（governance 迁移后由 `runtimeGovernanceStores` 装配）
+- 单测 / 无 PG：进程内 InMemory stores（`resetPlatformDemoRuntimeStoresForTests`）
+- 授予在进程重启后仍保留（PG）；`demo_session` 草稿同样落库，TTL ~24h
 
 ## 测试
 

@@ -29,6 +29,7 @@ export async function putWebAssetCreateOnly({
   contentEncoding,
   accessKeyId,
   accessKeySecret,
+  internal = false,
 }) {
   const client = new OSS({
     accessKeyId: required(accessKeyId, 'accessKeyId'),
@@ -36,6 +37,7 @@ export async function putWebAssetCreateOnly({
     bucket: required(bucket, 'bucket'),
     region: required(region, 'region').startsWith('oss-') ? region : `oss-${region}`,
     secure: true,
+    ...(internal ? { internal: true } : {}),
   });
   const headers = {
     'x-oss-forbid-overwrite': 'true',
@@ -63,7 +65,8 @@ async function main() {
     contentType,
     contentEncoding = '',
     credentialsPath,
-    modulePath,
+    modulePath = '',
+    internalFlag = '',
   ] = process.argv.slice(2);
   const credentials = JSON.parse(
     await readFile(required(credentialsPath, 'credentialsPath'), 'utf8'),
@@ -81,6 +84,7 @@ async function main() {
       contentEncoding,
       accessKeyId: credentials.accessKeyId,
       accessKeySecret: credentials.accessKeySecret,
+      internal: internalFlag === 'internal',
     });
   } catch (error) {
     if (error?.code === 'FileAlreadyExists' && Number(error?.status ?? error?.statusCode) === 409) {

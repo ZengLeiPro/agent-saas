@@ -1,0 +1,38 @@
+name: tmp-assemble-staging-yml
+on:
+  push:
+    branches: [fix/staging-oss-internal-hydrate]
+    paths:
+      - 'tmp/staging-yml-parts/**'
+      - '.github/workflows/tmp-assemble-staging-yml.yml'
+permissions:
+  contents: write
+jobs:
+  assemble:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/staging-oss-internal-hydrate
+          fetch-depth: 0
+      - name: Concatenate parts into deploy-staging.yml and push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cat tmp/staging-yml-parts/part-0 tmp/staging-yml-parts/part-1 \
+            tmp/staging-yml-parts/part-2 tmp/staging-yml-parts/part-3 \
+            > .github/workflows/deploy-staging.yml
+          expected='e75f3b3f0e53d0445275a5ab4e3af0eb3d77fa5a'
+          actual="$(git hash-object .github/workflows/deploy-staging.yml)"
+          test "$actual" = "$expected"
+          git add .github/workflows/deploy-staging.yml
+          if git diff --cached --quiet; then
+            echo 'deploy-staging.yml already current'
+            exit 0
+          fi
+          git config user.name 'Leo Zeng'
+          git config user.email 'zengleipro@gmail.com'
+          git commit -m 'fix(release): 测试环境制品由 ECS 从深圳 OSS 内网直拉，不再经 runner scp'
+          git push origin HEAD:fix/staging-oss-internal-hydrate

@@ -151,6 +151,7 @@ export class KyAppInstallationService {
   async verifyDomain(
     installationId: string,
     actor: GovernanceActor,
+    reusableInstallations: readonly KyAppInstallation[] = [],
   ): Promise<{ installation: KyAppInstallation; result: DomainVerificationResult }> {
     const installation = await this.require(installationId);
     const hostname = new URL(installation.baseUrl).hostname;
@@ -164,10 +165,7 @@ export class KyAppInstallationService {
         };
     let verificationSource: 'installation' | 'same_system_domain' = 'installation';
     if (!result.verified) {
-      const reusable =
-        (await this.options.systems.listVerifiedInstallationsForSystem?.(installation.systemId)) ??
-        [];
-      for (const candidate of reusable) {
+      for (const candidate of reusableInstallations) {
         if (
           candidate.installationId === installation.installationId ||
           candidate.systemId !== installation.systemId ||

@@ -157,6 +157,21 @@ export class KyAppExistingOnboardService {
       throw new KyAppInstallationError('技术联系人必须是所选组织的有效成员', 'invalid_contact');
   }
 
+  private async verifyDomain(installationId: string, systemId: string, actor: GovernanceActor) {
+    const reusableInstallations = (
+      await Promise.all(
+        this.options.tenants
+          .listAllStrict()
+          .map((tenant) => this.options.systems.listInstallationsForTenant(tenant.id)),
+      )
+    ).flat();
+    return this.options.installations.verifyDomain(
+      installationId,
+      actor,
+      reusableInstallations.filter((candidate) => candidate.systemId === systemId),
+    );
+  }
+
   private async run(request: FrozenRequest, actor: GovernanceActor): Promise<KyAppOnboardResult> {
     await this.validateContact(request.tenantId, request.techContactUserId);
     const definition = await this.options.systems.getDefinition(request.systemId);
@@ -228,7 +243,7 @@ export class KyAppExistingOnboardService {
         if (!installation.domainVerifiedAt) {
           try {
             installation = (
-              await this.options.installations.verifyDomain(request.installationId, actor)
+              await this.verifyDomain(request.installationId, request.systemId, actor)
             ).installation;
           } catch (error) {
             if (
@@ -286,9 +301,8 @@ export class KyAppExistingOnboardService {
       step('enable', 'pending');
       if (!installation.domainVerifiedAt) {
         try {
-          installation = (
-            await this.options.installations.verifyDomain(request.installationId, actor)
-          ).installation;
+          installation = (await this.verifyDomain(request.installationId, request.systemId, actor))
+            .installation;
         } catch (error) {
           if (
             error instanceof KyAppInstallationError &&

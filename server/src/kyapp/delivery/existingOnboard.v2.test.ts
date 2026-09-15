@@ -62,6 +62,7 @@ describe('KyAppExistingOnboardService V2', () => {
       tenants: {
         findByIdStrict: (id: string) =>
           id === tenantId ? { id, name: 'V2 测试组织', disabled: false } : undefined,
+        listAllStrict: () => [{ id: tenantId, name: 'V2 测试组织', disabled: false }],
       },
       users: {
         findById: (id: string) =>

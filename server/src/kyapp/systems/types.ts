@@ -120,7 +120,6 @@ export class KyAppSystemNotFoundError extends Error {
  */
 export interface KyAppSystemStore {
   listInstallationsForTenant?(tenantId: string): Promise<KyAppInstallation[]>;
-  listVerifiedInstallationsForSystem?(systemId: string): Promise<KyAppInstallation[]>;
   listDefinitions?(): Promise<KyAppSystemDefinition[]>;
   getDefinition(systemId: string): Promise<KyAppSystemDefinition | null>;
   getVersion(systemId: string, digest: string): Promise<KyAppSystemVersion | null>;

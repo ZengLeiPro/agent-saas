@@ -55,7 +55,6 @@ describe('assertBaseUrl', () => {
 
 describe('KyAppInstallationService 域名验证复用', () => {
   function rig(
-    candidates: KyAppInstallation[],
     dnsValues: string[],
     currentPatch: Omit<Partial<KyAppInstallation>, 'installationId'> = {},
   ) {
@@ -69,7 +68,6 @@ describe('KyAppInstallationService 域名验证复用', () => {
       config: resolveKyAppConfig({ kyApp: { environment: 'staging' } })!,
       systems: {
         getInstallation: vi.fn(async () => current),
-        listVerifiedInstallationsForSystem: vi.fn(async () => candidates),
         markDomainVerified,
       } as never,
       events: { enqueue: vi.fn() } as never,
@@ -89,9 +87,9 @@ describe('KyAppInstallationService 域名验证复用', () => {
       domainVerificationToken: 'donor-token',
       domainVerifiedAt: verifiedAt,
     });
-    const { service, markDomainVerified, resolveTxt } = rig([donor], ['donor-token']);
+    const { service, markDomainVerified, resolveTxt } = rig(['donor-token']);
 
-    const result = await service.verifyDomain('installation-current', PLATFORM_ADMIN);
+    const result = await service.verifyDomain('installation-current', PLATFORM_ADMIN, [donor]);
 
     expect(result.installation.domainVerifiedAt).toBe(verifiedAt);
     expect(result.result.detail).toBe('同一业务系统的相同域名已通过实时归属复验');
@@ -107,11 +105,11 @@ describe('KyAppInstallationService 域名验证复用', () => {
       domainVerificationToken: 'donor-token',
       domainVerifiedAt: verifiedAt,
     });
-    const { service, markDomainVerified, resolveTxt } = rig([donor], ['donor-token'], {
+    const { service, markDomainVerified, resolveTxt } = rig(['donor-token'], {
       domainVerificationToken: null,
     });
 
-    const result = await service.verifyDomain('installation-current', PLATFORM_ADMIN);
+    const result = await service.verifyDomain('installation-current', PLATFORM_ADMIN, [donor]);
 
     expect(result.installation.domainVerifiedAt).toBe(verifiedAt);
     expect(markDomainVerified).toHaveBeenCalledOnce();
@@ -151,7 +149,7 @@ describe('KyAppInstallationService 域名验证复用', () => {
         domainVerifiedAt: verifiedAt,
       }),
     ];
-    const { service, markDomainVerified } = rig(candidates, [
+    const { service, markDomainVerified } = rig([
       'wrong-system-token',
       'wrong-host-token',
       'unverified-token',
@@ -159,7 +157,7 @@ describe('KyAppInstallationService 域名验证复用', () => {
     ]);
 
     await expect(
-      service.verifyDomain('installation-current', PLATFORM_ADMIN),
+      service.verifyDomain('installation-current', PLATFORM_ADMIN, candidates),
     ).rejects.toMatchObject({ code: 'domain_verification_failed' });
     expect(markDomainVerified).not.toHaveBeenCalled();
   });

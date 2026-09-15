@@ -129,9 +129,9 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
   return (
     <section className="space-y-4 rounded-xl border p-4" aria-labelledby="org-agent-runtime-title">
       <div className="space-y-1">
-        <h3 id="org-agent-runtime-title" className="text-sm font-semibold">运行策略</h3>
+        <h3 id="org-agent-runtime-title" className="text-sm font-semibold">高级运行设置</h3>
         <p className="text-xs leading-5 text-muted-foreground">
-          这些配置只作用于当前企业专家。工具、MCP、执行环境和能力开关只能在组织默认策略上继续收窄，不会绕过权限或审批。
+          多数情况不用改。这些配置只作用于当前企业专家；工具、MCP、执行环境和能力开关只能在组织默认策略上继续收窄，不会绕过权限或审批。
         </p>
       </div>
 
@@ -146,7 +146,7 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
               checked={value.executionMode === 'direct'}
               onChange={() => setExecutionMode('direct')}
             />
-            <span><span className="block text-sm font-medium">自主执行</span><span className="block text-xs leading-5 text-muted-foreground">当前 Agent 直接使用受治理工具完成工作。</span></span>
+            <span><span className="block text-sm font-medium">直接处理</span><span className="block text-xs leading-5 text-muted-foreground">当前专家直接使用受治理工具完成工作（自主执行）。</span></span>
           </label>
           <label className="flex cursor-pointer gap-3 rounded-md border p-3">
             <input
@@ -156,7 +156,7 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
               checked={value.executionMode === 'dispatcher'}
               onChange={() => setExecutionMode('dispatcher')}
             />
-            <span><span className="block text-sm font-medium">前台调度器</span><span className="block text-xs leading-5 text-muted-foreground">前台只接单、澄清和汇报，实际工作交给独立后台 Worker；可并行接收新任务，但会增加一次模型调度及相应用量。</span></span>
+            <span><span className="block text-sm font-medium">接待员模式</span><span className="block text-xs leading-5 text-muted-foreground">前台只接单、澄清和汇报，复杂工作交给后台 Worker（前台调度器）；可并行接收新任务，但会增加一次模型调度及相应用量。</span></span>
           </label>
         </div>
       </div>

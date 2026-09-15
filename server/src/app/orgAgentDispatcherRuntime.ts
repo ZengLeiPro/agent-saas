@@ -40,15 +40,22 @@ export function createOrgAgentDispatcherRuntimeValidator(deps: DispatcherValidat
       if (orgProfile.version.config.tools.denylist.includes(tool))
         blockers.add(`DISPATCHER_REQUIRED_TOOL_DENIED:${tool}`);
     }
+    // background_* profiles default to model.inherit. At runtime, inherit means
+    // "use the front-desk session model" (UI: 继承前台模型) — see
+    // resolveSubagentExecutionOptions(inheritedModelRef) / parent session modelRef.
+    // Requiring tenant-default (or a separately provisioned background_* model)
+    // here blocks enable/publish for properly configured org experts whenever the
+    // tenant default happens to lack a connection, even though workers would run
+    // on the front-desk model. Only explicit fixed/default worker models need a
+    // connection check at governance time; inherit is enforced at dispatch.
     for (const bindingKey of ['background_general', 'background_explore'] as const) {
       const profile = await deps.profileResolver.resolveForSession({
         existingSession: null,
         bindingKey,
       });
       const effective = mergeOrgAgentWorkerRuntimePolicy(profile.version.config, policy);
-      const modelRef = effective.model.strategy === 'inherit'
-        ? deps.defaultModelResolver?.(tenantId)?.ref
-        : effective.model.modelRef;
+      if (effective.model.strategy === 'inherit') continue;
+      const modelRef = effective.model.modelRef;
       const resolved = modelRef ? deps.modelResolver?.(modelRef, tenantId) : null;
       const hasConnection = Boolean(
         resolved &&
@@ -56,8 +63,9 @@ export function createOrgAgentDispatcherRuntimeValidator(deps: DispatcherValidat
           isSubscriptionTransport(resolved.providerOptions?.responsesTransport) ||
           process.env.OPENAI_API_KEY),
       );
-      if (!resolved || !hasConnection)
+      if (!resolved || !hasConnection) {
         blockers.add(`DISPATCHER_WORKER_MODEL_UNAVAILABLE:${bindingKey}`);
+      }
     }
     return [...blockers];
   };

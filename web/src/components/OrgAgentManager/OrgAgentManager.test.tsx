@@ -123,6 +123,11 @@ beforeEach(() => {
   }));
 });
 
+async function expandTemplates() {
+  const expandBtn = await screen.findByRole('button', { name: '展开' });
+  fireEvent.click(expandBtn);
+}
+
 function adminRecord(overrides: Partial<OrgAgentAdminRecord> = {}): OrgAgentAdminRecord {
   return {
     id: 'oa-valid',
@@ -329,8 +334,9 @@ describe('OrgAgentManager - 数据合同与异步隔离', () => {
     render(<OrgAgentManager tenantId="kaiyan" />);
     fireEvent.click(screen.getByTitle('编辑'));
     const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /高级运行设置/ }));
     await waitFor(() => expect(
-      (within(dialog).getByRole('radio', { name: /前台调度器/ }) as HTMLInputElement).checked,
+      (within(dialog).getByRole('radio', { name: /接待员模式/ }) as HTMLInputElement).checked,
     ).toBe(true));
     expect(within(dialog).getByRole('combobox', { name: '企业专家 Worker 模型' }).textContent)
       .toContain('Worker 专用模型');
@@ -357,12 +363,13 @@ describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
       }),
     }));
   });
-  it('可切换为前台调度器并保存不可关闭的强制能力', async () => {
+  it('可切换为接待员模式并保存不可关闭的强制能力', async () => {
     render(<OrgAgentManager tenantId="kaiyan" />);
     fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
     const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /高级运行设置/ }));
     fireEvent.change(within(dialog).getByPlaceholderText('如：产品选型助手'), { target: { value: '前台助手' } });
-    fireEvent.click(within(dialog).getByRole('radio', { name: /前台调度器/ }));
+    fireEvent.click(within(dialog).getByRole('radio', { name: /接待员模式/ }));
     const subagentsSwitch = within(dialog).getByRole('switch', { name: '子 Agent' });
     const backgroundTasksSwitch = within(dialog).getByRole('switch', { name: '后台任务' });
     expect(subagentsSwitch.getAttribute('aria-checked')).toBe('true');
@@ -383,14 +390,15 @@ describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
     }));
   });
 
-  it('前台调度器可保存 Worker 可覆盖默认模型策略', async () => {
+  it('接待员模式可保存 Worker 可覆盖默认模型策略', async () => {
     render(<OrgAgentManager tenantId="kaiyan" />);
     fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
     const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /高级运行设置/ }));
     fireEvent.change(within(dialog).getByPlaceholderText('如：产品选型助手'), {
       target: { value: '可选模型前台' },
     });
-    fireEvent.click(within(dialog).getByRole('radio', { name: /前台调度器/ }));
+    fireEvent.click(within(dialog).getByRole('radio', { name: /接待员模式/ }));
     const strategy = await within(dialog).findByRole('combobox', { name: 'Worker 模型策略' });
     await waitFor(() => expect(
       (within(strategy).getByRole('option', { name: '可覆盖默认模型' }) as HTMLOptionElement).disabled,
@@ -411,6 +419,10 @@ describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
 
   it('渲染 3 张种子模板卡（报价审核 / 客户情报 / 合同风险）', async () => {
     render(<OrgAgentManager tenantId="kaiyan" tenantName="开沿科技" />);
+    expect(await screen.findByRole('button', { name: '展开' })).toBeTruthy();
+    // 模板区默认收起
+    expect(screen.queryByRole('button', { name: '使用此模板' })).toBeNull();
+    await expandTemplates();
     for (const template of API_TEMPLATES) {
       expect(await screen.findByText(template.name)).toBeTruthy();
     }
@@ -427,6 +439,7 @@ describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
 
   it('点击"使用此模板"打开编辑表单并预填名称', async () => {
     render(<OrgAgentManager tenantId="kaiyan" />);
+    await expandTemplates();
     await screen.findByText('报价审核助手');
     const cards = screen.getAllByRole('button', { name: '使用此模板' });
     fireEvent.click(cards[0]);
@@ -440,6 +453,7 @@ describe('OrgAgentManager - 门禁填空 / 模板卡 / 试测按钮', () => {
 
   it('模板卡预填门禁字段：mode=shadow + allowExamples 非空', async () => {
     render(<OrgAgentManager tenantId="kaiyan" />);
+    await expandTemplates();
     await screen.findByText('报价审核助手');
     fireEvent.click(screen.getAllByRole('button', { name: '使用此模板' })[0]);
     const dialog = await screen.findByRole('dialog');
@@ -602,5 +616,68 @@ describe('emptyFormValues 兼容', () => {
     expect(values.guardrailMode).toBe('off');
     expect(values.guardrailAllowExamples).toEqual([]);
     expect(values.guardrailRejectExamples).toEqual([]);
+  });
+});
+
+describe('OrgAgentManager - UX 信息架构 A/B/C', () => {
+  it('模板区默认收起，展开后可见模板卡', async () => {
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    expect(await screen.findByRole('button', { name: '展开' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '使用此模板' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '展开' }));
+    expect(await screen.findByText('报价审核助手')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: '使用此模板' }).length).toBe(API_TEMPLATES.length);
+  });
+
+  it('创建流程不展示钉钉渠道接入；编辑已有专家时可见', async () => {
+    const createView = render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const createDialog = await screen.findByRole('dialog');
+    expect(within(createDialog).queryByRole('button', { name: /渠道接入/ })).toBeNull();
+    expect(within(createDialog).queryByText(/钉钉成员账号/)).toBeNull();
+    createView.unmount();
+
+    const agent = adminRecord();
+    mockUseOrgAgentAdmin.mockReturnValue({
+      agents: [agent], dataIssues: [], loading: false, error: null, refresh: vi.fn(),
+      loadConfiguration: mockLoadConfiguration, saveConfiguration: mockSaveConfiguration,
+      updateStatus: mockUpdateStatus, uploadAvatar: mockUploadAvatar,
+    });
+    mockLoadConfiguration.mockResolvedValue({
+      resource: { agentId: agent.id, tenantId: agent.tenantId, kind: 'org_agent', ownerUserId: 'admin', status: 'enabled', currentVersionId: 'v1', revision: 1 },
+      version: { versionId: 'v1', definition: {
+        schemaVersion: 1, name: agent.name, description: agent.description, starterPrompts: [],
+        instructions: agent.instructions, skills: [], knowledge: [], runtime: emptyFormValues().runtime,
+        guardrail: agent.guardrail, source: 'governance',
+      } },
+      assignment: { version: 1, assignments: [{ assigneeType: 'everyone', effect: 'allow', origin: 'direct' }] },
+    });
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByTitle('编辑'));
+    const editDialog = await screen.findByRole('dialog');
+    expect(within(editDialog).getByRole('button', { name: /渠道接入/ })).toBeTruthy();
+  });
+
+  it('高级运行设置默认收起，展开后可见工作模式与人话文案', async () => {
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const dialog = await screen.findByRole('dialog');
+    const advancedToggle = within(dialog).getByRole('button', { name: /高级运行设置/ });
+    expect(advancedToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(within(dialog).queryByRole('radio', { name: /接待员模式/ })).toBeNull();
+    expect(within(dialog).queryByRole('radio', { name: /直接处理/ })).toBeNull();
+    fireEvent.click(advancedToggle);
+    expect(advancedToggle.getAttribute('aria-expanded')).toBe('true');
+    expect(within(dialog).getByRole('radio', { name: /接待员模式/ })).toBeTruthy();
+    expect(within(dialog).getByRole('radio', { name: /直接处理/ })).toBeTruthy();
+    expect(within(dialog).getByText(/高级 · 多数情况不用改/)).toBeTruthy();
+  });
+
+  it('能力区使用人话「这个专家自带的技能」', async () => {
+    render(<OrgAgentManager tenantId="kaiyan" />);
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('这个专家自带的技能')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /只回答职责内的问题/ })).toBeTruthy();
   });
 });

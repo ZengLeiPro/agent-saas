@@ -17,7 +17,7 @@
   "version": {
     "marketingVersion": "1.0.0",
     "iosBuildNumber": 6,
-    "androidVersionCode": null,
+    "androidVersionCode": 1,
     "latestPublished": {
       "marketingVersion": null,
       "iosBuildNumber": null,
@@ -26,13 +26,13 @@
   },
   "target": {
     "profile": "production",
-    "distribution": null,
+    "distribution": "enterprise",
     "gitSha": null
   },
   "verification": {
     "identity": "verified",
     "versions": "verified",
-    "distribution": "pending-external-verification"
+    "distribution": "verified"
   },
   "oauthCallback": {
     "enabled": {
@@ -41,9 +41,14 @@
       "production": false
     },
     "profiles": {
-      "development": ["agent-saas://oauth/callback"],
-      "preview": ["agent-saas://oauth/callback"],
+      "development": [
+        "agent-saas://oauth/callback"
+      ],
+      "preview": [
+        "agent-saas://oauth/callback"
+      ],
       "production": []
     }
   }
 }
+

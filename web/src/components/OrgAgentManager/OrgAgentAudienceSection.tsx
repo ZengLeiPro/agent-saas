@@ -24,7 +24,7 @@ export function OrgAgentAudienceSection({
 
   return (
     <div className="space-y-1.5 rounded-xl border p-4">
-      <Label>访问范围</Label>
+      <Label>谁能用</Label>
       <div className="flex flex-wrap items-center gap-4 text-sm">
         <label className="flex items-center gap-1.5">
           <input type="radio" checked={values.audienceExposure === 'all'} onChange={() => onChange({ audienceExposure: 'all' })} />

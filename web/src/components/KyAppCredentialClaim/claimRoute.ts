@@ -6,3 +6,7 @@ export function credentialClaimUrl(installationId: string, ticket?: string): str
   const base = `${window.location.origin}/ky-app/credential-claim/${encodeURIComponent(installationId)}`;
   return ticket ? `${base}#ticket=${encodeURIComponent(ticket)}` : base;
 }
+
+export function navigateCredentialClaim(installationId: string): void {
+  window.location.assign(credentialClaimUrl(installationId));
+}

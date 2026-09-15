@@ -56,4 +56,65 @@ describe('Org Agent dispatcher runtime readiness', () => {
     expect(modelResolver).toHaveBeenCalledWith('group/worker-default', 'tenant-1');
     expect(modelResolver).not.toHaveBeenCalledWith('group/tenant-default', 'tenant-1');
   });
+
+  it('Worker inherit 不因 background_* / 租户默认模型不可用而阻断启用', async () => {
+    const modelResolver = vi.fn(() => null);
+    const validate = createOrgAgentDispatcherRuntimeValidator({
+      backgroundTasks: {} as never,
+      profileResolver: profileResolver() as never,
+      defaultModelResolver: () => ({ ref: 'group/tenant-default' }),
+      modelResolver,
+    });
+    const policy = orgAgentRuntimePolicySchema.parse({
+      ...structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
+      executionMode: 'dispatcher',
+      workerModel: { strategy: 'inherit' },
+    });
+
+    await expect(validate('tenant-1', policy)).resolves.toEqual([]);
+    expect(modelResolver).not.toHaveBeenCalled();
+  });
+
+  it('前台固定模型 + Worker inherit：合并后按前台 modelRef 校验连接', async () => {
+    const modelResolver = vi.fn((ref: string) =>
+      ref === 'group/front'
+        ? { model: 'provider/front', connection: { apiKey: 'front-key' } }
+        : null,
+    );
+    const validate = createOrgAgentDispatcherRuntimeValidator({
+      backgroundTasks: {} as never,
+      profileResolver: profileResolver() as never,
+      defaultModelResolver: () => ({ ref: 'group/tenant-default' }),
+      modelResolver,
+    });
+    const policy = orgAgentRuntimePolicySchema.parse({
+      ...structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
+      executionMode: 'dispatcher',
+      model: { strategy: 'fixed', modelRef: 'group/front' },
+      workerModel: { strategy: 'inherit' },
+    });
+
+    await expect(validate('tenant-1', policy)).resolves.toEqual([]);
+    expect(modelResolver).toHaveBeenCalledWith('group/front', 'tenant-1');
+    expect(modelResolver).not.toHaveBeenCalledWith('group/tenant-default', 'tenant-1');
+  });
+
+  it('Worker fixed 模型缺少连接时仍 fail-closed，并带 bindingKey', async () => {
+    const validate = createOrgAgentDispatcherRuntimeValidator({
+      backgroundTasks: {} as never,
+      profileResolver: profileResolver() as never,
+      defaultModelResolver: () => ({ ref: 'group/tenant-default' }),
+      modelResolver: () => null,
+    });
+    const policy = orgAgentRuntimePolicySchema.parse({
+      ...structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
+      executionMode: 'dispatcher',
+      workerModel: { strategy: 'fixed', modelRef: 'group/missing-worker' },
+    });
+
+    await expect(validate('tenant-1', policy)).resolves.toEqual([
+      'DISPATCHER_WORKER_MODEL_UNAVAILABLE:background_general',
+      'DISPATCHER_WORKER_MODEL_UNAVAILABLE:background_explore',
+    ]);
+  });
 });

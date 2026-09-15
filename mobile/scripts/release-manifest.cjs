@@ -1052,6 +1052,7 @@ module.exports = {
   assertProductionReady,
   assertStaticExpoConfigHasNoReleaseFields,
   compareSemver,
+  parseSemver,
   createArtifactIdentity,
   createExpoConfig,
   loadRepositoryInputs,

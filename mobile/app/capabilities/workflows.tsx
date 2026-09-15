@@ -18,6 +18,7 @@ import {
 } from '../../src/components/capabilities/ScenarioDetailSheet';
 import { ScenarioReplayModal } from '../../src/components/capabilities/ScenarioReplayModal';
 import { WorkflowCard } from '../../src/components/capabilities/WorkflowCard';
+import { ResponsiveCardGrid } from '../../src/components/layout';
 import { WorkflowFilterBar } from '../../src/components/capabilities/WorkflowFilterBar';
 import { EmptyState } from '../../src/components/ui';
 import { EntityIcons } from '../../src/lib/icons';
@@ -171,17 +172,19 @@ export default function CapabilityWorkflowsScreen() {
                 onAction={() => setFilters(EMPTY_WORKFLOW_FILTERS)}
               />
             ) : (
-              scenarios.map((scenario) => (
-                <WorkflowCard
-                  key={scenario.id}
-                  scenario={scenario}
-                  roleLabels={roleLabels}
-                  onOpenDetail={setDetail}
-                  onReplay={setReplay}
-                  onTry={(item) => handleAction('chat', item)}
-                  testID={`workflow-card-${scenario.id}`}
-                />
-              ))
+              <ResponsiveCardGrid testID="workflows-card-grid">
+                {scenarios.map((scenario) => (
+                  <WorkflowCard
+                    key={scenario.id}
+                    scenario={scenario}
+                    roleLabels={roleLabels}
+                    onOpenDetail={setDetail}
+                    onReplay={setReplay}
+                    onTry={(item) => handleAction('chat', item)}
+                    testID={`workflow-card-${scenario.id}`}
+                  />
+                ))}
+              </ResponsiveCardGrid>
             )}
           </>
         )}

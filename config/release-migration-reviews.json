@@ -39115,7 +39115,7 @@
         },
         {
           "path": "scripts/release/migration-plan.mjs",
-          "digest": "sha256:e45d2f292fb91de79e6724edb7418b6c571e1b2e1f74e73ddb43b8744f082439"
+          "digest": "sha256:6dafb6879274b26492d0086bbb67eef3acdbfd823a44be9d1941857634f387be"
         },
         {
           "path": "scripts/release/migration-plan.test.mjs",
@@ -42728,6 +42728,35 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        }
+      ]
+    },
+    {
+      "baselineSha": "27fea278e5d883dd3a5d8fa99067ec6b4c853426",
+      "files": [
+        {
+          "path": "server/src/data/externalClients/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bd3f6d9073012451b5313561485830a65cd5ba2dd5f97eb8f95a65aab87589e3",
+          "classification": "expand",
+          "reason": "新增外部调用身份专用 PostgreSQL 存储并在 advisory lock 内幂等执行新表初始化；运行时只读写本次新增表，不改动或回填既有结构。"
+        },
+        {
+          "path": "server/src/data/externalClients/schema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bfff29fe5d316525058f44676eb1e9b24e8a1edcb1eea1052e818f2b66e88e03",
+          "classification": "expand",
+          "reason": "只新增 API Client 表、主键、Key 哈希唯一约束、状态约束和两个普通查询索引；无删除、收窄、重命名或历史数据改写。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/data/externalClients/store.pg.test.ts",
+          "digest": "sha256:c3ded59e527ed51fcb866586864114dcd9a905aeb17b6c4e3395161a94b33a7f"
+        },
+        {
+          "path": "docs/release/外部Agent调用身份P0迁移审核-20260915.md",
+          "digest": "sha256:ffecb42f58f630f5ceb2bab9d7011cf3247caae26817653da3a01eb18e972dca"
         }
       ]
     }

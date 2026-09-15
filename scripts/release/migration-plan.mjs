@@ -106,6 +106,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/data/directoryGroups/store.ts',
   'server/src/data/entitlements/store.ts',
   'server/src/data/environments/store.ts',
+  'server/src/data/externalClients/store.ts',
   'server/src/data/feedback/store.ts',
   'server/src/data/governance-audit/store.ts',
   'server/src/data/guardrail/pgGuardrailEventStore.ts',

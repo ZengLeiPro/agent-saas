@@ -2,6 +2,34 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "path": "server/src/data/externalClients/store.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:bd3f6d9073012451b5313561485830a65cd5ba2dd5f97eb8f95a65aab87589e3",
+      "checks": [
+        {
+          "id": "external-agent-api-client-store-schema",
+          "configPath": "runtimeEventStore",
+          "description": "外部 Agent API Client 启动存储对应的表、约束和查询索引满足调用身份契约",
+          "sql": "WITH target AS (SELECT to_regclass($1 || '_external_api_clients') AS oid), expected(column_name,data_type,not_null) AS (VALUES ('client_id','text',true),('tenant_id','text',true),('service_account_user_id','text',true),('name','text',true),('key_hash','text',true),('key_prefix','text',true),('scopes','text[]',true),('allowed_connection_ids','text[]',true),('status','text',true),('expires_at','timestamptz',false),('last_used_at','timestamptz',false),('created_at','timestamptz',true),('created_by','text',true),('updated_at','timestamptz',true),('updated_by','text',true),('revoked_at','timestamptz',false),('revoked_by','text',false)), columns_ok AS (SELECT t.oid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attname=e.column_name AND a.attnum>0 AND NOT a.attisdropped WHERE a.attname IS NULL OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.not_null) AND (SELECT count(*)=17 FROM pg_attribute a WHERE a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped) AS ok FROM target t), constraints_ok AS (SELECT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='client_id' WHERE c.conrelid=t.oid AND c.contype='p' AND c.convalidated AND c.conkey=ARRAY[a.attnum]) AND EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='key_hash' WHERE c.conrelid=t.oid AND c.contype='u' AND c.convalidated AND c.conkey=ARRAY[a.attnum]) AND EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=t.oid AND c.contype='c' AND c.convalidated AND pg_get_constraintdef(c.oid) LIKE '%status%active%revoked%') AS ok FROM target t), indexes_ok AS (SELECT COALESCE((SELECT i.indisvalid AND i.indisready AND NOT i.indisunique AND i.indnkeyatts=2 AND i.indpred IS NULL AND i.indexprs IS NULL FROM pg_index i WHERE i.indexrelid=to_regclass(left($1 || '_external_api_clients_tenant_created_idx',63)) AND i.indrelid=t.oid),false) AND COALESCE((SELECT i.indisvalid AND i.indisready AND NOT i.indisunique AND i.indnkeyatts=1 AND i.indpred IS NULL AND i.indexprs IS NULL FROM pg_index i WHERE i.indexrelid=to_regclass(left($1 || '_external_api_clients_service_account_idx',63)) AND i.indrelid=t.oid),false) AS ok FROM target t) SELECT columns_ok.ok AND constraints_ok.ok AND indexes_ok.ok AS ok FROM columns_ok,constraints_ok,indexes_ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/externalClients/schema.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:bfff29fe5d316525058f44676eb1e9b24e8a1edcb1eea1052e818f2b66e88e03",
+      "checks": [
+        {
+          "id": "external-agent-api-client-schema",
+          "configPath": "runtimeEventStore",
+          "description": "外部 Agent API Client 表的完整列定义、密钥唯一约束、状态约束和查询索引满足调用身份契约",
+          "sql": "WITH target AS (SELECT to_regclass($1 || '_external_api_clients') AS oid), expected(column_name,data_type,not_null) AS (VALUES ('client_id','text',true),('tenant_id','text',true),('service_account_user_id','text',true),('name','text',true),('key_hash','text',true),('key_prefix','text',true),('scopes','text[]',true),('allowed_connection_ids','text[]',true),('status','text',true),('expires_at','timestamptz',false),('last_used_at','timestamptz',false),('created_at','timestamptz',true),('created_by','text',true),('updated_at','timestamptz',true),('updated_by','text',true),('revoked_at','timestamptz',false),('revoked_by','text',false)), columns_ok AS (SELECT t.oid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM expected e LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attname=e.column_name AND a.attnum>0 AND NOT a.attisdropped WHERE a.attname IS NULL OR a.atttypid IS DISTINCT FROM to_regtype(e.data_type) OR a.attnotnull IS DISTINCT FROM e.not_null) AND (SELECT count(*)=17 FROM pg_attribute a WHERE a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped) AS ok FROM target t), constraints_ok AS (SELECT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='client_id' WHERE c.conrelid=t.oid AND c.contype='p' AND c.convalidated AND c.conkey=ARRAY[a.attnum]) AND EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='key_hash' WHERE c.conrelid=t.oid AND c.contype='u' AND c.convalidated AND c.conkey=ARRAY[a.attnum]) AND EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=t.oid AND c.contype='c' AND c.convalidated AND pg_get_constraintdef(c.oid) LIKE '%status%active%revoked%') AS ok FROM target t), indexes_ok AS (SELECT COALESCE((SELECT i.indisvalid AND i.indisready AND NOT i.indisunique AND i.indnkeyatts=2 AND i.indpred IS NULL AND i.indexprs IS NULL FROM pg_index i WHERE i.indexrelid=to_regclass(left($1 || '_external_api_clients_tenant_created_idx',63)) AND i.indrelid=t.oid),false) AND COALESCE((SELECT i.indisvalid AND i.indisready AND NOT i.indisunique AND i.indnkeyatts=1 AND i.indpred IS NULL AND i.indexprs IS NULL FROM pg_index i WHERE i.indexrelid=to_regclass(left($1 || '_external_api_clients_service_account_idx',63)) AND i.indrelid=t.oid),false) AS ok FROM target t) SELECT columns_ok.ok AND constraints_ok.ok AND indexes_ok.ok AS ok FROM columns_ok,constraints_ok,indexes_ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
       "path": "server/src/data/toolDescriptionStore.ts",
       "baselineDigest": null,
       "targetDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",

@@ -95,7 +95,7 @@ import { createConnectorDictionaryOrgRouter } from '../routes/connectorDictionar
 import { createImageGenPricingAdminRouter } from '../routes/imageGenPricingAdmin.js';
 import { createEgressConfigAdminRouter } from '../routes/egressConfigAdmin.js';
 import { createMemoryPollingAdminRouter } from '../routes/memoryPollingAdmin.js';
-import { createSystemPromptsAdminRouter } from '../routes/systemPromptsAdmin.js';
+import { createSystemPromptsAdminRouter } from '../routes/systemPromptsAdmin.js'; import { createExternalAgentClientsAdminRouter } from '../routes/externalAgentClients.js'; import { PgExternalClientStore } from '../data/externalClients/index.js';
 import { createAgentRuntimeProfilesAdminRouter } from '../routes/agentRuntimeProfilesAdmin.js';
 import { createConfigStatusAdminRouter } from '../routes/configStatusAdmin.js';
 import { createAdminConfigOperationsRouter } from '../routes/adminConfigOperations.js';
@@ -167,7 +167,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
-  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus }));
+  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus })); app.use('/api/admin/external-agent-clients', requireAdmin, createExternalAgentClientsAdminRouter({ store: runtime.runtimePgEventStore ? new PgExternalClientStore(runtime.runtimePgEventStore.pool, { tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined }) : undefined, userStore: runtime.userStore, tenantStore: runtime.tenantStore }));
   if (runtime.sessionAutomationStore && runtime.sessionAutomationCommandService && runtime.sessionCatalog) {
     app.use('/api', createSessionAutomationsRouter({ store: runtime.sessionAutomationStore,
       service: runtime.sessionAutomationCommandService, sessionCatalog: runtime.sessionCatalog,

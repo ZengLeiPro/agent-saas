@@ -14,41 +14,38 @@ const fence: RemoteAttemptFence = {
   startBeforeMs: 1_789_404_849_702,
 };
 
+function mockRun() {
+  return vi.fn<(args: string[], options?: { input?: string; timeoutMs?: number }) => Promise<{
+    stdout: string; stderr: string; exitCode: number; signal: null;
+  }>>().mockResolvedValue({ stdout: '{}', stderr: '', exitCode: 1, signal: null });
+}
+
+async function queryWith(run: ReturnType<typeof mockRun>, podUid: string) {
+  await queryRemoteAttemptEvidence({
+    config: {
+      authToken: 'test-token',
+      sandboxContainerName: 'sandbox',
+      workspaceMountPath: '/workspace',
+    } as AcsOrchestratorConfig,
+    kubectl: { run } as unknown as Kubectl,
+    sandboxName: 'as-one',
+    fence: { ...fence, podUid },
+    action: 'status',
+  });
+  expect(run).toHaveBeenCalledOnce();
+  return run.mock.calls[0][0];
+}
+
 describe('queryRemoteAttemptEvidence', () => {
   it('passes the fence Pod UID to attempt_control.py so Downward API `uid` cannot fail the RPC', async () => {
-    const run = vi.fn(async () => ({ stdout: '{}', stderr: '', exitCode: 1, signal: null }));
-    await queryRemoteAttemptEvidence({
-      config: {
-        authToken: 'test-token',
-        sandboxContainerName: 'sandbox',
-        workspaceMountPath: '/workspace',
-      } as AcsOrchestratorConfig,
-      kubectl: { run } as unknown as Kubectl,
-      sandboxName: 'as-one',
-      fence,
-      action: 'status',
-    });
-    expect(run).toHaveBeenCalledOnce();
-    const args = run.mock.calls[0]?.[0] as string[];
+    const args = await queryWith(mockRun(), fence.podUid);
     expect(args).toContain('/app/acs-orchestrator/dist/remote/attempt_control.py');
     expect(args).toContain(`--owned-pod-uid=${fence.podUid}`);
     expect(args.at(-1)).toBe(`--owned-pod-uid=${fence.podUid}`);
   });
 
   it('omits the flag when the fence Pod UID is the unusable Downward API literal', async () => {
-    const run = vi.fn(async () => ({ stdout: '{}', stderr: '', exitCode: 1, signal: null }));
-    await queryRemoteAttemptEvidence({
-      config: {
-        authToken: 'test-token',
-        sandboxContainerName: 'sandbox',
-        workspaceMountPath: '/workspace',
-      } as AcsOrchestratorConfig,
-      kubectl: { run } as unknown as Kubectl,
-      sandboxName: 'as-one',
-      fence: { ...fence, podUid: 'uid' },
-      action: 'status',
-    });
-    const args = run.mock.calls[0]?.[0] as string[];
+    const args = await queryWith(mockRun(), 'uid');
     expect(args.join(' ')).not.toContain('--owned-pod-uid=');
   });
 });

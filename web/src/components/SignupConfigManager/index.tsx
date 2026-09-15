@@ -149,6 +149,13 @@ function formatTime(iso: string): string {
   }
 }
 
+
+function maskAccessKeyId(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 8) return trimmed ? "****" : "";
+  return `${trimmed.slice(0, 4)}****${trimmed.slice(-4)}`;
+}
+
 export function SignupConfigManager() {
   // 只读平台 admin：保存并生效 / 清除 SMS Secret disabled
   const { platformReadOnly } = useAuth();
@@ -156,6 +163,7 @@ export function SignupConfigManager() {
   const [draft, setDraft] = useState<SignupDraft>(() => draftFromConfig(null));
   const [allowedModelsText, setAllowedModelsText] = useState("");
   const [secretText, setSecretText] = useState("");
+  const [accessKeyIdRevealed, setAccessKeyIdRevealed] = useState(false);
   const [clearSecret, setClearSecret] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -175,6 +183,7 @@ export function SignupConfigManager() {
     setAllowedModelsText((response.config.allowedModels ?? []).join("\n"));
     setSecretText("");
     setClearSecret(false);
+    setAccessKeyIdRevealed(false);
     setDirty(false);
     setSavedAt(null);
   }, []);
@@ -409,11 +418,27 @@ export function SignupConfigManager() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="signup-sms-access-key-id">AccessKey ID</Label>
-                <Input
-                  id="signup-sms-access-key-id"
-                  value={draft.sms.accessKeyId}
-                  onChange={(event) => updateSms({ accessKeyId: event.target.value })}
-                />
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="signup-sms-access-key-id"
+                    value={accessKeyIdRevealed ? draft.sms.accessKeyId : maskAccessKeyId(draft.sms.accessKeyId)}
+                    readOnly={!accessKeyIdRevealed}
+                    onChange={(event) => updateSms({ accessKeyId: event.target.value })}
+                    autoComplete="off"
+                    aria-label="AccessKey ID"
+                    data-testid="signup-access-key-id"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!draft.sms.accessKeyId.trim()}
+                    onClick={() => setAccessKeyIdRevealed((current) => !current)}
+                  >
+                    {accessKeyIdRevealed ? "隐藏" : "显示"}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">默认脱敏显示；仅在需要核对或修改时点「显示」。</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="signup-sms-sign-name">短信签名</Label>

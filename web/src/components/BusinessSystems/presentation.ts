@@ -4,6 +4,7 @@ const STATUS_LABELS: Readonly<Record<string, string>> = {
   enabled: '已启用',
   disabled: '已停用',
   running: '处理中',
+  waiting: '等待处理',
   waiting_external: '等待外部处理',
   completed: '已完成',
   failed: '处理失败',

@@ -51,6 +51,10 @@ export function SystemDeliveryPage({
   }
   const currentExecution = embedded ? selectedExecution : executionId;
   function started(result: OnboardResponse) {
+    if (result.authorization) {
+      navigateCredentialClaim(result.authorization.installationId);
+      return;
+    }
     open(result.execution.executionId);
   }
   return currentExecution ? (
@@ -159,6 +163,7 @@ function DeliveryExecution({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const execution = resource.data?.execution;
   useEffect(() => {
     if (execution?.status !== 'running') return;
@@ -169,6 +174,7 @@ function DeliveryExecution({
     if (!execution || busy) return;
     setBusy(true);
     setError('');
+    setNotice('');
     try {
       const result = await kyAppPost<OnboardResponse>(
         execution.request?.mode === 'existing'
@@ -180,6 +186,11 @@ function DeliveryExecution({
         navigateCredentialClaim(result.authorization.installationId);
         return;
       }
+      setNotice(
+        result.execution.status === 'completed'
+          ? '接入进度已更新完成。'
+          : `已重新检查：${connectionWaitingMessage(result.execution.lastErrorCode)}`,
+      );
       resource.reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '继续交付失败');
@@ -201,6 +212,7 @@ function DeliveryExecution({
     <section className="space-y-4 p-4">
       <h2 className="text-lg font-semibold">组织接入进度</h2>
       {error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
       {!execution ? (
         <ResourceState error={resource.error} retry={resource.reload} />
       ) : (

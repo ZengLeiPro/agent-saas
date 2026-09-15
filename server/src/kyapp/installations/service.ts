@@ -151,18 +151,50 @@ export class KyAppInstallationService {
   async verifyDomain(
     installationId: string,
     actor: GovernanceActor,
+    reusableInstallations: readonly KyAppInstallation[] = [],
   ): Promise<{ installation: KyAppInstallation; result: DomainVerificationResult }> {
     const installation = await this.require(installationId);
-    if (!installation.domainVerificationToken) {
-      throw new KyAppInstallationError(
-        '该实例没有待验证的域名归属令牌',
-        'verification_unavailable',
-      );
-    }
     const hostname = new URL(installation.baseUrl).hostname;
-    const result = await this.probeDomainOwnership(hostname, installation.domainVerificationToken);
+    let result: DomainVerificationResult = installation.domainVerificationToken
+      ? await this.probeDomainOwnership(hostname, installation.domainVerificationToken)
+      : {
+          verified: false,
+          method: 'dns_txt',
+          hostname,
+          detail: '该实例没有待验证的域名归属令牌',
+        };
+    let verificationSource: 'installation' | 'same_system_domain' = 'installation';
     if (!result.verified) {
-      throw new KyAppInstallationError(result.detail, 'domain_verification_failed');
+      for (const candidate of reusableInstallations) {
+        if (
+          candidate.installationId === installation.installationId ||
+          candidate.systemId !== installation.systemId ||
+          candidate.status === 'deleted' ||
+          !candidate.domainVerifiedAt ||
+          !candidate.domainVerificationToken ||
+          normalizedHostname(candidate.baseUrl) !== hostname.toLowerCase()
+        )
+          continue;
+        const reusableResult = await this.probeDomainOwnership(
+          hostname,
+          candidate.domainVerificationToken,
+        );
+        if (!reusableResult.verified) continue;
+        result = {
+          ...reusableResult,
+          detail: '同一业务系统的相同域名已通过实时归属复验',
+        };
+        verificationSource = 'same_system_domain';
+        break;
+      }
+    }
+    if (!result.verified) {
+      throw new KyAppInstallationError(
+        result.detail,
+        installation.domainVerificationToken
+          ? 'domain_verification_failed'
+          : 'verification_unavailable',
+      );
     }
     const updated = await this.audited(
       actor,
@@ -171,7 +203,7 @@ export class KyAppInstallationService {
         targetId: installationId,
         targetTenantId: installation.tenantId,
         purpose: 'app_installation_provisioning',
-        metadata: { hostname, verificationMethod: result.method },
+        metadata: { hostname, verificationMethod: result.method, verificationSource },
       },
       async () => {
         const value = await this.options.systems.markDomainVerified(installationId, actor.sub);
@@ -444,6 +476,14 @@ function errorKind(error: unknown): string {
   if (error instanceof KyAppSystemConflictError) return 'conflict';
   if (error instanceof KyAppSystemNotFoundError) return 'not_found';
   return 'internal';
+}
+
+function normalizedHostname(value: string): string | null {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
 }
 
 /** §2.5：跨站独立域，登记的 origin 必须是不含路径的 origin。 */

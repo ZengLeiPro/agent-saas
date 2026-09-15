@@ -5,6 +5,7 @@ describe('业务系统展示转换', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('技术状态统一转换为中文，未知值不原样显示', () => {
+    expect(businessStatusLabel('waiting')).toBe('等待处理');
     expect(businessStatusLabel('waiting_external')).toBe('等待外部处理');
     expect(businessStatusLabel('ready_required')).toBe('等待业务服务就绪');
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

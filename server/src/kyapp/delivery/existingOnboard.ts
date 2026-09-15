@@ -157,6 +157,21 @@ export class KyAppExistingOnboardService {
       throw new KyAppInstallationError('技术联系人必须是所选组织的有效成员', 'invalid_contact');
   }
 
+  private async verifyDomain(installationId: string, systemId: string, actor: GovernanceActor) {
+    const reusableInstallations = (
+      await Promise.all(
+        this.options.tenants
+          .listAllStrict()
+          .map((tenant) => this.options.systems.listInstallationsForTenant(tenant.id)),
+      )
+    ).flat();
+    return this.options.installations.verifyDomain(
+      installationId,
+      actor,
+      reusableInstallations.filter((candidate) => candidate.systemId === systemId),
+    );
+  }
+
   private async run(request: FrozenRequest, actor: GovernanceActor): Promise<KyAppOnboardResult> {
     await this.validateContact(request.tenantId, request.techContactUserId);
     const definition = await this.options.systems.getDefinition(request.systemId);
@@ -226,19 +241,18 @@ export class KyAppExistingOnboardService {
       result.domainVerification = domain ?? null;
       if (this.options.useV2?.(request.systemId)) {
         if (!installation.domainVerifiedAt) {
-          const verified =
-            installation.domainVerificationToken &&
-            (
-              await this.options.installations.probeDomainOwnership(
-                new URL(installation.baseUrl).hostname,
-                installation.domainVerificationToken,
-              )
-            ).verified;
-          if (!verified)
-            return wait('installation_credential', 'domain_verification_required', domain);
-          installation = (
-            await this.options.installations.verifyDomain(request.installationId, actor)
-          ).installation;
+          try {
+            installation = (
+              await this.verifyDomain(request.installationId, request.systemId, actor)
+            ).installation;
+          } catch (error) {
+            if (
+              error instanceof KyAppInstallationError &&
+              ['domain_verification_failed', 'verification_unavailable'].includes(error.code)
+            )
+              return wait('installation_credential', 'domain_verification_required', domain);
+            throw error;
+          }
         }
         if (
           installation.authMode !== 'v2_asymmetric' ||
@@ -286,19 +300,17 @@ export class KyAppExistingOnboardService {
       step('installation_credential', 'completed');
       step('enable', 'pending');
       if (!installation.domainVerifiedAt) {
-        if (
-          !installation.domainVerificationToken ||
-          !(
-            await this.options.installations.probeDomainOwnership(
-              new URL(installation.baseUrl).hostname,
-              installation.domainVerificationToken,
-            )
-          ).verified
-        )
-          return wait('enable', 'domain_verification_required', domain);
-        installation = (
-          await this.options.installations.verifyDomain(request.installationId, actor)
-        ).installation;
+        try {
+          installation = (await this.verifyDomain(request.installationId, request.systemId, actor))
+            .installation;
+        } catch (error) {
+          if (
+            error instanceof KyAppInstallationError &&
+            ['domain_verification_failed', 'verification_unavailable'].includes(error.code)
+          )
+            return wait('enable', 'domain_verification_required', domain);
+          throw error;
+        }
       }
       const runtime = await this.options.runtimeStore.get(request.installationId);
       if (runtime?.readyStatus !== 'ok' || runtime.manifestDigest !== request.digest)

@@ -58,7 +58,7 @@ export default function AppearanceLayoutSettingsScreen() {
 
       <SettingsGroup
         title="宽屏布局"
-        footnote="iPad / 宽屏（窗口宽度 ≥ 768）采用左侧导航 chrome 与会话列表|详情并排；默认单栏会话 chrome，会话列表始终显示头像。业务系统/apps 不进入移动导航。"
+        footnote="iPad / 宽屏（窗口宽度 ≥ 768）采用左侧导航 chrome，会话/文件/定时任务/设置列表|详情并排；默认单栏会话 chrome，会话列表始终显示头像。业务系统/apps 不进入移动导航。"
       >
         <ListRow title="会话 chrome" value="单栏（默认）" />
         <ListRow title="会话列表头像" value="始终显示" />

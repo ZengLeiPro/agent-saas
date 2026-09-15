@@ -12,6 +12,8 @@ export interface SettingsScrollViewProps {
   onRefresh?: () => void;
   testID?: string;
   accessibilityLabel?: string;
+  /** When false, skip md+ FORM maxWidth (e.g. settings master list in split). Default true. */
+  constrainWidth?: boolean;
 }
 
 export function SettingsScrollView({
@@ -20,6 +22,7 @@ export function SettingsScrollView({
   onRefresh,
   testID,
   accessibilityLabel,
+  constrainWidth = true,
 }: SettingsScrollViewProps) {
   const insets = useSafeAreaInsets();
   const { isMdUp } = useBreakpoint();
@@ -32,11 +35,13 @@ export function SettingsScrollView({
     },
   }));
 
+  const widthStyle = constrainWidth ? formContentMaxWidthStyle(isMdUp) : { width: '100%' as const };
+
   return (
     <View style={styles.container} testID={testID} accessibilityLabel={accessibilityLabel}>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.content, formContentMaxWidthStyle(isMdUp)]}
+        contentContainerStyle={[styles.content, widthStyle]}
         refreshControl={
           onRefresh ? (
             <RefreshControl refreshing={refreshing ?? false} onRefresh={onRefresh} />

@@ -9,11 +9,13 @@
  *
  * 刻意保留的移动端专属元素：顶部账号卡（E2E `account-username`）、
  * 底部退出登录按钮（E2E `logout-button`）与版本号。
+ *
+ * P3 md+：section list | detail pane（复用 `app/settings/*` 屏）；phone 仍 push。
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Text, View } from "react-native";
 import { Image } from "expo-image";
-import { useRouter, useFocusEffect } from "expo-router";
+import { Stack, useRouter, useFocusEffect } from "expo-router";
 import Constants from "expo-constants";
 import { useAuth } from "../../../src/contexts/AuthContext";
 import { mobileConfig } from "../../../src/platform/mobileConfig";
@@ -22,6 +24,7 @@ import {
   spacing,
   fontScale,
   fontWeight,
+  useColors,
   useThemedStyles,
 } from "../../../src/theme";
 import { Button, ListRow } from "../../../src/components/ui";
@@ -31,16 +34,24 @@ import {
   SettingsGroup,
   SettingsScrollView,
 } from "../../../src/components/settings/SettingsSections";
+import { MasterDetailSplit } from "../../../src/components/layout";
+import { useBreakpoint } from "../../../src/hooks/useBreakpoint";
 import {
   groupPersonalSettingsSections,
+  PERSONAL_SETTINGS_SECTIONS,
   type PersonalSettingsSection,
   type PersonalSettingsSectionId,
 } from "../../../src/lib/settings/personalSettingsSections";
+import {
+  isSettingsPaneSection,
+  type SettingsPaneSectionId,
+} from "../../../src/lib/settings/settingsPaneSections";
 import { DEFAULT_TENANT_SETTINGS, fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, TenantFeatureFlags } from "@agent/shared";
 import { isFilesEntryVisible } from "../../../src/lib/filesEntry";
 import { isV1RouteAllowed } from "../../../src/v1/v1Capabilities";
 import { getV1BuildProfile } from "../../../src/v1/v1Runtime";
+import { SettingsPaneDetail } from "./SettingsPaneDetail";
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.0.0";
 const AVATAR_SIZE = 40;
@@ -53,9 +64,12 @@ export default function SettingsScreen() {
   );
   const { user, logout } = useAuth();
   const router = useRouter();
+  const colors = useColors();
+  const { isMdUp } = useBreakpoint();
   const tenantFeatures: TenantFeatureFlags =
     user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features;
   const [trashVisible, setTrashVisible] = useState(false);
+  const [paneSectionId, setPaneSectionId] = useState<SettingsPaneSectionId | null>(null);
 
   // V1 范围裁剪（M00-01）：生产构建按 allowlist 决定分区可见性。
   const v1Profile = getV1BuildProfile();
@@ -128,6 +142,14 @@ export default function SettingsScreen() {
     ]);
   }, [logout]);
 
+  const openAccountSecurity = useCallback(() => {
+    if (isMdUp) {
+      setPaneSectionId("account-security");
+      return;
+    }
+    router.push("/settings/account-security");
+  }, [isMdUp, router]);
+
   const openSection = useCallback(
     (section: PersonalSettingsSection) => {
       if (section.target.kind === "sheet") {
@@ -135,64 +157,102 @@ export default function SettingsScreen() {
         return;
       }
       if (section.target.kind === "unavailable") return;
+      if (isMdUp && isSettingsPaneSection(section.id)) {
+        setPaneSectionId(section.id);
+        return;
+      }
       // 落点来自注册表（`src/lib/settings/personalSettingsSections.ts`），
       // 其 V1 分类由该模块的单测断言，这里不再重复静态字符串。
       const pathname = `/${section.target.route}`;
       router.push(pathname);
     },
-    [router],
+    [router, isMdUp],
+  );
+
+  const paneTitle = useMemo(() => {
+    if (!paneSectionId) return "设置";
+    return PERSONAL_SETTINGS_SECTIONS.find((s) => s.id === paneSectionId)?.label ?? "设置";
+  }, [paneSectionId]);
+
+  const sectionList = (
+    <SettingsScrollView
+      testID="settings-screen"
+      accessibilityLabel="设置"
+      constrainWidth={!isMdUp}
+    >
+      <SettingsGroup>
+        <ListRow
+          title={agentProfile?.realName || user?.realName || user?.username || "-"}
+          titleTestID="account-username"
+          subtitle={user?.tenantName ? `${user.username} · ${user.tenantName}` : user?.username}
+          accessibilityLabel="当前账户"
+          leading={
+            avatarUri ? (
+              <Image source={{ uri: avatarUri }} style={styles.avatarImage} cachePolicy="disk" />
+            ) : (
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{initial}</Text>
+              </View>
+            )
+          }
+          onPress={openAccountSecurity}
+          style={
+            isMdUp && paneSectionId === "account-security"
+              ? { backgroundColor: colors.secondary }
+              : undefined
+          }
+        />
+      </SettingsGroup>
+
+      {groups.map((group) => (
+        <SettingsGroup key={group.group} title={group.label}>
+          {group.sections.map((section) => (
+            <ListRow
+              key={section.id}
+              testID={`settings-section-${section.id}`}
+              title={section.label}
+              subtitle={section.description}
+              icon={PERSONAL_SETTINGS_ICONS[section.iconKey]}
+              onPress={() => openSection(section)}
+              style={
+                isMdUp && paneSectionId === section.id
+                  ? { backgroundColor: colors.secondary }
+                  : undefined
+              }
+            />
+          ))}
+        </SettingsGroup>
+      ))}
+
+      <View>
+        <Button
+          testID="logout-button"
+          accessibilityLabel="退出登录"
+          label="退出登录"
+          variant="destructive"
+          size="lg"
+          fullWidth
+          onPress={handleLogout}
+        />
+        <Text style={styles.versionText}>v{APP_VERSION}</Text>
+      </View>
+    </SettingsScrollView>
   );
 
   return (
     <>
-      <SettingsScrollView testID="settings-screen" accessibilityLabel="设置">
-        <SettingsGroup>
-          <ListRow
-            title={agentProfile?.realName || user?.realName || user?.username || "-"}
-            titleTestID="account-username"
-            subtitle={user?.tenantName ? `${user.username} · ${user.tenantName}` : user?.username}
-            accessibilityLabel="当前账户"
-            leading={
-              avatarUri ? (
-                <Image source={{ uri: avatarUri }} style={styles.avatarImage} cachePolicy="disk" />
-              ) : (
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initial}</Text>
-                </View>
-              )
-            }
-            onPress={() => router.push("/settings/account-security")}
-          />
-        </SettingsGroup>
-
-        {groups.map((group) => (
-          <SettingsGroup key={group.group} title={group.label}>
-            {group.sections.map((section) => (
-              <ListRow
-                key={section.id}
-                testID={`settings-section-${section.id}`}
-                title={section.label}
-                subtitle={section.description}
-                icon={PERSONAL_SETTINGS_ICONS[section.iconKey]}
-                onPress={() => openSection(section)}
-              />
-            ))}
-          </SettingsGroup>
-        ))}
-
-        <View>
-          <Button
-            testID="logout-button"
-            accessibilityLabel="退出登录"
-            label="退出登录"
-            variant="destructive"
-            size="lg"
-            fullWidth
-            onPress={handleLogout}
-          />
-          <Text style={styles.versionText}>v{APP_VERSION}</Text>
-        </View>
-      </SettingsScrollView>
+      <Stack.Screen options={{ title: isMdUp ? paneTitle : "设置" }} />
+      {isMdUp ? (
+        <MasterDetailSplit
+          testID="settings-master-detail"
+          emptyLabel="请选择设置项"
+          emptyDescription="从左侧打开账户、偏好或数据相关设置。"
+          master={sectionList}
+          detail={paneSectionId ? <SettingsPaneDetail sectionId={paneSectionId} /> : null}
+        />
+      ) : (
+        sectionList
+      )}
 
       <TrashSheet visible={trashVisible} onClose={() => setTrashVisible(false)} />
     </>

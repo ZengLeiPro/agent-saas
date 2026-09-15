@@ -4,9 +4,13 @@ import {
   DESKTOP_PRIMARY_MIN_WIDTH,
   OVERLAY_MIN_WIDTH,
   clampOverlayForMainMinWidth,
+  getPrimaryWidthWithMasterChrome,
   remainingMainWidth,
+  resolveMasterChromeProtectionLevel,
   resolveProtectedOverlayWidth,
+  shouldHideMasterChrome,
   withWidthHysteresis,
+  type MasterChromeProtectionLevel,
 } from './layoutProtection';
 
 describe('clampOverlayForMainMinWidth', () => {
@@ -106,5 +110,97 @@ describe('resolveProtectedOverlayWidth', () => {
     });
     expect(restored.protectionActive).toBe(false);
     expect(restored.width).toBe(380);
+  });
+});
+
+
+function resolveMaster(
+  overrides: Partial<Parameters<typeof resolveMasterChromeProtectionLevel>[0]>,
+  previousLevel: MasterChromeProtectionLevel = 0,
+) {
+  return resolveMasterChromeProtectionLevel(
+    {
+      containerWidth: 1180,
+      masterWidth: 360,
+      overlayWidth: 0,
+      sidebarPersistentlyCollapsed: false,
+      ...overrides,
+    },
+    previousLevel,
+  );
+}
+
+describe('resolveMasterChromeProtectionLevel', () => {
+  it('keeps master visible when primary stays ≥ 640', () => {
+    // 1180 − 360 = 820 ≥ 640
+    expect(resolveMaster({})).toBe(0);
+    expect(
+      getPrimaryWidthWithMasterChrome(
+        {
+          containerWidth: 1180,
+          masterWidth: 360,
+          overlayWidth: 0,
+          sidebarPersistentlyCollapsed: false,
+        },
+        0,
+      ),
+    ).toBeGreaterThanOrEqual(DESKTOP_PRIMARY_MIN_WIDTH);
+  });
+
+  it('hides master at md=768 so primary can reach ≥ 640', () => {
+    // 768 − 360 = 408 < 640 → level 1; with master hidden primary = 768
+    expect(resolveMaster({ containerWidth: 768 })).toBe(1);
+    expect(
+      getPrimaryWidthWithMasterChrome(
+        {
+          containerWidth: 768,
+          masterWidth: 360,
+          overlayWidth: 0,
+          sidebarPersistentlyCollapsed: false,
+        },
+        1,
+      ),
+    ).toBe(768);
+  });
+
+  it('hides master when overlay would starve primary with master shown', () => {
+    // 1024 − 360 − 380 = 284 < 640 → hide master → 1024 − 380 = 644 ≥ 640
+    expect(resolveMaster({ containerWidth: 1024, overlayWidth: 380 })).toBe(1);
+  });
+
+  it('restores master only after primary clears 640+48 hysteresis', () => {
+    // At level 1, need primary-with-master ≥ 688 to restore
+    // 1000 − 360 = 640 → still hide
+    expect(resolveMaster({ containerWidth: 1000 }, 1)).toBe(1);
+    // 1048 − 360 = 688 → restore
+    expect(
+      resolveMaster(
+        { containerWidth: DESKTOP_PRIMARY_MIN_WIDTH + 360 + DESKTOP_LAYOUT_HYSTERESIS },
+        1,
+      ),
+    ).toBe(0);
+  });
+
+  it('does not invent temporary hide when user persistently collapsed', () => {
+    expect(
+      resolveMaster({
+        containerWidth: 768,
+        sidebarPersistentlyCollapsed: true,
+      }),
+    ).toBe(0);
+  });
+});
+
+describe('shouldHideMasterChrome', () => {
+  it('hides for persistent collapse or protection level 1', () => {
+    expect(shouldHideMasterChrome({ protectionLevel: 0, sidebarPersistentlyCollapsed: false })).toBe(
+      false,
+    );
+    expect(shouldHideMasterChrome({ protectionLevel: 1, sidebarPersistentlyCollapsed: false })).toBe(
+      true,
+    );
+    expect(shouldHideMasterChrome({ protectionLevel: 0, sidebarPersistentlyCollapsed: true })).toBe(
+      true,
+    );
   });
 });

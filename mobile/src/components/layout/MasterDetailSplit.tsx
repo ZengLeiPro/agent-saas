@@ -2,6 +2,7 @@
  * Generic list|detail split for md+ shells (chat / files / cron).
  * Phone callers keep their existing stack; this is the wide layout chrome:
  * master list ~320–380 + floating main card (web DesktopLayout inset).
+ * P4: `masterHidden` drops the list column so primary can stay ≥640.
  */
 import React, { useMemo } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
@@ -15,6 +16,8 @@ export type MasterDetailSplitProps = {
   emptyLabel?: string;
   emptyDescription?: string;
   masterWidth?: number;
+  /** When true, omit the master column (protection / user collapse). */
+  masterHidden?: boolean;
   testID?: string;
   style?: StyleProp<ViewStyle>;
 };
@@ -25,6 +28,7 @@ export function MasterDetailSplit({
   emptyLabel = '请选择',
   emptyDescription,
   masterWidth = MASTER_LIST_WIDTH,
+  masterHidden = false,
   testID = 'master-detail-split',
   style,
 }: MasterDetailSplitProps) {
@@ -44,6 +48,7 @@ export function MasterDetailSplit({
           flex: 1,
           paddingVertical: FLOATING_MAIN_INSET,
           paddingRight: FLOATING_MAIN_INSET,
+          paddingLeft: masterHidden ? FLOATING_MAIN_INSET : 0,
           backgroundColor: colors.background,
         },
         detailCard: {
@@ -62,12 +67,12 @@ export function MasterDetailSplit({
           padding: spacing.lg,
         },
       }),
-    [colors, masterWidth],
+    [colors, masterWidth, masterHidden],
   );
 
   return (
     <View style={[styles.split, style]} testID={testID}>
-      <View style={styles.master}>{master}</View>
+      {masterHidden ? null : <View style={styles.master}>{master}</View>}
       <View style={styles.detailHost}>
         <View style={styles.detailCard}>
           {detail ?? (

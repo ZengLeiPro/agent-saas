@@ -1,9 +1,10 @@
 /**
  * Tiny port of web `useDesktopLayoutProtection` (main ≥ 640, restore +48px).
- * Native md+ already uses overlay (not a docked divider); we only clamp overlay
- * width so the visible main column stays readable when the window can afford it.
+ * Native md+ already uses overlay (not a docked divider) for the right slot;
+ * we clamp overlay width and (P4) temporarily hide the master list column when
+ * the primary pane would otherwise fall below 640 — web protection level 3.
  *
- * Full multi-level sidebar collapse / docked divider stays deferred.
+ * Docked divider / secondary-sidebar compact (web levels 1–2 docked) stay deferred.
  */
 export const DESKTOP_PRIMARY_MIN_WIDTH = 640;
 export const DESKTOP_LAYOUT_HYSTERESIS = 48;
@@ -74,4 +75,69 @@ export function resolveProtectedOverlayWidth(opts: {
       })
     : Math.min(opts.desiredOverlayWidth, Math.max(0, opts.hostWidth));
   return { width, protectionActive };
+}
+
+/**
+ * Master-list chrome protection (web levels → native single master column).
+ * Native has no secondary sidebar and already overlays the right slot; the
+ * remaining lever when main would fall below 640 is hide the master list
+ * (web protection level 3). User persistent collapse is handled by callers
+ * via `sidebarPersistentlyCollapsed` (AsyncStorage `sidebar-collapsed`).
+ */
+export type MasterChromeProtectionLevel = 0 | 1;
+
+export type MasterChromeBudgetInput = {
+  containerWidth: number;
+  masterWidth: number;
+  /** Effective overlay width currently covering main (0 when closed). */
+  overlayWidth: number;
+  sidebarPersistentlyCollapsed: boolean;
+};
+
+/** Primary (detail) width at a given master-chrome level. */
+export function getPrimaryWidthWithMasterChrome(
+  input: MasterChromeBudgetInput,
+  level: MasterChromeProtectionLevel,
+): number {
+  const master =
+    input.sidebarPersistentlyCollapsed || level >= 1 ? 0 : Math.max(0, input.masterWidth);
+  return Math.max(0, input.containerWidth - master - Math.max(0, input.overlayWidth));
+}
+
+/**
+ * Resolve whether to temporarily hide the master list so primary stays ≥ 640.
+ * Hysteresis: restore only after primary at the looser level clears 640+48.
+ * When the user has persistently collapsed, return 0 (caller already hides).
+ */
+export function resolveMasterChromeProtectionLevel(
+  input: MasterChromeBudgetInput,
+  previousLevel: MasterChromeProtectionLevel,
+): MasterChromeProtectionLevel {
+  if (input.containerWidth <= 0) return 0;
+  if (input.sidebarPersistentlyCollapsed) return 0;
+
+  const levels: MasterChromeProtectionLevel[] = [0, 1];
+  const requiredLevel =
+    levels.find(
+      (level) => getPrimaryWidthWithMasterChrome(input, level) >= DESKTOP_PRIMARY_MIN_WIDTH,
+    ) ?? 1;
+
+  if (requiredLevel >= previousLevel) return requiredLevel;
+
+  const restoreThreshold = DESKTOP_PRIMARY_MIN_WIDTH + DESKTOP_LAYOUT_HYSTERESIS;
+  return (
+    levels.find(
+      (level) =>
+        level < previousLevel &&
+        getPrimaryWidthWithMasterChrome(input, level) >= restoreThreshold,
+    ) ?? previousLevel
+  );
+}
+
+/** Whether master chrome should be withheld from the flex row. */
+export function shouldHideMasterChrome(opts: {
+  protectionLevel: MasterChromeProtectionLevel;
+  sidebarPersistentlyCollapsed: boolean;
+}): boolean {
+  return opts.sidebarPersistentlyCollapsed || opts.protectionLevel >= 1;
 }

@@ -1,4 +1,7 @@
 import {
+  activityWallClockDurationMs,
+  collectActivityTimingLeaves,
+  earliestLiveStartedAtMs,
   todoItemKey,
   type BusinessStepEventItem,
   type BusinessStepSection,
@@ -24,6 +27,12 @@ export interface BusinessStepDetailView {
   stepCount: number;
   sections: BusinessStepSection[];
   terminal?: BusinessStepEventItem;
+  /** 步骤过程叶子的墙钟耗时（并行并集）；缺数据时省略。 */
+  durationMs?: number;
+  /** 进行中叶子的最早 startedAt；有值表示主卡应 tick。 */
+  liveStartedAtMs?: number;
+  /** 计算 durationMs 时的墙钟；live 时用 now - measuredAt 外推。 */
+  timingMeasuredAtMs?: number;
 }
 
 export interface BusinessStepPlanView {
@@ -144,5 +153,66 @@ export function buildBusinessStepCatalog(items: RenderItem[]): BusinessStepCatal
     }
   }
 
+  for (const plan of plans) {
+    for (const detail of plan.details) {
+      const leaves = collectActivityTimingLeaves(detail.sections);
+      const measuredAtMs = Date.now();
+      const durationMs = activityWallClockDurationMs(leaves, { nowMs: measuredAtMs });
+      if (durationMs !== undefined) detail.durationMs = durationMs;
+      const liveStartedAtMs = earliestLiveStartedAtMs(leaves);
+      if (liveStartedAtMs !== undefined) {
+        detail.liveStartedAtMs = liveStartedAtMs;
+        detail.timingMeasuredAtMs = measuredAtMs;
+      }
+    }
+  }
+
   return { plans, planById };
+}
+
+/** 主卡按 todoKey 取墙钟耗时；live 起点供进行中行本地 tick。 */
+export type BusinessStepTodoTiming = {
+  durationMs?: number;
+  liveStartedAtMs?: number;
+  timingMeasuredAtMs?: number;
+};
+
+/** 主卡按 todoKey 取墙钟耗时；live 字段供进行中行本地 tick。 */
+export function businessStepTimingByTodoKey(
+  plan: BusinessStepPlanView | null | undefined,
+): Map<string, BusinessStepTodoTiming> {
+  const map = new Map<string, BusinessStepTodoTiming>();
+  if (!plan) return map;
+  for (const detail of plan.details) {
+    if (
+      detail.durationMs === undefined
+      && detail.liveStartedAtMs === undefined
+    ) continue;
+    map.set(detail.todoKey, {
+      ...(detail.durationMs !== undefined ? { durationMs: detail.durationMs } : {}),
+      ...(detail.liveStartedAtMs !== undefined ? { liveStartedAtMs: detail.liveStartedAtMs } : {}),
+      ...(detail.timingMeasuredAtMs !== undefined ? { timingMeasuredAtMs: detail.timingMeasuredAtMs } : {}),
+    });
+  }
+  return map;
+}
+
+/** 把目录快照时的耗时外推到 now（仅 live 行）。 */
+export function resolveBusinessStepDurationMs(
+  timing: BusinessStepTodoTiming | undefined,
+  nowMs: number,
+): number | undefined {
+  if (!timing) return undefined;
+  const base = timing.durationMs;
+  if (
+    timing.liveStartedAtMs !== undefined
+    && timing.timingMeasuredAtMs !== undefined
+    && base !== undefined
+  ) {
+    return Math.max(0, base + (nowMs - timing.timingMeasuredAtMs));
+  }
+  if (timing.liveStartedAtMs !== undefined) {
+    return Math.max(0, nowMs - timing.liveStartedAtMs);
+  }
+  return base;
 }

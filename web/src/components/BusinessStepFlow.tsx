@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Circle,
   CircleCheck,
@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import {
   businessStepOverallStatus,
+  formatActivityDuration,
   isEndedWithoutTerminal,
   migrateLegacySectionVerdicts,
   outcomeToneMeta,
@@ -37,7 +38,9 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 import {
   businessStepSelectionKey,
   detailSelection,
+  resolveBusinessStepDurationMs,
   type BusinessStepSelection,
+  type BusinessStepTodoTiming,
 } from "./businessStepViewModel";
 
 /**
@@ -183,6 +186,7 @@ function PlanTodoRow({
   detailPanelId,
   planClosed,
   generationId,
+  timing,
   onSelect,
 }: {
   todo: TodoItem;
@@ -196,6 +200,7 @@ function PlanTodoRow({
   detailPanelId: string;
   planClosed?: boolean;
   generationId?: string;
+  timing?: BusinessStepTodoTiming;
   onSelect?: (selection: BusinessStepSelection) => void;
 }) {
   const selection = detailSelection(
@@ -210,6 +215,16 @@ function PlanTodoRow({
   const endedWithoutTerminal = isEndedWithoutTerminal(todo, planClosed);
   const isCurrent = !planClosed && todo.status === "in_progress";
   const accessibleStatus = todoAccessibleStatus(todo, planClosed);
+  const live = timing?.liveStartedAtMs !== undefined;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [live, timing?.liveStartedAtMs, timing?.timingMeasuredAtMs, timing?.durationMs]);
+  const durationMs = resolveBusinessStepDurationMs(timing, live ? nowMs : Date.now());
+  const durationLabel = formatActivityDuration(durationMs) ?? undefined;
 
   return (
     <li
@@ -230,7 +245,7 @@ function PlanTodoRow({
           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           isSelected ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/70",
         )}
-        aria-label={[todo.content, accessibleStatus, todo.outcome?.text].filter(Boolean).join("，")}
+        aria-label={[todo.content, accessibleStatus, durationLabel, todo.outcome?.text].filter(Boolean).join("，")}
         aria-selected={isSelected}
         aria-current={isCurrent ? "step" : undefined}
         aria-controls={detailPanelId}
@@ -262,6 +277,14 @@ function PlanTodoRow({
         >
           {todo.content}
         </span>
+        {durationLabel ? (
+          <span
+            className="shrink-0 pt-0.5 text-2xs tabular-nums text-muted-foreground/60"
+            data-business-step-duration
+          >
+            {durationLabel}
+          </span>
+        ) : null}
         <span className="w-5 shrink-0 pt-0.5 text-right text-2xs tabular-nums text-muted-foreground/60">
           {String(index).padStart(2, "0")}
         </span>
@@ -275,12 +298,14 @@ export function BusinessStepFlow({
   sessionId,
   selected,
   detailPanelId = "business-step-detail-panel",
+  timingByTodoKey,
   onSelect,
 }: {
   event: BusinessStepEventItem;
   sessionId?: string | null;
   selected: BusinessStepSelection | null;
   detailPanelId?: string;
+  timingByTodoKey?: ReadonlyMap<string, BusinessStepTodoTiming>;
   onSelect?: (selection: BusinessStepSelection) => void;
 }) {
   if (event.kind !== "plan") return null;
@@ -305,23 +330,27 @@ export function BusinessStepFlow({
         data-business-step-list
         data-business-step-connected={todos.length > 1 ? "true" : "false"}
       >
-        {todos.map((todo, index) => (
-          <PlanTodoRow
-            key={todo.id || `${index}-${todo.content}`}
-            todo={todo}
-            index={index + 1}
-            isFirst={index === 0}
-            isLast={index === todos.length - 1}
-            planId={event.id}
-            sessionId={sessionId}
-            runId={event.runId}
-            selected={selected}
-            detailPanelId={detailPanelId}
-            planClosed={event.isClosed}
-            generationId={event.generationId}
-            onSelect={onSelect}
-          />
-        ))}
+        {todos.map((todo, index) => {
+          const todoKey = todo.id ? `id:${todo.id}` : `legacy:${todo.content}`;
+          return (
+            <PlanTodoRow
+              key={todo.id || `${index}-${todo.content}`}
+              todo={todo}
+              index={index + 1}
+              isFirst={index === 0}
+              isLast={index === todos.length - 1}
+              planId={event.id}
+              sessionId={sessionId}
+              runId={event.runId}
+              selected={selected}
+              detailPanelId={detailPanelId}
+              planClosed={event.isClosed}
+              generationId={event.generationId}
+              timing={timingByTodoKey?.get(todoKey)}
+              onSelect={onSelect}
+            />
+          );
+        })}
       </ol>
     </section>
   );

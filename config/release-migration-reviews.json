@@ -675,6 +675,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -824,7 +831,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -1915,6 +1922,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -2200,7 +2214,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -3109,6 +3123,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -3374,7 +3395,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -4262,6 +4283,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -4511,7 +4539,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -5399,6 +5427,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -5648,7 +5683,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -6522,6 +6557,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -6763,7 +6805,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -7637,6 +7679,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -7878,7 +7927,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -8752,6 +8801,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -8993,7 +9049,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -10112,6 +10168,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -10365,7 +10428,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -11246,6 +11309,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -11507,7 +11577,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -12402,6 +12472,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -12655,7 +12732,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -13550,6 +13627,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -13803,7 +13887,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -14656,6 +14740,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -14893,7 +14984,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -15746,6 +15837,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -15983,7 +16081,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -16836,6 +16934,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -17073,7 +17178,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -17926,6 +18031,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -18163,7 +18275,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -19002,6 +19114,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -19235,7 +19354,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -20074,6 +20193,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -20307,7 +20433,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -21097,6 +21223,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -21310,7 +21443,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -22100,6 +22233,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -22309,7 +22449,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -23099,6 +23239,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -23300,7 +23447,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -24090,6 +24237,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -24291,7 +24445,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -25081,6 +25235,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -25282,7 +25443,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -26044,6 +26205,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -26237,7 +26405,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -26985,6 +27153,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -27186,7 +27361,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -27906,6 +28081,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -28091,7 +28273,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -28811,6 +28993,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -28996,7 +29185,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -29688,6 +29877,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -29857,7 +30053,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -30549,6 +30745,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -30710,7 +30913,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -31388,6 +31591,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -31537,7 +31747,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -32215,6 +32425,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -32360,7 +32577,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -33038,6 +33255,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -33187,7 +33411,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -33865,6 +34089,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -34006,7 +34237,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -34684,6 +34915,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -34825,7 +35063,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -35503,6 +35741,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -35640,7 +35885,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -36318,6 +36563,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -36467,7 +36719,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -37145,6 +37397,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -37294,7 +37553,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -37972,6 +38231,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -38121,7 +38387,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -38771,6 +39037,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -38860,7 +39133,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -39538,6 +39811,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -39671,7 +39951,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -39985,6 +40265,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -40074,7 +40361,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -40381,6 +40668,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -40454,7 +40748,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -40754,6 +41048,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -40823,7 +41124,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -41116,6 +41417,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -41181,7 +41489,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -41467,6 +41775,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -41528,7 +41843,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -41772,6 +42087,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -41817,7 +42139,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -42061,6 +42383,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -42106,7 +42435,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -42343,6 +42672,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -42380,7 +42716,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -42596,6 +42932,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -42625,7 +42968,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -42757,6 +43100,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -42786,7 +43136,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -42897,6 +43247,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -42922,7 +43279,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -43054,6 +43411,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -43095,7 +43459,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -43178,6 +43542,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -43195,7 +43566,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -43271,6 +43642,13 @@
           "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
           "classification": "expand",
           "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
@@ -43296,7 +43674,7 @@
         },
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -43316,12 +43694,23 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         }
       ],
       "evidence": [
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         }
       ]
     },
@@ -43353,7 +43742,7 @@
       "evidence": [
         {
           "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
-          "digest": "sha256:41f285edef4bb36a97cb9b5f23432c03941f834875508028e7f63c97a94045f2"
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
         },
         {
           "path": "server/src/data/governance-schema/v49PlatformDemoMigration.test.ts",

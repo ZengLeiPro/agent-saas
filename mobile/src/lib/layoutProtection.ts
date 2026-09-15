@@ -1,10 +1,10 @@
 /**
  * Tiny port of web `useDesktopLayoutProtection` (main ≥ 640, restore +48px).
- * Native md+ already uses overlay (not a docked divider) for the right slot;
- * we clamp overlay width and (P4) temporarily hide the master list column when
- * the primary pane would otherwise fall below 640 — web protection level 3.
  *
- * Docked divider / secondary-sidebar compact (web levels 1–2 docked) stay deferred.
+ * P5 right slot: dock beside main when window ≥ lg (1024) and host can keep
+ * primary ≥ 640 (web levels 0–1 docked); otherwise SideOverlayPanel (level 2).
+ * P4: temporarily hide the master list when primary would fall below 640 (level 3).
+ * Secondary-sidebar compact (web level 1 chrome) stays N/A — native is single master.
  */
 export const DESKTOP_PRIMARY_MIN_WIDTH = 640;
 export const DESKTOP_LAYOUT_HYSTERESIS = 48;
@@ -77,12 +77,82 @@ export function resolveProtectedOverlayWidth(opts: {
   return { width, protectionActive };
 }
 
+
+
+/** Product gate: prefer docked right pane only at lg+ (window width). */
+export const RIGHT_PANE_DOCK_MIN_WINDOW = 1024;
+
+/** Hairline divider between main and a docked right pane. */
+export const RIGHT_PANE_DIVIDER_WIDTH = 1;
+
+export type RightPanePresentation = 'docked' | 'overlay';
+
+export type RightPanePresentationInput = {
+  /** Full window / breakpoint width (lg gate). */
+  windowWidth: number;
+  /** Chat session host width (detail card) — budget for main ≥ 640. */
+  hostWidth: number;
+  paneWidth: number;
+  /** Whether the previous open presentation was docked (hysteresis). */
+  previouslyDocked: boolean;
+  minWindowWidth?: number;
+  minMainWidth?: number;
+  dividerWidth?: number;
+};
+
+/**
+ * Web levels 0–2 for the right slot: dock when wide enough and main stays ≥ 640;
+ * otherwise overlay. Phone callers never open the slot (md+ only).
+ *
+ * Hysteresis: once docked, stay docked until remaining main would fall below 640
+ * (activate overlay immediately); restore dock only after remaining clears 640+48.
+ */
+export function resolveRightPanePresentation(
+  input: RightPanePresentationInput,
+): RightPanePresentation {
+  const minWindow = input.minWindowWidth ?? RIGHT_PANE_DOCK_MIN_WINDOW;
+  const minMain = input.minMainWidth ?? DESKTOP_PRIMARY_MIN_WIDTH;
+  const divider = input.dividerWidth ?? RIGHT_PANE_DIVIDER_WIDTH;
+  const host = Math.max(0, input.hostWidth);
+  const pane = Math.max(0, input.paneWidth);
+  const windowWidth = Math.max(0, input.windowWidth);
+
+  if (windowWidth < minWindow || host <= 0 || pane <= 0) return 'overlay';
+
+  const remainingIfDocked = host - pane - divider;
+  // previouslyDocked=false means we treat overlay-protection as previously active
+  // when deciding whether to restore dock after a tight layout.
+  const forceOverlay = withWidthHysteresis(
+    remainingIfDocked,
+    minMain,
+    !input.previouslyDocked,
+  );
+  return forceOverlay ? 'overlay' : 'docked';
+}
+
+/** Pure predicate (no hysteresis) — lg gate + main ≥ 640 if docked. */
+export function canDockRightPane(opts: {
+  windowWidth: number;
+  hostWidth: number;
+  paneWidth: number;
+  minWindowWidth?: number;
+  minMainWidth?: number;
+  dividerWidth?: number;
+}): boolean {
+  const minWindow = opts.minWindowWidth ?? RIGHT_PANE_DOCK_MIN_WINDOW;
+  const minMain = opts.minMainWidth ?? DESKTOP_PRIMARY_MIN_WIDTH;
+  const divider = opts.dividerWidth ?? RIGHT_PANE_DIVIDER_WIDTH;
+  if (opts.windowWidth < minWindow || opts.hostWidth <= 0 || opts.paneWidth <= 0) return false;
+  return opts.hostWidth - opts.paneWidth - divider >= minMain;
+}
+
 /**
  * Master-list chrome protection (web levels → native single master column).
- * Native has no secondary sidebar and already overlays the right slot; the
- * remaining lever when main would fall below 640 is hide the master list
- * (web protection level 3). User persistent collapse is handled by callers
- * via `sidebarPersistentlyCollapsed` (AsyncStorage `sidebar-collapsed`).
+ * Native has no secondary sidebar; when the right slot is docked it already
+ * shrinks host width. The remaining lever when main would fall below 640 is
+ * hide the master list (web protection level 3). User persistent collapse is
+ * handled by callers via `sidebarPersistentlyCollapsed` (AsyncStorage
+ * `sidebar-collapsed`).
  */
 export type MasterChromeProtectionLevel = 0 | 1;
 

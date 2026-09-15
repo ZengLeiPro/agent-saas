@@ -4,8 +4,8 @@
  * 本文件只做「屏幕编排」：状态、导航、以及把列表 / pill 行 / FAB / 面板拼起来；
  * 列表行、滑动动作、分组对话框、回收站等都在 `src/components/sessions/` 下。
  *
- * P0–P4 iPad / 宽屏（md≥768）：单栏会话 chrome + 列表|详情 master-detail（头像默认显示）；
- * 窄主栏保护可折叠/汉堡唤起列表（`sidebar-collapsed`）；窄屏仍 push 栈。不托管 apps。
+ * P0–P5 iPad / 宽屏（md≥768）：单栏会话 chrome + 列表|详情 master-detail（头像默认显示）；
+ * 窄主栏保护可折叠/汉堡唤起列表（`sidebar-collapsed`）；lg+ 右栏可 dock；窄屏仍 push 栈。不托管 apps。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, InteractionManager, LayoutChangeEvent, StyleSheet, Text, TouchableOpacity, View } from 'react-native';

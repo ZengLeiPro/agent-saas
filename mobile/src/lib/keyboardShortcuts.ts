@@ -1,9 +1,18 @@
 /**
  * Pure chat shortcut matchers (web DesktopLayout / catalog feel).
  *
- * Global HardwareKeyboard / UIKeyCommand needs a native Expo module (EAS
- * binary risk) — callers may wire these from TextInput `onKeyPress` or a
- * future Expo-safe key-command helper. Matching stays JS-only and tested.
+ * ## Expo-safe wiring status (P5)
+ * No safe global key-command path without a new native module:
+ * - RN `TextInput` `onKeyPress` only exposes `{ key }` — no `metaKey` / `ctrlKey`
+ *   on iOS/Android (see `TextInputKeyPressEventData`).
+ * - `react-native-keyboard-controller` covers keyboard geometry only, not
+ *   hardware key commands.
+ * - RN's internal `RCTKeyCommands` is not a public JS API for app shortcuts;
+ *   wiring ⌘/Ctrl+N via UIKeyCommand would need a custom Expo native module
+ *   (EAS binary risk) — deferred with P4.
+ *
+ * Keep matchers JS-only and tested. Call sites may later wire from a sanctioned
+ * Expo module or RN-web where modifier flags exist; do not invent a polyfill.
  */
 export type ChatShortcutAction = 'new-chat' | 'focus-composer' | 'search';
 
@@ -33,4 +42,9 @@ export function matchChatShortcut(event: KeyShortcutEvent): ChatShortcutAction |
   if (key === '/' && !event.shiftKey) return 'focus-composer';
   if (key === 'k' && !event.shiftKey) return 'search';
   return null;
+}
+
+/** Always false on current Expo RN — see file header. Useful for call-site guards. */
+export function canWireChatShortcutsExpoSafe(): boolean {
+  return false;
 }

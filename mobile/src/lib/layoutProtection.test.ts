@@ -3,11 +3,15 @@ import {
   DESKTOP_LAYOUT_HYSTERESIS,
   DESKTOP_PRIMARY_MIN_WIDTH,
   OVERLAY_MIN_WIDTH,
+  RIGHT_PANE_DIVIDER_WIDTH,
+  RIGHT_PANE_DOCK_MIN_WINDOW,
+  canDockRightPane,
   clampOverlayForMainMinWidth,
   getPrimaryWidthWithMasterChrome,
   remainingMainWidth,
   resolveMasterChromeProtectionLevel,
   resolveProtectedOverlayWidth,
+  resolveRightPanePresentation,
   shouldHideMasterChrome,
   withWidthHysteresis,
   type MasterChromeProtectionLevel,
@@ -202,5 +206,98 @@ describe('shouldHideMasterChrome', () => {
     expect(shouldHideMasterChrome({ protectionLevel: 0, sidebarPersistentlyCollapsed: true })).toBe(
       true,
     );
+  });
+});
+
+
+describe('canDockRightPane / resolveRightPanePresentation', () => {
+  const pane = 380;
+
+  it('requires window ≥ lg (1024) before docking', () => {
+    expect(
+      canDockRightPane({
+        windowWidth: 1023,
+        hostWidth: 1180,
+        paneWidth: pane,
+      }),
+    ).toBe(false);
+    expect(
+      resolveRightPanePresentation({
+        windowWidth: 1023,
+        hostWidth: 1180,
+        paneWidth: pane,
+        previouslyDocked: true,
+      }),
+    ).toBe('overlay');
+  });
+
+  it('docks at lg+ when host keeps main ≥ 640', () => {
+    // 1180 − 380 − 1 = 799 ≥ 640
+    expect(
+      canDockRightPane({
+        windowWidth: RIGHT_PANE_DOCK_MIN_WINDOW,
+        hostWidth: 1180,
+        paneWidth: pane,
+      }),
+    ).toBe(true);
+    expect(
+      resolveRightPanePresentation({
+        windowWidth: 1180,
+        hostWidth: 1180,
+        paneWidth: pane,
+        previouslyDocked: true,
+      }),
+    ).toBe('docked');
+  });
+
+  it('overlays when docking would starve main below 640', () => {
+    // 900 − 380 − 1 = 519 < 640 (e.g. master still visible on a 1180 window)
+    expect(
+      canDockRightPane({
+        windowWidth: 1180,
+        hostWidth: 900,
+        paneWidth: pane,
+      }),
+    ).toBe(false);
+    expect(
+      resolveRightPanePresentation({
+        windowWidth: 1180,
+        hostWidth: 900,
+        paneWidth: pane,
+        previouslyDocked: true,
+      }),
+    ).toBe('overlay');
+  });
+
+  it('uses +48 hysteresis before restoring dock after overlay protection', () => {
+    const tightHost = DESKTOP_PRIMARY_MIN_WIDTH + pane + RIGHT_PANE_DIVIDER_WIDTH + 20; // remaining 660
+    // Previously overlay: stay overlay until remaining clears 640+48
+    expect(
+      resolveRightPanePresentation({
+        windowWidth: 1180,
+        hostWidth: tightHost,
+        paneWidth: pane,
+        previouslyDocked: false,
+      }),
+    ).toBe('overlay');
+    const restoreHost = DESKTOP_PRIMARY_MIN_WIDTH + pane + RIGHT_PANE_DIVIDER_WIDTH + DESKTOP_LAYOUT_HYSTERESIS;
+    expect(
+      resolveRightPanePresentation({
+        windowWidth: 1180,
+        hostWidth: restoreHost,
+        paneWidth: pane,
+        previouslyDocked: false,
+      }),
+    ).toBe('docked');
+  });
+
+  it('phone-sized window never docks', () => {
+    expect(
+      canDockRightPane({
+        windowWidth: 390,
+        hostWidth: 390,
+        paneWidth: pane,
+      }),
+    ).toBe(false);
   });
 });

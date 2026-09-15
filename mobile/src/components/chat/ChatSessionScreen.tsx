@@ -30,7 +30,11 @@ import { FilePreviewBody, filePreviewDisplayName } from '../files/preview/FilePr
 import { SideOverlayPanel } from '../layout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { chatTranscriptMaxWidthStyle, MASTER_LIST_WIDTH, RIGHT_OVERLAY_WIDTH } from '../../lib/layoutDensity';
-import { resolveProtectedOverlayWidth } from '../../lib/layoutProtection';
+import {
+  resolveProtectedOverlayWidth,
+  resolveRightPanePresentation,
+  type RightPanePresentation,
+} from '../../lib/layoutProtection';
 import {
   ChatRightSlotProvider,
   SubagentTranscriptProvider,
@@ -140,6 +144,35 @@ export function ChatSessionScreen({
     const next = Math.round(event.nativeEvent.layout.width);
     setHostWidth((prev) => (Math.abs(prev - next) < 1 ? prev : next));
   }, []);
+  /** Prefer dock on first open; hysteresis via resolveRightPanePresentation. */
+  const dockPreferRef = useRef(true);
+  const rightSlotOpen =
+    isMdUp && !!(transcriptTarget || rightPreview || fileBrowserOpen);
+  const rightPanePresentation: RightPanePresentation | null = useMemo(() => {
+    if (!rightSlotOpen) return null;
+    const host =
+      hostWidth > 0
+        ? hostWidth
+        : Math.max(0, breakpointWidth - (isPane ? MASTER_LIST_WIDTH : 0));
+    return resolveRightPanePresentation({
+      windowWidth: breakpointWidth,
+      hostWidth: host,
+      paneWidth: RIGHT_OVERLAY_WIDTH,
+      previouslyDocked: dockPreferRef.current,
+    });
+  }, [rightSlotOpen, hostWidth, breakpointWidth, isPane, isMdUp]);
+  useEffect(() => {
+    if (!rightSlotOpen) {
+      dockPreferRef.current = true;
+      return;
+    }
+    if (rightPanePresentation) {
+      dockPreferRef.current = rightPanePresentation === 'docked';
+    }
+  }, [rightSlotOpen, rightPanePresentation]);
+  const dockedRight = rightPanePresentation === 'docked';
+  const overlayRight = rightPanePresentation === 'overlay';
+  const rightPaneWidth = dockedRight ? RIGHT_OVERLAY_WIDTH : overlayWidth;
   const defaultBottomPadding = 56 + insets.bottom;
   const [composerHeight, setComposerHeight] = useState(defaultBottomPadding);
   const lastComposerHeightRef = useRef(defaultBottomPadding);
@@ -635,10 +668,82 @@ export function ChatSessionScreen({
     </View>
   );
 
+  const rightSlotNode = !rightPanePresentation ? null : transcriptTarget ? (
+    <SideOverlayPanel
+      title={`子任务完整过程 · ${transcriptTarget.title}`}
+      subtitle={transcriptTarget.childSessionId}
+      onClose={() => setTranscriptTarget(null)}
+      width={rightPaneWidth}
+      presentation={rightPanePresentation}
+      dimmed={overlayRight}
+      testID="chat-right-subagent"
+    >
+      <SubagentTranscriptSheet
+        visible
+        variant="body"
+        childSessionId={transcriptTarget.childSessionId}
+        title={transcriptTarget.title}
+        onClose={() => setTranscriptTarget(null)}
+      />
+    </SideOverlayPanel>
+  ) : rightPreview?.route === '/chat/markdown-preview' ? (
+    <SideOverlayPanel
+      title={markdownPreviewTitle(rightPreview.filePath)}
+      onClose={() => setRightPreview(null)}
+      width={rightPaneWidth}
+      presentation={rightPanePresentation}
+      dimmed={overlayRight}
+      testID="chat-right-preview"
+    >
+      <MarkdownPreviewBody
+        filePath={rightPreview.filePath}
+        {...(sessionOwner ? { owner: sessionOwner } : {})}
+        onNavigatePreview={(next) =>
+          setRightPreview({ route: '/chat/markdown-preview', filePath: next })
+        }
+      />
+    </SideOverlayPanel>
+  ) : rightPreview?.route === '/files/preview' ? (
+    <SideOverlayPanel
+      title={filePreviewDisplayName(rightPreview.filePath, rightPreview.name)}
+      onClose={() => setRightPreview(null)}
+      width={rightPaneWidth}
+      presentation={rightPanePresentation}
+      dimmed={overlayRight}
+      testID="chat-right-file-preview"
+    >
+      <FilePreviewBody
+        filePath={rightPreview.filePath}
+        name={rightPreview.name}
+        size={rightPreview.size ?? 0}
+        modifiedAt={rightPreview.modifiedAt ?? 0}
+        {...(sessionOwner ? { owner: sessionOwner } : {})}
+      />
+    </SideOverlayPanel>
+  ) : fileBrowserOpen ? (
+    <SideOverlayPanel
+      title="文件"
+      onClose={() => setFileBrowserOpen(false)}
+      width={rightPaneWidth}
+      presentation={rightPanePresentation}
+      dimmed={overlayRight}
+      testID="chat-right-file-browser"
+    >
+      <ChatFileBrowserPane
+        owner={sessionOwner}
+        onOpenPreview={(request) => {
+          openRightFilePreview(request);
+        }}
+      />
+    </SideOverlayPanel>
+  ) : null;
+
   return (
     <View style={styles.container} testID={isPane ? 'chat-pane-screen' : 'chat-screen'} onLayout={handleHostLayout}>
       {isPane ? paneHeader : stackHeader}
 
+      <View style={dockedRight ? styles.bodyRow : styles.bodyColumn}>
+      <View style={styles.mainColumn}>
       <ConnectionBanner connectionState={chat.connectionState} isOnline={isOnline} />
       {/* /compact skipped 轻提示：历史太短未压缩时显示 note，4s 自动消失 */}
       {chat.compactionNotice ? (
@@ -790,24 +895,7 @@ export function ChatSessionScreen({
         />
       ) : null}
 
-      {/* 右栏单槽：md+ SideOverlay；phone 仍用全屏 Modal / push */}
-      {isMdUp && transcriptTarget ? (
-        <SideOverlayPanel
-          title={`子任务完整过程 · ${transcriptTarget.title}`}
-          subtitle={transcriptTarget.childSessionId}
-          onClose={() => setTranscriptTarget(null)}
-          width={overlayWidth}
-          testID="chat-right-subagent"
-        >
-          <SubagentTranscriptSheet
-            visible
-            variant="body"
-            childSessionId={transcriptTarget.childSessionId}
-            title={transcriptTarget.title}
-            onClose={() => setTranscriptTarget(null)}
-          />
-        </SideOverlayPanel>
-      ) : null}
+      {/* phone：子任务仍全屏 Modal；md+ 右栏见 bodyRow / overlay */}
       {!isMdUp && transcriptTarget ? (
         <SubagentTranscriptSheet
           visible
@@ -816,53 +904,11 @@ export function ChatSessionScreen({
           onClose={() => setTranscriptTarget(null)}
         />
       ) : null}
-      {isMdUp && rightPreview?.route === '/chat/markdown-preview' ? (
-        <SideOverlayPanel
-          title={markdownPreviewTitle(rightPreview.filePath)}
-          onClose={() => setRightPreview(null)}
-          width={overlayWidth}
-          testID="chat-right-preview"
-        >
-          <MarkdownPreviewBody
-            filePath={rightPreview.filePath}
-            {...(sessionOwner ? { owner: sessionOwner } : {})}
-            onNavigatePreview={(next) =>
-              setRightPreview({ route: '/chat/markdown-preview', filePath: next })
-            }
-          />
-        </SideOverlayPanel>
-      ) : null}
-      {isMdUp && rightPreview?.route === '/files/preview' ? (
-        <SideOverlayPanel
-          title={filePreviewDisplayName(rightPreview.filePath, rightPreview.name)}
-          onClose={() => setRightPreview(null)}
-          width={overlayWidth}
-          testID="chat-right-file-preview"
-        >
-          <FilePreviewBody
-            filePath={rightPreview.filePath}
-            name={rightPreview.name}
-            size={rightPreview.size ?? 0}
-            modifiedAt={rightPreview.modifiedAt ?? 0}
-            {...(sessionOwner ? { owner: sessionOwner } : {})}
-          />
-        </SideOverlayPanel>
-      ) : null}
-      {isMdUp && fileBrowserOpen ? (
-        <SideOverlayPanel
-          title="文件"
-          onClose={() => setFileBrowserOpen(false)}
-          width={overlayWidth}
-          testID="chat-right-file-browser"
-        >
-          <ChatFileBrowserPane
-            owner={sessionOwner}
-            onOpenPreview={(request) => {
-              openRightFilePreview(request);
-            }}
-          />
-        </SideOverlayPanel>
-      ) : null}
+      </View>
+      {dockedRight ? rightSlotNode : null}
+      </View>
+      {/* 右栏单槽：lg+ 可 dock；更窄时 SideOverlay；phone 不变 */}
+      {overlayRight ? rightSlotNode : null}
     </View>
   );
 }
@@ -872,6 +918,23 @@ function useScreenStyles(colors: ThemeColors) {
     container: {
       flex: 1,
       backgroundColor: colors.background,
+    },
+    bodyRow: {
+      flex: 1,
+      flexDirection: 'row',
+      minHeight: 0,
+      minWidth: 0,
+    },
+    bodyColumn: {
+      flex: 1,
+      flexDirection: 'column',
+      minHeight: 0,
+      minWidth: 0,
+    },
+    mainColumn: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 0,
     },
     inputOverlay: {
       position: 'absolute',

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PortalContainerProvider } from "@/components/ui/portal-container";
 import { cn } from "@/lib/utils";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+const PlatformDemoShell = lazy(() => import("@/components/PlatformDemo/PlatformDemoShell"));
 
 interface ManagementSettingsAccessGateProps {
   scope: "tenant" | "platform";
@@ -13,11 +14,14 @@ interface ManagementSettingsAccessGateProps {
   onReturnPersonal: () => void;
   /** Desktop unified settings may retain a workspace only after the user has visited it. */
   persistAfterVisit?: boolean;
+  /** When true, platform scope falls back to the sample-data demo shell. */
+  platformDemoEntryAllowed?: boolean;
   children: ReactNode;
 }
 
 export function ManagementSettingsAccessGate({
-  scope, target, access, onRetry, onReturnPersonal, persistAfterVisit = false, children,
+  scope, target, access, onRetry, onReturnPersonal, persistAfterVisit = false,
+  platformDemoEntryAllowed = false, children,
 }: ManagementSettingsAccessGateProps) {
   const active = target === scope;
   const [visited, setVisited] = useState(active);
@@ -63,6 +67,16 @@ export function ManagementSettingsAccessGate({
     );
   }
   if (!active) return null;
+
+  if (scope === "platform" && platformDemoEntryAllowed && access.status === "ready") {
+    return (
+      <div className="h-full min-h-0" data-testid="management-settings-platform-demo-workspace">
+        <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 className="size-7 animate-spin text-muted-foreground" /></div>}>
+          <PlatformDemoShell fallbackFromRealAdmin onClose={onReturnPersonal} />
+        </Suspense>
+      </div>
+    );
+  }
 
   const loading = access.status === "loading" || access.status === "refreshing";
   const error = access.status === "error";

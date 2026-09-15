@@ -8,7 +8,7 @@ export interface GovernanceAuditEvent {
   changeId?: string;
   actorType: 'user' | 'service';
   actorUserId: string;
-  actorPersona: 'platform_admin' | 'org_admin' | 'member' | 'service';
+  actorPersona: 'platform_admin' | 'org_admin' | 'member' | 'platform_demo' | 'service';
   actorTenantId?: string;
   action: string;
   targetType: string;

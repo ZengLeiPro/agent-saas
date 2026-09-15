@@ -1,6 +1,6 @@
 import { PLATFORM_TENANT_ID } from '../../data/tenants/types.js';
 
-export type GovernanceHumanPersona = 'platform_admin' | 'org_admin' | 'member';
+export type GovernanceHumanPersona = 'platform_admin' | 'org_admin' | 'member' | 'platform_demo';
 
 export function isActivePlatformAdminIdentity(
   tenantId: string | undefined,

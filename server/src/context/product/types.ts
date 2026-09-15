@@ -11,8 +11,8 @@ export interface ContextProductSubject {
   tenantId: string;
   actorId: string;
   actorTenantId?: string;
-  actorPersona?: 'platform_admin' | 'org_admin' | 'member';
-  accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only';
+  actorPersona?: 'platform_admin' | 'org_admin' | 'member' | 'platform_demo';
+  accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only' | 'platform_demo';
 }
 
 export interface ProductRecordLocator {

@@ -531,6 +531,7 @@ describe("AdminShells V2 内容适配", () => {
 
   it.each([
     ["platform-admins", "平台管理员"],
+    ["demo-access", "演示访问"],
     ["agent-templates", "智能体模板"],
     ["environment-templates", "环境模板"],
   ] as const)("统一设置入口 %s 挂载既有治理页面", async (settingsSection, expectedTitle) => {

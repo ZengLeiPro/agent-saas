@@ -64,6 +64,8 @@ const kyAppV2ReviewPaths = [
   'server/src/data/governance-schema/latestMigrations.ts',
   'server/src/data/governance-schema/migrations.ts',
   'server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts',
+  'server/src/data/governance-schema/v49PlatformDemoMigration.ts',
+  'shared/src/types/governance.ts',
   'server/src/kyapp/enrollment/store.ts',
   'server/src/kyapp/systems/store.ts',
   'server/src/kyapp/workload/deploymentKeyStore.ts',
@@ -107,12 +109,14 @@ const evidencePaths = [
   kyAppV2Evidence,
   gwsPersistEvidence,
   gwsAuthInjectionEvidence,
+  'docs/release/平台演示模式V49迁移审核-20260916.md',
 ];
 const expandPaths = [
   providerStore,
   ...grokExpandPaths,
   'server/src/runtime/runStoreSchema.ts',
   'server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts',
+  'server/src/data/governance-schema/v49PlatformDemoMigration.ts',
 ];
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });

@@ -89,6 +89,7 @@ export function ManagementWorkspaceContent({
   platformAdminSection,
   platformAdminEntityId,
   setPlatformAdminRoute,
+  platformDemoEntryAllowed = false,
 }: {
   route: GovernanceRouteState;
   access: ManagementSettingsAccess;
@@ -96,6 +97,7 @@ export function ManagementWorkspaceContent({
   platformAdminSection: LayoutProps['platformAdminSection'];
   platformAdminEntityId: string | null;
   setPlatformAdminRoute: LayoutProps['setPlatformAdminRoute'];
+  platformDemoEntryAllowed?: boolean;
 }) {
   const target = route.area === 'organization' ? 'tenant' : 'platform';
 
@@ -113,6 +115,7 @@ export function ManagementWorkspaceContent({
               access={access}
               onRetry={access.retry}
               onReturnPersonal={onReturnPersonal}
+              platformDemoEntryAllowed={platformDemoEntryAllowed}
             >
               <ManagementShell route={route} access={access} dirtyController={dirtyController}>
                 {route.area === 'organization' ? (

@@ -3,6 +3,9 @@
  *
  * 本文件只做「屏幕编排」：状态、导航、以及把列表 / pill 行 / FAB / 面板拼起来；
  * 列表行、滑动动作、分组对话框、回收站等都在 `src/components/sessions/` 下。
+ *
+ * P0 iPad / 宽屏（md≥768）：单栏会话 chrome + 列表|详情 master-detail（头像默认显示）；
+ * 窄屏仍走 push `/chat/[sessionId]` 栈。不托管业务系统/apps。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, InteractionManager, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -40,7 +43,9 @@ import { glassFree } from '../../../src/lib/headerItems';
 import { hapticLight, hapticWarning } from '../../../src/lib/haptics';
 import { readSessionListAnchor } from '../../../src/lib/sessionListAnchor';
 import { toSidebarSessions } from '../../../src/lib/sessionListAdapter';
-import { useColors, fontScale } from '../../../src/theme';
+import { useColors, fontScale, spacing } from '../../../src/theme';
+import { useBreakpoint } from '../../../src/hooks/useBreakpoint';
+import { ChatSessionScreen } from '../../../src/components/chat/ChatSessionScreen';
 
 /** 分组定时刷新周期（ms），与会话轮询保持一致 */
 const GROUPS_REFRESH_MS = 30_000;
@@ -59,6 +64,10 @@ export default function SessionListScreen() {
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
+
+  const { isMdUp } = useBreakpoint();
+  // md+ master-detail selection (null = empty pane「请选择会话」)
+  const [paneSessionId, setPaneSessionId] = useState<string | null>(null);
 
   // FlashList 的 imperative 句柄，只用来恢复滚动位置。
   const listRef = useRef<any>(null);
@@ -161,9 +170,13 @@ export default function SessionListScreen() {
       if (guard === 'suppress') return;
       hapticLight();
       chat.selectSession(sessionId);
+      if (isMdUp) {
+        setPaneSessionId(sessionId);
+        return;
+      }
       router.push(`/chat/${sessionId}`);
     },
-    [chat, router, closeOpenSwipeable],
+    [chat, router, closeOpenSwipeable, isMdUp],
   );
 
   const handleGroupClick = useCallback(
@@ -222,7 +235,14 @@ export default function SessionListScreen() {
   const handleNewSession = useNewSessionLauncher({
     chat,
     isAdminUser,
-    onNavigate: (path) => router.push(path as never),
+    onNavigate: (path) => {
+      if (isMdUp && (path === '/chat/new' || path.startsWith('/chat/'))) {
+        const id = path === '/chat/new' ? 'new' : path.replace(/^\/chat\//, '');
+        setPaneSessionId(id);
+        return;
+      }
+      router.push(path as never);
+    },
   });
 
   const handleRefresh = useCallback(() => {
@@ -260,6 +280,7 @@ export default function SessionListScreen() {
           selectMode={selection.isSelectMode}
           selected={selection.selectedIds.has(item.session.id)}
           onSelectToggle={() => selection.toggleSelect(item.session.id)}
+          active={isMdUp && paneSessionId === item.session.id}
           agentAvatar={ownerAvatar?.avatar}
           agentAvatarVersion={ownerAvatar?.avatarVersion}
           agentAvatarUsername={ownerUsername}
@@ -278,6 +299,8 @@ export default function SessionListScreen() {
       getSessionActions,
       handleSelectSession,
       selection,
+      isMdUp,
+      paneSessionId,
     ],
   );
 
@@ -285,6 +308,24 @@ export default function SessionListScreen() {
     () =>
       StyleSheet.create({
         container: { flex: 1, backgroundColor: colors.card },
+        split: { flex: 1, flexDirection: 'row' },
+        listPane: { flex: 1, backgroundColor: colors.card },
+        listPaneWide: {
+          width: 340,
+          maxWidth: '42%',
+          borderRightWidth: StyleSheet.hairlineWidth,
+          borderRightColor: colors.border,
+          backgroundColor: colors.card,
+        },
+        detailPane: { flex: 1, backgroundColor: colors.background },
+        emptyPane: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: spacing.lg,
+          backgroundColor: colors.background,
+        },
+        emptyPaneText: { ...fontScale.base, color: colors.mutedForeground },
         headerText: { ...fontScale.base, color: colors.foreground },
       }),
     [colors],
@@ -310,18 +351,8 @@ export default function SessionListScreen() {
       </TouchableOpacity>
     );
 
-  return (
-    <View style={styles.container} testID="chat-home-screen">
-      <Stack.Screen
-        options={{
-          title: 'Agent SaaS',
-          headerLeft,
-          unstable_headerLeftItems: () => [glassFree(headerLeft())],
-          headerRight,
-          unstable_headerRightItems: () => [glassFree(headerRight())],
-        }}
-      />
-
+  const listBody = (
+      <>
       <SessionListView
         listKey={`${selection.isSelectMode ? 'select' : 'list'}-${chat.sessionsHydrated ? 'hydrated' : 'cold'}`}
         listRef={listRef}
@@ -372,6 +403,42 @@ export default function SessionListScreen() {
         onClose={() => setTrashOpen(false)}
         onChanged={() => void chat.refreshSessions()}
       />
+      </>
+  );
+
+  return (
+    <View style={styles.container} testID="chat-home-screen">
+      <Stack.Screen
+        options={{
+          title: 'Agent SaaS',
+          headerLeft,
+          unstable_headerLeftItems: () => [glassFree(headerLeft())],
+          headerRight,
+          unstable_headerRightItems: () => [glassFree(headerRight())],
+        }}
+      />
+
+      {isMdUp ? (
+        <View style={styles.split} testID="chat-master-detail">
+          <View style={styles.listPaneWide}>{listBody}</View>
+          <View style={styles.detailPane}>
+            {paneSessionId ? (
+              <ChatSessionScreen
+                sessionId={paneSessionId}
+                presentation="pane"
+                onClosePane={() => setPaneSessionId(null)}
+                onSessionNavigate={(id) => setPaneSessionId(id)}
+              />
+            ) : (
+              <View style={styles.emptyPane} testID="chat-pane-empty">
+                <Text style={styles.emptyPaneText}>请选择会话</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      ) : (
+        <View style={styles.listPane}>{listBody}</View>
+      )}
     </View>
   );
 }

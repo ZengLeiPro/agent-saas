@@ -43703,6 +43703,13 @@
           "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
         },
         {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
+          "classification": "no-schema-change",
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
+        },
+        {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
           "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
@@ -43731,6 +43738,13 @@
     {
       "baselineSha": "5351a0493d82d22a979757a84c7cce1e59d72891",
       "files": [
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
+          "classification": "no-schema-change",
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
+        },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",

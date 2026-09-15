@@ -45177,6 +45177,49 @@
           "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
+    },
+    {
+      "baselineSha": "1ba765905c4a45d960b127fe006482a80d04b2a0",
+      "files": [
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
+          "classification": "no-schema-change",
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:8adbeec1f158cc83fe11c1b83efaecf7223a6d6a9df4103c5fa4db071d879f16",
+          "targetDigest": "sha256:09860ca9844f25453f8f43ed40e3b21f14e45177e31d26ce8d10f51550f47cb0",
+          "classification": "no-schema-change",
+          "reason": "仅登记已审核迁移的版本和顺序，不直接执行或内嵌 SQL。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+          "classification": "expand",
+          "reason": "V49 expand-only：新建 membership_capability_grants 与 platform_demo_sessions 表及索引；不删除表列、不回填。"
+        },
+        {
+          "path": "shared/src/types/governance.ts",
+          "baselineDigest": "sha256:338ef1691a81bca79de1f91acd87f18d97eda5a1a7cd1a6ff4ddea18a5dd6aec",
+          "targetDigest": "sha256:9aeec46d1408c7de443b7eb6ceb4ef4d307a5b53fccdb4d418052df7d75fcb5d",
+          "classification": "no-schema-change",
+          "reason": "仅扩展 governancePersonaSchema 字面量 platform_demo；无 SQL、DDL 或启动建表。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/平台演示模式V49迁移审核-20260916.md",
+          "digest": "sha256:63756f2d292584c2d4b3f73e861ebb09da36b21d8b882e2f8b4894a16ad719ab"
+        },
+        {
+          "path": "server/src/data/governance-schema/v49PlatformDemoMigration.test.ts",
+          "digest": "sha256:f2092bd9bc4cfddffe3f27281949a86835467abc903649ab16e2b95d39f74574"
+        }
+      ]
     }
   ]
 }

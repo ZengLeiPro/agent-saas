@@ -10,7 +10,7 @@ import { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import { SkillConfigStore } from '../data/skills/index.js';
 import { PgMembershipStore } from '../data/memberships/index.js';
-import { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
+import { isOAuthGrantRuntimeUsable, PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 import { PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import {
   normalizeLegacyEntitlementSettings,
@@ -703,11 +703,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   ): Promise<boolean> => {
     if (!oauthGrantStore) return false;
     const grant = await oauthGrantStore.getForSubject(tenantId, userId, grantId);
-    return (
-      grant?.status === 'active' &&
-      !grant.revocationStage &&
-      (!grant.expiresAt || new Date(grant.expiresAt).getTime() > Date.now())
-    );
+    return isOAuthGrantRuntimeUsable(grant);
   };
   const authorizeConnectorAssignment = async (
     userId: string,
@@ -1106,7 +1102,11 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
           ownedContext.userId,
           googleWorkspaceGrant.grantId,
         );
-        if (!existingGrant) await oauthGrantStore.ensureProjection(googleWorkspaceGrant);
+        // Connected UI can exist while a leftover revocation_stage blocks token injection.
+        // Re-project whenever the grant is missing or not runtime-usable.
+        if (!isOAuthGrantRuntimeUsable(existingGrant)) {
+          await oauthGrantStore.ensureProjection(googleWorkspaceGrant);
+        }
       } catch (error) {
         serverLogger.warn(
           `Google Workspace OAuth Grant projection skipped: ${error instanceof Error ? error.message : String(error)}`,

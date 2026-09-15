@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
+import { isOAuthGrantRuntimeUsable, PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 
 const NOW = '2026-08-10T00:00:00.000Z';
 
@@ -95,5 +95,72 @@ describe('PgOAuthGrantStore', () => {
     ]));
     expect(query).toHaveBeenCalledWith('COMMIT');
   });
+
+
+  it('重新投影 active Grant 时清掉残留 revocation_stage，避免运行态拒发 token', async () => {
+    const cleared = {
+      ...grantRow(),
+      status: 'active',
+      version: 3,
+      revocation_stage: null,
+      revocation_attempt: 0,
+      revocation_next_retry_at: null,
+      revocation_last_error_code: null,
+      revocation_requested_by: null,
+      revocation_purpose: null,
+    };
+    const query = vi.fn().mockImplementation(async (sql: string) => {
+      if (sql.includes('INSERT INTO test_oauth_grants')) return { rows: [cleared], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgOAuthGrantStore({ pool: { connect: vi.fn().mockResolvedValue(client) } as never, tablePrefix: 'test' });
+    await expect(store.recordProjection({
+      grantId: 'grant-1', tenantId: 'tenant-a', subjectUserId: 'user-1', provider: 'google',
+      connectorId: 'google-workspace', status: 'active', scopeSummary: ['email'], approvedAt: NOW,
+      action: 'approved', purpose: 'google_workspace_connect', actorUserId: 'user-1',
+    })).resolves.toMatchObject({ grantId: 'grant-1', status: 'active' });
+    const upsertSql = String(query.mock.calls.find(([sql]) => String(sql).includes('ON CONFLICT (grant_id) DO UPDATE SET'))?.[0] ?? '');
+    expect(upsertSql).toContain("revocation_stage=CASE WHEN EXCLUDED.status='active' THEN NULL");
+    expect(upsertSql).toContain('revocation_requested_by=CASE WHEN EXCLUDED.status=');
+  });
+
+  it('ensureProjection 会把 revoked/残留撤销中的 Grant 恢复成 runtime-usable', async () => {
+    const stale = {
+      ...grantRow(),
+      status: 'revoked',
+      version: 2,
+      revocation_stage: 'local_finalized',
+    };
+    const cleared = {
+      ...grantRow(),
+      status: 'active',
+      version: 3,
+      revocation_stage: null,
+      revocation_attempt: 0,
+    };
+    const query = vi.fn().mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM test_oauth_grants')) return { rows: [stale], rowCount: 1 };
+      if (sql.includes('UPDATE test_oauth_grants')) return { rows: [cleared], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgOAuthGrantStore({ pool: { connect: vi.fn().mockResolvedValue(client) } as never, tablePrefix: 'test' });
+    const grant = await store.ensureProjection({
+      grantId: 'grant-1', tenantId: 'tenant-a', subjectUserId: 'user-1', provider: 'google',
+      connectorId: 'google-workspace', status: 'active', scopeSummary: ['email'], approvedAt: NOW,
+      action: 'approved', purpose: 'legacy_google_workspace_backfill', actorUserId: 'user-1',
+    });
+    expect(isOAuthGrantRuntimeUsable(grant)).toBe(true);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('revocation_stage=NULL'), expect.any(Array));
+  });
+
+  it('isOAuthGrantRuntimeUsable 拒绝 active+revocation_stage 残留', () => {
+    expect(isOAuthGrantRuntimeUsable({
+      status: 'active', revocationStage: 'local_finalized',
+    })).toBe(false);
+    expect(isOAuthGrantRuntimeUsable({ status: 'active' })).toBe(true);
+  });
+
 
 });

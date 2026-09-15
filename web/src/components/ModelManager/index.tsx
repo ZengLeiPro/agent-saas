@@ -26,7 +26,6 @@ import type {
 } from "./modelConfigTypes";
 import { useModelWritePolicy } from "./useModelWritePolicy";
 
-
 type SelectedPanel =
   | { type: "general" }
   | { type: "group"; groupId: string }
@@ -84,17 +83,12 @@ export function ModelManager() {
     setAdvancedText(entries);
   }, []);
 
-  // Keep refresh identity stable so useEffect([refresh]) does not re-fetch after policy updates;
-  // seq ignores stale overlapping responses (e.g. catalog import refresh racing a failed click).
-  const acceptResponseRef = useRef(acceptResponse);
-  acceptResponseRef.current = acceptResponse;
-  const applyUtilityResponseRef = useRef(titleSettings.applyResponse);
-  applyUtilityResponseRef.current = titleSettings.applyResponse;
-  const refreshSeqRef = useRef(0);
+  const acceptResponseRef = useRef(acceptResponse); acceptResponseRef.current = acceptResponse;
+  const applyUtilityResponseRef = useRef(titleSettings.applyResponse); applyUtilityResponseRef.current = titleSettings.applyResponse;
+  const refreshSeqRef = useRef(0); // stable refresh; ignore stale overlapping responses
   const refresh = useCallback(async () => {
     const seq = ++refreshSeqRef.current;
-    setLoading(true);
-    setSavedAt(null);
+    setLoading(true); setSavedAt(null);
     try {
       const res = await authFetch("/api/admin/models");
       const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string; code?: string };
@@ -109,15 +103,11 @@ export function ModelManager() {
         if (prev.type === "model" && data.models!.groups.some((group) => group.id === prev.groupId && group.models.some((model) => model.id === prev.modelId))) return prev;
         return { type: "general" };
       });
-      hydrateAdvancedText(data.models);
-      setError(null);
+      hydrateAdvancedText(data.models); setError(null);
     } catch (err) {
       if (seq !== refreshSeqRef.current) return;
-      acceptResponseRef.current({});
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (seq === refreshSeqRef.current) setLoading(false);
-    }
+      acceptResponseRef.current({}); setError(err instanceof Error ? err.message : String(err));
+    } finally { if (seq === refreshSeqRef.current) setLoading(false); }
   }, [hydrateAdvancedText]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {

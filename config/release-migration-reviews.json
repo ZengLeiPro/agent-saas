@@ -668,6 +668,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -814,6 +835,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -1897,6 +1922,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -2179,6 +2225,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -3080,6 +3130,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -3342,6 +3413,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -4222,6 +4297,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -4468,6 +4564,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -5348,6 +5448,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -5594,6 +5715,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -6460,6 +6585,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -6698,6 +6844,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -7564,6 +7714,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -7802,6 +7973,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -8668,6 +8843,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -8906,6 +9102,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -10017,6 +10217,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -10267,6 +10488,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -11140,6 +11365,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -11398,6 +11644,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -12285,6 +12535,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -12535,6 +12806,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -13422,6 +13697,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -13672,6 +13968,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -14517,6 +14817,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -14751,6 +15072,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -15596,6 +15921,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -15830,6 +16176,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -16675,6 +17025,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -16909,6 +17280,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -17754,6 +18129,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -17988,6 +18384,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -18819,6 +19219,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -19049,6 +19470,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -19880,6 +20305,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -20110,6 +20556,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -20892,6 +21342,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -21102,6 +21573,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -21884,6 +22359,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -22090,6 +22586,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -22872,6 +23372,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -23070,6 +23591,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -23852,6 +24377,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -24050,6 +24596,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -24832,6 +25382,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -25030,6 +25601,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -25784,6 +26359,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -25974,6 +26570,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -26714,6 +27314,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -26912,6 +27533,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -27624,6 +28249,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -27806,6 +28452,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -28518,6 +29168,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -28700,6 +29371,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -29384,6 +30059,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -29550,6 +30246,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -30234,6 +30934,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -30392,6 +31113,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -31062,6 +31787,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -31208,6 +31954,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -31878,6 +32628,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -32020,6 +32791,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -32690,6 +33465,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -32836,6 +33632,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -33506,6 +34306,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -33644,6 +34465,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -34314,6 +35139,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -34452,6 +35298,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -35122,6 +35972,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -35256,6 +36127,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -35926,6 +36801,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -36072,6 +36968,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -36742,6 +37642,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -36888,6 +37809,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -37558,6 +38483,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -37704,6 +38650,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -38346,6 +39296,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -38432,6 +39403,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -39102,6 +40077,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -39232,6 +40228,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -39538,6 +40538,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -39624,6 +40645,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -39923,6 +40948,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -39993,6 +41039,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -40285,6 +41335,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -40351,6 +41422,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -40636,6 +41711,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -40698,6 +41794,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -40976,6 +42076,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -41034,6 +42155,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -41270,6 +42395,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -41312,6 +42458,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -41548,6 +42698,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -41590,6 +42761,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -41819,6 +42994,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -41853,6 +43049,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42061,6 +43261,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42087,6 +43308,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42211,6 +43436,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42237,6 +43483,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42340,6 +43590,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42362,6 +43633,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42486,6 +43761,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42524,6 +43820,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42599,6 +43899,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42613,6 +43934,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42681,6 +44006,27 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
@@ -42703,6 +44049,10 @@
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     },
@@ -42722,12 +44072,69 @@
           "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
           "classification": "no-schema-change",
           "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        },
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
         }
       ],
       "evidence": [
         {
           "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
           "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        },
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
+        }
+      ]
+    },
+    {
+      "baselineSha": "5351a0493d82d22a979757a84c7cce1e59d72891",
+      "files": [
+        {
+          "path": "server/src/app/runtimeGovernanceConnectors.ts",
+          "baselineDigest": "sha256:1351379c7a1b83abcf062ab9e66791b933f53868b44b1395f839fdb0d3322cfc",
+          "targetDigest": "sha256:dca82a2630cd64d69b4b5f579fa45adf33dbb45662659a10549b3e8f1ef51fc7",
+          "classification": "no-schema-change",
+          "reason": "只改授权判定与 Google Workspace Grant 投影触发：缺省或非 runtime-usable 时 re-ensure；不改启动建表或 schema。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/store.ts",
+          "baselineDigest": "sha256:2473d1c9881522b93b2daf8551aae71755e782a24f5153ac3360a01b9365441d",
+          "targetDigest": "sha256:c4c5b4646b3e186d8b38f01ff8b24c493de6ace510704cb922131cb3236b072a",
+          "classification": "no-schema-change",
+          "reason": "init 的 CREATE TABLE/INDEX IF NOT EXISTS 逐字未变；只改运行期 ensureProjection/recordProjection，在 active 再批准时清掉残留 revocation_* 列。无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/oauthGrants/types.ts",
+          "baselineDigest": "sha256:a747025330cedc1568765bc68df160c095de030aa163adac1f502e7380f27b77",
+          "targetDigest": "sha256:09e58e4ebda59e58a672203183427e7bba5a8f5015942b767944ef30140760e2",
+          "classification": "no-schema-change",
+          "reason": "仅新增 isOAuthGrantRuntimeUsable 纯函数；无 SQL、建表或持久化形状变化。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md",
+          "digest": "sha256:9ea5bb5473572cbdeeba103b2b3eb7e454d82114eed91a319ce847659dd40480"
         }
       ]
     }

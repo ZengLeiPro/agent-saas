@@ -46,7 +46,7 @@ jobs:
   guard:
     name: 验证部署请求与固定的业务源码
     runs-on: kaiyan-linux
-    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 5
     permissions:
       contents: read
@@ -74,7 +74,7 @@ jobs:
       queue: max
     if: github.ref == 'refs/heads/main'
     runs-on: kaiyan-linux
-    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 45
     environment: staging
     permissions:
@@ -301,7 +301,7 @@ jobs:
     needs: [ensure-evidence-writer, guard]
     if: github.ref == 'refs/heads/main'
     runs-on: kaiyan-linux
-    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 45
     environment: production
     permissions:
@@ -753,7 +753,7 @@ jobs:
       queue: max
     if: github.ref == 'refs/heads/main'
     runs-on: kaiyan-linux
-    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 50
     environment: staging
     permissions:
@@ -856,7 +856,7 @@ jobs:
     needs: build-deploy-verify
     if: success() && github.ref == 'refs/heads/main' && inputs.promote_to_production == true
     runs-on: kaiyan-linux
-    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 5
     permissions:
       contents: read
@@ -897,7 +897,7 @@ jobs:
       queue: max
     if: github.ref == 'refs/heads/main'
     runs-on: kaiyan-linux
-    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 120
     environment: staging
     env:

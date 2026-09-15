@@ -54,7 +54,7 @@ jobs:
   dispatch:
     name: 校验生产操作与互斥参数
     runs-on: kaiyan-linux
-    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 5
     permissions:
       contents: read
@@ -78,7 +78,7 @@ jobs:
     needs: dispatch
     if: github.ref == 'refs/heads/main' && needs.dispatch.outputs.operation == 'promote'
     runs-on: kaiyan-linux
-    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 180
     environment: production
     env:
@@ -1358,7 +1358,7 @@ jobs:
     permissions:
       contents: read
     runs-on: kaiyan-linux
-    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     environment: production
     timeout-minutes: 25
     env:

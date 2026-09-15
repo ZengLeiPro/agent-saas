@@ -162,7 +162,8 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           # Pin packages needed for EAS local APK; licenses accepted by the action.
-          packages: 'tools platform-tools platforms;android-35 build-tools;35.0.0'
+          # cmdline-tools come from the action; do not request deprecated SDK 'tools'.
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
       - name: 物化 release keystore 与 ephemeral credentials.json
         id: signing
         env:

@@ -14,6 +14,7 @@ export { MessageCitationCard } from './CitationCard';
 export {
   ChatRightSlotProvider,
   useChatRightSlot,
+  type ChatRightArtifactPreviewRequest,
   type ChatRightFilePreviewRequest,
   type ChatRightSlotContextValue,
 } from './ChatRightSlotContext';

@@ -24,19 +24,18 @@ import { EmptyChatRecommendCards } from './EmptyChatRecommendCards';
 import { ExpertWelcome } from './ExpertWelcome';
 import { useScenarioDeepLink } from '../../hooks/useScenarioDeepLink';
 import { resolveActiveExpertPresentation } from '../../lib/activeExpertPresentation';
-import { SubagentTranscriptSheet } from './SubagentTranscriptSheet';
-import { MarkdownPreviewBody, markdownPreviewTitle } from './MarkdownPreviewBody';
-import { FilePreviewBody, filePreviewDisplayName } from '../files/preview/FilePreviewBody';
-import { SideOverlayPanel } from '../layout';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 import { chatTranscriptMaxWidthStyle } from '../../lib/layoutDensity';
 import { useChatRightPaneLayout } from '../../hooks/useChatRightPaneLayout';
 import {
   ChatRightSlotProvider,
   SubagentTranscriptProvider,
+  type ChatRightArtifactPreviewRequest,
   type ChatRightFilePreviewRequest,
   type SubagentTranscriptTarget,
 } from './blocks';
+import { ChatRightSlotHost } from './ChatRightSlotHost';
+import { SubagentTranscriptSheet } from './SubagentTranscriptSheet';
 import { MessageFeedbackProvider } from '../../contexts/MessageFeedbackContext';
 import { AskUserPromptPanel } from './AskUserPromptPanel';
 import { QueuedMessageBar } from './QueuedMessageBar';
@@ -44,7 +43,6 @@ import { ChatInput } from './ChatInput';
 import { ConnectionBanner } from '../ConnectionBanner';
 import { TokenDetailOverlay } from './TokenDetail';
 import { ChatHeaderRight, ChatHeaderTitle } from './ChatSessionHeader';
-import { ChatFileBrowserPane } from './ChatFileBrowserPane';
 import { isFilesEntryVisible } from '../../lib/filesEntry';
 import { isV1RouteAllowed } from '../../v1/v1Capabilities';
 import { getV1BuildProfile } from '../../v1/v1Runtime';
@@ -111,6 +109,8 @@ export function ChatSessionScreen({
   const [transcriptTarget, setTranscriptTarget] = useState<SubagentTranscriptTarget | null>(null);
   /** md+ single right-slot: file preview (subagent shares the same overlay host). */
   const [rightPreview, setRightPreview] = useState<ChatRightFilePreviewRequest | null>(null);
+  /** md+ right-slot: Artifact preview (no HTML engine; download-notice for html). */
+  const [rightArtifact, setRightArtifact] = useState<ChatRightArtifactPreviewRequest | null>(null);
   /** md+ right-slot: workspace file browser (web FolderOpen header entry). */
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const { isMdUp, width: breakpointWidth } = useBreakpoint();
@@ -123,7 +123,7 @@ export function ChatSessionScreen({
     [authUser?.tenantFeatures],
   );
   const rightSlotOpen =
-    isMdUp && !!(transcriptTarget || rightPreview || fileBrowserOpen);
+    isMdUp && !!(transcriptTarget || rightPreview || rightArtifact || fileBrowserOpen);
   const {
     handleHostLayout,
     rightPanePresentation,
@@ -414,7 +414,20 @@ export function ChatSessionScreen({
       }
       setTranscriptTarget(null);
       setFileBrowserOpen(false);
+      setRightArtifact(null);
       setRightPreview(request);
+      return true;
+    },
+    [isMdUp],
+  );
+
+  const openRightArtifactPreview = useCallback(
+    (request: ChatRightArtifactPreviewRequest) => {
+      if (!isMdUp) return false;
+      setTranscriptTarget(null);
+      setFileBrowserOpen(false);
+      setRightPreview(null);
+      setRightArtifact(request);
       return true;
     },
     [isMdUp],
@@ -427,14 +440,18 @@ export function ChatSessionScreen({
       if (next) {
         setTranscriptTarget(null);
         setRightPreview(null);
+        setRightArtifact(null);
       }
       return next;
     });
   }, [isMdUp]);
 
   const rightSlotValue = useMemo(
-    () => ({ openFilePreview: openRightFilePreview }),
-    [openRightFilePreview],
+    () => ({
+      openFilePreview: openRightFilePreview,
+      openArtifactPreview: openRightArtifactPreview,
+    }),
+    [openRightFilePreview, openRightArtifactPreview],
   );
 
   const handlePreviewMd = useCallback((filePath: string) => {
@@ -534,6 +551,7 @@ export function ChatSessionScreen({
   );
   useEffect(() => {
     setRightPreview(null);
+    setRightArtifact(null);
     setTranscriptTarget(null);
     setFileBrowserOpen(false);
   }, [sessionId]);
@@ -544,6 +562,7 @@ export function ChatSessionScreen({
     () => ({
       openTranscript: (target: SubagentTranscriptTarget) => {
         setRightPreview(null);
+        setRightArtifact(null);
         setFileBrowserOpen(false);
         setTranscriptTarget(target);
       },
@@ -563,13 +582,14 @@ export function ChatSessionScreen({
   const handleHeaderBack = useCallback(() => {
     if (transcriptTarget) { setTranscriptTarget(null); return; }
     if (fileBrowserOpen) { setFileBrowserOpen(false); return; }
+    if (rightArtifact) { setRightArtifact(null); return; }
     if (rightPreview) { setRightPreview(null); return; }
     if (isPane) {
       onClosePane?.();
       return;
     }
     router.back();
-  }, [transcriptTarget, fileBrowserOpen, rightPreview, router, isPane, onClosePane]);
+  }, [transcriptTarget, fileBrowserOpen, rightArtifact, rightPreview, router, isPane, onClosePane]);
 
   const headerTitleNode = (
     <ChatHeaderTitle
@@ -634,87 +654,29 @@ export function ChatSessionScreen({
     </View>
   );
 
-  const rightSlotNode = !rightPanePresentation ? null : transcriptTarget ? (
-    <SideOverlayPanel
-      title={`子任务完整过程 · ${transcriptTarget.title}`}
-      subtitle={transcriptTarget.childSessionId}
-      onClose={() => setTranscriptTarget(null)}
-      width={rightPaneWidth}
+  const rightSlotNode = (
+    <ChatRightSlotHost
       presentation={rightPanePresentation}
-      resizable={dockedRight}
-      onResizeDelta={dockedRight ? handleRightPaneResizeDelta : undefined}
-      onResizeEnd={dockedRight ? handleRightPaneResizeEnd : undefined}
-      dimmed={overlayRight}
-      testID="chat-right-subagent"
-    >
-      <SubagentTranscriptSheet
-        visible
-        variant="body"
-        childSessionId={transcriptTarget.childSessionId}
-        title={transcriptTarget.title}
-        onClose={() => setTranscriptTarget(null)}
-      />
-    </SideOverlayPanel>
-  ) : rightPreview?.route === '/chat/markdown-preview' ? (
-    <SideOverlayPanel
-      title={markdownPreviewTitle(rightPreview.filePath)}
-      onClose={() => setRightPreview(null)}
       width={rightPaneWidth}
-      presentation={rightPanePresentation}
-      resizable={dockedRight}
-      onResizeDelta={dockedRight ? handleRightPaneResizeDelta : undefined}
-      onResizeEnd={dockedRight ? handleRightPaneResizeEnd : undefined}
-      dimmed={overlayRight}
-      testID="chat-right-preview"
-    >
-      <MarkdownPreviewBody
-        filePath={rightPreview.filePath}
-        {...(sessionOwner ? { owner: sessionOwner } : {})}
-        onNavigatePreview={(next) =>
-          setRightPreview({ route: '/chat/markdown-preview', filePath: next })
-        }
-      />
-    </SideOverlayPanel>
-  ) : rightPreview?.route === '/files/preview' ? (
-    <SideOverlayPanel
-      title={filePreviewDisplayName(rightPreview.filePath, rightPreview.name)}
-      onClose={() => setRightPreview(null)}
-      width={rightPaneWidth}
-      presentation={rightPanePresentation}
-      resizable={dockedRight}
-      onResizeDelta={dockedRight ? handleRightPaneResizeDelta : undefined}
-      onResizeEnd={dockedRight ? handleRightPaneResizeEnd : undefined}
-      dimmed={overlayRight}
-      testID="chat-right-file-preview"
-    >
-      <FilePreviewBody
-        filePath={rightPreview.filePath}
-        name={rightPreview.name}
-        size={rightPreview.size ?? 0}
-        modifiedAt={rightPreview.modifiedAt ?? 0}
-        {...(sessionOwner ? { owner: sessionOwner } : {})}
-      />
-    </SideOverlayPanel>
-  ) : fileBrowserOpen ? (
-    <SideOverlayPanel
-      title="文件"
-      onClose={() => setFileBrowserOpen(false)}
-      width={rightPaneWidth}
-      presentation={rightPanePresentation}
-      resizable={dockedRight}
-      onResizeDelta={dockedRight ? handleRightPaneResizeDelta : undefined}
-      onResizeEnd={dockedRight ? handleRightPaneResizeEnd : undefined}
-      dimmed={overlayRight}
-      testID="chat-right-file-browser"
-    >
-      <ChatFileBrowserPane
-        owner={sessionOwner}
-        onOpenPreview={(request) => {
-          openRightFilePreview(request);
-        }}
-      />
-    </SideOverlayPanel>
-  ) : null;
+      docked={!!dockedRight}
+      overlay={!!overlayRight}
+      onResizeDelta={handleRightPaneResizeDelta}
+      onResizeEnd={handleRightPaneResizeEnd}
+      transcriptTarget={transcriptTarget}
+      onCloseTranscript={() => setTranscriptTarget(null)}
+      rightPreview={rightPreview}
+      onClosePreview={() => setRightPreview(null)}
+      onNavigateMarkdown={(next) =>
+        setRightPreview({ route: '/chat/markdown-preview', filePath: next })
+      }
+      rightArtifact={rightArtifact}
+      onCloseArtifact={() => setRightArtifact(null)}
+      fileBrowserOpen={fileBrowserOpen}
+      onCloseFileBrowser={() => setFileBrowserOpen(false)}
+      sessionOwner={sessionOwner}
+      onOpenPreviewFromBrowser={openRightFilePreview}
+    />
+  );
 
   return (
     <View style={styles.container} testID={isPane ? 'chat-pane-screen' : 'chat-screen'} onLayout={handleHostLayout}>

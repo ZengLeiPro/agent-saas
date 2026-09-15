@@ -432,6 +432,70 @@
           ]
         }
       ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:ef9534237aaad294f2d33beb3efe603f47ff6754877eb3789ec1d5aba07e5fd8",
+      "checks": [
+        {
+          "id": "skill-presentation-v38-schema",
+          "configPath": "runtimeEventStore",
+          "description": "V38 skill_presentations 表已经建立",
+          "sql": "SELECT to_regclass($1 || '_skill_presentations') IS NOT NULL AS ok",
+          "params": [
+            "$tablePrefix"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+      "checks": [
+        {
+          "id": "ky-app-v41-system-schema",
+          "configPath": "runtimeEventStore",
+          "description": "KY App V41 系统定义与安装相关表已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_ky_app_system_definitions') AS definitions, to_regclass($1 || '_ky_app_tenant_system_installations') AS installations) SELECT refs.definitions IS NOT NULL AND refs.installations IS NOT NULL AS ok FROM refs",
+          "params": [
+            "$tablePrefix"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+      "checks": [
+        {
+          "id": "ky-app-v42-directory-schema",
+          "configPath": "runtimeEventStore",
+          "description": "KY App V42 目录变更日志与状态表已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_ky_app_directory_change_log') AS change_log, to_regclass($1 || '_ky_app_directory_state') AS state) SELECT refs.change_log IS NOT NULL AND refs.state IS NOT NULL AS ok FROM refs",
+          "params": [
+            "$tablePrefix"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+      "checks": [
+        {
+          "id": "ky-app-v43-session-tool-snapshot-schema",
+          "configPath": "runtimeEventStore",
+          "description": "KY App V43 会话工具快照表已经建立",
+          "sql": "SELECT to_regclass($1 || '_ky_app_session_tool_snapshots') IS NOT NULL AS ok",
+          "params": [
+            "$tablePrefix"
+          ]
+        }
+      ]
     }
   ]
 }

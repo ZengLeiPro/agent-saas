@@ -272,12 +272,29 @@ const url = process.env.TEST_DATABASE_URL;
     });
     expect(r.issue).toHaveBeenCalledTimes(1);
   });
+  it('V2 已有组织在 DNS 完成后返回可恢复的自动授权入口', async () => {
+    const r = rig();
+    r.options.useV2 = () => true;
+    const initial = await r.service.start(r.input, PLATFORM_ADMIN);
+    expect(initial.execution.lastErrorCode).toBe('domain_verification_required');
+    r.state.dns = true;
+    const resumed = await r.service.resume(initial.execution.executionId, PLATFORM_ADMIN);
+    expect(resumed.execution.lastErrorCode).toBe('authorization_required');
+    expect(resumed.authorization).toEqual({
+      path: `/ky-app/credential-claim/${resumed.execution.installationId}`,
+      installationId: resumed.execution.installationId,
+    });
+    expect(r.issue).not.toHaveBeenCalled();
+  });
   it.each(['active', 'tenantDisabled', 'userDisabled'] as const)(
-    '恢复执行仍重新检查组织和联系人状态：%s', async (field) => {
+    '恢复执行仍重新检查组织和联系人状态：%s',
+    async (field) => {
       const r = rig();
       const initial = await r.service.start(r.input, PLATFORM_ADMIN);
       r.state[field] = field.endsWith('Disabled');
-      await expect(r.service.resume(initial.execution.executionId, PLATFORM_ADMIN)).rejects.toThrow();
+      await expect(
+        r.service.resume(initial.execution.executionId, PLATFORM_ADMIN),
+      ).rejects.toThrow();
       expect(r.issue).toHaveBeenCalledTimes(1);
       expect(r.options.runSmoke).not.toHaveBeenCalled();
       expect((await store.get(initial.execution.executionId))?.status).toBe('waiting_external');
@@ -352,7 +369,9 @@ const url = process.env.TEST_DATABASE_URL;
         body: JSON.stringify(body),
       });
     expect((await send({ ...r.input, grantCredits: 100 })).status).toBe(400);
-    const organization = await fetch(`${base}/systems/${TEST_SYSTEM}/connection-options/${r.input.tenantId}`);
+    const organization = await fetch(
+      `${base}/systems/${TEST_SYSTEM}/connection-options/${r.input.tenantId}`,
+    );
     expect(organization.status).toBe(200);
     expect(await organization.json()).not.toHaveProperty('eligible');
     const created = await send(r.input);

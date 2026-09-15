@@ -2,12 +2,12 @@ import { StrictMode } from 'react';
 import { render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 vi.mock('./KyAppCredentialClaimPage', () => ({
-  KyAppCredentialClaimPage: ({ initialTicket }: { initialTicket: string }) => (
-    <p>{window.location.hash === '' ? initialTicket : 'fragment 未清除'}</p>
+  KyAppCredentialClaimPage: ({ installationId }: { installationId: string }) => (
+    <p>{window.location.hash === '' ? installationId : 'fragment 未清除'}</p>
   ),
 }));
 import { KyAppCredentialClaimEntry } from './KyAppCredentialClaimEntry';
-it('StrictMode 下先清除 fragment，再将内存票据传入异步领取页面', async () => {
+it('StrictMode 下清除旧版票据 fragment，再进入纯 V2 自动授权页面', async () => {
   window.history.replaceState(
     null,
     '',
@@ -19,6 +19,7 @@ it('StrictMode 下先清除 fragment，再将内存票据传入异步领取页�
     </StrictMode>,
   );
   expect(window.location.hash).toBe('');
-  expect(await screen.findByText('one-time-test-ticket')).toBeTruthy();
+  expect(await screen.findByText('demo')).toBeTruthy();
+  expect(document.body.textContent).not.toContain('one-time-test-ticket');
   window.history.replaceState(null, '', '/');
 });

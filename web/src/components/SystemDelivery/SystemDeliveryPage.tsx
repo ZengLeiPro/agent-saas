@@ -6,9 +6,9 @@ import { kyAppPost } from '@/lib/kyAppManagementApi';
 import type { OnboardExecution, OnboardResponse } from '@/lib/kyAppManagementTypes';
 import type { ConnectionOptions } from '@/lib/kyAppConnectionTypes';
 import { useManagementResource, ResourceState } from '../BusinessSystems/ManagementResource';
-import { credentialClaimUrl } from '../KyAppCredentialClaim/claimRoute';
+import { navigateCredentialClaim } from '../KyAppCredentialClaim/claimRoute';
 import { CreateDeliveryForm } from './CreateDeliveryForm';
-import { businessStatusLabel, formatBusinessSystemTime } from '../BusinessSystems/presentation';
+import { businessStatusLabel } from '../BusinessSystems/presentation';
 const routeId = 'platform.runtime.system-deliveries';
 const stepNames: Record<string, string> = {
   existing_organization: '组织与技术联系人',
@@ -50,9 +50,7 @@ export function SystemDeliveryPage({
     window.history.replaceState(window.history.state, '', url);
   }
   const currentExecution = embedded ? selectedExecution : executionId;
-  const [latest, setLatest] = useState<OnboardResponse>();
   function started(result: OnboardResponse) {
-    setLatest(result);
     open(result.execution.executionId);
   }
   return currentExecution ? (
@@ -66,8 +64,6 @@ export function SystemDeliveryPage({
         key={currentExecution}
         executionId={currentExecution}
         expectedSystemId={systemId}
-        latest={latest?.execution.executionId === currentExecution ? latest : undefined}
-        onResumed={setLatest}
       />
     </div>
   ) : (
@@ -153,14 +149,10 @@ function DeliveryRows({
 }
 function DeliveryExecution({
   executionId,
-  latest,
-  onResumed,
   expectedSystemId,
 }: {
   executionId: string;
   expectedSystemId?: string;
-  latest?: OnboardResponse;
-  onResumed: (result: OnboardResponse) => void;
 }) {
   const resource = useManagementResource<{ execution: OnboardExecution }>(
     `/onboard/${encodeURIComponent(executionId)}`,
@@ -178,14 +170,16 @@ function DeliveryExecution({
     setBusy(true);
     setError('');
     try {
-      onResumed(
-        await kyAppPost<OnboardResponse>(
-          execution.request?.mode === 'existing'
-            ? `/onboard-existing/${encodeURIComponent(execution.executionId)}/resume`
-            : '/onboard',
-          execution.request?.mode === 'existing' ? {} : execution.request,
-        ),
+      const result = await kyAppPost<OnboardResponse>(
+        execution.request?.mode === 'existing'
+          ? `/onboard-existing/${encodeURIComponent(execution.executionId)}/resume`
+          : '/onboard',
+        execution.request?.mode === 'existing' ? {} : execution.request,
       );
+      if (result.authorization) {
+        navigateCredentialClaim(result.authorization.installationId);
+        return;
+      }
       resource.reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '继续交付失败');
@@ -194,8 +188,6 @@ function DeliveryExecution({
       setBusy(false);
     }
   }
-  const claim = latest?.claim;
-  const ticket = claim?.path.split('/').at(-1);
   const visibleSteps = execution?.steps.filter(
     (step) => !['smoke', 'delivery_checklist'].includes(step.id),
   );
@@ -236,30 +228,6 @@ function DeliveryExecution({
           </ol>
           {execution.status === 'waiting_external' && !coreCompleted && (
             <p>{connectionWaitingMessage(execution.lastErrorCode)}</p>
-          )}
-          {claim && ticket && (
-            <div className="rounded border p-3">
-              <p>
-                平台管理员可直接领取，也可将链接交给技术联系人。过期时间：
-                {formatBusinessSystemTime(claim.ticketExpiresAt)}
-              </p>
-              <input
-                aria-label="凭据领取链接"
-                readOnly
-                value={credentialClaimUrl(execution.installationId, ticket)}
-                className="w-full rounded border bg-background p-2 text-xs"
-              />
-              <p className="text-xs">刷新后不保留此链接；如遗失，请到实例运营页重新签发。</p>
-              <Button asChild variant="outline">
-                <a
-                  href={credentialClaimUrl(execution.installationId, ticket)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  领取凭据
-                </a>
-              </Button>
-            </div>
           )}
           {['waiting_external', 'failed'].includes(execution.status) && !coreCompleted && (
             <Button disabled={busy} onClick={() => void resume()}>
@@ -341,6 +309,7 @@ function ResolvedOrganizationName({ systemId, tenantId }: { systemId: string; te
 
 function connectionWaitingMessage(code: string | null) {
   const messages: Record<string, string> = {
+    authorization_required: '待自动授权：点击继续交付进入授权并自动接入页面。',
     credential_claim_required: '待领取凭据：平台管理员或技术联系人可登录领取并装配凭据。',
     credential_ack_required: '待服务确认：请装配凭据，启动业务服务并完成确认。',
     domain_verification_required: '待域名验证：请按处理信息配置 DNS TXT，完成后继续。',

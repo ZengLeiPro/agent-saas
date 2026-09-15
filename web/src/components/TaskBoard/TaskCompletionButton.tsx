@@ -12,8 +12,10 @@ export function canManuallyCompleteTask(
 ): boolean {
   if (!task || readOnly || !canTransitionTask || executionActive || !executionStateReady) return false;
   if (task.kind === "integration" || task.kind === "remediation") return false;
-  if (task.kind === "delivery" && (
-    task.mergeEligibility === "eligible" || task.mergeEligibility === "claimed"
+  if (task.mergeEligibility === "claimed") return false;
+  // 待合并列的交付任务可以人工收口，不必再走集成批次；已被占用的来源仍由集成工作流控制。
+  if (task.kind === "delivery" && task.status !== "ready_to_merge" && (
+    task.mergeEligibility === "eligible"
     || Boolean(task.providerPullRequestId && !task.mergedCommitOid)
   )) return false;
   return !["done", "canceled"].includes(task.status);

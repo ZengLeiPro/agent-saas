@@ -21,9 +21,13 @@ export async function completeStoredTask(
     assertBoardRole(loaded.boardRole, 'maintainer');
     assertExpectedVersion(loaded.task, input.expectedVersion);
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
-    const deliveryRequiresWorkflow = loaded.task.kind === 'delivery' && (
-      loaded.task.mergeEligibility === 'eligible' || loaded.task.mergeEligibility === 'claimed'
-      || Boolean(loaded.task.providerPullRequestId && !loaded.task.mergedCommitOid)
+    const deliveryRequiresWorkflow = loaded.task.mergeEligibility === 'claimed' || (
+      loaded.task.kind === 'delivery'
+      && loaded.task.status !== 'ready_to_merge'
+      && (
+        loaded.task.mergeEligibility === 'eligible'
+        || Boolean(loaded.task.providerPullRequestId && !loaded.task.mergedCommitOid)
+      )
     );
     if (loaded.task.kind === 'integration' || loaded.task.kind === 'remediation'
       || loaded.task.status === 'done' || loaded.task.status === 'canceled'

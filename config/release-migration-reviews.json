@@ -210,7 +210,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -1135,7 +1135,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -2483,7 +2483,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -3664,7 +3664,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -4808,7 +4808,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -5945,7 +5945,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -7067,7 +7067,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -8189,7 +8189,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -9360,7 +9360,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -10704,7 +10704,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -11846,7 +11846,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -13001,7 +13001,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -14135,7 +14135,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -15232,7 +15232,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -16329,7 +16329,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -17426,7 +17426,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -18516,7 +18516,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -19595,7 +19595,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -20660,7 +20660,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -21670,7 +21670,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -22676,7 +22676,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -23674,7 +23674,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -24672,7 +24672,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -25670,7 +25670,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -26632,7 +26632,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -27588,7 +27588,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -28500,7 +28500,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -29398,7 +29398,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -30266,7 +30266,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -31126,7 +31126,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -31960,7 +31960,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -32790,7 +32790,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -33624,7 +33624,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -34450,7 +34450,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -35276,7 +35276,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -36098,7 +36098,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -36932,7 +36932,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -37766,7 +37766,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -38586,7 +38586,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "治理最高版本 46 调整为 47；执行器和旧迁移不变，DDL 由 V47 文件单独审核。"
         },
@@ -39367,7 +39367,7 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:f4d8cf98de45431a23c485b944fb8b0bc44ca13e2cf5615178467adef3fb1b18",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
           "reason": "Migration registry wiring only; V47 owns the additive DDL and its exact postcondition."
         },
@@ -40206,9 +40206,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -40609,9 +40609,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -40989,9 +40989,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -41358,9 +41358,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -41716,9 +41716,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -42028,9 +42028,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -42324,9 +42324,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -42613,9 +42613,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -42873,9 +42873,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -43041,9 +43041,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -43188,9 +43188,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -43352,9 +43352,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -43483,9 +43483,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "只把治理库最高版本常量推进到 48，不直接执行或内嵌 SQL。"
+          "reason": "只把治理库最高版本常量推进到 49，不直接执行或内嵌 SQL。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -43583,9 +43583,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:588ca7a595f50e6c87bc7538368e4f468d405fbb080d0cddedde0e864f37ca96",
-          "targetDigest": "sha256:60942b3a1377b91ca3ba74be4770cdbc27e5fe19c9ba7e2e67ebce0b8ab3cfb3",
+          "targetDigest": "sha256:d59839ff35eabbae10eba8bbd20cca6f8bfd0b341fabc04e28c8754b3810edd8",
           "classification": "no-schema-change",
-          "reason": "治理 schema 目标版本从 47 单调提升到 48。"
+          "reason": "治理 schema 目标版本从 47 单调提升到 49。"
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts",
@@ -43662,7 +43662,7 @@
         },
         {
           "path": "server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.test.ts",
-          "digest": "sha256:b26231065e59b608101ecaaa82478709bb5acc614051c8d03e78ea57db72e413"
+          "digest": "sha256:0e9755472d89ee3746fb9dd835563ddf50a537050d501f0738545209adec11a4"
         },
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",

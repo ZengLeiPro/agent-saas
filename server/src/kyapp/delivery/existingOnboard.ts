@@ -250,7 +250,7 @@ export class KyAppExistingOnboardService {
           return {
             ...waiting,
             authorization: {
-              path: `/ky-app/credentials/claim?installation=${encodeURIComponent(request.installationId)}`,
+              path: `/ky-app/credential-claim/${encodeURIComponent(request.installationId)}`,
               installationId: request.installationId,
             },
           };

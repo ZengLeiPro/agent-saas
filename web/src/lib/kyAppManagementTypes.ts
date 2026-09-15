@@ -64,6 +64,7 @@ export interface OnboardExecution {
 export interface OnboardResponse {
   execution: OnboardExecution;
   claim?: { path: string; credentialId: string; ticketExpiresAt: string; ackDeadlineAt: string };
+  authorization?: { path: string; installationId: string };
 }
 export interface CredentialTicket {
   credentialId: string;

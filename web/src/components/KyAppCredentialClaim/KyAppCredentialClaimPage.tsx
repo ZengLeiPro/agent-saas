@@ -3,21 +3,8 @@ import { AuthShell } from '@/components/AuthShell';
 import { LoginPage } from '@/components/LoginPage';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
-import {
-  installationPath,
-  kyAppRequest,
-  kyAppV2Post,
-  kyAppV2Request,
-  KyAppManagementError,
-} from '@/lib/kyAppManagementApi';
+import { kyAppV2Post, kyAppV2Request, KyAppManagementError } from '@/lib/kyAppManagementApi';
 import type { EnrollmentOperationView } from '@/lib/kyAppManagementTypes';
-
-interface ClaimedCredential {
-  serviceCredential: string;
-  installationKey: string;
-  keyVersion: string;
-  ackDeadlineAt: string;
-}
 
 const scopeNames: Record<string, string> = {
   'installation.activate': '完成本组织接入',
@@ -27,16 +14,8 @@ const scopeNames: Record<string, string> = {
 };
 const activeStatuses = new Set(['code_issued', 'exchanged', 'activating']);
 
-export function KyAppCredentialClaimPage({
-  installationId,
-  initialTicket = '',
-}: {
-  installationId: string;
-  initialTicket?: string;
-}) {
+export function KyAppCredentialClaimPage({ installationId }: { installationId: string }) {
   const { isAuthenticated, isLoading } = useAuth();
-  const ticket = useRef(initialTicket);
-  const legacyGeneration = useRef(0);
   const alive = useRef(true);
   const storageKey = `ky-app-enrollment:${installationId}`;
   const [operation, setOperation] = useState<EnrollmentOperationView>();
@@ -45,10 +24,6 @@ export function KyAppCredentialClaimPage({
   );
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [credential, setCredential] = useState<ClaimedCredential>();
-  const [legacyPhase, setLegacyPhase] = useState<'confirm' | 'claiming' | 'shown' | 'gone'>(
-    'confirm',
-  );
 
   const applyOperation = useCallback(
     (next: EnrollmentOperationView) => {
@@ -111,7 +86,6 @@ export function KyAppCredentialClaimPage({
     }
     return () => {
       alive.current = false;
-      legacyGeneration.current += 1;
     };
   }, [isAuthenticated, refresh, storageKey]);
 
@@ -120,27 +94,6 @@ export function KyAppCredentialClaimPage({
     const timer = window.setInterval(() => void refresh(operation.operationId), 2_000);
     return () => window.clearInterval(timer);
   }, [operation, refresh]);
-
-  useEffect(() => {
-    const clearLegacySecret = () => {
-      if (document.visibilityState !== 'hidden') return;
-      legacyGeneration.current += 1;
-      setCredential(undefined);
-      setLegacyPhase((current) =>
-        current === 'shown' || current === 'claiming' ? 'gone' : current,
-      );
-    };
-    const leave = () => {
-      ticket.current = '';
-      clearLegacySecret();
-    };
-    document.addEventListener('visibilitychange', clearLegacySecret);
-    window.addEventListener('pagehide', leave);
-    return () => {
-      document.removeEventListener('visibilitychange', clearLegacySecret);
-      window.removeEventListener('pagehide', leave);
-    };
-  }, []);
 
   async function begin() {
     if (phase !== 'start') return;
@@ -161,7 +114,7 @@ export function KyAppCredentialClaimPage({
         reason instanceof KyAppManagementError && reason.status === 403
           ? '当前账号不是本次接入的负责人，请使用平台管理员或登记的技术联系人账号。'
           : reason instanceof KyAppManagementError && reason.status === 409
-            ? '该业务系统暂未开放自动接入，可在下方使用旧版手动方式。'
+            ? '该业务系统暂未开放自动接入，请联系平台管理员检查 V2 接入配置。'
             : `安全检查暂未完成。${operationId ? '请刷新页面查询原进度，不要重复发起。' : '请稍后重试。'}`,
       );
     }
@@ -188,41 +141,6 @@ export function KyAppCredentialClaimPage({
       );
       void refresh(operation.operationId);
     }
-  }
-
-  async function claimLegacy() {
-    if (!ticket.current || legacyPhase !== 'confirm') {
-      setError('旧版领取票据缺失或已经结束，请联系管理员重新签发。');
-      return;
-    }
-    const current = ++legacyGeneration.current;
-    setLegacyPhase('claiming');
-    setError('');
-    const value = ticket.current;
-    ticket.current = '';
-    try {
-      const response = await kyAppRequest<{ credential: ClaimedCredential }>(
-        installationPath(installationId, `/credentials/claim/${encodeURIComponent(value)}`),
-      );
-      if (
-        alive.current &&
-        current === legacyGeneration.current &&
-        document.visibilityState !== 'hidden'
-      ) {
-        setCredential(response.credential);
-        setLegacyPhase('shown');
-      }
-    } catch {
-      if (!alive.current || current !== legacyGeneration.current) return;
-      setLegacyPhase('gone');
-      setError('旧版领取未完成，票据可能已使用或过期，请联系管理员核对。');
-    }
-  }
-
-  function envText() {
-    return credential
-      ? `KY_SERVICE_CREDENTIAL=${credential.serviceCredential}\nKY_INSTALLATION_KEY=${credential.installationKey}\nKY_INSTALLATION_KEY_VERSION=${credential.keyVersion}\n`
-      : '';
   }
 
   if (isLoading) return <p role="status">正在验证登录状态…</p>;
@@ -312,36 +230,6 @@ export function KyAppCredentialClaimPage({
             刷新进度
           </Button>
         </section>
-      )}
-
-      {initialTicket && (
-        <details className="rounded-lg border p-4">
-          <summary className="cursor-pointer text-sm font-medium">手动配置旧版系统</summary>
-          <div className="mt-3 space-y-3 text-sm">
-            <p>仅当业务系统尚未支持自动接入时使用；该方式仍需要人工配置并重新发布。</p>
-            {legacyPhase === 'confirm' && (
-              <Button variant="outline" onClick={() => void claimLegacy()}>
-                领取旧版配置
-              </Button>
-            )}
-            {legacyPhase === 'claiming' && <p role="status">正在领取旧版配置…</p>}
-            {credential && legacyPhase === 'shown' && (
-              <>
-                <pre className="whitespace-pre-wrap break-all rounded border p-3 text-xs">
-                  {envText()}
-                </pre>
-                <p>请在 {credential.ackDeadlineAt} 前完成配置。</p>
-                <Button
-                  variant="outline"
-                  onClick={() => void navigator.clipboard.writeText(envText())}
-                >
-                  复制旧版配置
-                </Button>
-              </>
-            )}
-            {legacyPhase === 'gone' && <p>本次旧版领取已结束，配置明文不会再次显示。</p>}
-          </div>
-        </details>
       )}
     </main>
   );

@@ -7,15 +7,16 @@ const ClaimPage = lazy(() =>
 
 /** 先移除 fragment，再加载领取页面；票据仅保留在本次路由的内存。 */
 export function KyAppCredentialClaimEntry({ installationId }: { installationId: string }) {
-  const [ticket, setTicket] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
   useLayoutEffect(() => {
-    const captured = new URLSearchParams(window.location.hash.slice(1)).get('ticket');
-    if (captured) window.history.replaceState(window.history.state, '', window.location.pathname);
-    setTicket((previous) => captured ?? previous ?? '');
+    if (window.location.hash) {
+      window.history.replaceState(window.history.state, '', window.location.pathname);
+    }
+    setReady(true);
   }, []);
-  return ticket === null ? null : (
+  return !ready ? null : (
     <Suspense fallback={<p role="status">正在加载凭据领取页…</p>}>
-      <ClaimPage installationId={installationId} initialTicket={ticket} />
+      <ClaimPage installationId={installationId} />
     </Suspense>
   );
 }

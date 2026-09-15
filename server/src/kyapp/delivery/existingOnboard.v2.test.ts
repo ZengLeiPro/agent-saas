@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { buildManifest, PLATFORM_ADMIN, TEST_SYSTEM } from '../__tests__/harness.js';
 import { resolveKyAppConfig } from '../config.js';
+import { KyAppInstallationError } from '../installations/service.js';
 import { KyAppExistingOnboardService } from './existingOnboard.js';
 import type { KyAppOnboardExecution } from './store.js';
 
@@ -103,6 +104,11 @@ describe('KyAppExistingOnboardService V2', () => {
         },
         probeDomainOwnership: async () => ({ verified: dnsVerified }),
         verifyDomain: async () => {
+          if (!dnsVerified)
+            throw new KyAppInstallationError(
+              'DNS TXT 未包含当前实例的验证令牌',
+              'domain_verification_failed',
+            );
           installation = {
             ...installation!,
             domainVerifiedAt: '2026-09-15T00:01:00.000Z',

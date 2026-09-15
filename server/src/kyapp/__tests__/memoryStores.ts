@@ -212,6 +212,19 @@ export class MemoryKyAppSystemStore {
       .sort((a, b) => a.installationId.localeCompare(b.installationId));
   }
 
+  async listVerifiedInstallationsForSystem(systemId: string): Promise<KyAppInstallation[]> {
+    return [...this.installations.values()]
+      .filter(
+        (item) =>
+          item.systemId === systemId && item.status !== 'deleted' && item.domainVerifiedAt !== null,
+      )
+      .sort(
+        (a, b) =>
+          b.domainVerifiedAt!.localeCompare(a.domainVerifiedAt!) ||
+          a.installationId.localeCompare(b.installationId),
+      );
+  }
+
   async listEnabled(): Promise<KyAppInstallation[]> {
     return [...this.installations.values()]
       .filter((item) => item.status === 'enabled')

@@ -18,6 +18,23 @@ vi.mock('../BusinessSystems/ManagementResource', async (original) => ({
   ...(await original<object>()),
   useManagementResource: vi.fn(),
 }));
+vi.mock('./CreateDeliveryForm', () => ({
+  CreateDeliveryForm: ({ onStarted }: { onStarted: (result: OnboardResponse) => void }) => (
+    <button
+      onClick={() =>
+        onStarted({
+          execution,
+          authorization: {
+            path: '/ky-app/credential-claim/installation-1',
+            installationId: 'installation-1',
+          },
+        })
+      }
+    >
+      模拟确认接入
+    </button>
+  ),
+}));
 
 const execution: OnboardExecution = {
   executionId: 'execution-1',
@@ -63,6 +80,14 @@ describe('SystemDeliveryPage 恢复已有组织接入', () => {
     );
   });
 
+  it('首次确认接入直接返回授权入口时立即进入 V2 自动授权页', () => {
+    render(<SystemDeliveryPage systemId="system-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: '模拟确认接入' }));
+
+    expect(navigateCredentialClaim).toHaveBeenCalledWith('installation-1');
+  });
+
   it('继续交付推进到授权阶段后立即进入 V2 自动授权页', async () => {
     const response: OnboardResponse = {
       execution: {
@@ -88,5 +113,15 @@ describe('SystemDeliveryPage 恢复已有组织接入', () => {
       expect(kyAppPost).toHaveBeenCalledWith('/onboard-existing/execution-1/resume', {}),
     );
     expect(navigateCredentialClaim).toHaveBeenCalledWith('installation-1');
+  });
+
+  it('继续交付仍被外部条件阻塞时明确反馈重新检查结果', async () => {
+    vi.mocked(kyAppPost).mockResolvedValue({ execution });
+    render(<SystemDeliveryPage executionId="execution-1" systemId="system-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: '继续交付' }));
+
+    expect((await screen.findByRole('status')).textContent).toContain('已重新检查：待域名验证');
+    expect(navigateCredentialClaim).not.toHaveBeenCalled();
   });
 });

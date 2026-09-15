@@ -337,6 +337,22 @@ export class PgKyAppSystemStore implements KyAppSystemStore {
     return result.rows.map((row) => rowToInstallation(row as Row));
   }
 
+  /**
+   * 查找同一业务系统仍有效的域名验证事实。
+   *
+   * 调用方仍须按规范化 hostname 精确过滤，并用原实例令牌实时复验 DNS；
+   * 这里只缩小候选集，不能把历史时间戳直接当成可复用授权。
+   */
+  async listVerifiedInstallationsForSystem(systemId: string): Promise<KyAppInstallation[]> {
+    const result = await this.options.pool.query(
+      `SELECT * FROM ${this.installationsTable}
+       WHERE system_id = $1 AND status <> 'deleted' AND domain_verified_at IS NOT NULL
+       ORDER BY domain_verified_at DESC, installation_id`,
+      [systemId],
+    );
+    return result.rows.map((row) => rowToInstallation(row as Row));
+  }
+
   async createInstallation(input: CreateKyAppInstallationInput): Promise<KyAppInstallation> {
     const result = await this.options.pool.query(
       `INSERT INTO ${this.installationsTable}

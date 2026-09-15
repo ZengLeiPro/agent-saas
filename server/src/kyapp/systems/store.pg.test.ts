@@ -137,6 +137,12 @@ describePg('定制项目系统目录三表 PostgreSQL 合约', () => {
       actor: 'admin-1',
     });
     expect(enabled.stateVersion).toBe(2);
+    await store.markDomainVerified('tsi_01', 'admin-1');
+    expect(
+      (await store.listVerifiedInstallationsForSystem('demo-erp')).map(
+        (item) => item.installationId,
+      ),
+    ).toEqual(['tsi_01']);
     // 幂等：同状态不推进 stateVersion。
     expect(
       (
@@ -190,5 +196,6 @@ describePg('定制项目系统目录三表 PostgreSQL 合约', () => {
       }),
     ).rejects.toThrow(/不能从 deleted/u);
     expect((await store.listInstallationsForTenant('t_demo')).length).toBe(0);
+    expect(await store.listVerifiedInstallationsForSystem('demo-erp')).toEqual([]);
   }, 30_000);
 });

@@ -591,6 +591,7 @@ export function DesktopSessionSidebar({
   onCloseSettings,
   isAdmin = false,
   settingsAccess = { status: "ready", personalAllowed: true, tenantEntryAllowed: false, platformEntryAllowed: false, retry: () => undefined },
+  platformDemoEntryAllowed = false,
   isPlatformAdmin = false,
   hasMore,
   isLoadingMore,
@@ -1297,6 +1298,7 @@ export function DesktopSessionSidebar({
         hidden={hidden}
         className={className}
         access={settingsAccess}
+        platformDemoEntryAllowed={platformDemoEntryAllowed}
         personalAgentEnabled={personalAgentEnabled}
         target={settingsTarget}
         activeSection={activeSettingsSection}

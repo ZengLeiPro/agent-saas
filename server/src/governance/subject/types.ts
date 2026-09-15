@@ -1,4 +1,4 @@
-export type HumanPersona = 'platform_admin' | 'org_admin' | 'member';
+export type HumanPersona = 'platform_admin' | 'org_admin' | 'member' | 'platform_demo';
 
 export interface HumanSubjectContext {
   subjectType: 'human';

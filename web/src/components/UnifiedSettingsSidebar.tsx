@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { managementPagesFor } from "@/lib/managementNavigation";
+import { PLATFORM_DEMO_MENU_LABEL } from "@agent/shared/lib/platformDemoApi";
 
 const MANAGEMENT_ICONS: Readonly<Record<string, LucideIcon>> = {
   bot: EntityIcons.expert,
@@ -61,11 +62,13 @@ export interface UnifiedSettingsSidebarProps {
   onNavigate?: (target: "personal" | AdminSettingsTarget, section: string) => void;
   onClose?: () => void;
   footer: ReactNode;
+  platformDemoEntryAllowed?: boolean;
 }
 
 export function UnifiedSettingsSidebar({
   hidden, className, access, personalAgentEnabled,
   target, activeSection, onNavigate, onClose, footer,
+  platformDemoEntryAllowed = false,
 }: UnifiedSettingsSidebarProps) {
   const groups = useMemo(() => [
     {
@@ -77,7 +80,8 @@ export function UnifiedSettingsSidebar({
     },
     ...((access.status === "ready" || access.status === "refreshing") && access.tenantEntryAllowed ? [{ id: "tenant" as const, label: "组织管理", items: managementItems('organization') }] : []),
     ...((access.status === "ready" || access.status === "refreshing") && access.platformEntryAllowed ? [{ id: "platform" as const, label: "平台运营", items: managementItems('platform') }] : []),
-  ], [access.platformEntryAllowed, access.status, access.tenantEntryAllowed, personalAgentEnabled]);
+    ...(!access.platformEntryAllowed && platformDemoEntryAllowed ? [{ id: "platform" as const, label: PLATFORM_DEMO_MENU_LABEL, items: [{ id: 'overview', label: '演示总览', group: '演示', icon: Settings2 }] }] : []),
+  ], [access.platformEntryAllowed, access.status, access.tenantEntryAllowed, personalAgentEnabled, platformDemoEntryAllowed]);
   const [search, setSearch] = useState("");
   const visibleGroups = useMemo(() => {
     const needle = search.trim().toLowerCase();

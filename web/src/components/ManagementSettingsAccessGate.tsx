@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { PortalContainerProvider } from "@/components/ui/portal-container";
 import { cn } from "@/lib/utils";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { PlatformDemoShell } from "@/components/PlatformDemo/PlatformDemoShell";
 
 interface ManagementSettingsAccessGateProps {
   scope: "tenant" | "platform";
@@ -13,6 +14,8 @@ interface ManagementSettingsAccessGateProps {
   onReturnPersonal: () => void;
   /** Desktop unified settings may retain a workspace only after the user has visited it. */
   persistAfterVisit?: boolean;
+  /** When true, platform scope falls back to the sample-data demo shell. */
+  platformDemoEntryAllowed?: boolean;
   children: ReactNode;
 }
 
@@ -63,6 +66,14 @@ export function ManagementSettingsAccessGate({
     );
   }
   if (!active) return null;
+
+  if (scope === "platform" && platformDemoEntryAllowed && access.status === "ready") {
+    return (
+      <div className="h-full min-h-0" data-testid="management-settings-platform-demo-workspace">
+        <PlatformDemoShell fallbackFromRealAdmin onClose={onReturnPersonal} />
+      </div>
+    );
+  }
 
   const loading = access.status === "loading" || access.status === "refreshing";
   const error = access.status === "error";

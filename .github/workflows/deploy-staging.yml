@@ -1338,19 +1338,39 @@ jobs:
           set -euo pipefail
           remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" "mkdir -p '$remote'"
+          # 制品留在深圳 OSS。runner 只传脚本/清单/模板/预签名拉取计划，ECS 内网直拉并校验摘要。
+          # 签名凭据只写 runner 私有文件，不进 env 扫描、不进 ECS 载荷。
+          : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing staging secret ALIYUN_ACCESS_KEY_ID}"
+          : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing staging secret ALIYUN_ACCESS_KEY_SECRET}"
+          : "${STAGING_RELEASE_OSS_URI:?Missing staging variable STAGING_RELEASE_OSS_URI}"
+          oss_sign_credentials="$RUNNER_TEMP/staging-oss-sign-credentials.json"
+          (
+            umask 077
+            jq -n --arg accessKeyId "$ALIBABACLOUD_ACCESS_KEY_ID" \
+              --arg accessKeySecret "$ALIBABACLOUD_ACCESS_KEY_SECRET" \
+              '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$oss_sign_credentials"
+          )
+          node scripts/release/sign-promotion-artifact-urls.mjs \
+            "$RUNNER_TEMP/manifest.json" "$RELEASE_RECORD_OSS_REGION" \
+            "$RUNNER_TEMP/staging-artifact-fetch-plan.json" \
+            "$oss_sign_credentials" \
+            "$RUNNER_TEMP/release/artifact-index.json" \
+            "$STAGING_RELEASE_OSS_URI"
           # The deploy gate imports the shared strict private ConfigIdentity contract.
-          scp -i ~/.ssh/staging_key "$RUNNER_TEMP/selected/"*.tgz "$RUNNER_TEMP/manifest.json" \
+          scp -i ~/.ssh/staging_key "$RUNNER_TEMP/manifest.json" \
+            "$RUNNER_TEMP/staging-artifact-fetch-plan.json" \
             scripts/release/deploy-staging-release.sh scripts/release/acs-deployment-drain.sh \
             scripts/release/prune-unreferenced-releases.sh \
             scripts/release/verify-installed-release.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs scripts/release/config-publication.mjs \
-            scripts/release/artifact-lib.mjs \
+            scripts/release/artifact-lib.mjs scripts/release/reuse-promotion-artifacts.mjs \
             daemon-packaging/systemd/agent-saas-server-staging.service.template \
             daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template \
             daemon-packaging/systemd/agent-saas-acs-orchestrator-staging.service.template \
             "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
-            "RELEASE_DIR='$remote' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' STAGING_RUNTIME_ASSETS_PATH='$remote/staging-runtime-assets.tgz' STAGING_RUNTIME_ASSETS_DIGEST='$(jq -r .stagingRuntimeAssetsDigest "$RUNNER_TEMP/staging-runtime-summary.json")' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$remote/deploy-staging-release.sh'"
+            "node '$remote/reuse-promotion-artifacts.mjs' hydrate '$remote/staging-artifact-fetch-plan.json' '$remote' && \
+             RELEASE_DIR='$remote/artifacts' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' STAGING_RUNTIME_ASSETS_PATH='$remote/artifacts/staging-runtime-assets.tgz' STAGING_RUNTIME_ASSETS_DIGEST='$(jq -r .stagingRuntimeAssetsDigest "$RUNNER_TEMP/staging-runtime-summary.json")' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$remote/deploy-staging-release.sh'"
 
       - name: 最后发布精确的测试环境 Web 产物
         run: |

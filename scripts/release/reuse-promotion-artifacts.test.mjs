@@ -143,3 +143,43 @@ test('工作流不再把 selected tgz 经 runner scp 回深圳', async () => {
   assert.equal(upload.includes('while IFS='), false);
   assert.match(upload, /sign-promotion-artifact-urls\.mjs/u);
 });
+
+test('hydrate 允许 Staging 额外制品并从预签名 URL 拉取', async () => {
+  const f = await fixture();
+  const fetched = Buffer.from('staging runtime assets');
+  const digest = createHash('sha256').update(fetched).digest('hex');
+  const url =
+    'https://agent-saas-staging-releases.oss-cn-shenzhen-internal.aliyuncs.com/rc/staging-runtime-assets.tgz';
+  const result = await hydrateArtifacts(
+    [
+      {
+        filename: 'staging-runtime-assets.tgz',
+        digest,
+        size: fetched.length,
+        url,
+      },
+    ],
+    f.root,
+    {
+      download: async (href, dest) => {
+        assert.equal(href, url);
+        await writeFile(dest, fetched);
+      },
+    },
+  );
+  assert.deepEqual(result, { reusedArtifacts: 0, fetchedArtifacts: 1 });
+  assert.deepEqual(await readFile(join(f.root, 'artifacts/staging-runtime-assets.tgz')), fetched);
+});
+
+test('测试环境工作流不再把 selected tgz 经 runner scp 回深圳', async () => {
+  const workflow = await readFile(
+    new URL('../../.github/workflows/deploy-staging.yml', import.meta.url),
+    'utf8',
+  );
+  const upload = workflow
+    .split('- name: 部署精确的测试环境 API、Worker 与 ACS 产物\n')[1]
+    .split('\n      - name:')[0];
+  assert.equal(upload.includes('selected/"*.tgz'), false);
+  assert.match(upload, /sign-promotion-artifact-urls\.mjs/u);
+  assert.match(upload, /reuse-promotion-artifacts\.mjs/u);
+});

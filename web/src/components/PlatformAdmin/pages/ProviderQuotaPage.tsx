@@ -1,6 +1,6 @@
 import { GrokQuotaDetails } from './GrokQuotaDetails';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronRight, GripVertical, Loader2, RefreshCw, TriangleAlert } from 'lucide-react';
+import { ChevronRight, GripVertical, Loader2, RefreshCw } from 'lucide-react';
 import type {
   ProviderQuotaHistoryPoint,
   ProviderQuotaHistoryResponse,
@@ -19,7 +19,6 @@ import { cn } from '@/lib/utils';
 
 import { platformAdminApi } from '../api';
 import { ProviderPlanExpiryEditor } from './ProviderPlanExpiryEditor';
-import { ProviderQuotaNoteEditor } from './ProviderQuotaNoteEditor';
 import { ProviderQuotaPlanBadge } from './ProviderQuotaPlanBadge';
 import {
   moveQuotaAccount,
@@ -87,7 +86,7 @@ function isMainSubscriptionWindow(
 
 /**
  * 卡级总状态：凭据能不能用，再看额度。
- * 采集失败不单独成状态、不进顶部异常；沿用上次成功窗口判断额度，采集时间变红提示。
+ * 采集失败不单独成状态、不进顶部异常；沿用上次成功窗口判断额度，该卡重新采集按钮变红提示。
  * 调度器冷却不参与本页状态展示，不影响后端实际调度行为。
  */
 export function accountStatus(
@@ -153,11 +152,6 @@ export function baselineUsedPercent(
   return null;
 }
 
-const TONE_BADGE: Record<Tone, 'success' | 'warning' | 'danger'> = {
-  ok: 'success',
-  warning: 'warning',
-  critical: 'danger',
-};
 const TONE_BAR: Record<Tone, string> = {
   ok: 'bg-primary',
   warning: 'bg-warning',
@@ -174,6 +168,20 @@ export function formatResetTime(value?: string): string {
 
 function formatMinuteTime(value: string): string {
   return formatTime(value).replace(/:\d{2}$/, '');
+}
+
+function latestCollectedAt(
+  items: readonly Pick<ProviderQuotaSnapshot, 'collectedAt'>[],
+): string | null {
+  let latestMs = Number.NEGATIVE_INFINITY;
+  let latest: string | null = null;
+  for (const item of items) {
+    const ms = Date.parse(item.collectedAt);
+    if (!Number.isFinite(ms) || ms < latestMs) continue;
+    latestMs = ms;
+    latest = item.collectedAt;
+  }
+  return latest;
 }
 
 function WindowTile({
@@ -234,7 +242,6 @@ function AccountCard({
   onExpirySaved: (overview: ProviderQuotaOverviewResponse) => void;
   dragHandle: ReactNode;
 }) {
-  const status = accountStatus(snapshot);
   const credential = snapshot.credential;
   const isCodex = snapshot.sourceKind === 'codex_subscription';
   const isPushOnly = PUSH_ONLY_SOURCES.has(snapshot.sourceKind);
@@ -249,10 +256,7 @@ function AccountCard({
       : Number(b.windowSeconds === 604_800) - Number(a.windowSeconds === 604_800));
   const additionalWindows = snapshot.windows.filter((window) => !isMainWindow(window));
   const additionalLimited = additionalWindows.filter((window) => windowTone(window) === 'critical').length;
-  const lastSuccessAt =
-    typeof snapshot.extra?.lastSuccessAt === 'string' ? snapshot.extra.lastSuccessAt : null;
   const collectionFailed = !snapshot.ok;
-  const displayCollectedAt = collectionFailed && lastSuccessAt ? lastSuccessAt : snapshot.collectedAt;
   const credits = snapshot.extra?.credits as
     { balance?: string | number; hasCredits?: boolean } | undefined;
   const creditBalance = Number(credits?.balance ?? 0);
@@ -278,33 +282,22 @@ function AccountCard({
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {dragHandle}
             <CardTitle className="break-all text-base">{snapshot.accountLabel}</CardTitle>
-            <Badge variant={TONE_BADGE[status.tone]} className="gap-1 px-1.5 py-0 text-[11px]">
-              {status.tone !== 'ok' && <TriangleAlert className="size-3" />}
-              {status.label}
-            </Badge>
-            {credential?.availability === 'auth_unavailable' && status.label !== '凭据不可用，请重授权' && (
-              <Badge variant="danger" className="px-1.5 py-0 text-2xs" title={credential.lastFailureCode}>凭据不可用，请重授权</Badge>
-            )}
+            <ProviderQuotaPlanBadge sourceKind={snapshot.sourceKind} planType={snapshot.plan?.type}>{subtitle}</ProviderQuotaPlanBadge>
             {!isCodex && snapshot.plan?.status && snapshot.plan.status !== 'Running' && (
               <Badge variant="warning" className="px-1.5 py-0 text-2xs">{snapshot.plan.status}</Badge>
             )}
           </div>
-          <div className="col-start-2 row-start-1 flex items-center justify-end gap-3">
-            <span
-              className={cn(
-                'whitespace-nowrap text-xs font-normal tabular-nums',
-                collectionFailed ? 'text-danger' : 'text-muted-foreground',
-              )}
-              title={collectionFailed ? `最近一次采集失败：${snapshot.error ?? '未知错误'}` : undefined}
-            >
-              采集 {formatMinuteTime(displayCollectedAt)}
-            </span>
+          <div className="col-start-2 row-start-1 flex items-center justify-end">
             {!isPushOnly ? (
               <Button
                 variant="ghost"
                 size="sm"
-                className="size-7 shrink-0 p-0 text-xs"
+                className={cn(
+                  'size-7 shrink-0 p-0 text-xs',
+                  collectionFailed && 'text-danger hover:text-danger',
+                )}
                 aria-label={`刷新 ${snapshot.accountLabel}`}
+                title={collectionFailed ? `最近一次采集失败：${snapshot.error ?? '未知错误'}` : undefined}
                 disabled={refreshDisabled}
                 onClick={() => onRefresh(snapshot.accountKey)}
               >
@@ -314,13 +307,9 @@ function AccountCard({
               <span className="size-7 shrink-0" aria-hidden="true" />
             )}
           </div>
-          <div className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" title={isCodex && credential?.expiresAt ? `凭据到期 ${formatMinuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
-            <ProviderQuotaPlanBadge sourceKind={snapshot.sourceKind} planType={snapshot.plan?.type}>{subtitle}</ProviderQuotaPlanBadge>
-            <ProviderQuotaNoteEditor snapshot={snapshot} onSaved={onExpirySaved} />
-            {showCredits && <span className="whitespace-nowrap tabular-nums text-muted-foreground">Credits {credits!.balance}</span>}
-          </div>
-          <div className="col-start-2 row-start-2 justify-self-end text-right">
+          <div className="col-start-1 row-start-2 col-span-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs" title={isCodex && credential?.expiresAt ? `凭据到期 ${formatMinuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
             <ProviderPlanExpiryEditor snapshot={snapshot} onSaved={onExpirySaved} />
+            {showCredits && <span className="whitespace-nowrap tabular-nums text-muted-foreground">Credits {credits!.balance}</span>}
           </div>
         </div>
       </CardHeader>
@@ -455,6 +444,7 @@ export function ProviderQuotaPage() {
     () => orderQuotaAccounts(overview?.items ?? [], accountOrder),
     [overview?.items, accountOrder],
   );
+  const collectedAt = useMemo(() => latestCollectedAt(orderedItems), [orderedItems]);
 
   const moveAccount = (accountKey: string, targetKey: string) => {
     const next = moveQuotaAccount(orderedItems.map((item) => item.accountKey), accountKey, targetKey);
@@ -524,6 +514,11 @@ export function ProviderQuotaPage() {
             >
               采集
             </Button>
+            {collectedAt && (
+              <span className="whitespace-nowrap text-xs font-normal tabular-nums text-muted-foreground">
+                采集 {formatMinuteTime(collectedAt)}
+              </span>
+            )}
           </div>
         }
       />

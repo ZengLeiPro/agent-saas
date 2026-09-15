@@ -84,7 +84,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -654,6 +654,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -796,6 +810,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -882,7 +900,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -1865,6 +1883,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -2143,6 +2175,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -2229,7 +2265,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -3030,6 +3066,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -3288,6 +3338,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -3374,7 +3428,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -4154,6 +4208,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -4396,6 +4464,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -4482,7 +4554,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -5262,6 +5334,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -5504,6 +5590,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -5590,7 +5680,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -6356,6 +6446,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -6590,6 +6694,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -6676,7 +6784,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -7442,6 +7550,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -7676,6 +7798,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -7762,7 +7888,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -8528,6 +8654,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -8762,6 +8902,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -8848,7 +8992,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -9859,6 +10003,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -10105,6 +10263,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -10191,7 +10353,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -10964,6 +11126,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -11218,6 +11394,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -11304,7 +11484,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -12091,6 +12271,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -12337,6 +12531,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -12423,7 +12621,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -13210,6 +13408,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -13456,6 +13668,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -13542,7 +13758,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -14287,6 +14503,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -14517,6 +14747,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -14603,7 +14837,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -15348,6 +15582,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -15578,6 +15826,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -15664,7 +15916,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -16409,6 +16661,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -16639,6 +16905,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -16725,7 +16995,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -17470,6 +17740,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -17700,6 +17984,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -17786,7 +18074,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -18517,6 +18805,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -18743,6 +19045,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -18829,7 +19135,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -19560,6 +19866,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -19786,6 +20106,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -19872,7 +20196,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -20554,6 +20878,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -20760,6 +21098,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -20846,7 +21188,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -21528,6 +21870,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -21730,6 +22086,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -21816,7 +22176,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -22498,6 +22858,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -22692,6 +23066,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -22778,7 +23156,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -23460,6 +23838,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -23654,6 +24046,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -23740,7 +24136,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -24422,6 +24818,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -24616,6 +25026,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -24702,7 +25116,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -25356,6 +25770,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -25542,6 +25970,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -25628,7 +26060,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -26268,6 +26700,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -26462,6 +26908,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -26548,7 +26998,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -27160,6 +27610,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -27338,6 +27802,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -27424,7 +27892,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -28036,6 +28504,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -28214,6 +28696,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -28300,7 +28786,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -28884,6 +29370,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -29046,6 +29546,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -29132,7 +29636,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -29716,6 +30220,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -29870,6 +30388,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -29956,7 +30478,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -30526,6 +31048,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -30668,6 +31204,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -30754,7 +31294,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -31324,6 +31864,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -31462,6 +32016,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -31548,7 +32106,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -32118,6 +32676,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -32260,6 +32832,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -32346,7 +32922,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -32916,6 +33492,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -33050,6 +33640,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -33136,7 +33730,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -33706,6 +34300,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -33840,6 +34448,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -33926,7 +34538,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -34496,6 +35108,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -34626,6 +35252,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -34712,7 +35342,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -35282,6 +35912,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -35424,6 +36068,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -35510,7 +36158,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -36080,6 +36728,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -36222,6 +36884,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -36308,7 +36974,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -36878,6 +37544,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -37020,6 +37700,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -37106,7 +37790,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Existing runtime module newly reached by conservative migration closure; audited SQL and startup DDL are unchanged."
         },
@@ -37648,6 +38332,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -37730,6 +38428,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -37816,7 +38518,7 @@
         {
           "path": "server/src/agent/shellReadOnlyPolicy.ts",
           "baselineDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
-          "targetDigest": "sha256:d5670cfc3098369659eaf3e45287aa59d9a6925480647df71f7a79687d77ac88",
+          "targetDigest": "sha256:f2ea9afb3e3e677bd2e20447f2a6491808e8ae850abf4b6836e599e07a9ec805",
           "classification": "no-schema-change",
           "reason": "Runtime or conservative-closure dependency; audited startup DDL is unchanged."
         },
@@ -38386,6 +39088,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -38512,6 +39228,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -38804,6 +39524,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -38886,6 +39620,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -39171,6 +39909,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -39237,6 +39989,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -39515,6 +40271,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -39577,6 +40347,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -39848,6 +40622,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -39906,6 +40694,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -40170,6 +40962,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -40224,6 +41030,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -40446,6 +41256,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -40484,6 +41308,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -40706,6 +41534,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -40744,6 +41586,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -40959,6 +41805,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -40989,6 +41849,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -41183,6 +42047,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -41205,6 +42083,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -41315,6 +42197,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -41337,6 +42233,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -41426,6 +42326,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -41444,6 +42358,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -41554,6 +42472,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -41588,6 +42520,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -41649,6 +42585,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只读写 V48 防重放表，不执行启动 DDL 或回填。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -41659,6 +42609,10 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     },
@@ -41713,6 +42667,20 @@
           "targetDigest": "sha256:aa3a20dae60ea37ecfcf4022f5b5dbecf0287f32ca3c8ecd314034c472ce83c0",
           "classification": "no-schema-change",
           "reason": "只对 V48 防重放表执行原子占位和到期清理，不改变数据库结构。"
+        },
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
         }
       ],
       "evidence": [
@@ -41731,6 +42699,35 @@
         {
           "path": "docs/release/KY-App-V2-最终迁移复核-20260914.md",
           "digest": "sha256:27cbeb63fa4c262287a3b4f3c817a9a813d1e4d45f4feb00670c0c7ab0f571d4"
+        },
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
+        }
+      ]
+    },
+    {
+      "baselineSha": "6db0d0cbb138ec2d1c900871e7decf8047cf63a2",
+      "files": [
+        {
+          "path": "server/src/connectors/googleWorkspace.ts",
+          "baselineDigest": "sha256:f05fbf39e3841a288f9e2e7e1b5bfaf9c7a8c97c11a41525ab22a48076cca44b",
+          "targetDigest": "sha256:45c1422c0e6f062e4918d3e9242669e4937410d16640028939a4787982eb6917",
+          "classification": "no-schema-change",
+          "reason": "只给 resolveGoogleWorkspaceRuntimeEnv 增加 file keyring backend 与既有短期 access token 注入；PostgreSQL OAuth state store、Vault 读写和启动建表均未改。"
+        },
+        {
+          "path": "server/src/connectors/runtimeState.ts",
+          "baselineDigest": "sha256:9d65b69449c0be7b8a891a3ee72592dfe0e7b158fc6d7afe35f6f8295685dcb6",
+          "targetDigest": "sha256:1212b4ff2b2ec0ccc6f4d503fc3dcc6201ee71c855a57da5bc98c93feca45535",
+          "classification": "no-schema-change",
+          "reason": "暂停 Google Workspace 时覆盖 CONFIG_DIR 并删除 token/credentials env；JS delete 只删进程环境变量，不执行 SQL。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/gws凭据持久化无结构变更审核-20260914.md",
+          "digest": "sha256:ae300d38be83bc0c4e4e711978a067eadeb05b8ae55b28dd23ed63ad9d508f14"
         }
       ]
     }

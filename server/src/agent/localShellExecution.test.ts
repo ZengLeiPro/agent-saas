@@ -127,4 +127,35 @@ describe('runLocalShellStreaming', () => {
     expect(streamed.join('')).toBe('🙂');
     expect(streamed.join('')).not.toContain('\uFFFD');
   });
+
+  it('\u5173\u95ED stdin\uFF0C\u907F\u514D\u65E0\u8DEF\u5F84\u547D\u4EE4\u628A\u6253\u5F00\u7684 pipe \u5F53\u6210\u8F93\u5165\u6E90', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'local-shell-stdin-'));
+    roots.push(root);
+    const workspace: WorkspaceRef = {
+      root,
+      userId: 'user-1',
+      sessionId: 'session-1',
+      executionTarget: 'server-local',
+    };
+    const script = [
+      "process.stdin.on('end', () => { process.stdout.write('closed'); process.exit(0); });",
+      'process.stdin.resume();',
+      "setTimeout(() => { process.stdout.write('open'); process.exit(2); }, 400);",
+    ].join('');
+
+    const response = await runLocalShellStreaming({
+      workspace,
+      command: `node -e ${JSON.stringify(script)}`,
+      timeoutMs: 5_000,
+      invocationId: 'stdin-ignore',
+      findDeniedPathMention: () => undefined,
+    });
+
+    expect(response.status).toBe('success');
+    if (response.status === 'success') {
+      expect(response.content).toContain('closed');
+      expect(response.content).not.toContain('open');
+      expect(response.metadata?.exitCode).toBe(0);
+    }
+  });
 });

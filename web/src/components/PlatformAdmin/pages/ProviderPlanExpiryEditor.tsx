@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Pencil } from 'lucide-react';
 import type { ProviderQuotaOverviewResponse, ProviderQuotaSnapshot } from '@agent/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +32,30 @@ function displayTime(value: string): string {
   return toBeijingInput(value).slice(5).replace('-', '/').replace('T', ' ');
 }
 
+function MetaDisplay({
+  expiryLabel,
+  note,
+  placeholder,
+}: {
+  expiryLabel: string | null;
+  note: string;
+  placeholder?: string;
+}) {
+  if (!expiryLabel && !note) {
+    return placeholder ? <span>{placeholder}</span> : null;
+  }
+  return (
+    <>
+      {expiryLabel && <span className="whitespace-nowrap text-xs font-normal tabular-nums">{expiryLabel}</span>}
+      {note && (
+        <span className="min-w-0 truncate" title={note}>
+          {note}
+        </span>
+      )}
+    </>
+  );
+}
+
 export function ProviderPlanExpiryEditor({
   snapshot,
   onSaved,
@@ -41,22 +65,29 @@ export function ProviderPlanExpiryEditor({
 }) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
+  const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const state = snapshot.planExpiry;
   const expiry = state?.endTime ?? snapshot.plan?.endTime;
-  const label = expiry ? `到期 ${displayTime(expiry)}` : '设置到期';
+  const currentNote = state?.note ?? '';
+  const expiryLabel = expiry ? `到期 ${displayTime(expiry)}` : null;
 
   async function save(clear = false) {
-    const endTime = clear ? null : fromBeijingInput(value);
-    if (!clear && !endTime) {
+    const endTime = clear ? null : value ? fromBeijingInput(value) : null;
+    if (!clear && value && !endTime) {
       setError('请选择有效的日期和时间');
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      onSaved(await platformAdminApi.setProviderPlanExpiry(snapshot.accountKey, endTime));
+      let overview: ProviderQuotaOverviewResponse | undefined;
+      if (clear || value) {
+        overview = await platformAdminApi.setProviderPlanExpiry(snapshot.accountKey, endTime);
+      }
+      overview = await platformAdminApi.setProviderPlanNote(snapshot.accountKey, note.trim() || null);
+      onSaved(overview);
       setOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '保存失败，请重试');
@@ -65,7 +96,14 @@ export function ProviderPlanExpiryEditor({
     }
   }
 
-  if (!state?.editable) return expiry ? <span className="whitespace-nowrap text-xs font-normal tabular-nums text-muted-foreground">{label}</span> : null;
+  const display = (
+    <span className="inline-flex min-w-0 max-w-full items-center gap-4 text-xs font-normal text-muted-foreground">
+      <MetaDisplay expiryLabel={expiryLabel} note={currentNote} placeholder={state?.editable ? '设置到期与备注' : undefined} />
+    </span>
+  );
+
+  if (!state?.editable) return expiryLabel || currentNote ? display : null;
+
   return (
     <Dialog
       open={open}
@@ -75,23 +113,21 @@ export function ProviderPlanExpiryEditor({
     >
       <button
         type="button"
-        className="inline-flex items-center gap-3 rounded-md text-xs font-normal tabular-nums text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label={`编辑 ${snapshot.accountLabel} 套餐到期时间`}
-        title={`${state.manualEndTime ? '手动设置' : '编辑套餐到期'} · 北京时间`}
+        className="inline-flex min-w-0 max-w-full items-center rounded-md text-left text-xs font-normal text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`编辑 ${snapshot.accountLabel} 到期时间与备注`}
+        title={`${state.manualEndTime ? '手动设置' : '编辑套餐到期与备注'} · 北京时间`}
         onClick={() => {
           setValue(toBeijingInput(expiry));
+          setNote(currentNote);
           setError(null);
           setOpen(true);
         }}
       >
-        <span className="whitespace-nowrap">{label}</span>
-        <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-accent">
-          <Pencil className="size-3.5" />
-        </span>
+        {display}
       </button>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>套餐到期时间</DialogTitle>
+          <DialogTitle>套餐到期与备注</DialogTitle>
           <DialogDescription>{snapshot.accountLabel} · 北京时间</DialogDescription>
         </DialogHeader>
         <form
@@ -109,7 +145,16 @@ export function ProviderPlanExpiryEditor({
               value={value}
               disabled={saving}
               onChange={(event) => setValue(event.target.value)}
-              required
+            />
+          </label>
+          <label className="block space-y-2 text-sm">
+            <span>备注</span>
+            <Textarea
+              aria-label="备注内容"
+              value={note}
+              disabled={saving}
+              placeholder="填写备注"
+              onChange={(event) => setNote(event.target.value)}
             />
           </label>
           {state.providerEndTime && (
@@ -141,7 +186,7 @@ export function ProviderPlanExpiryEditor({
             >
               取消
             </Button>
-            <Button type="submit" disabled={saving || !value}>
+            <Button type="submit" disabled={saving}>
               {saving ? '保存中…' : '保存'}
             </Button>
           </DialogFooter>

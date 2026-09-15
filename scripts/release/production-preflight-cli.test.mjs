@@ -6,6 +6,7 @@ import {
   writeFileSync,
   readFileSync,
   existsSync,
+  realpathSync,
   rmSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -29,7 +30,7 @@ function rig(t, readerSource) {
   const result = spawnSync(
     process.execPath,
     [
-      join(dir, 'production-preflight.mjs'),
+      realpathSync(join(dir, 'production-preflight.mjs')),
       '--reader',
       'read-production-state.mjs',
       '--config-identity-stage',
@@ -45,7 +46,16 @@ function rig(t, readerSource) {
       '--retry-mode',
       'fresh',
     ],
-    { encoding: 'utf8', timeout: 10000 },
+    {
+      encoding: 'utf8',
+      timeout: 10000,
+      env: {
+        ...process.env,
+        PREFLIGHT_DISK_PATHS: tmpdir(),
+        PREFLIGHT_MIN_FREE_BYTES: '1',
+        PREFLIGHT_MIN_FREE_INODES: '1',
+      },
+    },
   );
   return { result, output, diagnostics };
 }

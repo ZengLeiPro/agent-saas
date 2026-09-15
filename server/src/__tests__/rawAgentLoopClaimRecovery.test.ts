@@ -30,6 +30,7 @@ class AskUserAndReadAdapter implements ModelAdapter {
           id: 'call_ask_batch', name: 'AskUserQuestion',
           arguments: JSON.stringify({ questions: [{
             question: 'Which branch should I use?', header: 'Branch', multiSelect: false,
+            description: 'Choose the branch that should receive the pending changes.',
             options: [{ label: 'main', description: 'Use main' }, { label: 'dev', description: 'Use dev' }],
           }] }),
         },

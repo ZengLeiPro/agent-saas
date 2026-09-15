@@ -51,7 +51,10 @@ describe('initializeRuntimeGovernanceCredentials', () => {
     });
     await expect(resolveGoogleWorkspaceRuntimeEnv(service, {
       userId: 'user-1', username: 'alice', tenantId: 'tenant-a',
-    })).resolves.toEqual({ GOOGLE_WORKSPACE_CLI_TOKEN: 'google-access-token' });
+    })).resolves.toEqual({
+      GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file',
+      GOOGLE_WORKSPACE_CLI_TOKEN: 'google-access-token',
+    });
 
     const [webRef, workerRef] = await Promise.all([
       first.secretVault.putSecret('user-1', 'connector', 'web-secret', caller),

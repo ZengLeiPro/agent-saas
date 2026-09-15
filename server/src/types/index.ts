@@ -268,6 +268,8 @@ export type ContextUsageRaw = Record<string, unknown>;
 export interface AskUserQuestion {
   question: string;
   header: string;
+  /** 新调用必填；仅为兼容缺少该字段的历史事件而保留 optional。 */
+  description?: string;
   options: Array<{ label: string; description: string }>;
   multiSelect: boolean;
 }

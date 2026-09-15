@@ -130,6 +130,7 @@ export type MessageItem =
       questions: Array<{
         question: string;
         header: string;
+        description?: string;
         options: Array<{ label: string; description: string }>;
         multiSelect: boolean;
       }>;

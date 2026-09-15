@@ -211,7 +211,10 @@ export function parseProvablyReadOnlyRgCommand(command: string): string[] | unde
   if (!filesMode && !hasExplicitPattern && positional.length === 0) return undefined;
   const isWorkingDirectory = (path: string) => path === '.' || path === './' || path === '.\\';
   if (paths.some((path) => !isWorkingDirectory(path))) return undefined;
-  if (filesMode ? paths.length > 1 : paths.length !== 1) return undefined;
+  if (paths.length > 1) return undefined;
+  // `-n` 省略路径与 `--files` 对齐：批准面视为 cwd，argv 必须补上 `.`。
+  // 不补的话 stdin 非 tty 时 rg 会搜 stdin；spawn stdin 关闭后会变成空输入假阴性。
+  if (!filesMode && paths.length === 0) return [...tokens, '.'];
   return tokens;
 }
 

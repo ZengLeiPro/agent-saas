@@ -501,8 +501,11 @@ ENV PATH=/home/agent/.npm-global/bin:$PATH
 ENV NODE_PATH=/opt/ky-agent/node/node_modules
 # Notion/Google Workspace 官方 CLI：凭据优先由用户级连接器注入 token env；
 # 仍把官方 CLI 的本地状态限定到当前用户独立 workspace，避免落入临时 HOME。
+# gws 默认走 OS keyring（容器 HOME，sandbox 重建即丢失）。强制 file backend，
+# 让 credentials.enc 与 .encryption_key 都落在 /workspace/.gws/，对齐 dws/lark。
 ENV NOTION_KEYRING=0 \
-    GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/workspace/.gws
+    GOOGLE_WORKSPACE_CLI_CONFIG_DIR=/workspace/.gws \
+    GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file
 # dws warm sandbox 隔离约定（agent 无需 source .dws/env.sh）：
 # 强制 token/config 写工作区 /workspace/.dws/、禁用系统凭据管理器。
 # 用绝对路径而非 $PWD/.dws/…：agent 走到子目录（如 assets/YYYYMMDD/）时 token 归属不漂移。

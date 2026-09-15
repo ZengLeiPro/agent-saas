@@ -99,22 +99,28 @@ describe('Google Workspace native connector', () => {
       userId: 'user-1',
       username: 'alice',
       tenantId: 'tenant-a',
-    })).resolves.toEqual({ GOOGLE_WORKSPACE_CLI_TOKEN: 'access-1' });
+    })).resolves.toEqual({
+      GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file',
+      GOOGLE_WORKSPACE_CLI_TOKEN: 'access-1',
+    });
     grantActive = false;
     await expect(resolveGoogleWorkspaceRuntimeEnv(service, {
       userId: 'user-1', username: 'alice', tenantId: 'tenant-a',
-    })).resolves.toEqual({});
+    })).resolves.toEqual({ GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file' });
     grantActive = true;
     await expect(resolveGoogleWorkspaceRuntimeEnv(service, {
       userId: 'user-2',
       username: 'bob',
       tenantId: 'tenant-a',
-    })).resolves.toEqual({});
+    })).resolves.toEqual({ GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file' });
     await expect(resolveGoogleWorkspaceRuntimeEnv(service, {
       userId: 'replacement-user',
       username: 'alice',
       tenantId: 'tenant-a',
-    })).resolves.toEqual({});
+    })).resolves.toEqual({ GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file' });
+    await expect(resolveGoogleWorkspaceRuntimeEnv(undefined, {
+      userId: 'user-1', username: 'alice', tenantId: 'tenant-a',
+    })).resolves.toEqual({ GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: 'file' });
     expect(JSON.stringify(connectionStore.get('alice', 'google-workspace'))).not.toContain('access-1');
     expect(JSON.stringify(connectionStore.get('alice', 'google-workspace'))).not.toContain('refresh-1');
   });

@@ -88,6 +88,7 @@ export type ChatDeliveryMode = 'queue' | 'steer';
 export interface WsAskUserQuestion {
     question: string;
     header: string;
+    description?: string;
     options: Array<{ label: string; description: string }>;
     multiSelect: boolean;
 }

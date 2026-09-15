@@ -558,7 +558,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       allowRuntimeAdmissionPause: true,
     }),
     json(options['web-url'] ?? 'https://agent.kaiyan.net/release-identity.json'),
-    json(options['acs-url'] ?? 'http://127.0.0.1:3400/health'),
+    json((() => {
+      if (typeof options['acs-url'] === 'string' && options['acs-url'].length > 0) return options['acs-url'];
+      const base = String(process.env.ACS_ORCH_BASE_URL || 'http://127.0.0.1:3400').replace(/\/$/, '');
+      return `${base}/health`;
+    })()),
     resolvePrivateConfigIdentity(options),
   ]);
   const configIdentityStage = options['config-identity-stage'] ?? 'steady-state';

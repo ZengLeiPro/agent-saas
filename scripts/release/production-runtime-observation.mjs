@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { constants, openSync, closeSync, fstatSync, readSync, realpathSync } from 'node:fs';
+import { constants, openSync, closeSync, fstatSync, readSync, realpathSync, statfsSync, existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 const ERRNOS = new Set([
   'ENOENT',
@@ -59,6 +60,125 @@ const SHA = /^[a-f0-9]{40}$/u;
 const RELEASE = /^rc-[0-9]{8}-[0-9]{2,}$/u;
 const BOOT = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
 export const safeErrno = (error) => (ERRNOS.has(error?.code) ? error.code : 'UNKNOWN');
+export const PRODUCTION_DISK_PATHS = Object.freeze([
+  '/',
+  '/opt/agent-saas',
+  '/opt/agent-saas-app',
+  '/var/lib/agent-saas',
+]);
+
+export function resolveDiskPaths(raw = process.env.PREFLIGHT_DISK_PATHS) {
+  if (typeof raw === 'string' && raw.trim()) {
+    const paths = raw
+      .split(/[\s,]+/u)
+      .map((path) => path.trim())
+      .filter(Boolean);
+    if (paths.length) return paths;
+  }
+  return [...PRODUCTION_DISK_PATHS];
+}
+
+function numberish(value) {
+  if (typeof value === 'bigint') {
+    const next = Number(value);
+    return Number.isFinite(next) ? next : null;
+  }
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function mountIdentity(stats) {
+  return `${String(stats.type ?? '')}:${String(stats.blocks ?? '')}:${String(stats.files ?? '')}`;
+}
+
+function mountPointOf(path, stats, statfs, realpath) {
+  let current = path;
+  try {
+    current = realpath(path);
+  } catch {
+    while (current !== '/' && !existsSync(current)) current = dirname(current);
+  }
+  const identity = mountIdentity(stats);
+  let cursor = current;
+  while (cursor !== '/') {
+    const parent = dirname(cursor);
+    try {
+      if (mountIdentity(statfs(parent)) !== identity) return cursor;
+    } catch {
+      return cursor;
+    }
+    cursor = parent;
+  }
+  return '/';
+}
+
+export const PREFLIGHT_MIN_FREE_BYTES_DEFAULT = 8 * 1024 * 1024 * 1024;
+export const PREFLIGHT_MIN_FREE_INODES_DEFAULT = 250_000;
+
+export function diskPreflightReasons(
+  disk,
+  minFreeBytes = PREFLIGHT_MIN_FREE_BYTES_DEFAULT,
+  minFreeInodes = PREFLIGHT_MIN_FREE_INODES_DEFAULT,
+) {
+  const reasons = [];
+  const paths = disk?.paths;
+  if (!Array.isArray(paths) || paths.length === 0) {
+    reasons.push('Host disk observation is missing.');
+    return reasons;
+  }
+  for (const entry of paths) {
+    if (!entry?.path) {
+      reasons.push('Host disk observation is missing a path.');
+      continue;
+    }
+    if (entry.error) {
+      reasons.push(`Host disk check failed for ${entry.path}: ${entry.error}`);
+      continue;
+    }
+    if (!Number.isFinite(entry.availableBytes) || !Number.isFinite(entry.availableInodes)) {
+      reasons.push(`Host disk check failed for ${entry.path}: statfs_unreadable`);
+      continue;
+    }
+    if (entry.availableBytes < minFreeBytes) {
+      reasons.push(
+        `Host disk free bytes below ${minFreeBytes} at ${entry.path} (availableBytes=${entry.availableBytes}).`,
+      );
+    }
+    if (entry.availableInodes < minFreeInodes) {
+      reasons.push(
+        `Host disk free inodes below ${minFreeInodes} at ${entry.path} (availableInodes=${entry.availableInodes}).`,
+      );
+    }
+  }
+  return reasons;
+}
+
+export function collectDiskObservation({
+  paths = resolveDiskPaths(),
+  statfs = statfsSync,
+  realpath = realpathSync,
+} = {}) {
+  return {
+    paths: [...paths].map((path) => {
+      try {
+        const stats = statfs(path);
+        const bsize = numberish(stats.bsize);
+        const bavail = numberish(stats.bavail);
+        const ffree = numberish(stats.ffree);
+        if (bsize === null || bavail === null || ffree === null) {
+          return { path, error: 'statfs_unreadable' };
+        }
+        return {
+          path,
+          availableBytes: bavail * bsize,
+          availableInodes: ffree,
+          mountPoint: mountPointOf(path, stats, statfs, realpath),
+        };
+      } catch (error) {
+        return { path, error: safeErrno(error) };
+      }
+    }),
+  };
+}
 const numeric = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const pidOf = (text) =>
   /^[1-9][0-9]*$/u.test(String(text).trim()) && Number.isSafeInteger(Number(String(text).trim()))
@@ -114,6 +234,7 @@ export function observeProductionRuntime({
   realpath = realpathSync,
   show = systemd,
   uid = process.getuid?.() ?? null,
+  statfs = statfsSync,
 } = {}) {
   const file = (path, limit) => {
     try {
@@ -418,6 +539,7 @@ export function observeProductionRuntime({
     executorUid: uid,
     bootId,
     memory,
+    disk: collectDiskObservation({ statfs, realpath }),
     api,
     runtimeWorker,
     retry: { allowed: retryable, reasonCode, identityKey },

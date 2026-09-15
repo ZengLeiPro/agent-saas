@@ -1,5 +1,6 @@
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
+import { pythonAttemptControlExecArgs } from './ownedPodIdentity.js';
 import { deriveRemoteReceiptKey, parseRemoteReceipt, type RemoteAttemptFence, type RemoteAttemptReceipt } from './remoteAttemptProtocol.js';
 import { waitForOwned, OWNED_WAIT_BUDGETS } from './ownedWait.js';
 
@@ -22,10 +23,11 @@ export async function queryRemoteAttemptEvidence(input: {
   action: 'status' | 'cancel';
 }): Promise<{ receipt: RemoteAttemptReceipt; envelope: unknown } | null> {
   const receiptKey = deriveRemoteReceiptKey(input.config.authToken, input.fence);
-  const task = input.kubectl.run([
-    'exec', '-i', input.sandboxName, '-c', input.config.sandboxContainerName, '--',
-    '/usr/local/bin/python3', '-I', '/app/acs-orchestrator/dist/remote/attempt_control.py',
-  ], { timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs, input: JSON.stringify({
+  const task = input.kubectl.run(pythonAttemptControlExecArgs({
+    sandboxName: input.sandboxName,
+    containerName: input.config.sandboxContainerName,
+    ownedPodUid: input.fence.podUid,
+  }), { timeoutMs: OWNED_WAIT_BUDGETS.persistenceMs, input: JSON.stringify({
     protocolVersion: 1, action: input.action, fence: input.fence, receiptKey,
     workspaceRoot: input.config.workspaceMountPath,
   }) });

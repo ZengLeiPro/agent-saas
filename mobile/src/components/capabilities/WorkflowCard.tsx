@@ -5,7 +5,7 @@
  * 与 Web 一致：整卡可点进详情；两个动作同级同形，只用色相区分
  * （演示=品牌暖橙 brandAccent，试试=品牌蓝 brand）；卡内不出现第三种颜色。
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Play } from 'lucide-react-native';
 import type { CatalogScenarioPublic } from '@agent/shared';
@@ -35,6 +35,7 @@ export function WorkflowCard({
   testID,
 }: WorkflowCardProps) {
   const colors = useColors();
+  const [hovered, setHovered] = useState(false);
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -47,6 +48,7 @@ export function WorkflowCard({
           gap: spacing.sm,
         },
         pressed: { opacity: PRESSED_OPACITY },
+        hovered: { backgroundColor: colors.accent },
         titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
         title: { ...typography.subtitle, color: colors.foreground, flex: 1 },
         goal: { ...typography.caption, color: colors.brand[700], fontWeight: '500' },
@@ -87,7 +89,13 @@ export function WorkflowCard({
       accessibilityRole="button"
       accessibilityLabel={`查看 ${scenario.title} 详情`}
       onPress={() => onOpenDetail(scenario)}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      style={({ pressed }) => [
+        styles.card,
+        hovered && !pressed && styles.hovered,
+        pressed && styles.pressed,
+      ]}
     >
       <View style={styles.titleRow}>
         <Text style={styles.title} numberOfLines={2}>

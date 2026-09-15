@@ -1,4 +1,4 @@
-import React, { useMemo, type MutableRefObject } from 'react';
+import React, { useMemo, useState, type MutableRefObject } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MessageCircle, Check } from 'lucide-react-native';
 import Animated from 'react-native-reanimated';
@@ -43,6 +43,7 @@ interface SessionRowProps {
  */
 export const SessionRow = React.memo(function SessionRow({ session, actions, openRowRef, onPress, enableBackGesture, showOwner, selectMode, selected, onSelectToggle, active, agentAvatar, agentAvatarVersion, agentAvatarUsername, dense }: SessionRowProps) {
   const colors = useColors();
+  const [hovered, setHovered] = useState(false);
 
   const styles = useMemo(() => StyleSheet.create({
     swipeContainer: {
@@ -182,7 +183,13 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
       testID={session.id}
       accessibilityLabel={`会话：${session.title || '新会话'}`}
       accessibilityRole="button"
-      style={({ pressed }) => [styles.sessionRow, active && styles.sessionRowActive, pressed && styles.sessionRowPressed]}
+      style={({ pressed }) => [
+        styles.sessionRow,
+        active && styles.sessionRowActive,
+        (pressed || hovered) && styles.sessionRowPressed,
+      ]}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
       onPress={selectMode ? onSelectToggle : () => onPress(session.id)}
     >
       {selectMode && (

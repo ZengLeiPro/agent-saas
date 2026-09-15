@@ -202,6 +202,13 @@ jobs:
           fs.writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
           NODE
           echo "keystore_path=$KEYSTORE_PATH" >> "$GITHUB_OUTPUT"
+      - name: 可选注入 EXPO_TOKEN
+        env:
+          EXPO_TOKEN_VALUE: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -n "${EXPO_TOKEN_VALUE:-}" ]; then
+            echo "EXPO_TOKEN=${EXPO_TOKEN_VALUE}" >> "$GITHUB_ENV"
+          fi
       - name: 构建企业 APK（EAS local）
         working-directory: source
         env:
@@ -209,7 +216,6 @@ jobs:
           ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
           ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
           ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
           export GITHUB_SHA="$ANDROID_SOURCE_SHA"

@@ -6,10 +6,10 @@
 `com.agentsaas.mobile`）。v1 **不**提交 Google Play / AAB，**不**走 MDM publish，
 **不**启用企业 OTA updater。
 
-| 模式 | Secrets | 产出 |
-| --- | --- | --- |
-| PR `contract` | 无 | 单元/契约测试、企业清洁预构建、Gradle release fail-closed |
-| Dispatch `仅构建企业 APK` | Environment `mobile-build-android-enterprise` | 签名 APK 工作流制品（人工下载侧载） |
+| 模式                      | Secrets                                       | 产出                                                      |
+| ------------------------- | --------------------------------------------- | --------------------------------------------------------- |
+| PR `contract`             | 无                                            | 单元/契约测试、企业清洁预构建、Gradle release fail-closed |
+| Dispatch `仅构建企业 APK` | Environment `mobile-build-android-enterprise` | 签名 APK 工作流制品（人工下载侧载）                       |
 
 编译使用 `mobile/scripts/build.sh android --distribution enterprise` → EAS 本地
 `production-enterprise` profile（`credentialsSource: local`）。签名 fail-closed 行为由
@@ -23,12 +23,12 @@
 - 生产 API/WSS：`mobile/eas.json` 的 `build.production` 与 `build.production-enterprise`
   公共 `EXPO_PUBLIC_MOBILE_*` 键；构建前 `load-android-production-config.sh` 也会导出
 
-## GitHub Environment（人工，合并后）
+## GitHub Environment（已存在，合并后核验）
 
-创建 **`mobile-build-android-enterprise`**（与 iOS `mobile-build-production` 隔离）：
+Environment **`mobile-build-android-enterprise`** 已创建（与 iOS `mobile-build-production` 隔离）。合并后核验，**不要重建**：
 
 - 保护：仅 `main`；无 required reviewer；无 wait timer
-- Secrets：
+- Secrets（应已齐）：
   - `ANDROID_RELEASE_KEYSTORE_BASE64`
   - `ANDROID_RELEASE_STORE_PASSWORD`
   - `ANDROID_RELEASE_KEY_ALIAS`
@@ -40,12 +40,12 @@
 ## 日常操作
 
 1. 合并启用 PR 且 main CI 绿。
-2. 配置上述 Environment secrets（一次性）。
+2. 核验上述 Environment 保护规则与四个 `ANDROID_RELEASE_*` secrets（已存在则跳过创建）。
 3. Actions →「Android 企业 APK 构建」→ 分支 `main` → 操作「仅构建企业 APK」。
 4. 下载 artifact `android-enterprise-apk-<sha>-<run>-<attempt>` 中的
    `AgentSaaS-enterprise-<versionCode>.apk`。
 5. 侧载：`adb install -r AgentSaaS-enterprise-1.apk`（或文件分发）。
-6. 接受后跟进提交：把 `latestPublished.androidVersionCode` 设为本次 N；下次发版人工 +1。
+6. 接受后跟进提交：把 `latestPublished.androidVersionCode` 设为 `1`（本次 N）；下次发版人工 +1。
 
 ```bash
 gh workflow run mobile-android-release.yml --ref main \

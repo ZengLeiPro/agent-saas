@@ -65,6 +65,7 @@ const kyAppV2ReviewPaths = [
   'server/src/data/governance-schema/migrations.ts',
   'server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts',
   'server/src/data/governance-schema/v49PlatformDemoMigration.ts',
+  'shared/src/types/governance.ts',
   'server/src/kyapp/enrollment/store.ts',
   'server/src/kyapp/systems/store.ts',
   'server/src/kyapp/workload/deploymentKeyStore.ts',

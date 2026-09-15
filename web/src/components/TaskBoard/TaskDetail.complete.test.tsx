@@ -121,10 +121,48 @@ describe("TaskDetail 人工完成", () => {
     ["已取消任务", { ...advisoryTask, status: "canceled" as const }, false, true],
     ["待集成 Delivery", { ...advisoryTask, kind: "delivery" as const, mergeEligibility: "eligible" as const }, false, true],
     ["被集成占用", { ...advisoryTask, kind: "delivery" as const, mergeEligibility: "claimed" as const }, false, true],
+    ["待合并但仍被集成占用", {
+      ...advisoryTask, kind: "delivery" as const, status: "ready_to_merge" as const,
+      mergeEligibility: "claimed" as const, providerPullRequestId: "235", pullRequestNumber: 235,
+    }, false, true],
     ["带未合并 PR", {
       ...advisoryTask, kind: "delivery" as const, providerPullRequestId: "235", pullRequestNumber: 235,
     }, false, true],
   ])("%s不满足人工完成条件", (_label, candidate, readOnly, canTransition) => {
     expect(canManuallyCompleteTask(candidate, readOnly, canTransition, false, true)).toBe(false);
+  });
+
+  it.each([
+    ["待合并且可集成的交付任务", {
+      ...advisoryTask, kind: "delivery" as const, status: "ready_to_merge" as const,
+      mergeEligibility: "eligible" as const, providerPullRequestId: "235", pullRequestNumber: 235,
+    }],
+    ["待合并但无 PR 的交付任务", {
+      ...advisoryTask, kind: "delivery" as const, status: "ready_to_merge" as const,
+      mergeEligibility: "not_applicable" as const,
+    }],
+  ])("%s满足人工完成条件", (_label, candidate) => {
+    expect(canManuallyCompleteTask(candidate, false, true, false, true)).toBe(true);
+  });
+
+  it("待合并区交付任务详情提供完成入口", async () => {
+    const user = userEvent.setup();
+    const readyTask = {
+      ...advisoryTask,
+      kind: "delivery" as const,
+      status: "ready_to_merge" as const,
+      mergeEligibility: "eligible" as const,
+      providerPullRequestId: "235",
+      pullRequestNumber: 235,
+    };
+    mocks.fetchTask.mockResolvedValue(readyTask);
+    render(<TaskDetail {...props({
+      task: readyTask,
+      onDeleteTask: vi.fn(async (task) => task),
+    })} />);
+    await user.click(await screen.findByRole("tab", { name: "详细信息" }));
+    expect(await screen.findByRole("button", { name: "完成任务" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "归档任务" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "删除任务" })).toBeTruthy();
   });
 });

@@ -119,7 +119,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
   const [templates, setTemplates] = useState<OrgAgentTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
-  const [templatesCollapsed, setTemplatesCollapsed] = useState(false);
+  const [templatesCollapsed, setTemplatesCollapsed] = useState(true);
   const tenantIdRef = useRef(tenantId);
   tenantIdRef.current = tenantId;
 
@@ -226,7 +226,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
     <div className="flex h-full min-h-0 w-full flex-col">
       <SettingsPanelHeader
         title="企业专家"
-        description={`为 ${tenantName || tenantId || '当前组织'} 管理专岗 Agent；打开详情即可配置身份、能力、运行策略、访问范围与钉钉账号。`}
+        description={`为 ${tenantName || tenantId || '当前组织'} 管理专岗专家；打开详情即可配置岗位、能力、谁能用，以及按需打开高级运行设置与钉钉接入。`}
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => { void refresh(); }} disabled={loading}>
@@ -273,7 +273,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
                 <Sparkles className="size-4 text-brand-500" />
                 从模板创建
                 <span className="text-xs font-normal text-muted-foreground">
-                  一键预填名称/职责/门禁配置，管理员确认后创建。
+                  一键预填名称/职责与话题范围，管理员确认后创建。默认收起，需要时展开。
                 </span>
               </div>
               <Button
@@ -319,7 +319,7 @@ export function OrgAgentManager({ tenantId, tenantName }: { tenantId?: string; t
             ) : agents.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
                 <Bot className="size-6" />
-                <span>还没有企业专家，可从上方模板一键创建，或点击右上角新建。</span>
+                <span>还没有企业专家，可展开上方「从模板创建」，或点击右上角新建。</span>
               </div>
             ) : (
               <Table>

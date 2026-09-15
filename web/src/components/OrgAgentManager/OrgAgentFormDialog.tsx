@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ImagePlus, Loader2, PlayCircle, Plus, UserRound, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ChevronDown, ImagePlus, Loader2, PlayCircle, Plus, UserRound, X } from 'lucide-react';
 import { agentAvatarUrl, resolveApiAssetUrl } from '@/lib/apiBase';
 import { authFetch } from '@/lib/authFetch';
 
@@ -45,6 +45,58 @@ import {
   type OrgAgentFormValues,
   type OrgAgentGuardrailMode,
 } from './types';
+
+
+/** Accordion step shell — keeps all fields in one form (dirty-state safe); no multi-page wizard remount. */
+function FormStepSection({
+  step,
+  title,
+  hint,
+  open,
+  onOpenChange,
+  children,
+  badge,
+}: {
+  step: string;
+  title: string;
+  hint?: string;
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  children: ReactNode;
+  badge?: string;
+}) {
+  const panelId = `org-agent-step-${step}`;
+  return (
+    <section className="overflow-hidden rounded-xl border">
+      <button
+        type="button"
+        className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-muted/30"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => onOpenChange(!open)}
+      >
+        <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+          {step}
+        </span>
+        <span className="min-w-0 flex-1 space-y-0.5">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">{title}</span>
+            {badge ? (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{badge}</span>
+            ) : null}
+          </span>
+          {hint ? <span className="block text-xs leading-5 text-muted-foreground">{hint}</span> : null}
+        </span>
+        <ChevronDown className={`mt-1 size-4 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-0' : '-rotate-90'}`} />
+      </button>
+      {open ? (
+        <div id={panelId} className="space-y-4 border-t px-4 py-4">
+          {children}
+        </div>
+      ) : null}
+    </section>
+  );
+}
 
 /** 门禁三档语义说明（radio label 旁的副标题） */
 const GATE_MODE_META: Array<{ value: OrgAgentGuardrailMode; label: string; hint: string }> = [
@@ -107,6 +159,15 @@ export function OrgAgentFormDialog({
   const [gateTestMessage, setGateTestMessage] = useState('');
   const [gateTestRunning, setGateTestRunning] = useState(false);
   const [gateTestResult, setGateTestResult] = useState<GateTestResult | null>(null);
+  /** Accordion disclosure; runtime (advanced) starts collapsed. Toggling never remounts parent form values. */
+  const [stepOpen, setStepOpen] = useState({
+    role: true,
+    skills: true,
+    audience: true,
+    guardrail: true,
+    runtime: false,
+    channels: true,
+  });
   const [directoryGroups, setDirectoryGroups] = useState<Array<{ groupId: string; displayName: string }>>([]);
   const [directoryGroupsError, setDirectoryGroupsError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -150,6 +211,18 @@ export function OrgAgentFormDialog({
     submitGenerationRef.current += 1;
     setSaving(false);
   }, [open, tenantId, editing?.id, initialValues]);
+
+  useEffect(() => {
+    if (!open) return;
+    setStepOpen({
+      role: true,
+      skills: true,
+      audience: true,
+      guardrail: true,
+      runtime: false,
+      channels: true,
+    });
+  }, [open, editing?.id, initialValues]);
 
   useEffect(() => {
     if (!open || !tenantId) {
@@ -449,7 +522,7 @@ export function OrgAgentFormDialog({
         <DialogHeader className="shrink-0 border-b px-6 py-4">
           <DialogTitle>{editing ? `配置「${editing.name}」` : '创建企业专家'}</DialogTitle>
           <DialogDescription>
-            在一个详情页配置身份、职责、能力、运行策略、访问范围、钉钉账号与话题门禁。
+            按步骤配置岗位、能力、谁能用；高级运行设置默认收起。钉钉接入仅在编辑已有专家时可见。
           </DialogDescription>
         </DialogHeader>
 
@@ -464,6 +537,13 @@ export function OrgAgentFormDialog({
           ) : null}
           {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
+          <FormStepSection
+            step="1"
+            title="岗位"
+            hint="名称、头像、简介、系统提示/职责与开场问题"
+            open={stepOpen.role}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, role: next }))}
+          >
           <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
             <div className="space-y-1.5">
               <Label>名称</Label>
@@ -602,9 +682,17 @@ export function OrgAgentFormDialog({
               placeholder="定义这个 Agent 的岗位职责、回答风格与知识来源要求"
             />
           </div>
+          </FormStepSection>
 
+          <FormStepSection
+            step="2"
+            title="能力"
+            hint="这个专家自带的技能与知识资源"
+            open={stepOpen.skills}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, skills: next }))}
+          >
           <div className="space-y-1.5">
-            <Label>固有技能</Label>
+            <Label>这个专家自带的技能</Label>
             <p className="text-xs text-muted-foreground">勾选后成为这位企业专家的固有能力；成员无需在个人设置中再次启用。</p>
             {skillsLoading ? (
               <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
@@ -632,7 +720,7 @@ export function OrgAgentFormDialog({
             )}
           </div>
 
-          <div className="space-y-1.5 rounded-xl border p-4">
+          <div className="space-y-1.5">
             <Label>知识资源</Label>
             <p className="text-xs text-muted-foreground">
               选择组织自有知识技能，保存后固化到 Agent 版本并注入运行时。
@@ -669,12 +757,15 @@ export function OrgAgentFormDialog({
               </p>
             )}
           </div>
+          </FormStepSection>
 
-          <OrgAgentRuntimeSection
-            value={values.runtime}
-            onChange={runtime => patch({ runtime })}
-          />
-
+          <FormStepSection
+            step="3"
+            title="谁能用"
+            hint="控制哪些成员或部门可以使用这位专家"
+            open={stepOpen.audience}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, audience: next }))}
+          >
           <OrgAgentAudienceSection
             values={values}
             tenantUsers={tenantUsers}
@@ -682,15 +773,21 @@ export function OrgAgentFormDialog({
             directoryGroupsError={directoryGroupsError}
             onChange={patch}
           />
+          </FormStepSection>
 
+          <FormStepSection
+            step="4"
+            title="只回答职责内的问题"
+            hint="可选 · 话题门禁；默认关闭，多数专家可先不上"
+            open={stepOpen.guardrail}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, guardrail: next }))}
+            badge="可选"
+          >
           {/* ---------------- 门禁配置：填空题式（allow/reject chips + mode + strictness + 试测） ---------------- */}
-          <div className="space-y-3 rounded-xl border p-3">
-            <div className="space-y-1">
-              <div className="text-sm font-medium">话题门禁</div>
-              <div className="text-xs leading-5 text-muted-foreground">
-                不用写 prompt，只需告诉门禁"允许问什么 / 拒绝问什么"——保存时前端自动拼装成结构化 prompt 交给后端。
-              </div>
-            </div>
+          <div className="space-y-3">
+            <p className="text-xs leading-5 text-muted-foreground">
+              只回答职责内的问题<span className="text-muted-foreground/80">（话题门禁）</span>。不用写 prompt，告诉门禁「允许问什么 / 拒绝问什么」即可——保存时自动拼装。
+            </p>
 
             <div className="space-y-1.5">
               <Label>门禁模式</Label>
@@ -915,14 +1012,33 @@ export function OrgAgentFormDialog({
               </>
             )}
           </div>
+          </FormStepSection>
+
+          <FormStepSection
+            step="5"
+            title="高级运行设置"
+            hint="高级 · 多数情况不用改（工作模式、模型、工具/MCP 等）"
+            open={stepOpen.runtime}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, runtime: next }))}
+            badge="高级"
+          >
+          <OrgAgentRuntimeSection
+            value={values.runtime}
+            onChange={runtime => patch({ runtime })}
+          />
+          </FormStepSection>
 
           {editing && tenantId ? (
-            <OrgAgentDwsSection tenantId={tenantId} agentId={editing.id} agentName={values.name || editing.name} />
-          ) : (
-            <div className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">
-              创建并保存企业专家后，可在同一详情页绑定钉钉成员账号。
-            </div>
-          )}
+            <FormStepSection
+              step="6"
+              title="渠道接入 / 钉钉"
+              hint="绑定钉钉成员账号；创建成功后可在此配置"
+              open={stepOpen.channels}
+              onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, channels: next }))}
+            >
+              <OrgAgentDwsSection tenantId={tenantId} agentId={editing.id} agentName={values.name || editing.name} />
+            </FormStepSection>
+          ) : null}
 
           <div className="flex items-start justify-between gap-4 rounded-xl border p-3">
             <div>
@@ -932,6 +1048,7 @@ export function OrgAgentFormDialog({
             <Switch checked={values.enabled} onCheckedChange={(checked) => patch({ enabled: checked })} />
           </div>
         </div>
+
 
         <DialogFooter className="shrink-0 border-t px-6 py-4">
           <Button type="button" variant="outline" onClick={requestClose} disabled={saving}>取消</Button>

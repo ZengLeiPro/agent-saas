@@ -4,13 +4,13 @@
  */
 import React from 'react';
 import { View } from 'react-native';
-import type { SettingsPaneSectionId } from '../../../src/lib/settings/settingsPaneSections';
-import AccountSecurityScreen from '../../settings/account-security';
-import MyAgentSettingsScreen from '../../settings/my-agent';
-import ChatModelSettingsScreen from '../../settings/chat-model';
-import AppearanceLayoutSettingsScreen from '../../settings/appearance-layout';
-import FilesStorageSettingsScreen from '../../settings/files-storage';
-import MyPermissionsScreen from '../../settings/my-permissions';
+import type { SettingsPaneSectionId } from '../../lib/settings/settingsPaneSections';
+import AccountSecurityScreen from '../../../app/settings/account-security';
+import MyAgentSettingsScreen from '../../../app/settings/my-agent';
+import ChatModelSettingsScreen from '../../../app/settings/chat-model';
+import AppearanceLayoutSettingsScreen from '../../../app/settings/appearance-layout';
+import FilesStorageSettingsScreen from '../../../app/settings/files-storage';
+import MyPermissionsScreen from '../../../app/settings/my-permissions';
 
 const PANE_BODIES: Record<SettingsPaneSectionId, React.ComponentType> = {
   'account-security': AccountSecurityScreen,

@@ -51,7 +51,7 @@ import type { AgentProfile, TenantFeatureFlags } from "@agent/shared";
 import { isFilesEntryVisible } from "../../../src/lib/filesEntry";
 import { isV1RouteAllowed } from "../../../src/v1/v1Capabilities";
 import { getV1BuildProfile } from "../../../src/v1/v1Runtime";
-import { SettingsPaneDetail } from "./SettingsPaneDetail";
+import { SettingsPaneDetail } from "../../../src/components/settings/SettingsPaneDetail";
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.0.0";
 const AVATAR_SIZE = 40;

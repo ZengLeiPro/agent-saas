@@ -60,7 +60,10 @@
       "pnpm": "10.18.3",
       "env": {
         "EXPO_PUBLIC_V1_PROFILE": "production",
-        "MOBILE_ANDROID_DISTRIBUTION": "enterprise"
+        "MOBILE_ANDROID_DISTRIBUTION": "enterprise",
+        "EXPO_PUBLIC_MOBILE_API_ORIGIN": "https://api.agent.kaiyan.net",
+        "EXPO_PUBLIC_MOBILE_API_ALLOWLIST": "https://api.agent.kaiyan.net",
+        "EXPO_PUBLIC_MOBILE_WS_ALLOWLIST": "wss://api.agent.kaiyan.net"
       },
       "android": {
         "credentialsSource": "local",
@@ -77,3 +80,4 @@
     }
   }
 }
+

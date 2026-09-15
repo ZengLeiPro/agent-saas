@@ -2,21 +2,30 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Keyboard } from 'react-native';
 import { ListChecks } from 'lucide-react-native';
-import type { BusinessStepEventItem } from '@agent/shared';
+import type { BusinessStepEventItem, BusinessStepTodoTiming } from '@agent/shared';
 import { businessStepOverallStatus, todoItemKey } from '@agent/shared';
 import { useColors, spacing, radius, fontWeight, useChatTypography } from '../../../theme';
 import { Badge } from '../../ui';
+import { useBusinessStepPlanTiming } from '../BusinessStepTimingContext';
 import { BusinessStepDetailSheet } from './BusinessStepDetailSheet';
 import { BusinessStepTimelineRow } from './BusinessStepTimeline';
 import { toneBadgeVariant } from './tone';
 
-export function BusinessStepFlow({ event }: { event: BusinessStepEventItem }) {
+export function BusinessStepFlow({
+  event,
+  timingByTodoKey: timingProp,
+}: {
+  event: BusinessStepEventItem;
+  timingByTodoKey?: ReadonlyMap<string, BusinessStepTodoTiming>;
+}) {
   const colors = useColors();
   const typo = useChatTypography();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const todos = useMemo(() => event.kind === 'plan' ? event.todos ?? [] : [], [event]);
   const overall = useMemo(() => businessStepOverallStatus(todos, event.isClosed), [todos, event.isClosed]);
   const selectedTodo = useMemo(() => todos.find((todo) => todoItemKey(todo) === selectedKey) ?? null, [todos, selectedKey]);
+  const timingFromContext = useBusinessStepPlanTiming(event.id);
+  const timingByTodoKey = timingProp ?? timingFromContext;
   if (event.kind !== 'plan') return null;
   return <View accessibilityRole="summary"
     accessibilityLabel={`业务步骤，${overall.label}，共 ${todos.length} 步，已完成 ${overall.completed} 步`}
@@ -30,7 +39,8 @@ export function BusinessStepFlow({ event }: { event: BusinessStepEventItem }) {
       const key = todoItemKey(todo);
       return <BusinessStepTimelineRow key={key || `${index}-${todo.content}`} todo={todo} index={index + 1}
         isFirst={index === 0} isLast={index === todos.length - 1} planClosed={event.isClosed}
-        selected={key === selectedKey} onPress={() => { Keyboard.dismiss(); setSelectedKey(key); }} />;
+        selected={key === selectedKey} timing={timingByTodoKey?.get(key)}
+        onPress={() => { Keyboard.dismiss(); setSelectedKey(key); }} />;
     })}</View>
     <BusinessStepDetailSheet visible={!!selectedTodo} todo={selectedTodo} todos={todos} planClosed={event.isClosed}
       onSelectTodo={(todo) => setSelectedKey(todoItemKey(todo))} onClose={() => setSelectedKey(null)} />

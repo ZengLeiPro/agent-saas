@@ -1,16 +1,22 @@
 /**
  * 业务步骤时间线 —— 与 `web/src/components/BusinessStepFlow.tsx` 的 PlanTodoRow 同构：
- * 左侧竖线把各步串成一条线，节点是状态图标，右侧是步骤标题与序号。
+ * 左侧竖线把各步串成一条线，节点是状态图标，右侧是步骤标题、墙钟耗时与序号。
  *
  * Web 用 `::before/::after` 伪元素画竖线；RN 没有伪元素，改为绝对定位的两段细线
  * （节点上方 / 下方），首尾两步各省掉一段——视觉结果一致。
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { Circle, CircleCheck, CircleX, Clock3, Loader2, TriangleAlert } from 'lucide-react-native';
-import type { BusinessStepIcon, TodoItem } from '@agent/shared';
-import { isEndedWithoutTerminal, todoAccessibleStatus, todoStatusMeta } from '@agent/shared';
+import type { BusinessStepIcon, BusinessStepTodoTiming, TodoItem } from '@agent/shared';
+import {
+  formatActivityDuration,
+  isEndedWithoutTerminal,
+  resolveBusinessStepDurationMs,
+  todoAccessibleStatus,
+  todoStatusMeta,
+} from '@agent/shared';
 import { useColors, spacing, radius, fontWeight, useChatTypography } from '../../../theme';
 import { useSpinStyle } from '../../ui';
 import { resolveActivityToneTokens } from './tone';
@@ -56,6 +62,7 @@ export function BusinessStepTimelineRow({
   isLast,
   planClosed,
   selected,
+  timing,
   onPress,
 }: {
   todo: TodoItem;
@@ -65,11 +72,22 @@ export function BusinessStepTimelineRow({
   isLast: boolean;
   planClosed?: boolean;
   selected?: boolean;
+  timing?: BusinessStepTodoTiming;
   onPress?: () => void;
 }) {
   const colors = useColors();
   const typo = useChatTypography();
   const isCurrent = !planClosed && todo.status === 'in_progress';
+  const live = timing?.liveStartedAtMs !== undefined;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    setNowMs(Date.now());
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [live, timing?.liveStartedAtMs, timing?.timingMeasuredAtMs, timing?.durationMs]);
+  const durationMs = resolveBusinessStepDurationMs(timing, live ? nowMs : Date.now());
+  const durationLabel = formatActivityDuration(durationMs) ?? undefined;
 
   return (
     <View>
@@ -83,6 +101,7 @@ export function BusinessStepTimelineRow({
         accessibilityLabel={[
           todo.content,
           todoAccessibleStatus(todo, planClosed),
+          durationLabel,
           todo.outcome?.text,
         ]
           .filter(Boolean)
@@ -105,7 +124,25 @@ export function BusinessStepTimelineRow({
         >
           {todo.content}
         </Text>
-        <Text style={[typo.meta, styles.index, { color: colors.mutedForeground }]}>
+        {durationLabel ? (
+          <Text
+            testID="business-step-duration"
+            style={[
+              typo.meta,
+              styles.duration,
+              { color: colors.mutedForeground, opacity: 0.6, fontVariant: ['tabular-nums'] },
+            ]}
+          >
+            {durationLabel}
+          </Text>
+        ) : null}
+        <Text
+          style={[
+            typo.meta,
+            styles.index,
+            { color: colors.mutedForeground, opacity: 0.6, fontVariant: ['tabular-nums'] },
+          ]}
+        >
           {String(index).padStart(2, '0')}
         </Text>
       </Pressable>
@@ -146,5 +183,6 @@ const styles = StyleSheet.create({
     width: StyleSheet.hairlineWidth,
   },
   title: { flex: 1, minWidth: 0 },
-  index: { width: 20, textAlign: 'right' },
+  duration: { flexShrink: 0, paddingTop: 2 },
+  index: { width: 20, textAlign: 'right', paddingTop: 2 },
 });

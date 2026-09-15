@@ -36,6 +36,10 @@ env:
   NODE_VERSION: '22.23.1'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+defaults:
+  run:
+    shell: bash   # 自建 runner 的容器里默认 sh，很多 step 用 pipefail 等 bash 语法
+
 jobs:
   # ── 门禁计划：PR 只跑受影响工作区 + affected 测试、不收集覆盖率；
   #    push main / dispatch 全量分片 + 覆盖率。PR 选择子集，main 保留权威全量验证。
@@ -129,7 +133,7 @@ jobs:
 
       - name: 配置 pnpm
         if: needs.ci_plan.outputs.acs_required == 'true'
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         if: needs.ci_plan.outputs.acs_required == 'true'
@@ -265,7 +269,7 @@ jobs:
           fetch-depth: 0
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         uses: actions/setup-node@v5
@@ -290,7 +294,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
@@ -341,7 +345,7 @@ jobs:
 
       - name: 配置 pnpm
         if: matrix.workspace != 'none'
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         if: matrix.workspace != 'none'
@@ -406,7 +410,7 @@ jobs:
           fetch-depth: 0
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         uses: actions/setup-node@v5
@@ -441,7 +445,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         uses: actions/setup-node@v5
@@ -469,7 +473,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         uses: actions/setup-node@v5
@@ -497,7 +501,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js 22.23.1 与工作区缓存
         uses: actions/setup-node@v5
@@ -604,7 +608,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v5
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
@@ -636,7 +640,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v5
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
@@ -658,7 +662,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v5
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
@@ -694,7 +698,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         uses: actions/setup-node@v5
@@ -1012,7 +1016,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         uses: actions/setup-node@v5

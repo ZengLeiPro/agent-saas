@@ -38,6 +38,10 @@ env:
   ACR_REGISTRY: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com
   ACR_REPOSITORY: agent-saas/acs-sandbox
 
+defaults:
+  run:
+    shell: bash   # 自建 runner 的容器里默认 sh，很多 step 用 pipefail 等 bash 语法
+
 jobs:
   guard:
     name: 验证部署请求与固定的业务源码
@@ -107,7 +111,7 @@ jobs:
         run: node scripts/release/deployment-engine.mjs .github/workflows/deploy-staging.yml "$RUNNER_TEMP/deployment-engine.json"
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         uses: actions/setup-node@v5
@@ -381,7 +385,7 @@ jobs:
 
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
@@ -988,7 +992,7 @@ jobs:
         run: node scripts/release/deployment-engine.mjs .github/workflows/deploy-staging.yml "$RUNNER_TEMP/deployment-engine.json"
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:

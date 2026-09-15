@@ -132,3 +132,17 @@ export function businessStepResultPlaceholder(
 }
 
 export type { TodoStatus };
+
+// 目录与墙钟耗时与状态语义同属业务步骤主卡契约，一并再导出方便 barrel 合并。
+export {
+  buildBusinessStepCatalog,
+  businessStepTimingByPlanId,
+  businessStepTimingByTodoKey,
+  resolveBusinessStepDurationMs,
+} from './businessStepCatalog';
+export type {
+  BusinessStepCatalog,
+  BusinessStepDetailView,
+  BusinessStepPlanView,
+  BusinessStepTodoTiming,
+} from './businessStepCatalog';

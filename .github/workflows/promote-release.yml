@@ -484,11 +484,6 @@ jobs:
             scripts/release/web-recovery-journal.mjs scripts/rollback-recovery-web.sh \
             scripts/release/read-production-recovery-state.mjs scripts/release/production-checkpoint.mjs \
             scripts/release/artifact-lib.mjs scripts/release/reuse-promotion-artifacts.mjs \
-            scripts/release/upload-web-assets-immutable.sh \
-            scripts/release/put-web-asset-create-only.mjs \
-            scripts/release/get-web-object.mjs \
-            scripts/release/repair-web-asset-metadata.mjs \
-            scripts/release/publish-web-assets-on-ecs.sh \
             "$upload_root/"
           if [ "$PRODUCTION_ALREADY_TARGET" != true ]; then
             # 制品留在深圳 OSS。runner 只传脚本/清单/预签名拉取计划，ECS 内网直拉并校验摘要。
@@ -657,16 +652,9 @@ jobs:
           production_staging_root=/run/agent-saas-production-staging
           recovery_run_id="${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           recovery_remote="$production_staging_root/recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          web_extract_remote="$production_staging_root/web-assets-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          web_creds_remote="$production_staging_root/web-oss-creds-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
-          web_diag_remote="$production_staging_root/web-asset-diagnostics-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           recovery_release_id="$(jq -r .components.web.sourceSha "$RUNNER_TEMP/manifest.json")"
           printf '%s' "$recovery_release_id" | grep -Eq '^[a-f0-9]{40}$'
           export recovery_web_root production_staging_root recovery_run_id recovery_remote recovery_release_id
-          export web_extract_remote web_creds_remote web_diag_remote
-          wipe_ecs_web_publish_secrets() {
-            recovery_ssh "sudo rm -f -- '$web_creds_remote'" || true
-          }
           recovery_ssh() {
             ssh -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
               -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "$@"
@@ -689,17 +677,12 @@ jobs:
           }
           publish_recovery_web() {
             set -euo pipefail
-            local digest before_q
-            # ECS already holds the hydrated tree from Shenzhen OSS; only release-identity.json
-            # is generated on the runner and must cross the ocean.
-            recovery_ssh "sudo test -d '$web_extract_remote' && sudo test -s '$web_extract_remote/index.html'"
-            recovery_ssh "sudo tee '$web_extract_remote/release-identity.json' >/dev/null" \
-              < "$RUNNER_TEMP/web-assets/release-identity.json"
+            local archive="$RUNNER_TEMP/agent-saas-recovery-web-$recovery_run_id.tgz" digest before_q
+            tar -C "$RUNNER_TEMP/web-assets" -czf "$archive" .
+            digest="$(sha256sum "$archive" | cut -d' ' -f1)"
             recovery_ssh "sudo rm -rf -- '$recovery_remote' && \
               sudo install -d -m 0700 '$recovery_remote' && \
-              sudo tar -C '$web_extract_remote' -czf '$recovery_remote/recovery-web.tgz' ."
-            digest="$(recovery_ssh "sudo sha256sum '$recovery_remote/recovery-web.tgz'" | awk '{print $1}')"
-            printf '%s' "$digest" | grep -Eq '^[a-f0-9]{64}$'
+              sudo tee '$recovery_remote/recovery-web.tgz' >/dev/null" < "$archive"
             recovery_ssh "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$production_staging_root' \
               bash -s -- verify '$digest' '$recovery_remote/recovery-web.tgz' '$recovery_remote'" \
               < scripts/release/seal-root-staged-payload.sh
@@ -806,8 +789,6 @@ jobs:
             local deploy_status=$?
             trap - EXIT
             set +e
-            wipe_ecs_web_publish_secrets
-            recovery_ssh "sudo rm -rf -- '$web_extract_remote' '$web_diag_remote'" || true
             local rollback_status=0
             if [ "$web_committed" = false ] && [ "$web_backup_ready" = true ]; then
               if web_lock_is_alive; then
@@ -872,7 +853,6 @@ jobs:
           # Snapshot every key this attempt may overwrite, including sw.js, manifest and icons.
           # Hash assets are create-only and deliberately excluded from rollback.
           web_oss_credentials="$RUNNER_TEMP/web-oss-sdk-credentials.json"
-          export web_oss_credentials PRODUCTION_WEB_OSS_URI
           (
             umask 077
             jq -n --arg accessKeyId "$ALIBABACLOUD_ACCESS_KEY_ID" \
@@ -895,42 +875,10 @@ jobs:
           }
           persist_web_recovery
           web_backup_ready=true
-          # Immutable hashed assets: Shenzhen ECS publishes via oss-cn-shenzhen-internal
-          # (same spirit as PR #689/#724). Runner keeps shell/entry flips + public verify.
-          # Short-lived OSS credentials live only under /run for this lock window.
+          # Immutable assets retain the PR #634 byte/header/cancellation gates.
           test -d "$RUNNER_TEMP/web-assets/assets"
-          publish_immutable_web_assets() {
-            set -euo pipefail
-            local web_asset_digest api_artifact_digest oss_module_path
-            web_asset_digest="$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")"
-            printf '%s' "$web_asset_digest" | grep -Eq '^sha256:[a-f0-9]{64}$'
-            web_asset_digest="${web_asset_digest#sha256:}"
-            api_artifact_digest="$(jq -r .components.api.artifactDigest "$RUNNER_TEMP/manifest.json")"
-            printf '%s' "$api_artifact_digest" | grep -Eq '^sha256:[a-f0-9]{64}$'
-            oss_module_path="/opt/agent-saas-app/releases/${api_artifact_digest#sha256:}/server/node_modules/ali-oss"
-            recovery_ssh "sudo test -d $(printf '%q' "$oss_module_path")"
-            recovery_ssh "sudo test -f '$PROMOTION_REMOTE/artifacts/web-assets.tgz'"
-            recovery_ssh "sudo test -f '$PROMOTION_REMOTE/publish-web-assets-on-ecs.sh'"
-            recovery_ssh "sudo install -d -m 0700 '$production_staging_root' && \
-              sudo rm -f -- '$web_creds_remote' && sudo install -m 0600 /dev/null '$web_creds_remote'"
-            recovery_ssh "sudo tee '$web_creds_remote' >/dev/null && sudo chmod 0400 '$web_creds_remote'" \
-              < "$web_oss_credentials"
-            recovery_ssh "sudo env OSS_REGION='$RELEASE_RECORD_OSS_REGION' \
-              bash '$PROMOTION_REMOTE/publish-web-assets-on-ecs.sh' \
-              '$PROMOTION_REMOTE/artifacts/web-assets.tgz' '$web_asset_digest' \
-              '$web_extract_remote' '$PRODUCTION_WEB_OSS_URI/assets' \
-              '$web_creds_remote' $(printf '%q' "$oss_module_path") \
-              'https://agent.kaiyan.net' 8 60 '$web_diag_remote'"
-            wipe_ecs_web_publish_secrets
-            mkdir -p "$RUNNER_TEMP/web-asset-diagnostics"
-            if recovery_ssh "sudo test -d '$web_diag_remote'"; then
-              recovery_ssh "sudo tar -C '$web_diag_remote' -cf - ." \
-                | tar -C "$RUNNER_TEMP/web-asset-diagnostics" -xf - || true
-            fi
-          }
-          export -f wipe_ecs_web_publish_secrets publish_immutable_web_assets
-          run_with_web_lock bash -euo pipefail -c publish_immutable_web_assets
-
+          run_with_web_lock bash scripts/release/upload-web-assets-immutable.sh \
+            "$RUNNER_TEMP/web-assets/assets" "$PRODUCTION_WEB_OSS_URI/assets" "$web_oss_credentials" "" "https://agent.kaiyan.net" 4 60 "$RUNNER_TEMP/web-asset-diagnostics"
           # 2) 其余壳文件（sw.js、manifest、图标等）保持原有覆盖式上传；入口两键最后写。
           rm -rf "$RUNNER_TEMP/web-shell"
           mkdir -p "$RUNNER_TEMP/web-shell"
@@ -952,7 +900,7 @@ jobs:
           export PRODUCTION_WEB_OSS_URI RELEASE_RECORD_OSS_REGION
           # 单对象 CLI 启动约有固定网络开销；保持逐文件字节校验，但与 Staging 一致限为 8 路。
           # 整批仍由一个 run_with_web_lock 监管，锁丢失或总截止时间到达会终止整个进程组。
-          # assets/ 已由 ECS 上 upload-web-assets-immutable.sh（内网）以 SDK GET 逐对象回读并校验公开 headers；
+          # assets/ 已由 upload-web-assets-immutable.sh 以 SDK GET 逐对象按存储字节回读并校验公开 headers；
           # aliyun `oss cp` 会对 Content-Encoding: gzip 对象透明解压并因 CRC 不一致失败，故这里只回读壳文件。
           run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '
             source="$1"
@@ -979,8 +927,6 @@ jobs:
           # A lost commit acknowledgement is UNKNOWN, not permission to undo a committed transaction.
           if ! finish_web_recovery committed; then web_backup_ready=false; exit 1; fi
           web_committed=true
-          wipe_ecs_web_publish_secrets
-          recovery_ssh "sudo rm -rf -- '$web_extract_remote' '$web_diag_remote'" || true
           write_web_budget 0 0
           release_web_lock
           trap - EXIT

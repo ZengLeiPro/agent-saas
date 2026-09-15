@@ -91,9 +91,9 @@ describe('KyAppV2ActivationService', () => {
               .sign(pair.privateKey);
             return { status: 200, json: { attestation } };
           }
-          if (input.path === '/ky/v1/health/ready')
+          if (input.path === '/ky/v2/health/ready')
             return { status: 200, json: { manifestDigest: digest } };
-          if (input.path === '/ky/v1/manifest') return { status: 200, json: manifest };
+          if (input.path === '/ky/v2/manifest') return { status: 200, json: manifest };
           return {
             status: 200,
             json: {

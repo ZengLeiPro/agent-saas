@@ -26,6 +26,7 @@ import { sha256Hex } from '@kaiyan/ky-app-contract';
 
 import type { KyAppGatewayConfig } from '../config.js';
 import { KyAppOutboundError, type KyAppOutbound, type KyAppOutboundResult } from '../outbound.js';
+import { kyAppRuntimePaths } from '../protocol.js';
 import { KyAppSatDeniedError, type KyAppSatIssuer } from '../sat/issuer.js';
 import {
   exceedsResponseBudget,
@@ -50,12 +51,12 @@ export const MAX_RETRY_AFTER_MS = 10_000;
 /** §6.2-5：`read_only` 视为「可安全重试」的 5xx。 */
 const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
 
-function capabilityPath(capabilityId: string): string {
-  return `/ky/v1/capabilities/${encodeURIComponent(capabilityId)}`;
+function capabilityPath(entry: AppCapabilityEntry): string {
+  return kyAppRuntimePaths(entry.authMode).capability(entry.capabilityId);
 }
 
-function executionsPath(capabilityId: string, lcid: string): string {
-  return `${capabilityPath(capabilityId)}/executions/${encodeURIComponent(lcid)}`;
+function executionsPath(entry: AppCapabilityEntry, lcid: string): string {
+  return kyAppRuntimePaths(entry.authMode).execution(entry.capabilityId, lcid);
 }
 
 /** §4.4 的执行记录状态。 */
@@ -287,7 +288,7 @@ export class AppLogicalCallRunner {
     const token = await this.signAgentSat(input);
     return this.deps.outbound.request({
       baseUrl: input.entry.baseUrl,
-      path: capabilityPath(input.entry.capabilityId),
+      path: capabilityPath(input.entry),
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -447,7 +448,7 @@ export class AppLogicalCallRunner {
         const token = await this.signAgentSat(input);
         response = await this.deps.outbound.request({
           baseUrl: input.entry.baseUrl,
-          path: executionsPath(input.entry.capabilityId, input.lcid),
+          path: executionsPath(input.entry, input.lcid),
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,

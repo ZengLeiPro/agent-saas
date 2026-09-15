@@ -171,8 +171,8 @@ export interface EndpointAuthorizationOptions {
   testEndpoints?: boolean;
 }
 
-const CAPABILITY_INVOKE = /^\/ky\/v1\/capabilities\/[^/]+$/u;
-const CAPABILITY_EXECUTION = /^\/ky\/v1\/capabilities\/[^/]+\/executions\/[^/]+$/u;
+const CAPABILITY_INVOKE = /^\/ky\/v[12]\/capabilities\/[^/]+$/u;
+const CAPABILITY_EXECUTION = /^\/ky\/v[12]\/capabilities\/[^/]+\/executions\/[^/]+$/u;
 
 /**
  * §3.3 端点 × act 授权矩阵。不在表内一律 false（由调用方回 403）。
@@ -193,30 +193,31 @@ export function isEndpointAllowed(
   const verb = method.toUpperCase();
 
   // 公开行：任何主体（含未携带令牌的 public）都可访问。
-  if (verb === 'GET' && path === '/ky/v1/health/live') return true;
-  if (verb === 'GET' && path === '/ky/v1/attest') return true;
+  if (verb === 'GET' && ['/ky/v1/health/live', '/ky/v2/health/live'].includes(path)) return true;
+  if (verb === 'GET' && ['/ky/v1/attest', '/ky/v2/attest'].includes(path)) return true;
   if (verb === 'POST' && path === '/ky-local/enable') return true;
   if (path.startsWith('/ky-local/')) return options.localMode === true;
   if (path.startsWith('/ky/v1/test/')) return options.testEndpoints === true;
 
   switch (act) {
     case 'platform':
-      if (verb === 'GET' && path === '/ky/v1/health/ready') return true;
-      if (verb === 'GET' && path === '/ky/v1/manifest') return true;
-      if (verb === 'POST' && path === '/ky/v1/events') return true;
+      if (verb === 'GET' && ['/ky/v1/health/ready', '/ky/v2/health/ready'].includes(path))
+        return true;
+      if (verb === 'GET' && ['/ky/v1/manifest', '/ky/v2/manifest'].includes(path)) return true;
+      if (verb === 'POST' && ['/ky/v1/events', '/ky/v2/events'].includes(path)) return true;
       return false;
     case 'agent':
       if (verb === 'POST' && CAPABILITY_INVOKE.test(path)) return true;
       if (verb === 'GET' && CAPABILITY_EXECUTION.test(path)) return true;
       return false;
     case 'user':
-      if (verb === 'GET' && path === '/ky/v1/me') return true;
+      if (verb === 'GET' && ['/ky/v1/me', '/ky/v2/me'].includes(path)) return true;
       return matchesBusinessPrefix(path, options, { admin: options.tadm === true });
     case 'local_admin':
-      if (verb === 'GET' && path === '/ky/v1/me') return true;
+      if (verb === 'GET' && ['/ky/v1/me', '/ky/v2/me'].includes(path)) return true;
       return matchesBusinessPrefix(path, options, { admin: true });
     case 'local_user':
-      if (verb === 'GET' && path === '/ky/v1/me') return true;
+      if (verb === 'GET' && ['/ky/v1/me', '/ky/v2/me'].includes(path)) return true;
       return matchesBusinessPrefix(path, options, { admin: false });
     default:
       return false;

@@ -152,6 +152,16 @@ describe('read 链（safeToRetry:true）', () => {
     expect(satClaims[0]).not.toHaveProperty('apr');
   });
 
+  it('V2 实例只调用 V2 能力路径', async () => {
+    const { runner, requests } = makeHarness([ok({ ok: true, data: { orderId: 'A2' } })]);
+    const result = await runner.run({
+      ...CALL,
+      entry: readEntry({ authMode: 'v2_asymmetric' }),
+    });
+    expect(result.outcome.kind).toBe('success');
+    expect(requests[0]!.path).toBe('/ky/v2/capabilities/order.search');
+  });
+
   it('无响应重试 ≤ 2 次，退避 1s / 3s，每个 attempt 新签一枚 SAT', async () => {
     const { runner, slept, satClaims } = makeHarness([
       TIMEOUT,

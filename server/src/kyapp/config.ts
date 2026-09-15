@@ -50,7 +50,7 @@ export const DEFAULT_EVENT_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_GATEWAY = {
   /** 单会话内 `app__` 工具数上限：超出则按 (systemId, capabilityId) 字典序截断并记日志。 */
   maxToolsPerSession: 64,
-  /** 建快照时拉 `/ky/v1/me` 的超时（§4.2 壳侧同一端点）。 */
+  /** 建快照时拉取用户能力视图的超时。 */
   meTimeoutMs: 5_000,
   /** §6.2-5：逻辑调用总截止 60 s。 */
   logicalCallDeadlineMs: 60_000,

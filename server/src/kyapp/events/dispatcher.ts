@@ -3,7 +3,7 @@
  *
  * 每个 tick：取到期事件 → 按安装实例分组、按 `stateVersion` 升序**串行**投递
  * （同一实例的事件必须保序，否则对端只会一直回 `state_gap`）→ 签 `act=platform` SAT
- * （`rid` = `X-KY-Request-Id`）→ 经 `outbound.ts` POST `{baseUrl}/ky/v1/events`。
+ * （`rid` = `X-KY-Request-Id`）→ 经 `outbound.ts` POST 到实例对应的事件端点。
  *
  * 应答处置：
  * - 200 `{ack:true}` → 标 delivered（`jwks.probe` 的 `verifiedKid` 一并落库，作为 §8.4 切换证据）；
@@ -20,13 +20,12 @@ import type {
 } from '../installations/queries.js';
 import type { KyAppOutbound } from '../outbound.js';
 import { KyAppOutboundError } from '../outbound.js';
+import { kyAppRuntimePaths } from '../protocol.js';
 import type { KyAppSatIssuer } from '../sat/issuer.js';
 import type { PgKyAppSystemStore } from '../systems/store.js';
 import type { KyAppOutboundEvent, PgKyAppOutboundEventStore } from './store.js';
 
 /** 事件投递路径（规范 §3.7）。 */
-export const KY_APP_EVENTS_PATH = '/ky/v1/events';
-
 /** 被放弃的事件告警项；由 worker 交给 `alertNotifier.notifyExternal`。 */
 export interface KyAppDispatchAlert {
   installationId: string;
@@ -200,7 +199,13 @@ export class KyAppEventDispatcher {
 
   private async deliver(
     event: KyAppOutboundEvent,
-    installation: { installationId: string; tenantId: string; systemId: string; baseUrl: string },
+    installation: {
+      installationId: string;
+      tenantId: string;
+      systemId: string;
+      baseUrl: string;
+      authMode?: 'v1_symmetric' | 'v2_asymmetric';
+    },
     now: Date,
   ): Promise<'delivered' | 'state_gap' | 'failed' | 'abandoned'> {
     const requestId = randomUUID();
@@ -222,7 +227,7 @@ export class KyAppEventDispatcher {
     try {
       response = await this.options.outbound.request({
         baseUrl: installation.baseUrl,
-        path: KY_APP_EVENTS_PATH,
+        path: kyAppRuntimePaths(installation.authMode).events,
         method: 'POST',
         requestId,
         headers: { authorization: `Bearer ${token}` },
@@ -258,7 +263,13 @@ export class KyAppEventDispatcher {
   /** 对端回 `state_gap`：把该实例所有更早的未 ack 事件立即置为可发，下一轮按序补齐。 */
   private async replayEarlier(
     event: KyAppOutboundEvent,
-    installation: { installationId: string; tenantId: string; systemId: string; baseUrl: string },
+    installation: {
+      installationId: string;
+      tenantId: string;
+      systemId: string;
+      baseUrl: string;
+      authMode?: 'v1_symmetric' | 'v2_asymmetric';
+    },
     now: Date,
   ): Promise<number> {
     const earlier = (await this.options.store.listSince(event.installationId, 1))

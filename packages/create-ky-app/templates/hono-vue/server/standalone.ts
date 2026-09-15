@@ -112,7 +112,7 @@ export async function buildStandaloneApp(config: AppConfig) {
       await built.directory.sync();
       return {
         validate: async () => {
-          const response = await built.app.request('/ky/v1/health/live');
+          const response = await built.app.request('/ky/v2/health/live');
           if (!response.ok) throw new Error('adapter_health_validation_failed');
         },
         start: async () => {
@@ -167,6 +167,11 @@ export async function buildStandaloneApp(config: AppConfig) {
     app.get('/ky/v2/health/live', (c) => c.json({ ok: true, integration: 'disabled' }));
   }
   app.all('/ky/v1/*', (c) =>
+    activeAdapter
+      ? activeAdapter.app.fetch(c.req.raw)
+      : c.json({ ok: false, error: { code: 'installation_inactive' } }, 503),
+  );
+  app.all('/ky/v2/*', (c) =>
     activeAdapter
       ? activeAdapter.app.fetch(c.req.raw)
       : c.json({ ok: false, error: { code: 'installation_inactive' } }, 503),

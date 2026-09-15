@@ -76,7 +76,7 @@ export interface VerifySatOptions {
   now?: () => number;
 }
 
-const CAPABILITY_PATH = /^\/ky\/v1\/capabilities\/([^/]+)(?:\/executions\/([^/]+))?$/u;
+const CAPABILITY_PATH = /^\/ky\/v[12]\/capabilities\/([^/]+)(?:\/executions\/([^/]+))?$/u;
 
 /** `Authorization: Bearer <token>` 取值；缺失或格式不对返回 null。 */
 export function readBearerToken(headerValue: string | null | undefined): string | null {
@@ -142,7 +142,7 @@ function checkBinding(claims: SatClaims, options: VerifySatOptions, pathname: st
 /** `dig` 只在 `/ky/v1/capabilities/*` 比对，不等 → 409 `digest_mismatch`（§3.1 claims 表）。 */
 function checkDigest(claims: SatClaims, options: VerifySatOptions, pathname: string): void {
   if (claims.act !== 'agent') return;
-  if (!pathname.startsWith('/ky/v1/capabilities/')) return;
+  if (!/^\/ky\/v[12]\/capabilities\//u.test(pathname)) return;
   if (!timingSafeEqualHex(claims.dig, options.manifestDigest)) {
     throw new KyAppError('digest_mismatch', { message: 'SAT dig 与当前 manifest digest 不符' });
   }

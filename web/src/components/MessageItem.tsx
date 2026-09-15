@@ -738,7 +738,6 @@ export const MessageItem = memo(function MessageItem({
               已排队，将在当前步骤结束后插入
             </div>
           )}
-          {/* 失败态副文案 + 重试按钮 */}
           {isFailed && (
             <div className="mt-1 flex items-center justify-end gap-2 text-xs">
               <span className="text-destructive">
@@ -754,16 +753,11 @@ export const MessageItem = memo(function MessageItem({
               )}
             </div>
           )}
-          {/* In-flow actions footer: keeps hover/hit area under the bubble inside `.group`
-              (absolute h-0 overlay sat outside the group's layout box, so desktop hover
-              only activated after moving up into the bubble). */}
+          {/* In-flow footer so hover under the bubble stays inside `.group`. */}
           {!isFailed && (
             <div
               data-testid="user-message-actions"
-              className={cn(
-                "flex items-center justify-end gap-0.5 pt-0.5 transition-opacity",
-                "opacity-100 md:opacity-0 md:group-hover:opacity-100",
-              )}
+              className={cn("flex items-center justify-end gap-0.5 pt-0.5 transition-opacity", "opacity-100 md:opacity-0 md:group-hover:opacity-100")}
             >
               {onFork && !isFirstUser && !isLoading && message.id.startsWith('line-') && (
                 <button

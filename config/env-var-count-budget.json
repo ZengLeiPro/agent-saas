@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "reason": "PREFLIGHT_DISK_PATHS lets production-preflight disk observation target host paths that exist; GitHub runners do not have /opt/agent-saas",
-  "updatedAt": "2026-09-14",
+  "reason": "Ratchet prune: server removed: AGENT_TRANSCRIPTS_ROOT; deployment/scripts removed: HOME, MODEL, VERIFY_WS_MODEL",
+  "updatedAt": "2026-09-15",
   "domains": {
     "server": {
-      "budget": 65,
+      "budget": 64,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
@@ -26,7 +26,6 @@
         "AGENT_SAAS_ZOMBIE_TOOL_CALL_TIMEOUT_MS",
         "AGENT_SMS_ACCESS_KEY_SECRET",
         "AGENT_SMS_DEV_CODE",
-        "AGENT_TRANSCRIPTS_ROOT",
         "AZEROTH_API_URL",
         "AZEROTH_PROXY_BASE_URL",
         "AZEROTH_TOKENS_FILE",
@@ -146,14 +145,21 @@
     },
     "shared/runtime": {
       "budget": 2,
-      "names": ["PATH", "SKILL_DEMO_ALLOW_AUTH_STATE"]
+      "names": [
+        "PATH",
+        "SKILL_DEMO_ALLOW_AUTH_STATE"
+      ]
     },
     "web build-time": {
       "budget": 3,
-      "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
+      "names": [
+        "BUNDLE_API_ORIGIN",
+        "VITE_API_BASE",
+        "VITE_WEB_ORIGIN"
+      ]
     },
     "deployment/scripts": {
-      "budget": 53,
+      "budget": 50,
       "names": [
         "ACS_ORCH_AUTH_TOKEN",
         "ACS_ORCH_BASE_URL",
@@ -184,9 +190,7 @@
         "GITHUB_RUN_ATTEMPT",
         "GITHUB_RUN_ID",
         "GITHUB_STEP_SUMMARY",
-        "HOME",
         "HTTPS_PROXY",
-        "MODEL",
         "MP_TEST_DATABASE_URL",
         "MP_WORKER_PROCESS_ROLE",
         "PATH",
@@ -206,8 +210,7 @@
         "STAGING_VAULT_KEY",
         "STRYKER_MODULE",
         "TASKBOARD_TABLE_PREFIX",
-        "TEST_DATABASE_URL",
-        "VERIFY_WS_MODEL"
+        "TEST_DATABASE_URL"
       ]
     },
     "packages": {

@@ -196,6 +196,11 @@ export function selectRuntimeHandRoute(
     : { kind: 'none' };
 }
 
+/** @deprecated Prefer selectRuntimeHandRoute so attested runs can fail closed. */
+export function pickSoleReadyTenantHandId(hands: ReadonlyArray<HandRecord>): string | undefined {
+  const route = selectRuntimeHandRoute(hands);
+  return route.kind === 'ready' ? route.handId : undefined;
+}
 
 export interface RegisterHandInput {
   handId: string;

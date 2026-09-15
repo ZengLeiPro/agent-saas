@@ -11,8 +11,11 @@
 | PR `contract`             | 无                                            | 单元/契约测试、企业清洁预构建、Gradle release fail-closed |
 | Dispatch `仅构建企业 APK` | Environment `mobile-build-android-enterprise` | 签名 APK 工作流制品（人工下载侧载）                       |
 
-编译使用 `mobile/scripts/build.sh android --distribution enterprise` → EAS 本地
-`production-enterprise` profile（`credentialsSource: local`）。签名 fail-closed 行为由
+编译使用 `mobile/scripts/build.sh android --distribution enterprise`：
+- **CI 且无 `EXPO_TOKEN`**（默认）：`expo prebuild` + `./gradlew :app:assembleRelease`
+  （`mobile/scripts/build-android-native.sh`），仍用 Environment 的 `ANDROID_RELEASE_*` 签名。
+- **有 `EXPO_TOKEN`** 或本地默认：EAS 本地 `production-enterprise`（`credentialsSource: local`）。
+可通过 `MOBILE_ANDROID_BUILD_ENGINE=gradle|eas|auto` 强制选择。签名 fail-closed 行为由
 `mobile/plugins/withAndroidSigningConfig.js` 保证，本流程不得放宽。
 
 ## 固定身份与版本
@@ -33,7 +36,7 @@ Environment **`mobile-build-android-enterprise`** 已创建（与 iOS `mobile-bu
   - `ANDROID_RELEASE_STORE_PASSWORD`
   - `ANDROID_RELEASE_KEY_ALIAS`
   - `ANDROID_RELEASE_KEY_PASSWORD`
-  - 可选 `EXPO_TOKEN`（组织机器人；仅当 EAS CLI 本地构建要求登录时）
+  - 可选 `EXPO_TOKEN`（组织机器人；有则走 EAS local，无则 CI 自动走 Gradle）
 
 禁止把 keystore / `credentials.json` / 明文口令提交进 git。证书 SHA-256 记在私有 ops 日志。
 
@@ -57,7 +60,7 @@ gh workflow run mobile-android-release.yml --ref main \
 - **PR contract**：无密钥；证明清单企业门禁、EAS profile 形状、签名插件 fail-closed、企业预构建可生成、
   Gradle release 在缺 `ANDROID_RELEASE_*` 时失败。
 - **首次签名 dispatch**：Environment secrets 齐全时产出可安装签名 APK；证明 keystore 物化、
-  ephemeral `credentials.json`、EAS local、制品上传与清理。缺密钥时 job 失败关闭，不提供“未签名 release APK”旁路。
+  ephemeral `credentials.json`（EAS 路径）、Gradle/`assembleRelease`（无 token 路径）、制品上传与清理。缺签名密钥时 job 失败关闭，不提供“未签名 release APK”旁路。
 
 ## 相关文档
 

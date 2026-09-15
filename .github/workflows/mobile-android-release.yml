@@ -61,6 +61,7 @@ jobs:
           node --test mobile/scripts/release-manifest.test.mjs
           node --test mobile/scripts/android-actions.test.mjs
           bash -n mobile/scripts/build.sh
+          bash -n mobile/scripts/build-android-native.sh
           bash -n mobile/scripts/load-android-production-config.sh
       - name: 企业清洁预构建（无签名凭据）
         # Policy gate only: prebuilds in a temp dir and does NOT leave mobile/android/.
@@ -161,9 +162,10 @@ jobs:
       - name: 安装 Android SDK 命令行工具并接受许可证
         uses: android-actions/setup-android@v3
         with:
-          # Pin packages needed for EAS local APK; licenses accepted by the action.
+          # Pin packages for Expo prebuild + Gradle assembleRelease (and EAS local).
           # cmdline-tools come from the action; do not request deprecated SDK 'tools'.
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          # NDK r27b matches EAS image ubuntu-24.04-jdk-17-ndk-r27b-sdk-55.
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.1.12297006 cmake;3.22.1'
       - name: 物化 release keystore 与 ephemeral credentials.json
         id: signing
         env:
@@ -224,7 +226,7 @@ jobs:
           if [ -n "${EXPO_TOKEN_VALUE:-}" ]; then
             echo "EXPO_TOKEN=${EXPO_TOKEN_VALUE}" >> "$GITHUB_ENV"
           fi
-      - name: 构建企业 APK（EAS local）
+      - name: 构建企业 APK（无 EXPO_TOKEN 时 Gradle；有 token 时 EAS local）
         working-directory: source
         env:
           ANDROID_RELEASE_KEYSTORE_PATH: ${{ steps.signing.outputs.keystore_path }}

@@ -227,13 +227,53 @@ if $PLATFORM_ANDROID; then
   # shellcheck source=load-android-production-config.sh
   . "$MOBILE_DIR/scripts/load-android-production-config.sh"
 
-  echo "Building Android ${ANDROID_DISTRIBUTION} artifact with ${ANDROID_EAS_PROFILE}..."
-  if [ "$EXIT_CODE" -eq 0 ] && MOBILE_BUILD_PLATFORM=android MOBILE_ANDROID_DISTRIBUTION="$ANDROID_DISTRIBUTION" EAS_SKIP_AUTO_FINGERPRINT=1 pnpm exec eas build -p android -e "$ANDROID_EAS_PROFILE" --local --output "$ANDROID_ARTIFACT_PATH" --non-interactive && [ -f "$ANDROID_ARTIFACT_PATH" ]; then
-    ANDROID_OK=true
-    echo "Android ${ANDROID_DISTRIBUTION} build complete: $ANDROID_ARTIFACT_PATH"
-  else
-    EXIT_CODE=1
-    echo "Android ${ANDROID_DISTRIBUTION} build failed." >&2
+  # Build engine:
+  #   MOBILE_ANDROID_BUILD_ENGINE=eas|gradle|auto (default auto)
+  #   auto → EAS when EXPO_TOKEN is set; Gradle on CI without EXPO_TOKEN;
+  #          otherwise EAS (local eas login session still works).
+  ANDROID_BUILD_ENGINE="${MOBILE_ANDROID_BUILD_ENGINE:-auto}"
+  case "$ANDROID_BUILD_ENGINE" in
+    eas|gradle) ;;
+    auto)
+      if [ -n "${EXPO_TOKEN:-}" ]; then
+        ANDROID_BUILD_ENGINE=eas
+      elif [ "${CI:-}" = "1" ] || [ "${CI:-}" = "true" ]; then
+        ANDROID_BUILD_ENGINE=gradle
+      else
+        ANDROID_BUILD_ENGINE=eas
+      fi
+      ;;
+    *)
+      echo "[M10-04] Unsupported MOBILE_ANDROID_BUILD_ENGINE: $ANDROID_BUILD_ENGINE" >&2
+      EXIT_CODE=2
+      ;;
+  esac
+
+  if [ "$EXIT_CODE" -eq 0 ] && [ "$ANDROID_BUILD_ENGINE" = "gradle" ]; then
+    if [ "$ANDROID_DISTRIBUTION" != enterprise ]; then
+      echo "[M10-04] Gradle build engine is enterprise-APK only; use EAS local (EXPO_TOKEN) for store/AAB." >&2
+      EXIT_CODE=2
+    else
+      echo "Building Android enterprise APK with Gradle (expo prebuild + assembleRelease)..."
+      if MOBILE_BUILD_PLATFORM=android MOBILE_ANDROID_DISTRIBUTION=enterprise \
+        bash "$MOBILE_DIR/scripts/build-android-native.sh" "$ANDROID_ARTIFACT_PATH" enterprise \
+        && [ -f "$ANDROID_ARTIFACT_PATH" ]; then
+        ANDROID_OK=true
+        echo "Android enterprise Gradle build complete: $ANDROID_ARTIFACT_PATH"
+      else
+        EXIT_CODE=1
+        echo "Android enterprise Gradle build failed." >&2
+      fi
+    fi
+  elif [ "$EXIT_CODE" -eq 0 ]; then
+    echo "Building Android ${ANDROID_DISTRIBUTION} artifact with EAS local ${ANDROID_EAS_PROFILE}..."
+    if MOBILE_BUILD_PLATFORM=android MOBILE_ANDROID_DISTRIBUTION="$ANDROID_DISTRIBUTION" EAS_SKIP_AUTO_FINGERPRINT=1 pnpm exec eas build -p android -e "$ANDROID_EAS_PROFILE" --local --output "$ANDROID_ARTIFACT_PATH" --non-interactive && [ -f "$ANDROID_ARTIFACT_PATH" ]; then
+      ANDROID_OK=true
+      echo "Android ${ANDROID_DISTRIBUTION} build complete: $ANDROID_ARTIFACT_PATH"
+    else
+      EXIT_CODE=1
+      echo "Android ${ANDROID_DISTRIBUTION} build failed." >&2
+    fi
   fi
 fi
 

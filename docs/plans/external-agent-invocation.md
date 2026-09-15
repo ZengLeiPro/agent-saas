@@ -1,313 +1,355 @@
-# KY Agent 外部系统调用与组织 Agent 就绪治理方案
+# KY Agent 外部调用与客户数据库只读查询方案
 
 > 状态：待评审、待实施
+>
+> 版本：V2（个人 Agent MVP）
+>
 > 创建日期：2026-09-15
-> 适用范围：KY Agent 服务端、Web 管理后台、外部系统接入层
+>
 > 交付边界：本文只定义产品与技术方案，不包含 Workflow、部署、生产配置或数据迁移变更
 
 ---
 
 ## 一、结论
 
-KY Agent 可以向外部系统提供完整 Agent 能力，但不应把能力抽象成一次性的“单 Run 模型调用”。推荐方案是：
+第一阶段不依赖组织 Agent，采用更简单的方案：
 
-1. 外部系统通过稳定的 HTTP API 管理会话并提交消息。
-2. 服务端内部由一个无界面的 WebSocket 适配器复用现有 Web/Mobile Agent 协议。
-3. 同一个外部会话可以连续提交多轮消息，并始终绑定同一个组织 Agent。
-4. 每条消息在内部可以触发多轮模型推理、工具调用、子任务、审批和恢复。
-5. MVP 默认只向调用方返回 Agent 最终输出，不暴露思考文本和中间执行事件。
-6. 平台后台保留完整会话、执行过程、调用身份和计费记录。
+```text
+一个客户组织
+→ 一个或多个专用外部调用账号
+→ 每个账号使用自己的个人 Agent
+→ 外部 API Key 固定映射到账号
+→ 无界面 WebSocket 客户端复用现有 Agent Runtime
+→ 外部只接收最终结果
+→ 平台后台保留完整会话、执行过程与计费
+```
 
-该方案成立的前提不是“已经生成 Agent ID”，而是指定组织 Agent 已经达到可运行就绪状态。当前组织 Agent 创建链路存在多步骤半成功风险，因此第一阶段必须先补齐创建、发布、投影、授权和就绪判定。
+当 Agent 需要查询客户数据库时，第一阶段不要求专门制作 Skill，但必须提供模型之外的受控只读数据库查询工具：
+
+```text
+个人 Agent
+→ 通用只读数据库查询 Tool
+→ 服务端根据 connection_id 取得密钥
+→ 客户数据库
+```
+
+数据库账号、密码、连接字符串不得写入用户提示语，也不得进入模型上下文、会话记录、个人记忆或 Sandbox。客户只在受保护的连接管理接口登记一次数据库连接，后续会话只引用不敏感的 `connection_id`。
 
 一句话定义：
 
-> 外部 API 是现有 Agent Runtime 的无界面入口；调用身份决定租户、授权、会话归属和计费，`agent_id` 决定使用哪个组织 Agent 的指令与能力。
+> API Key 决定使用哪个客户专用账号及个人 Agent；`conversation_id` 承载多轮上下文；`connection_id` 决定可访问哪一个受控只读数据源；模型只能提出查询，不能接触数据库凭据或决定业务授权。
 
 ---
 
-## 二、概念与页面边界
+## 二、为什么改用个人 Agent
 
-### 2.1 “智能体规则”不是单个 Agent 的提示词
+当前组织 Agent 的创建、版本发布、访问范围和运行时投影链路尚未完全稳定。如果把外部 API 建立在组织 Agent 上，会同时引入以下前置依赖：
 
-设置中心中的“智能体规则”对应组织级 `instructions.md`，用于统一整个组织内 Agent 的表达方式、格式偏好和岗位约定。它不是某个组织 Agent 的专属系统提示词。
+- 组织 Agent 创建必须成功；
+- Agent ID 必须可发现；
+- Agent 版本必须发布；
+- Assignment 必须保存；
+- 运行时投影必须完成；
+- 外部服务身份必须被纳入组织 Agent 访问范围。
 
-单个组织 Agent 的专属指令在：
+专用账号的个人 Agent 已经天然具备用户工作区、会话、工具、技能、记忆和模型配置，可以先验证外部系统是否真正需要完整 Agent 能力。
 
-```text
-设置 → 组织管理 → 智能体 → 打开具体智能体 → 内部提示语
-```
+采用个人 Agent 后：
 
-最终提示词由多层内容组合：
+- MVP 不需要创建组织 Agent；
+- 外部调用不需要传 `agent_id`；
+- API Key 创建时就固定绑定专用账号；
+- 每条消息仍然可以触发完整的多轮推理、工具调用和子任务；
+- 同一个外部会话可以连续交流，不退化为单次模型调用；
+- 将来切换到组织 Agent 时，外部会话 API 可以保持兼容。
 
-```text
-平台基础规则
-+ Agent Runtime Profile 指令
-+ 组织资料与“智能体规则”
-+ 指定组织 Agent 的“内部提示语”
-+ 当前会话上下文与允许加载的记忆
-```
-
-外部 API 不允许调用方直接传入任意 `system_prompt`，避免绕过组织治理、安全规则和审计。需要不同岗位或提示词时，应创建不同组织 Agent 或发布该 Agent 的新版本。
-
-### 2.2 Agent ID 的语义
-
-- `agent_id` 是组织 Agent 的稳定、不可变调用标识。
-- 修改名称、头像、指令、模型或技能时，`agent_id` 不变。
-- 发布新版本时，`agent_id` 不变，内部版本号变化。
-- 删除操作默认应改为停用或归档，避免历史会话失去身份解释。
-- 外部请求中的 `agent_id` 只能作为候选标识；最终租户和权限必须由 API Key 对应的服务身份在服务端解析。
-
-MVP 可以直接使用现有治理资源的 `agentId`。后续若需要更稳定的公开命名，可增加独立的 `public_agent_id` 或别名，但不得用可修改的 Agent 名称充当主键。
+该方案是 MVP 的运行目标选择，不代表废弃组织 Agent。组织 Agent 后续仍适合多 Agent 目录、版本治理、统一指派和复杂权限场景。
 
 ---
 
-## 三、目标与非目标
+## 三、账号与组织模型
 
-### 3.1 目标
+### 3.1 客户组织
 
-1. 外部系统能够发现自己有权调用的组织 Agent。
-2. 外部系统能够创建持久会话，并在同一会话内连续多轮交流。
-3. 每次消息处理都复用现有 Agent Runtime，而不是退化为单次模型问答。
-4. 默认只返回最终结果，同时保证后台可以查看完整过程。
-5. 支持模型、推理开关、effort、超时和幂等键等调用参数。
-6. 调用身份、Agent 身份、会话身份、执行身份和费用归属可追溯。
-7. 组织 Agent 创建失败后可以安全重试，不重复创建孤立资源。
-8. 未达到就绪状态的 Agent 不进入外部可调用目录。
+- 已经有平台组织的客户：复用现有组织。
+- 尚无平台组织的客户：为其创建独立正式组织。
+- 禁止所有外部客户共用一个“外部调用组织”。
+- 会话、文件、记忆、连接、用量和费用都归属客户组织。
 
-### 3.2 非目标
+### 3.2 专用外部调用账号
 
-- 不开放调用方任意覆盖系统提示词。
-- 不让调用方直接指定或切换 `tenantId`。
-- 不把内部 WebSocket 协议直接暴露为公共协议。
-- MVP 不向外部返回模型思考文本、工具参数、凭据或内部路径。
-- 不在本阶段重写 Agent Runtime、工具系统和会话存储。
-- 不在本方案中启用或修改 CI/CD Workflow。
-
----
-
-## 四、总体架构
-
-```mermaid
-flowchart LR
-    E[外部业务系统] -->|HTTPS + API Key| G[External Agent API]
-    G --> A[认证、租户与 Agent 授权]
-    A --> C[会话与幂等协调器]
-    C --> W[无界面 WebSocket 适配器]
-    W --> R[现有 Web Channel / Agent Runtime]
-    R --> M[模型与多轮 Agent Loop]
-    R --> T[工具、技能、MCP、Sandbox]
-    R --> S[会话、Run 与事件持久化]
-    S --> O[组织/平台后台观测]
-    S --> B[计量与计费]
-    R --> W --> C -->|仅最终输出| G --> E
-```
-
-### 4.1 为什么采用无界面 WebSocket 适配器
-
-适配器作为内部客户端复用现有 Web/Mobile 运行协议，可以直接获得：
-
-- 会话恢复与消息续接；
-- Agent 多轮循环；
-- 工具和技能调用；
-- 中断、审批、错误和终态事件；
-- 现有消息持久化、运行记录和计费链路。
-
-公共 HTTP API 只负责稳定的外部契约，不复制 Agent Runtime。WebSocket 是内部实现细节，未来即使 Runtime Transport 更换，外部 API 也无需变化。
-
-### 4.2 不是“单 Run API”
-
-外部接口的核心资源是 `conversation`，不是 `run`：
+专用账号是非人员账号，只用于一个客户或一个明确的业务集成：
 
 ```text
-一个 conversation
-├─ 第一条外部消息
-│  └─ 一个 execution，可包含多轮推理和多次工具调用
-├─ 第二条外部消息
-│  └─ 一个新的 execution，继承同一会话上下文
-└─ 后续消息……
+客户 A
+├─ ERP 外部调用账号
+└─ 客服系统外部调用账号
+
+客户 B
+└─ 数据分析外部调用账号
 ```
 
-`execution_id` 只表示一条消息对应的本次执行，主要用于等待结果、重试、取消、审计和计费，不能取代长期会话。
+隔离原则：
 
----
+- 不复用员工真实账号；
+- 不跨客户共享账号；
+- 不把账号密码、Cookie 或 refresh token 交给外部系统；
+- 不同数据权限、费用中心或记忆边界使用不同账号；
+- 每个账号使用独立用户工作区；
+- 账号停用后，其 API Key 同步失效；
+- 管理员可以配置该账号的个人 Agent，但不能读取数据库明文密码。
 
-## 五、组织 Agent 创建与就绪治理
+### 3.3 API Client 与 API Key
 
-### 5.1 当前风险
-
-当前创建链路依次执行：
-
-```text
-创建治理资源
-→ 发布版本
-→ 设置状态
-→ 保存访问范围
-→ 投影到运行时 OrgAgentStore
-```
-
-该链路不是一个对用户原子化的操作，可能出现：
-
-- 已生成 `agentId`，但版本发布失败；
-- 版本已发布，但状态或访问范围未保存；
-- 治理数据已更新，但运行时投影仍 pending 或 failed；
-- 首次投影存在，但访问范围仍为空，因此运行时按安全策略拒绝调用；
-- 新建页面重试时再次创建资源，产生多个孤立草稿。
-
-因此，“接口返回了 Agent ID”不能作为创建成功或可调用的判据。
-
-### 5.2 目标状态机
-
-```mermaid
-stateDiagram-v2
-    [*] --> draft
-    draft --> publishing: 提交配置
-    publishing --> configuring_access: 版本已发布
-    configuring_access --> projecting: 状态与访问范围已保存
-    projecting --> ready: 运行时投影与依赖校验通过
-    publishing --> failed
-    configuring_access --> failed
-    projecting --> failed
-    failed --> publishing: 使用同一 operation_id 和 agent_id 重试
-    ready --> disabled: 管理员停用
-    disabled --> ready: 重新校验并启用
-    ready --> archived: 归档
-    disabled --> archived: 归档
-```
-
-对外目录只返回 `ready` 状态。`draft`、`publishing`、`failed`、`disabled`、`archived` 均不得被外部调用。
-
-### 5.3 创建命令
-
-建议将前端当前多次请求收敛为一个服务端应用命令：
-
-```http
-POST /api/governance/org-agents
-Idempotency-Key: <operation_id>
-```
-
-请求包含 Agent 定义、运行策略和访问范围。服务端负责：
-
-1. 第一次请求生成并持久化唯一 `agent_id`。
-2. 同一 `Idempotency-Key` 重试时返回同一资源和当前进度。
-3. 在数据库事务内写入可原子提交的数据。
-4. 通过 durable outbox 执行运行时投影。
-5. 投影失败时保存失败原因并支持后台重试。
-6. 只有完成运行时 readback 后才标记为 `ready`。
-
-如果短期内不合并现有后端接口，前端也至少必须在第一次创建资源后立即保存 `agent_id` 和 revision；后续步骤失败时继续该资源，不能再次调用创建接口。
-
-### 5.4 就绪判定
-
-一个组织 Agent 只有同时满足以下条件才是 `ready`：
-
-| 检查项          | 判定要求                                      |
-| --------------- | --------------------------------------------- |
-| 治理资源        | 存在且归属当前租户                            |
-| 状态            | `enabled`                                     |
-| 版本            | `currentVersionId` 存在且定义校验通过         |
-| 运行时投影      | 同 `agent_id`、同租户的运行记录存在且启用     |
-| 访问范围        | API Service Principal 对该 Agent 有明确 allow |
-| Runtime Profile | `org_agent` Profile 可解析                    |
-| 模型            | 继承或固定模型可用，且租户有权使用            |
-| 工具与技能      | 引用合法，禁用项按 fail-closed 处理           |
-| 执行模式        | dispatcher 等附加依赖校验通过                 |
-
-管理后台应显示“草稿、发布中、可调用、失败、已停用”及最后错误，不再只显示一个容易误解的启用开关。
-
----
-
-## 六、身份、组织与授权模型
-
-### 6.1 是否需要为外部客户创建组织
-
-- 已经是平台客户并有独立组织：复用其现有组织。
-- 外部调用方尚无组织：为客户创建正式租户组织，不创建所有客户共用的“外部调用组织”。
-- 每个外部集成在客户组织内创建独立 Service Principal 和 API Key。
-- 同一客户的测试、生产或不同业务系统建议使用不同 Service Principal，便于撤权和计费拆分。
-
-### 6.2 API Key 建议字段
-
-```text
-key_id
-tenant_id
-service_principal_id
-name
-key_hash
-key_prefix
-scopes
-allowed_agent_ids
-status
-expires_at
-last_used_at
-created_by / created_at
-revoked_by / revoked_at
-```
-
-只存 API Key 哈希；明文只在创建时展示一次。至少支持：
-
-- `agents:read`
-- `conversations:write`
-- `conversations:read`
-- `executions:read`
-- `executions:cancel`（可选）
-
-### 6.3 权限解析原则
+外部系统拿到的不是 Web 登录凭据，而是专用 API Key：
 
 ```text
 API Key
-→ Service Principal
-→ 固定 tenant_id
-→ allowed_agent_ids / Assignment
-→ 服务端生成可信 agentTarget
+→ api_client_id
+→ tenant_id
+→ service_account_user_id
+→ 该账号的个人 Agent
+→ allowed_connection_ids
 ```
 
-外部请求不能提供可信 `tenantId`。适配器生成的内部目标为：
+建议保存字段：
 
-```json
-{
-  "kind": "org-agent",
-  "tenantId": "由服务端身份解析",
-  "orgAgentId": "通过授权校验后的 agent_id"
-}
-```
+| 字段                      | 说明                       |
+| ------------------------- | -------------------------- |
+| `api_client_id`           | 外部集成身份               |
+| `tenant_id`               | 固定所属组织               |
+| `service_account_user_id` | 固定个人 Agent 所有者      |
+| `key_hash`                | API Key 哈希，不保存明文   |
+| `key_prefix`              | 后台识别用前缀             |
+| `scopes`                  | 会话、结果、连接等权限     |
+| `allowed_connection_ids`  | 允许使用的数据连接         |
+| `status`                  | active / revoked / expired |
+| `expires_at`              | 可选过期时间               |
+| `last_used_at`            | 最近使用时间               |
 
-同一会话在首次创建时绑定 Agent。后续消息如果再次传入不同 `agent_id`，服务端必须返回冲突；切换 Agent 需要新建会话。
+API Key 明文只在创建时展示一次，并支持轮换和撤销。
 
 ---
 
-## 七、外部 API 契约
+## 四、个人 Agent 的提示词与能力
 
-### 7.1 查询可调用 Agent
+### 4.1 系统提示词
 
-```http
-GET /v1/agents
-Authorization: Bearer <API_KEY>
+专用账号调用时使用该账号的个人 Agent，组合内容为：
+
+```text
+平台基础规则
++ main Agent Runtime Profile
++ 客户组织资料
++ 客户组织“智能体规则”
++ 专用账号“我的 Agent”中的个人提示词
++ 当前会话上下文
++ 该账号允许加载的个人记忆
 ```
 
-只返回当前 Service Principal 有权调用且状态为 `ready` 的 Agent：
+外部请求不能传入或覆盖 `system_prompt`。管理员通过“我的 Agent”和组织设置管理提示词。
+
+### 4.2 是否必须制作 Skill
+
+第一阶段不必须制作 Skill。
+
+只要个人 Agent 可以看到一个描述清晰的只读数据库查询 Tool，就能根据用户问题生成查询并调用工具。Tool 描述需要说明：
+
+- 支持的数据源类型；
+- 可以访问的 schema 和表；
+- 输入字段和限制；
+- 查询结果格式；
+- 超时、行数和敏感字段规则。
+
+Skill 适合后续补充：
+
+- 客户业务术语和指标口径；
+- 固定分析步骤；
+- 多表关联规范；
+- 常见问题模板；
+- 查询后如何生成报告；
+- 特定行业的判断规则。
+
+因此，第一阶段的安全边界在 Tool，不在 Skill。Skill 只是提高业务准确性，不承担数据库认证和授权。
+
+---
+
+## 五、数据库连接方案
+
+### 5.1 禁止把密码放进提示语
+
+以下请求不允许：
 
 ```json
 {
-  "data": [
-    {
-      "id": "org-550e8400-e29b-41d4-a716-446655440000",
-      "name": "订单分析助手",
-      "description": "分析订单异常并给出处理建议",
-      "capabilities": {
-        "attachments": true,
-        "reasoning": true
-      },
-      "defaults": {
-        "model": "inherit",
-        "reasoning_effort": "medium"
-      }
-    }
-  ]
+  "message": "数据库地址是 db.example.com，账号 readonly，密码 xxx，请查询销售数据"
 }
 ```
 
-不返回 Agent 内部提示语、工具明细、门禁规则、知识资源 ID 或租户 ID。
+原因包括：
+
+- 用户输入会进入会话 transcript；
+- 可能进入请求日志、错误日志和管理后台；
+- 会发送到模型提供方；
+- 可能被长期记忆或摘要再次保存；
+- 可能出现在 Shell 命令和工具调用记录中；
+- 提示词注入可以诱导模型泄漏凭据；
+- 只读账号仍可能泄漏全部可读数据或拖垮数据库。
+
+如果历史会话中已经发送过真实数据库密码，应按凭据泄漏处理并立即轮换。
+
+### 5.2 连接登记
+
+客户管理员通过受保护接口或管理后台登记数据库连接：
+
+```http
+POST /v1/database-connections
+Authorization: Bearer <management-credential>
+Content-Type: application/json
+```
+
+```json
+{
+  "name": "生产订单只读库",
+  "engine": "postgresql",
+  "host": "db.customer.internal",
+  "port": 5432,
+  "database": "orders",
+  "username": "agent_reader",
+  "password": "仅本次提交",
+  "ssl_mode": "verify-full",
+  "allowed_schemas": ["reporting"],
+  "allowed_tables": ["reporting.orders", "reporting.customers"]
+}
+```
+
+服务端必须：
+
+1. 禁止记录请求正文和密码。
+2. 使用 TLS 接收请求。
+3. 将凭据加密保存到独立 Credential Store。
+4. 验证连接与只读权限。
+5. 返回不敏感的 `connection_id`。
+6. 将连接绑定到固定租户和允许的 API Client。
+7. 支持测试、轮换、停用和删除。
+
+响应：
+
+```json
+{
+  "id": "dbc_01K...",
+  "name": "生产订单只读库",
+  "status": "ready",
+  "engine": "postgresql"
+}
+```
+
+### 5.3 客户数据库不可公网访问时
+
+不要求客户把数据库开放到公网。推荐在客户网络内部署查询网关：
+
+```text
+KY Agent 只读查询 Tool
+→ 双向认证的客户查询网关
+→ 客户内网数据库
+```
+
+数据库凭据保留在客户环境，平台只保存网关连接身份。查询网关必须执行相同的租户绑定、只读限制、SQL 校验、超时、结果裁剪和审计。
+
+---
+
+## 六、只读数据库查询 Tool
+
+### 6.1 Tool 契约
+
+MVP 可以提供一个通用工具：
+
+```ts
+database_query_readonly({
+  connectionId: string,
+  sql: string,
+  parameters?: unknown[],
+  maxRows?: number
+})
+```
+
+但 `connectionId` 不能由模型自由选择。运行时应根据当前 API Client 和会话上下文解析允许的连接，并拒绝任何未授权连接。
+
+返回示例：
+
+```json
+{
+  "columns": ["customer_name", "total_amount"],
+  "rows": [
+    ["客户甲", 125000],
+    ["客户乙", 98000]
+  ],
+  "row_count": 2,
+  "truncated": false,
+  "duration_ms": 43
+}
+```
+
+### 6.2 只读必须多层实施
+
+不能只判断 SQL 是否以 `SELECT` 开头。至少同时实施：
+
+1. 数据库使用专用只读角色，只授予必要 schema、view 和 table。
+2. 优先连接只读副本或报表库，不直接访问生产主库。
+3. 每次查询开启数据库原生只读事务。
+4. 使用 SQL AST 解析器拒绝写操作、多语句、危险函数和绕过语法。
+5. 只允许配置中的 schema、view、table 和字段。
+6. 强制 `statement_timeout`、连接超时和最大并发。
+7. 强制最大行数、最大结果字节数和分页。
+8. 禁止文件、网络、扩展、系统命令和管理函数。
+9. 对手机号、证件号、银行卡等字段进行脱敏或直接禁止返回。
+10. 记录查询摘要、耗时、行数和关联 ID，但不记录凭据。
+
+### 6.3 权限来源
+
+权限判断必须来自可信服务端上下文：
+
+```text
+API Key 解析出的 tenant_id
++ service_account_user_id
++ allowed_connection_ids
++ 数据连接自己的 schema/table allowlist
+= 本次查询的最大权限
+```
+
+用户提示语、模型生成 SQL、Header 或 query string 都不能覆盖这些权限。
+
+### 6.4 查询结果与记忆
+
+- 查询结果可以进入当前执行上下文和会话 transcript。
+- 默认禁止原始数据库行进入长期个人记忆。
+- 长期记忆只允许保存经过脱敏的结论或用户明确确认的摘要。
+- 会话导出和后台查看继续受组织权限控制。
+- 客户可以配置会话及查询结果保留时间。
+
+---
+
+## 七、外部会话 API
+
+### 7.1 调用目标
+
+MVP 中 API Key 已经固定绑定个人 Agent，因此不要求 `agent_id`：
+
+```text
+Authorization: Bearer <API_KEY>
+→ 找到客户组织
+→ 找到专用账号
+→ 使用该账号的 personal agentTarget
+```
+
+服务端内部生成：
+
+```json
+{
+  "kind": "personal",
+  "tenantId": "由 API Key 解析"
+}
+```
 
 ### 7.2 创建会话
 
@@ -315,15 +357,14 @@ Authorization: Bearer <API_KEY>
 POST /v1/conversations
 Authorization: Bearer <API_KEY>
 Idempotency-Key: <unique-key>
-Content-Type: application/json
 ```
 
 ```json
 {
-  "agent_id": "org-550e8400-e29b-41d4-a716-446655440000",
-  "external_conversation_id": "order-20260915-001",
+  "external_conversation_id": "customer-analysis-001",
+  "database_connection_id": "dbc_01K...",
   "metadata": {
-    "order_id": "SO-10086"
+    "business_id": "SO-10086"
   }
 }
 ```
@@ -333,16 +374,16 @@ Content-Type: application/json
 ```json
 {
   "id": "conv_01K...",
-  "external_conversation_id": "order-20260915-001",
-  "agent_id": "org-550e8400-e29b-41d4-a716-446655440000",
+  "external_conversation_id": "customer-analysis-001",
   "status": "active",
-  "created_at": "2026-09-15T10:00:00.000Z"
+  "database_connection": {
+    "id": "dbc_01K...",
+    "name": "生产订单只读库"
+  }
 }
 ```
 
-`external_conversation_id` 在同一个 Service Principal 下唯一，可用于调用方安全重试和业务主键关联。
-
-### 7.3 向会话发送消息并等待最终结果
+### 7.3 发送消息
 
 ```http
 POST /v1/conversations/{conversation_id}/messages
@@ -353,8 +394,7 @@ Content-Type: application/json
 
 ```json
 {
-  "message": "分析这个订单是否存在风险，并给出处理建议。",
-  "attachments": [],
+  "message": "查询今年销售额最高的十个客户，并分析增长原因。",
   "model": "inherit",
   "reasoning": {
     "enabled": true,
@@ -365,17 +405,16 @@ Content-Type: application/json
 }
 ```
 
-参数语义：
+参数说明：
 
-| 字段                | 说明                                                   |
-| ------------------- | ------------------------------------------------------ |
-| `message`           | 本轮用户输入，必填                                     |
-| `attachments`       | 可选附件引用，必须先通过受控上传接口取得               |
-| `model`             | `inherit` 或租户允许的模型标识；Agent 固定模型策略优先 |
-| `reasoning.enabled` | 是否允许推理能力；不表示向外返回思考文本               |
-| `reasoning.effort`  | `low`、`medium`、`high` 等受支持档位                   |
-| `response_mode`     | MVP 固定支持 `final`                                   |
-| `wait_timeout_ms`   | HTTP 最长等待时间，不是 Agent 总执行超时               |
+| 字段                | 说明                                 |
+| ------------------- | ------------------------------------ |
+| `message`           | 本轮用户输入                         |
+| `model`             | `inherit` 或账号有权使用的模型       |
+| `reasoning.enabled` | 是否允许使用推理能力                 |
+| `reasoning.effort`  | low / medium / high 等支持档位       |
+| `response_mode`     | MVP 固定为 `final`                   |
+| `wait_timeout_ms`   | HTTP 等待时间，不是 Agent 总执行时间 |
 
 在等待时间内完成时返回 `200`：
 
@@ -385,17 +424,16 @@ Content-Type: application/json
   "execution_id": "exec_01K...",
   "status": "completed",
   "output": {
-    "text": "该订单存在两个风险……"
+    "text": "今年销售额最高的十个客户为……"
   },
   "usage": {
-    "model": "effective-model-id",
+    "effective_model": "model-id",
     "reasoning_effort": "high"
-  },
-  "completed_at": "2026-09-15T10:01:20.000Z"
+  }
 }
 ```
 
-超过 HTTP 等待时间但 Agent 仍在执行时返回 `202`，任务继续运行：
+超过 HTTP 等待时间时返回 `202`，Agent 继续执行：
 
 ```json
 {
@@ -413,17 +451,21 @@ GET /v1/executions/{execution_id}
 Authorization: Bearer <API_KEY>
 ```
 
-只返回 `queued`、`running`、`completed`、`failed`、`cancelled` 等状态。完成后返回最终输出；不返回 chain-of-thought、内部工具参数、凭据或本地路径。
+只向外部返回执行状态、最终输出、受控错误和计量摘要，不返回：
 
-### 7.5 多轮续聊
+- chain-of-thought；
+- 数据库凭据；
+- 内部系统提示词；
+- 工具内部参数中的敏感内容；
+- 服务器或 Sandbox 路径。
 
-调用方继续向同一个 `conversation_id` 发送消息即可复用完整会话：
+### 7.5 多轮会话
 
-```http
-POST /v1/conversations/conv_01K.../messages
+后续问题继续调用同一个 `conversation_id`：
 
+```json
 {
-  "message": "继续比较第二个供应商，并结合刚才的结论。",
+  "message": "只看华东地区，再与去年同期比较。",
   "model": "inherit",
   "reasoning": {
     "enabled": true,
@@ -433,279 +475,257 @@ POST /v1/conversations/conv_01K.../messages
 }
 ```
 
-服务端不得为每条外部消息创建全新的无上下文会话。
+服务端恢复同一个内部 session，保留前文和之前的查询结论。每条消息内部仍可进行多轮模型推理和多次工具调用。
 
 ---
 
-## 八、无界面 WebSocket 适配器职责
+## 八、无界面 WebSocket 适配器
 
-适配器负责协议转换，不拥有业务权威数据：
+公共 HTTP API 不重新实现 Agent Runtime，而是通过内部无界面客户端复用现有 WebSocket 协议。
 
-1. 将可信 Service Principal 映射成内部执行身份。
-2. 创建或恢复内部 `sessionId`。
-3. 将外部 `conversation_id` 映射到唯一内部会话。
-4. 将已授权 `agent_id` 转换成 canonical `agentTarget`。
-5. 按现有 WebSocket 协议提交消息、模型、推理和附件参数。
-6. 持续消费内部事件，并把事件写入现有持久化链路。
-7. 识别真正终态，提取最终 assistant 输出。
-8. HTTP 断开时不取消 Agent；调用方可用 `execution_id` 查询结果。
-9. 重连后从持久状态恢复，不能依赖单个 Node 进程内存等待。
-10. 使用 `Idempotency-Key` 防止网络重试造成重复执行或重复副作用。
+适配器负责：
 
-适配器不得：
+1. 将 API Key 解析为专用账号身份。
+2. 创建或恢复该账号的内部 session。
+3. 将外部 conversation 映射到固定 session。
+4. 生成 personal `agentTarget`。
+5. 提交消息、模型、reasoning、附件等参数。
+6. 消费模型、工具和终态事件。
+7. 识别真正执行终态并提取最终 assistant 输出。
+8. HTTP 断开后保持内部执行继续运行。
+9. 重连后从 durable session/run 状态恢复。
+10. 用幂等键避免重复执行查询或其他副作用。
 
-- 直接拼接或覆盖系统提示词；
-- 信任调用方传入的 tenant、session、owner 或计费身份；
-- 把 API Key 或用户 OAuth 凭据传入 Sandbox；
-- 仅依据某个 WebSocket `done` 字符串判断完成而忽略持久化终态；
-- 在外部连接断开时丢弃内部运行映射。
+WebSocket 只是内部实现细节，不对外成为公共协议。
 
 ---
 
-## 九、会话、过程可见性与计费
+## 九、后台会话、审计与计费
 
-### 9.1 后台会话可见性
+### 9.1 后台必须可见
 
-平台管理员和对应组织管理员应能查看：
+平台管理员和对应组织管理员应能看到：
 
-- 外部会话 ID 与内部 session ID；
-- 客户组织、Service Principal、API Key 前缀；
-- 组织 Agent 名称、`agent_id` 和执行时版本快照；
-- 用户输入与 Agent 最终输出；
-- 模型调用、工具调用、审批、错误、重试和耗时；
-- execution/run/invocation/attempt 等关联 ID；
-- 当前状态和失败原因；
-- 用量与费用明细。
+- 客户组织和专用账号；
+- API Client 和 API Key 前缀；
+- 外部 conversation ID 与内部 session ID；
+- 用户输入、最终输出和完整执行事件；
+- 模型调用、工具调用、SQL 查询摘要、耗时和错误；
+- database connection 名称，不显示密码；
+- execution、run、toolCall、invocation 等关联 ID；
+- Token、数据库查询、工具和 Sandbox 用量；
+- 费用归属和计费明细。
 
-外部 API 默认只返回最终输出，但内部过程必须完整保存。这是“输出裁剪”，不是“过程不记录”。
+外部只返回最终结果不等于内部不记录过程。外部输出是裁剪视图，后台使用完整持久事件。
 
-### 9.2 数据归属
+### 9.2 会话标签
+
+每个外部会话至少记录：
 
 ```text
-tenant_id                 费用与数据所属客户
-service_principal_id      具体哪个外部系统调用
-agent_id + version_id     使用了哪个 Agent 配置
-conversation_id           多轮业务会话
-execution_id              本轮消息执行
-session_id / run_id       内部 Runtime 关联
-idempotency_key           外部请求去重
+source = external_api
+tenant_id
+api_client_id
+service_account_user_id
+external_conversation_id
+database_connection_id
+session_id
 ```
 
-### 9.3 计费维度
+每次执行至少记录：
 
-至少记录：
+```text
+execution_id
+run_id
+requested_model
+effective_model
+reasoning_effort
+idempotency_key
+usage
+cost
+status
+```
+
+### 9.3 计费
+
+费用归属客户组织，并可按 API Client 和专用账号拆分。至少统计：
 
 - 输入、输出、缓存和推理 Token；
-- 实际生效模型，而不只是调用方请求模型；
-- 工具、MCP、浏览器和 Sandbox 使用量；
-- 图片、音频等多模态用量；
-- 执行总时长和失败阶段；
-- 平台定价版本、成本和对客户计费金额；
-- 重试、恢复和幂等命中是否计费。
+- 实际生效模型；
+- 数据库查询次数、耗时和返回数据量；
+- 工具、MCP、浏览器和 Sandbox 用量；
+- 多模态用量；
+- 成功、失败、恢复和取消状态；
+- 定价版本、成本和对客户计费金额。
 
-计费归属应落在客户组织，同时可以按 Service Principal、Agent、会话和业务 metadata 分摊。
-
----
-
-## 十、安全与失败策略
-
-| 场景                              | 行为                                           |
-| --------------------------------- | ---------------------------------------------- |
-| API Key 无效、过期或撤销          | `401`，不泄漏 Agent 是否存在                   |
-| `agent_id` 不属于当前租户或未授权 | 统一返回 `404` 或授权拒绝，防枚举              |
-| Agent 未 ready                    | `409 agent_not_ready`，携带可支持的诊断 ID     |
-| 同一会话切换 Agent                | `409 conversation_agent_mismatch`              |
-| 同一幂等键、相同请求              | 返回原 conversation/execution                  |
-| 同一幂等键、不同请求体            | `409 idempotency_conflict`                     |
-| HTTP 等待超时                     | `202`，内部继续执行                            |
-| WebSocket 临时断开                | 适配器恢复连接并按 durable 状态续接            |
-| Agent Runtime 失败                | `failed`，外部返回稳定错误码，后台保留内部详情 |
-| 外部取消                          | 仅在拥有 `executions:cancel` 权限时传播取消    |
-| API Key 轮换                      | 旧 Key 可设置短暂重叠期，按 key_id 分开审计    |
-
-任何错误响应都不能回显系统提示词、凭据、文件路径、工具原始密钥或其他租户信息。
+数据库查询失败不应隐藏已经产生的模型或工具成本；幂等命中不得重复计费。
 
 ---
 
-## 十一、管理后台改造
+## 十、错误与安全策略
 
-### 11.1 智能体列表
+| 场景                     | 行为                                        |
+| ------------------------ | ------------------------------------------- |
+| API Key 无效、过期或撤销 | `401`                                       |
+| 专用账号停用             | `403 account_disabled`                      |
+| 组织未开放个人 Agent     | `409 personal_agent_unavailable`            |
+| 数据库连接未授权         | `404`，防止枚举                             |
+| 数据库连接不可用         | `409 database_connection_unavailable`       |
+| SQL 不符合只读策略       | 工具拒绝，允许 Agent 改写一次或返回受控失败 |
+| 查询超时或结果过大       | 截断或失败，不继续消耗数据库资源            |
+| HTTP 等待超时            | `202`，内部继续运行                         |
+| 相同幂等键、相同请求     | 返回原 conversation/execution               |
+| 相同幂等键、不同请求     | `409 idempotency_conflict`                  |
+| WebSocket 临时断开       | 按 durable 状态恢复                         |
+| API Key 撤销             | 阻止新请求，运行中任务按明确策略处理        |
 
-在当前 Agent 名称下方的 ID 基础上，增加：
-
-- 明确标签“调用标识”；
-- 复制按钮；
-- “可调用 / 发布中 / 投影失败 / 未授权 / 已停用”状态；
-- 当前版本和最后发布时间；
-- “查看创建操作”入口。
-
-### 11.2 Agent 详情
-
-明确区分：
-
-- 公开说明：给成员和 Agent 目录展示；
-- 内部提示语：该 Agent 专属系统指令；
-- 组织智能体规则：组织统一行为规则，只读引用；
-- 外部调用：Service Principal 授权、默认模型和调用示例；
-- 运行策略：模型、最大轮次、工具、技能、记忆与执行环境；
-- 版本记录：发布人、发布时间、变更原因和回滚版本。
-
-### 11.3 外部调用管理
-
-新增组织级管理页，提供：
-
-- Service Principal 创建、停用和删除；
-- API Key 创建、轮换和撤销；
-- 可调用 Agent 范围；
-- 调用量、成功率、耗时和费用；
-- 最近会话与完整执行过程；
-- 按外部业务 ID、Agent、时间、状态筛选。
+任何错误都不能回显密码、完整连接串、内部 SQL 校验细节、系统提示词或其他租户信息。
 
 ---
 
-## 十二、实施阶段
+## 十一、实施阶段
 
-### 阶段 P0：组织 Agent 创建闭环
+### P0：专用账号与调用身份
 
-目标：确保 Agent 可以稳定创建、重试并达到 `ready`。
+- 支持创建非人员专用账号。
+- 为账号配置个人 Agent 和独立工作区。
+- 创建 API Client 与 API Key。
+- 将 API Key 固定映射到 tenant 和账号。
+- 增加会话来源、外部业务 ID 和 API Client 元数据。
+- 确认组织的个人 Agent 功能已开启。
 
-- 为创建操作增加 `operation_id` / `Idempotency-Key`。
-- 修复失败重试可能重复创建资源的问题。
-- 暴露并持久化发布、Assignment 和投影状态。
-- 增加服务端就绪判定和 readback。
-- 管理页面展示准确状态与失败原因。
-- 补齐创建、半失败、重试、投影失败和恢复测试。
+退出条件：不使用 Web 登录凭据，API Key 可以安全解析到唯一客户组织和个人 Agent。
 
-退出条件：连续创建多个 Agent 不产生孤立重复资源；每个成功 Agent 均能由真实 Runtime 创建会话并完成一次带工具或多轮推理的测试。
+### P1：多轮外部 Agent API
 
-### 阶段 P1：外部调用 MVP
+- 实现 conversation 创建与恢复。
+- 实现消息提交与 execution 查询。
+- 实现无界面 WebSocket 适配器。
+- 支持 model、reasoning、effort、等待超时和幂等。
+- 外部默认只返回最终输出。
+- 后台保留完整执行过程。
 
-目标：外部系统能够发现 Agent、建立会话并获得最终输出。
+退出条件：同一 conversation 连续交流两轮，其中至少一轮触发多步 Agent 执行，外部获得最终结果，后台能完整回放。
 
-- 增加 Service Principal 与 API Key。
-- 实现 `GET /v1/agents`。
-- 实现会话创建、消息提交和 execution 查询。
-- 实现内部无界面 WebSocket 适配器。
-- 支持 `model`、`reasoning.enabled`、`reasoning.effort` 和等待超时。
-- 默认只返回最终文本结果。
-- 实现会话 Agent 固定、幂等和租户隔离。
+### P2：客户数据库只读查询
 
-退出条件：外部 HTTP 客户端能在同一 conversation 连续对话两轮；其中至少一轮触发多步 Agent 执行，最终结果正确，后台能看到完整过程。
+- 实现数据库连接登记、加密存储、测试、轮换和撤销。
+- 实现租户与 API Client 的连接授权。
+- 实现通用只读数据库 Tool。
+- 增加只读角色、AST 校验、allowlist、超时、行数和结果大小限制。
+- 对查询结果实施脱敏和长期记忆限制。
+- 支持客户内网查询网关。
 
-### 阶段 P2：管理与计费闭环
+退出条件：模型上下文、会话、日志和 Sandbox 中均不存在数据库密码；真实只读查询成功；越权、写入、大查询和跨租户访问均被拒绝。
 
-目标：组织和平台后台能够运营外部调用。
+### P3：运营与计费
 
-- 增加 API Key 管理与轮换。
-- 增加外部会话和执行过程筛选。
-- 按组织、Service Principal、Agent、模型汇总用量和费用。
-- 增加配额、并发、速率限制和预算告警。
-- 支持业务 metadata 检索和对账导出。
+- 增加 API Key 创建、轮换和撤销界面。
+- 增加外部会话和完整过程查询。
+- 增加数据库连接状态与查询审计。
+- 增加调用配额、并发、速率限制和预算告警。
+- 按组织、API Client、账号、模型和连接统计费用。
 
-### 阶段 P3：可靠性与扩展
+### P4：组织 Agent 扩展
 
-- Webhook 完成通知。
-- 流式最终内容或受控事件流。
-- 批量任务和异步队列。
-- Agent 公开别名与版本钉住策略。
-- 多地域、灾难恢复和更细粒度 SLA。
+组织 Agent 创建链路稳定后，再增加可选 `agent_id`：
 
----
+```json
+{
+  "agent_id": "org-...",
+  "message": "……"
+}
+```
 
-## 十三、测试与验收
-
-### 13.1 组织 Agent 创建
-
-1. 创建请求超时后使用相同幂等键重试，只产生一个 `agent_id`。
-2. 版本发布成功、Assignment 失败时 Agent 不可调用，后台展示明确错误。
-3. 投影失败后重试成功，同一 `agent_id` 进入 `ready`。
-4. 停用 Agent 后立即从 `/v1/agents` 消失，新建会话被拒绝。
-5. 修改 Agent 名称和提示词后 ID 不变，新会话使用新版本。
-6. 历史会话仍保存执行时 Agent 名称和版本快照。
-
-### 13.2 外部调用
-
-1. 正确 API Key 只能看到被授权且 ready 的 Agent。
-2. 跨租户 `agent_id` 无法枚举和调用。
-3. 同一个 conversation 连续两轮消息保留上下文。
-4. 一条消息内部可以进行多轮推理和工具调用，外部只收到最终结果。
-5. 请求模型被 Agent 固定策略覆盖时，返回实际生效模型。
-6. HTTP 等待超时返回 `202`，稍后查询可以取得相同最终结果。
-7. 相同幂等键不会重复执行有副作用的工具。
-8. 同一会话更换 `agent_id` 被拒绝。
-9. API Key 撤销后新请求立即失败，已有执行按明确策略继续或取消。
-
-### 13.3 后台与计费
-
-1. 后台可由外部业务 ID 定位唯一会话和 execution。
-2. 能查看消息、模型、工具、错误、耗时和最终输出。
-3. 外部不可获取内部思考文本、凭据和敏感工具参数。
-4. 用量可以按组织、Service Principal、Agent 和模型汇总。
-5. 账单明细与 Runtime 实际使用量可对账。
-
-### 13.4 验收证据
-
-端到端验收必须至少保留：
-
-- 外部 HTTP 请求与响应；
-- 内部 conversation/session/execution/run 关联 readback；
-- 管理后台完整过程截图或接口 readback；
-- 实际生效 Agent ID、版本和模型；
-- 用量与计费记录；
-- 跨租户、撤权和幂等测试结果。
-
-单元测试、CI 通过、健康检查或 WebSocket 连接成功都不能单独替代以上业务验收。
+未传 `agent_id` 时继续使用 API Key 绑定的个人 Agent，保持 MVP 客户兼容。
 
 ---
 
-## 十四、建议代码落点
+## 十二、验收清单
 
-| 能力                        | 建议位置                                             |
-| --------------------------- | ---------------------------------------------------- |
-| 公共 API 路由               | `server/src/routes/externalAgents.ts`                |
-| API Key / Service Principal | `server/src/data/externalIdentities/`                |
-| 会话映射与幂等              | `server/src/data/externalConversations/`             |
-| 无界面 WebSocket 适配器     | `server/src/externalAgent/headlessWebClient.ts`      |
-| 最终结果聚合                | `server/src/externalAgent/finalOutputCollector.ts`   |
-| Agent readiness             | `server/src/data/agentResources/readiness.ts`        |
-| 创建编排命令                | `server/src/services/orgAgentProvisioningService.ts` |
-| 管理后台                    | `web/src/components/ExternalAgentAccess/`            |
-| 共享契约                    | `shared/src/types/externalAgent.ts`                  |
+### 12.1 身份与会话
 
-具体文件名可以在实施时按现有模块边界调整，但必须保持公共 API、内部适配器、Runtime 和治理数据之间的职责分离。
+1. 每个 API Key 只能访问固定客户组织和专用账号。
+2. 不同客户账号的 workspace、会话、记忆和文件完全隔离。
+3. 同一 conversation 的第二轮能够引用第一轮结论。
+4. HTTP 超时后仍能通过 execution 查询最终结果。
+5. 网络重试不会创建重复会话或重复执行。
+6. 停用账号或撤销 API Key 后新请求立即失败。
+
+### 12.2 数据库安全
+
+1. 数据库密码只在登记入口出现一次且不进入日志。
+2. 模型输入、会话 transcript、记忆和工具结果中不存在密码。
+3. 写入语句、多语句和危险函数均被拒绝。
+4. 查询只能访问已授权 schema、table 和字段。
+5. 超时、最大行数、最大字节数和并发限制生效。
+6. 跨租户 connection ID 无法枚举或使用。
+7. 敏感字段按策略脱敏。
+8. 数据库凭据轮换后无需修改会话和提示词。
+
+### 12.3 后台与计费
+
+1. 可通过外部 conversation ID 定位内部 session 和 execution。
+2. 后台可以查看完整 Agent 执行过程和查询审计。
+3. 外部只能看到最终输出和受控状态。
+4. 实际模型、Token、工具和查询用量可以对账。
+5. 费用能够归属客户组织并按 API Client 拆分。
+
+### 12.4 端到端证据
+
+最终验收至少保留：
+
+- 外部 HTTP 请求和最终响应；
+- 两轮以上 conversation 上下文延续证据；
+- 内部 session、execution、run 和 toolCall readback；
+- 数据库查询审计及写操作拒绝证据；
+- 后台完整过程和计费 readback；
+- 跨租户、撤权、超时恢复和幂等测试结果。
+
+CI、单元测试、健康检查或 WebSocket 建连成功均不能单独替代真实业务验收。
 
 ---
 
-## 十五、需要在实施前确认的产品决策
+## 十三、建议代码落点
 
-1. 一个 API Key 是否只绑定一个 Agent，还是允许绑定多个 Agent。
-2. 外部会话最长保留时间和客户删除策略。
-3. HTTP 同步等待上限以及默认 `wait_timeout_ms`。
-4. 是否允许外部调用方选择具体模型，还是只能选择模型档位。
-5. reasoning effort 的允许值及不同模型不支持时的降级策略。
-6. API Key 撤销时是否取消已经在运行的 execution。
-7. 外部调用费用是包含在组织套餐内，还是单独计费。
-8. Agent 更新后，已有会话继续使用创建时版本还是自动使用最新版本。
+| 能力                    | 建议位置                                           |
+| ----------------------- | -------------------------------------------------- |
+| 公共外部 API            | `server/src/routes/externalAgentApi.ts`            |
+| API Client 与 Key       | `server/src/data/externalClients/`                 |
+| 外部会话映射            | `server/src/data/externalConversations/`           |
+| 无界面 WebSocket 客户端 | `server/src/externalAgent/headlessWebClient.ts`    |
+| 最终结果聚合            | `server/src/externalAgent/finalOutputCollector.ts` |
+| 数据库连接与凭据        | `server/src/data/databaseConnections/`             |
+| 只读查询策略            | `server/src/databaseQuery/readOnlyPolicy.ts`       |
+| 只读查询 Tool           | `server/src/agent/tools/DatabaseQueryReadonly.ts`  |
+| 管理后台                | `web/src/components/ExternalAgentAccess/`          |
+| 共享 API 类型           | `shared/src/types/externalAgent.ts`                |
 
-MVP 推荐：
-
-- 一个 Service Principal 可授权多个 Agent，一个 API Key 继承其授权；
-- 会话固定 Agent，但默认使用每次执行时的最新已发布版本，并保存版本快照；
-- 外部可请求模型和 effort，但最终受 Agent Profile、租户额度和平台 allowlist 约束；
-- 默认同步等待 120 秒，超时返回 `202`；
-- API Key 撤销只阻止新请求，不自动取消已经进入 Runtime 的执行；
-- 所有费用归属客户组织，并按 Service Principal 单独出明细。
+具体文件名可在实施时根据现有模块边界调整，但必须保持公共 API、身份映射、凭据存储、数据库执行和 Agent Runtime 的职责分离。
 
 ---
 
-## 十六、最终交付判定
+## 十四、MVP 最终形态
 
-只有同时满足以下条件，才能宣布“外部系统可以复用 KY Agent 能力”：
+```text
+客户管理员
+├─ 创建客户专用调用账号
+├─ 配置该账号的“我的 Agent”
+├─ 创建 API Key
+└─ 登记只读数据库连接，取得 connection_id
 
-1. 组织 Agent 创建、发布、授权和投影可可靠完成并可重试。
-2. 外部调用方能通过正式接口发现可调用的稳定 `agent_id`。
-3. 外部调用建立的是持久多轮会话，而不是单次无上下文 Run。
-4. 每条消息内部复用完整 Agent Loop、工具与技能体系。
-5. 外部默认只获得最终结果，后台保留完整执行过程。
-6. 租户隔离、Agent 授权、幂等、撤权和失败恢复通过端到端验证。
-7. 会话、Agent 版本、实际模型、用量和费用能够关联并对账。
+外部业务系统
+├─ 用 API Key 创建 conversation
+├─ 可选绑定 connection_id
+├─ 连续发送多轮自然语言消息
+└─ 只接收最终结果
+
+KY Agent 平台
+├─ 以专用账号的个人 Agent 执行
+├─ 通过无界面 WebSocket 复用完整 Agent Runtime
+├─ 由受控 Tool 查询数据库，模型不接触凭据
+├─ 持久化完整会话与执行过程
+└─ 按客户组织和 API Client 计量计费
+```
+
+该 MVP 不依赖组织 Agent、不要求 Agent ID、不强制制作 Skill，也不把数据库密码放进提示语；同时保留未来升级到组织 Agent、业务 Skill 和更多受控数据能力的兼容空间。

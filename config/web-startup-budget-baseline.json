@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 363464,
-    "startupCssGzipBytes": 35424,
-    "startupJsBrotliBytes": 289591,
+    "startupJsGzipBytes": 364554,
+    "startupCssGzipBytes": 35419,
+    "startupJsBrotliBytes": 290227,
     "startupCssBrotliBytes": 28066,
-    "largestJsGzipBytes": 363464,
-    "largestCssGzipBytes": 35424,
-    "largestJsBrotliBytes": 289591,
+    "largestJsGzipBytes": 364554,
+    "largestCssGzipBytes": 35419,
+    "largestJsBrotliBytes": 290227,
     "largestCssBrotliBytes": 28066,
-    "largestJs": "assets/index-BsRzJpph.js",
-    "largestCss": "assets/index-DPBffzZX.css"
+    "largestJs": "assets/index-Dl5WKSdb.js",
+    "largestCss": "assets/index-UwG_yUme.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "会话陈旧游标回放按 activeRun 过滤后，客户端 skipReplay 与 text 去重进入聊天启动包",
-  "updatedAt": "2026-09-14"
+  "reason": "提问卡片新增自包含问题背景，Web 启动包需渲染当前及历史提问描述",
+  "updatedAt": "2026-09-15"
 }

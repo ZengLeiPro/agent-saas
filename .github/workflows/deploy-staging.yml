@@ -41,7 +41,8 @@ env:
 jobs:
   guard:
     name: 验证部署请求与固定的业务源码
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 5
     permissions:
       contents: read
@@ -68,7 +69,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 45
     environment: staging
     permissions:
@@ -294,7 +296,8 @@ jobs:
       evidence_artifact_id: ${{ steps.fresh_authority.outputs.artifact-id }}
     needs: [ensure-evidence-writer, guard]
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 45
     environment: production
     permissions:
@@ -745,7 +748,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 50
     environment: staging
     permissions:
@@ -788,7 +792,7 @@ jobs:
           set -euo pipefail
           curl -fsSL --connect-timeout 10 --max-time 120 https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
-          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+          install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
       - name: 等待并按需恢复精确镜像
         id: image
         timeout-minutes: 46
@@ -847,7 +851,8 @@ jobs:
     name: 自动触发生产环境发布
     needs: build-deploy-verify
     if: success() && github.ref == 'refs/heads/main' && inputs.promote_to_production == true
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 5
     permissions:
       contents: read
@@ -887,7 +892,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 120
     environment: staging
     env:

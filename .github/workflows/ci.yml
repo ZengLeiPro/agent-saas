@@ -41,7 +41,8 @@ jobs:
   #    push main / dispatch 全量分片 + 覆盖率。PR 选择子集，main 保留权威全量验证。
   ci_plan:
     name: 预检 / 规划
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 5
     outputs:
       acs_required: ${{ steps.acs.outputs.required }}
@@ -96,7 +97,8 @@ jobs:
   # Stable required check; an intentional PR no-op succeeds, but a failed plan never does.
   acs-impact-gate:
     name: ACS Impact Gate
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 25
     needs: ci_plan
     if: ${{ !cancelled() }}
@@ -251,7 +253,8 @@ jobs:
 
   preflight_checks:
     name: 预检 / 静态检查
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 15
 
     steps:
@@ -278,7 +281,8 @@ jobs:
 
   migration_reviews:
     name: 预检 / 历史迁移审核
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 15
     steps:
       - name: 检出代码
@@ -301,7 +305,8 @@ jobs:
   # 覆盖率以 blob 形式上传，由独立 coverage_reports job 用 vitest --merge-reports 合并。
   tests:
     name: 预检 / 测试（${{ matrix.workspace }} ${{ matrix.shard }}/${{ matrix.total }}）
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 15
     needs: ci_plan
     strategy:
@@ -374,13 +379,14 @@ jobs:
 
   postgres_contracts:
     name: 预检 / PostgreSQL 契约
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 15
     needs: ci_plan
     if: needs.ci_plan.outputs.postgres == 'true'
     services:
       postgres:
-        image: postgres:16-alpine
+        image: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/postgres:16-alpine
         env:
           POSTGRES_USER: agent_test
           POSTGRES_PASSWORD: ci-only-password
@@ -424,7 +430,8 @@ jobs:
 
   web_production:
     name: 预检 / Web 生产构建
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 15
     needs: ci_plan
     if: needs.ci_plan.outputs.web_production == 'true'
@@ -451,7 +458,8 @@ jobs:
   # Metro 导出 iOS+Android bundle 是 Mobile 门禁里最慢的一步，独立成 job 与契约测试并行。
   mobile_router_export:
     name: 预检 / 移动端路由导出
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 15
     needs: ci_plan
     if: needs.ci_plan.outputs.mobile == 'true'
@@ -478,7 +486,8 @@ jobs:
 
   mobile_contract:
     name: 预检 / 移动端与原生发布契约
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 20
     needs: ci_plan
     if: needs.ci_plan.outputs.mobile == 'true'
@@ -568,7 +577,8 @@ jobs:
 
   release_packages:
     name: 预检 / 真实发布包
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 20
     needs: ci_plan
     if: needs.ci_plan.outputs.release_packages == 'true'
@@ -576,7 +586,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:16-alpine
+        image: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/postgres:16-alpine
         env:
           POSTGRES_USER: agent_test
           POSTGRES_PASSWORD: ci-only-password
@@ -617,7 +627,8 @@ jobs:
 
   writer_bundle:
     name: 预检 / Writer 真实入口
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 10
     needs: ci_plan
     if: needs.ci_plan.outputs.release_packages == 'true'
@@ -638,7 +649,8 @@ jobs:
 
   browser_smoke:
     name: 预检 / 浏览器应用壳
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 12
     needs: ci_plan
     if: needs.ci_plan.outputs.browser_smoke == 'true'
@@ -655,7 +667,7 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
       - name: 安装 Chromium
-        run: pnpm exec playwright install --with-deps chromium
+        run: sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; pnpm exec playwright install --with-deps chromium
       - name: 运行隔离应用壳协议烟测
         run: pnpm exec playwright test -c e2e/ky-app-shell.playwright.config.ts
       - name: 保存浏览器失败证据
@@ -671,7 +683,8 @@ jobs:
   # 本汇总 Job 都会明确失败；计划跳过的门禁只在计划说明跳过时才被接受。
   coverage_reports:
     name: 覆盖率汇总
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 10
     needs: [ci_plan, tests]
     if: ${{ !cancelled() && needs.tests.result == 'success' && needs.ci_plan.outputs.coverage == 'true' }}
@@ -742,7 +755,8 @@ jobs:
 
   build:
     name: Build & Check
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 15
     needs:
       [
@@ -820,7 +834,8 @@ jobs:
 
   deploy_plan:
     name: 规划生产部署
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     environment: production
     timeout-minutes: 5
     needs: build
@@ -955,7 +970,8 @@ jobs:
   # 后入口文件（no-cache），保证 index.html 引用的资源先就位。
   deploy-web-oss:
     name: 将 Web 部署到 OSS
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     environment: production
     timeout-minutes: 15
     # 只接受 deploy_plan 已证明无需 ECS。
@@ -1030,7 +1046,7 @@ jobs:
           set -euo pipefail
           curl -sL https://gosspublic.alicdn.com/ossutil/v2/2.1.2/ossutil-2.1.2-linux-amd64.zip -o /tmp/ossutil.zip
           unzip -o -q /tmp/ossutil.zip -d /tmp
-          sudo install /tmp/ossutil-2.1.2-linux-amd64/ossutil /usr/local/bin/ossutil
+          install /tmp/ossutil-2.1.2-linux-amd64/ossutil /usr/local/bin/ossutil
           ossutil version | grep -F '2.1.2'
           ossutil cp --help > "$RUNNER_TEMP/ossutil-cp-help.txt"
           ossutil stat --help > "$RUNNER_TEMP/ossutil-stat-help.txt"
@@ -1635,7 +1651,8 @@ jobs:
     name: 清理已退役 Workflow 注册项
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 5
     permissions:
       contents: read

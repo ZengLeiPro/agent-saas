@@ -89,7 +89,8 @@ jobs:
   plan:
     name: iOS / 发布准入
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22-bookworm
     timeout-minutes: 25
     permissions:
       contents: read

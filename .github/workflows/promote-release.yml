@@ -49,7 +49,8 @@ env:
 jobs:
   dispatch:
     name: 校验生产操作与互斥参数
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 5
     permissions:
       contents: read
@@ -72,7 +73,8 @@ jobs:
     name: 发布不可变 RC 到生产
     needs: dispatch
     if: github.ref == 'refs/heads/main' && needs.dispatch.outputs.operation == 'promote'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     timeout-minutes: 180
     environment: production
     env:
@@ -1351,7 +1353,8 @@ jobs:
     if: github.ref == 'refs/heads/main' && (needs.dispatch.outputs.operation == 'web-recovery-audit' || needs.dispatch.outputs.operation == 'web-recovery-repair')
     permissions:
       contents: read
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22.23.1-bookworm
     environment: production
     timeout-minutes: 25
     env:

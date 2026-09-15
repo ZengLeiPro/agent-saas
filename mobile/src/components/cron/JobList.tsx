@@ -23,25 +23,35 @@ interface JobListProps {
   onRefresh: () => Promise<void>;
   onSelect: (job: CronJob) => void;
   onToggle: (job: CronJob) => Promise<void>;
+  /** md+ master-detail selection highlight */
+  activeJobId?: string | null;
   contentPaddingTop?: number;
   contentPaddingBottom?: number;
+  /** md+ master list: tighter padding. Phone keeps default. */
+  dense?: boolean;
 }
 
 /** 骨架屏行数：够撑满一屏，不至于让首屏闪成空态 */
 const SKELETON_ROWS = 5;
 const SKELETON_ROW_HEIGHT = 72;
+const SKELETON_ROW_HEIGHT_DENSE = 64;
 
 function JobRow({
   job,
   modelList,
   onSelect,
   onToggle,
+  active,
+  dense,
 }: {
   job: CronJob;
   modelList?: ModelList | null;
   onSelect: (job: CronJob) => void;
   onToggle: (job: CronJob) => Promise<void>;
+  active?: boolean;
+  dense?: boolean;
 }) {
+  const colors = useColors();
   const running = !!job.state.runningAtMs;
 
   const handleToggle = useCallback(() => {
@@ -62,7 +72,7 @@ function JobRow({
       // 运行中不给切换：这一轮已经在跑，切开关只会造成「以为停下了」的错觉
       switchDisabled={running}
       onPress={() => onSelect(job)}
-      style={styles.row}
+      style={[styles.row, dense && styles.rowDense, active ? { backgroundColor: colors.secondary } : null]}
     />
   );
 }
@@ -75,25 +85,28 @@ export function JobList({
   onRefresh,
   onSelect,
   onToggle,
+  activeJobId,
   contentPaddingTop,
   contentPaddingBottom,
+  dense,
 }: JobListProps) {
   const colors = useColors();
+  const pad = dense ? spacing.sm : spacing.md;
 
   const contentContainerStyle = useMemo(
     () => ({
-      padding: spacing.md,
+      padding: pad,
       ...(contentPaddingTop != null ? { paddingTop: contentPaddingTop } : {}),
       ...(contentPaddingBottom != null ? { paddingBottom: contentPaddingBottom } : {}),
     }),
-    [contentPaddingTop, contentPaddingBottom],
+    [pad, contentPaddingTop, contentPaddingBottom],
   );
 
   if (loading && jobs.length === 0) {
     return (
-      <View style={styles.skeletonWrap} testID="cron-job-list-skeleton">
+      <View style={[styles.skeletonWrap, dense && styles.skeletonWrapDense]} testID="cron-job-list-skeleton">
         {Array.from({ length: SKELETON_ROWS }, (_, index) => (
-          <Skeleton key={index} height={SKELETON_ROW_HEIGHT} style={styles.skeletonRow} />
+          <Skeleton key={index} height={dense ? SKELETON_ROW_HEIGHT_DENSE : SKELETON_ROW_HEIGHT} style={styles.skeletonRow} />
         ))}
       </View>
     );
@@ -108,7 +121,7 @@ export function JobList({
       overrideProps={{ initialDrawBatchSize: 10 }}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => (
-        <JobRow job={item} modelList={modelList} onSelect={onSelect} onToggle={onToggle} />
+        <JobRow job={item} modelList={modelList} onSelect={onSelect} onToggle={onToggle} active={activeJobId === item.id} dense={dense} />
       )}
       contentContainerStyle={contentContainerStyle}
       refreshControl={
@@ -130,9 +143,16 @@ const styles = StyleSheet.create({
   row: {
     marginBottom: spacing.sm,
   },
+  rowDense: {
+    marginBottom: spacing.xs,
+  },
   skeletonWrap: {
     padding: spacing.md,
     gap: spacing.sm,
+  },
+  skeletonWrapDense: {
+    padding: spacing.sm,
+    gap: spacing.xs,
   },
   skeletonRow: {
     width: '100%',

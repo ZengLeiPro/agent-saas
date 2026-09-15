@@ -1,23 +1,33 @@
 /**
  * 文件条目点击分派 —— `/files` 与 `/files/browse` 共用。
  *
- * 目录进子目录；文件按 `resolveFilePreviewTarget`（shared `getPreviewFileType`
- * 的移动端封装）分派到 Markdown 预览 / 通用预览 / 下载分享三条路。
- * HTML/SVG 归在通用预览的 `html` 档，那里只给下载分享与安全提示，
- * 不做任何内嵌渲染（M50-03）。
+ * 目录进子目录；文件按 `resolveFilePreviewTarget` 分派。
+ * md+ master-detail 可通过 `onOpenPreview` / `onOpenFolder` 拦截，改为栏内呈现。
  */
 import { useCallback } from 'react';
 import { useRouter } from 'expo-router';
 import type { FileEntry } from '@agent/shared';
-import { resolveFilePreviewTarget } from '../lib/filePreviewTarget';
+import { resolveFileEntryPress, type FilePreviewNavTarget } from '../lib/fileEntryPress';
 import { useFileOpen } from './useFileOpen';
+
+export type { FilePreviewNavTarget };
 
 export interface UseFileEntryPressOptions {
   owner?: string;
   root?: boolean;
+  /**
+   * When provided, previewable files call this instead of `router.push`.
+   * Return true if handled (typical md+ pane).
+   */
+  onOpenPreview?: (target: FilePreviewNavTarget) => boolean;
+  /**
+   * When provided, directories call this instead of pushing `/files/browse`.
+   * Return true if handled (md+ in-pane folder drill).
+   */
+  onOpenFolder?: (path: string) => boolean;
 }
 
-export function useFileEntryPress({ owner, root }: UseFileEntryPressOptions) {
+export function useFileEntryPress({ owner, root, onOpenPreview, onOpenFolder }: UseFileEntryPressOptions) {
   const router = useRouter();
   const { open, downloading } = useFileOpen();
 
@@ -28,30 +38,32 @@ export function useFileEntryPress({ owner, root }: UseFileEntryPressOptions) {
 
   const press = useCallback(
     async (entry: FileEntry) => {
-      if (entry.isDirectory) {
+      const decision = resolveFileEntryPress(entry);
+      if (decision.kind === 'folder') {
+        if (onOpenFolder?.(decision.path)) return;
         router.push({
           pathname: '/files/browse',
-          params: { path: entry.path, ...commonParams() },
+          params: { path: decision.path, ...commonParams() },
         });
         return;
       }
 
-      const target = resolveFilePreviewTarget(entry.name);
-      if (target.route === '/chat/markdown-preview') {
-        router.push({
-          pathname: '/chat/markdown-preview',
-          params: { filePath: entry.path, ...commonParams() },
-        });
-        return;
-      }
-      if (target.route === '/files/preview') {
+      if (decision.kind === 'preview') {
+        if (onOpenPreview?.(decision.target)) return;
+        if (decision.target.route === '/chat/markdown-preview') {
+          router.push({
+            pathname: '/chat/markdown-preview',
+            params: { filePath: decision.target.filePath, ...commonParams() },
+          });
+          return;
+        }
         router.push({
           pathname: '/files/preview',
           params: {
-            filePath: entry.path,
-            name: entry.name,
-            size: String(entry.size),
-            modifiedAt: String(entry.modifiedAt),
+            filePath: decision.target.filePath,
+            name: decision.target.name,
+            size: String(decision.target.size),
+            modifiedAt: String(decision.target.modifiedAt),
             ...commonParams(),
           },
         });
@@ -66,7 +78,7 @@ export function useFileEntryPress({ owner, root }: UseFileEntryPressOptions) {
         ...(root ? { root: true } : {}),
       });
     },
-    [router, commonParams, open, owner, root],
+    [router, commonParams, open, owner, root, onOpenPreview, onOpenFolder],
   );
 
   return { press, downloading };

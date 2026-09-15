@@ -25,6 +25,7 @@
 
 ### 3. iOS 原生策略
 
+- **iPad 支持口径（产品正式宣称）**：`supportsTablet=true`；iPhone 保持竖屏锁定，iPad 允许横竖屏（`UISupportedInterfaceOrientations~ipad`）；宽屏（窗口宽度 ≥ 768）采用左侧 chrome + 会话列表|详情 master-detail，默认单栏会话 chrome 且会话列表始终显示头像。不在原生 iPad 托管业务系统/apps iframe，也不把 apps 加入移动导航。
 - 仅保留由用户动作触发的麦克风、相机、图库用途说明。
 - 移除 Location/Face ID 用途键、后台 audio mode、定位日志地图入口配置。
 - production 删除 Expo 默认 local-network ATS 例外及任意加载/exception-domain 类例外；development/preview 的 Expo 本地网络开发例外不进入 production。
@@ -48,7 +49,7 @@ M10-05 只关闭 Android 系统 backup/restore 通道，没有改变这些数据
 - [ ] Apple App Privacy：实际收集的数据类型、是否关联身份、用途、是否用于 tracking、第三方 SDK/服务端处理边界。
 - [ ] Apple required-reason API：`UserDefaults/CA92.1` 已进入受审真源；仍须对主 App、全部依赖与扩展做归档级扫描，确认没有 clean prebuild 尚未覆盖的 category/reason。
 - [ ] Google Play Data Safety：数据收集/共享、加密、删除请求、安全实践等答案。本文没有代填任何答案。
-- [ ] iPad 支持口径。源码继承 `supportsTablet=true`，但未取得产品/QA 的支持承诺，不能据此宣称已支持。
+- [ ] iPad 支持口径：产品已正式宣称支持 iPad；真机验收矩阵（横竖屏、分屏、md 断点 master-detail）仍待 QA 签收。
 - [ ] iOS/Android 最低系统版本、目标设备矩阵与商店兼容口径；应以正式发布配置和真机验收为准。
 - [ ] 服务端及本地消息、草稿、文件、审计日志、凭据的保留期限、删除条件、备份保留和用户请求流程。
 - [ ] Store 与 Enterprise 的地区、分发对象、更新责任与安装来源说明。

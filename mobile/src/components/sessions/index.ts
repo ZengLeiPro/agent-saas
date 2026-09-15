@@ -27,3 +27,8 @@ export {
 export { useSessionRowActions, type UseSessionRowActionsOptions } from './useSessionRowActions';
 export { useSessionSelection, type UseSessionSelectionOptions } from './useSessionSelection';
 export { useNewSessionLauncher } from './useNewSessionLauncher';
+
+export {
+  GroupSessionsPane,
+  type GroupSessionsPaneProps,
+} from './GroupSessionsPane';

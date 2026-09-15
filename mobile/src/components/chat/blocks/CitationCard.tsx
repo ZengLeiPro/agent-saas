@@ -15,6 +15,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useChatRightSlot } from './ChatRightSlotContext';
 import { BookOpen } from 'lucide-react-native';
 import {
   authFetch,
@@ -114,24 +115,35 @@ function DocumentCitationCard({
   label: string;
 }) {
   const router = useRouter();
+  const rightSlot = useChatRightSlot();
   const { open, downloading } = useFileOpen();
 
   const handlePress = useCallback(() => {
     const kbPath = buildKbPreviewPath(doc, page);
     const target = resolveFilePreviewTarget(doc);
-    if (target.route === '/chat/markdown-preview') {
-      router.push({ pathname: target.route, params: { filePath: kbPath } });
-      return;
-    }
-    if (target.route === '/files/preview') {
+    const name = doc.split('/').pop() || doc;
+    if (target.route === '/chat/markdown-preview' || target.route === '/files/preview') {
+      if (
+        rightSlot?.openFilePreview({
+          route: target.route,
+          filePath: kbPath,
+          name,
+        })
+      ) {
+        return;
+      }
+      if (target.route === '/chat/markdown-preview') {
+        router.push({ pathname: target.route, params: { filePath: kbPath } });
+        return;
+      }
       router.push({
         pathname: target.route,
-        params: { filePath: kbPath, name: doc.split('/').pop() || doc },
+        params: { filePath: kbPath, name },
       });
       return;
     }
     void open({ path: kbPath, modifiedAt: 0, size: 0 });
-  }, [doc, page, open, router]);
+  }, [doc, page, open, router, rightSlot]);
 
   return (
     <CitationBadge

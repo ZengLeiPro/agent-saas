@@ -5,6 +5,8 @@ import { authFetch } from "@agent/shared";
 import { useAuth } from "../src/contexts/AuthContext";
 import { showTextPrompt } from "../src/lib/prompt";
 import { spacing, radius, fontScale, fontWeight, useThemedStyles } from "../src/theme";
+import { useBreakpoint } from "../src/hooks/useBreakpoint";
+import { formContentMaxWidthStyle } from "../src/lib/layoutDensity";
 import { Button, Card, CardContent, Chip, Input } from "../src/components/ui";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
@@ -18,6 +20,7 @@ export default function LoginScreen() {
     changeServiceOrigin,
     reloadServiceConfig,
   } = useAuth();
+  const { isMdUp } = useBreakpoint();
   const [mode, setMode] = useState<"password" | "sms">("password");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -206,7 +209,7 @@ export default function LoginScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardView}
       >
-        <View style={styles.form}>
+        <View style={[styles.form, formContentMaxWidthStyle(isMdUp)]}>
           <Text style={styles.title}>Agent SaaS</Text>
           <Text style={styles.subtitle}>AI 智能助手</Text>
 

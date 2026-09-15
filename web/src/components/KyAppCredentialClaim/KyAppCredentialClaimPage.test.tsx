@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuth } from '@/contexts/AuthContext';
-import { kyAppRequest, kyAppV2Post, kyAppV2Request } from '@/lib/kyAppManagementApi';
+import { KyAppManagementError, kyAppV2Post, kyAppV2Request } from '@/lib/kyAppManagementApi';
 import type { EnrollmentOperationView } from '@/lib/kyAppManagementTypes';
 import { KyAppCredentialClaimPage } from './KyAppCredentialClaimPage';
 
@@ -13,7 +13,6 @@ vi.mock('@/components/AuthShell', () => ({
 }));
 vi.mock('@/lib/kyAppManagementApi', async (original) => ({
   ...(await original<object>()),
-  kyAppRequest: vi.fn(),
   kyAppV2Post: vi.fn(),
   kyAppV2Request: vi.fn(),
 }));
@@ -80,22 +79,14 @@ describe('自动接入页面', () => {
     expect(await screen.findByRole('button', { name: '确认授权并接入' })).toBeTruthy();
   });
 
-  it('旧版明文入口默认折叠，领取后页面隐藏立即销毁', async () => {
-    vi.mocked(kyAppRequest).mockResolvedValue({
-      credential: {
-        serviceCredential: 'one-time-test-value',
-        installationKey: 'test-key',
-        keyVersion: 'v1',
-        ackDeadlineAt: '2026-09-15',
-      },
-    });
-    render(<KyAppCredentialClaimPage installationId="iid-demo" initialTicket="legacy-ticket" />);
-    expect(screen.queryByText(/one-time-test-value/)).toBeNull();
-    fireEvent.click(screen.getByText('手动配置旧版系统'));
-    fireEvent.click(screen.getByRole('button', { name: '领取旧版配置' }));
-    expect(await screen.findByText(/one-time-test-value/)).toBeTruthy();
-    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
-    fireEvent(document, new Event('visibilitychange'));
-    expect(screen.queryByText(/one-time-test-value/)).toBeNull();
+  it('V2 未开放时只提示管理员检查配置，不再提供旧版手动授权入口', async () => {
+    vi.mocked(kyAppV2Post).mockRejectedValue(
+      new KyAppManagementError(409, 'conflict', 'V2 未开放', 'request-1', false),
+    );
+    render(<KyAppCredentialClaimPage installationId="iid-demo" />);
+    fireEvent.click(screen.getByRole('button', { name: '开始安全检查' }));
+    expect(await screen.findByText(/请联系平台管理员检查 V2 接入配置/)).toBeTruthy();
+    expect(screen.queryByText(/手动配置旧版系统/)).toBeNull();
+    expect(screen.queryByText(/领取旧版配置/)).toBeNull();
   });
 });

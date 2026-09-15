@@ -3,8 +3,9 @@
  *
  * 流程：壳请求 `nonce`（≥128 bit，绑定壳会话 + 用户 + 安装实例，10 分钟 TTL、原子消费）
  * → 子帧拿 nonce 找自己要 attest JWT → 壳把 attestation 交回平台
- * → 平台按 `kid` 取该实例 current/previous 安装密钥派生 HS256 子密钥验签，
- *   校验 `iid`/`origin`/`nonce`（`dig` 只记录）
+ * → 平台按实例认证模式验签：V2 使用登记的 current/previous 部署公钥校验 ES256，
+ *   V1 存量实例继续使用 current/previous 安装密钥派生的 HS256 子密钥
+ * → 校验实例、组织、系统、部署、代际、nonce 与登记 digest
  * → 通过后签 `act=user` SAT 并返回 `init` 载荷。
  *
  * 幂等：同一 nonce + 同一 attestation 重复提交返回缓存结果（壳会每秒重发 `ready`，≤10 s）；
@@ -12,7 +13,10 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 
+import { V2ContractError, decodeV2Jws, verifyV2Attestation } from '@kaiyan/ky-app-contract';
+
 import type { KyAppPlatformConfig } from '../config.js';
+import type { DeploymentKeyRecord } from '../enrollment/types.js';
 import type { KyAppCredentialManager } from '../installations/credentials.js';
 import type { KyAppSatIssuer, KyAppPathPrefixes } from '../sat/issuer.js';
 import type { PgKyAppSystemStore } from '../systems/store.js';
@@ -67,6 +71,9 @@ export interface KyAppHandshakeServiceOptions {
   systems: PgKyAppSystemStore;
   nonces: KyAppNonceStore;
   credentials: KyAppCredentialManager;
+  deploymentKeys?: {
+    listAccepted(installationId: string, now: Date): Promise<DeploymentKeyRecord[]>;
+  };
   issuer: KyAppSatIssuer;
   canAccessInstallation(installation: KyAppInstallation, user: KyAppShellUser): Promise<boolean>;
   onSecurityEvent?: KyAppSecurityEventSink;
@@ -113,10 +120,7 @@ export class KyAppHandshakeService {
     installationId: string;
     user: KyAppShellUser;
   }): Promise<{ nonce: string; expiresAt: string }> {
-    const installation = await this.requireUsableInstallation(
-      input.installationId,
-      input.user,
-    );
+    const installation = await this.requireUsableInstallation(input.installationId, input.user);
     const nonce = randomBytes(32).toString('base64url');
     const expiresAt = new Date(this.now() + KY_APP_NONCE_TTL_MS);
     await this.options.nonces.issue({
@@ -139,11 +143,18 @@ export class KyAppHandshakeService {
   }): Promise<KyAppHandshakeResult> {
     this.pruneCache();
     const installation = await this.requireUsableInstallation(input.installationId, input.user);
-    const cacheBinding = JSON.stringify([input.installationId, input.user.tenantId, input.user.userId, input.user.sessionId, input.user.authBinding]);
+    const cacheBinding = JSON.stringify([
+      input.installationId,
+      input.user.tenantId,
+      input.user.userId,
+      input.user.sessionId,
+      input.user.authBinding,
+    ]);
     const attestationSha256 = sha256(input.attestation);
     const cached = this.cache.get(input.nonce);
     if (cached) {
-      if (cached.binding !== cacheBinding) throw new KyAppHandshakeError('握手缓存不属于当前用户与会话', 'installation_forbidden');
+      if (cached.binding !== cacheBinding)
+        throw new KyAppHandshakeError('握手缓存不属于当前用户与会话', 'installation_forbidden');
       if (cached.attestationSha256 === attestationSha256) return cached.result;
       this.recordSecurityEvent(
         'attestation_mismatch',
@@ -179,24 +190,34 @@ export class KyAppHandshakeService {
       throw new KyAppHandshakeError('握手 nonce 与当前会话不匹配', 'nonce_binding_mismatch');
     }
 
-    const keys = await this.options.credentials.listAcceptableInstallationKeys(
-      input.installationId,
-    );
-    if (keys.length === 0) {
-      throw new KyAppHandshakeError('该安装实例尚未签发安装密钥', 'installation_key_missing');
-    }
     try {
-      await verifyKyAppAttestation({
-        token: input.attestation,
-        installationId: installation.installationId,
-        expectedOrigin: installation.origin,
-        audience: this.options.config.issuer,
-        nonce: input.nonce,
-        keys,
-        nowMs: this.now(),
-      });
+      if (installation.authMode === 'v2_asymmetric') {
+        await this.verifyV2Attestation(installation, input.nonce, input.attestation);
+      } else {
+        const keys = await this.options.credentials.listAcceptableInstallationKeys(
+          input.installationId,
+        );
+        if (keys.length === 0) {
+          throw new KyAppHandshakeError('该安装实例尚未签发安装密钥', 'installation_key_missing');
+        }
+        await verifyKyAppAttestation({
+          token: input.attestation,
+          installationId: installation.installationId,
+          expectedOrigin: installation.origin,
+          audience: this.options.config.issuer,
+          nonce: input.nonce,
+          keys,
+          nowMs: this.now(),
+        });
+      }
     } catch (error) {
-      const reason = error instanceof KyAppAttestationError ? error.reason : 'unknown';
+      if (error instanceof KyAppHandshakeError) throw error;
+      const reason =
+        error instanceof KyAppAttestationError
+          ? error.reason
+          : error instanceof V2ContractError
+            ? error.code
+            : 'unknown';
       this.recordSecurityEvent('attest_failed', input.installationId, input.user.userId, reason);
       throw new KyAppHandshakeError('安装证明校验未通过', 'attestation_invalid');
     }
@@ -216,10 +237,7 @@ export class KyAppHandshakeService {
     installationId: string;
     user: KyAppShellUser;
   }): Promise<KyAppHandshakeResult> {
-    const installation = await this.requireUsableInstallation(
-      input.installationId,
-      input.user,
-    );
+    const installation = await this.requireUsableInstallation(input.installationId, input.user);
     return this.issueUserToken(installation, input.user);
   }
 
@@ -257,6 +275,59 @@ export class KyAppHandshakeService {
     };
   }
 
+  private async verifyV2Attestation(
+    installation: KyAppInstallation,
+    nonce: string,
+    token: string,
+  ): Promise<void> {
+    if (
+      !this.options.deploymentKeys ||
+      !installation.deploymentId ||
+      !installation.currentKeyId ||
+      !installation.identityGeneration ||
+      !installation.registeredDigest
+    ) {
+      throw new KyAppHandshakeError('V2 安装身份尚未完整生效', 'installation_key_missing');
+    }
+    const decoded = decodeV2Jws(token);
+    if (
+      decoded.protectedHeader.alg === 'HS256' ||
+      decoded.protectedHeader.typ === 'ky-attest+jwt'
+    ) {
+      throw new V2ContractError('v2_downgrade_rejected', 'jose_header');
+    }
+    const keyId = decoded.protectedHeader.kid;
+    if (typeof keyId !== 'string' || keyId === '') {
+      throw new V2ContractError('key_id_mismatch', 'signature', '安装证明缺少 kid');
+    }
+    const accepted = await this.options.deploymentKeys.listAccepted(
+      installation.installationId,
+      new Date(this.now()),
+    );
+    const key = accepted.find(
+      (candidate) =>
+        candidate.status !== 'next' &&
+        candidate.keyId === keyId &&
+        candidate.deploymentId === installation.deploymentId,
+    );
+    if (!key) {
+      throw new V2ContractError('invalid_key_source', 'signature', '安装证明引用的部署公钥不可用');
+    }
+    verifyV2Attestation(token, {
+      deploymentPublicJwk: key.publicJwk,
+      deploymentId: key.deploymentId,
+      keyId: key.keyId,
+      platformAudience: this.options.config.issuer,
+      tenantId: installation.tenantId,
+      installationId: installation.installationId,
+      systemId: installation.systemId,
+      generation: key.generation,
+      nonce,
+      manifestDigest: installation.registeredDigest,
+      now: Math.floor(this.now() / 1000),
+    });
+  }
+
   /** `pfx` 的来源是**已发布版本**的 manifest，不是部署上报的 digest。 */
   private async resolvePathPrefixes(installation: KyAppInstallation): Promise<KyAppPathPrefixes> {
     const definition = await this.options.systems.getDefinition(installation.systemId);
@@ -281,8 +352,9 @@ export class KyAppHandshakeService {
       throw new KyAppHandshakeError('安装实例已停用', 'installation_disabled');
     }
     const definition = await this.options.systems.getDefinition(installation.systemId);
-    if (definition?.status !== 'published') throw new KyAppHandshakeError('业务系统已停用', 'installation_disabled');
-    if (!await this.options.canAccessInstallation(installation, user)) {
+    if (definition?.status !== 'published')
+      throw new KyAppHandshakeError('业务系统已停用', 'installation_disabled');
+    if (!(await this.options.canAccessInstallation(installation, user))) {
       throw new KyAppHandshakeError('当前成员未获业务系统访问授权', 'installation_forbidden');
     }
     return installation;

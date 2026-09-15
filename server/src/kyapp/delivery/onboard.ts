@@ -300,7 +300,7 @@ export class KyAppOnboardService {
               'authorization_required',
             ),
             authorization: {
-              path: `/ky-app/credentials/claim?installation=${encodeURIComponent(input.installationId)}`,
+              path: `/ky-app/credential-claim/${encodeURIComponent(input.installationId)}`,
               installationId: input.installationId,
             },
           };

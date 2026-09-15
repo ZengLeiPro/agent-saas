@@ -248,6 +248,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     systems,
     nonces,
     credentials,
+    deploymentKeys,
     issuer,
     canAccessInstallation: async (installation, user) =>
       (

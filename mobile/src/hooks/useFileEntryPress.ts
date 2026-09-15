@@ -1,10 +1,8 @@
 /**
  * 文件条目点击分派 —— `/files` 与 `/files/browse` 共用。
  *
- * 目录进子目录；文件按 `resolveFilePreviewTarget`（shared `getPreviewFileType`
- * 的移动端封装）分派到 Markdown 预览 / 通用预览 / 下载分享三条路。
- * HTML/SVG 归在通用预览的 `html` 档，那里只给下载分享与安全提示，
- * 不做任何内嵌渲染（M50-03）。
+ * 目录进子目录；文件按 `resolveFilePreviewTarget` 分派。
+ * md+ master-detail 可通过 `onOpenPreview` 拦截预览路由，改为右栏呈现。
  */
 import { useCallback } from 'react';
 import { useRouter } from 'expo-router';
@@ -12,12 +10,25 @@ import type { FileEntry } from '@agent/shared';
 import { resolveFilePreviewTarget } from '../lib/filePreviewTarget';
 import { useFileOpen } from './useFileOpen';
 
+export type FilePreviewNavTarget = {
+  route: '/chat/markdown-preview' | '/files/preview';
+  filePath: string;
+  name: string;
+  size: number;
+  modifiedAt: number;
+};
+
 export interface UseFileEntryPressOptions {
   owner?: string;
   root?: boolean;
+  /**
+   * When provided, previewable files call this instead of `router.push`.
+   * Return true if handled (typical md+ pane). Directory navigation still pushes.
+   */
+  onOpenPreview?: (target: FilePreviewNavTarget) => boolean;
 }
 
-export function useFileEntryPress({ owner, root }: UseFileEntryPressOptions) {
+export function useFileEntryPress({ owner, root, onOpenPreview }: UseFileEntryPressOptions) {
   const router = useRouter();
   const { open, downloading } = useFileOpen();
 
@@ -37,14 +48,23 @@ export function useFileEntryPress({ owner, root }: UseFileEntryPressOptions) {
       }
 
       const target = resolveFilePreviewTarget(entry.name);
-      if (target.route === '/chat/markdown-preview') {
-        router.push({
-          pathname: '/chat/markdown-preview',
-          params: { filePath: entry.path, ...commonParams() },
-        });
-        return;
-      }
-      if (target.route === '/files/preview') {
+      if (target.route === '/chat/markdown-preview' || target.route === '/files/preview') {
+        const nav: FilePreviewNavTarget = {
+          route: target.route,
+          filePath: entry.path,
+          name: entry.name,
+          size: entry.size,
+          modifiedAt: entry.modifiedAt,
+        };
+        if (onOpenPreview?.(nav)) return;
+
+        if (target.route === '/chat/markdown-preview') {
+          router.push({
+            pathname: '/chat/markdown-preview',
+            params: { filePath: entry.path, ...commonParams() },
+          });
+          return;
+        }
         router.push({
           pathname: '/files/preview',
           params: {
@@ -66,7 +86,7 @@ export function useFileEntryPress({ owner, root }: UseFileEntryPressOptions) {
         ...(root ? { root: true } : {}),
       });
     },
-    [router, commonParams, open, owner, root],
+    [router, commonParams, open, owner, root, onOpenPreview],
   );
 
   return { press, downloading };

@@ -23,6 +23,8 @@ interface JobListProps {
   onRefresh: () => Promise<void>;
   onSelect: (job: CronJob) => void;
   onToggle: (job: CronJob) => Promise<void>;
+  /** md+ master-detail selection highlight */
+  activeJobId?: string | null;
   contentPaddingTop?: number;
   contentPaddingBottom?: number;
 }
@@ -36,12 +38,15 @@ function JobRow({
   modelList,
   onSelect,
   onToggle,
+  active,
 }: {
   job: CronJob;
   modelList?: ModelList | null;
   onSelect: (job: CronJob) => void;
   onToggle: (job: CronJob) => Promise<void>;
+  active?: boolean;
 }) {
+  const colors = useColors();
   const running = !!job.state.runningAtMs;
 
   const handleToggle = useCallback(() => {
@@ -62,7 +67,7 @@ function JobRow({
       // 运行中不给切换：这一轮已经在跑，切开关只会造成「以为停下了」的错觉
       switchDisabled={running}
       onPress={() => onSelect(job)}
-      style={styles.row}
+      style={[styles.row, active ? { backgroundColor: colors.secondary } : null]}
     />
   );
 }
@@ -75,6 +80,7 @@ export function JobList({
   onRefresh,
   onSelect,
   onToggle,
+  activeJobId,
   contentPaddingTop,
   contentPaddingBottom,
 }: JobListProps) {
@@ -108,7 +114,7 @@ export function JobList({
       overrideProps={{ initialDrawBatchSize: 10 }}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => (
-        <JobRow job={item} modelList={modelList} onSelect={onSelect} onToggle={onToggle} />
+        <JobRow job={item} modelList={modelList} onSelect={onSelect} onToggle={onToggle} active={activeJobId === item.id} />
       )}
       contentContainerStyle={contentContainerStyle}
       refreshControl={

@@ -99,7 +99,11 @@ export class PgKyAppCapabilityObservationReader implements UserCapabilityObserva
     const result = await this.pool.query(
       `SELECT user_id,snapshot_key,entries,degraded,updated_at FROM ${this.snapshotsTable}
        WHERE tenant_id=$1 AND user_id=$2
-         AND string_to_array(snapshot_key,'|') @> ARRAY[$3 || ':' || $4]
+         AND EXISTS (
+           SELECT 1 FROM unnest(string_to_array(snapshot_key,'|')) AS snapshot_part
+           WHERE split_part(snapshot_part,':',1)=$3
+             AND split_part(snapshot_part,':',2)=$4
+         )
        ORDER BY updated_at DESC,session_id DESC LIMIT 1`,
       [tenantId, userId, installationId, registeredDigest],
     );
@@ -116,7 +120,11 @@ export class PgKyAppCapabilityObservationReader implements UserCapabilityObserva
       `SELECT DISTINCT ON (user_id) user_id,snapshot_key,entries,degraded,updated_at
        FROM ${this.snapshotsTable}
        WHERE tenant_id=$1
-         AND string_to_array(snapshot_key,'|') @> ARRAY[$2 || ':' || $3]
+         AND EXISTS (
+           SELECT 1 FROM unnest(string_to_array(snapshot_key,'|')) AS snapshot_part
+           WHERE split_part(snapshot_part,':',1)=$2
+             AND split_part(snapshot_part,':',2)=$3
+         )
        ORDER BY user_id,updated_at DESC,session_id DESC`,
       [tenantId, installationId, registeredDigest],
     );

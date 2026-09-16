@@ -48,6 +48,7 @@ function conversationRow(row: Record<string, unknown>): ExternalConversationReco
     ...(row.database_connection_id
       ? { databaseConnectionId: String(row.database_connection_id) }
       : {}),
+    ...(row.agent_id ? { agentId: String(row.agent_id) } : {}),
     metadata:
       row.metadata_json && typeof row.metadata_json === 'object'
         ? structuredClone(row.metadata_json as Record<string, unknown>)
@@ -111,6 +112,7 @@ export class InMemoryExternalConversationStore implements ExternalConversationSt
       serviceAccountUserId: input.serviceAccountUserId,
       externalConversationId: input.externalConversationId,
       ...(input.databaseConnectionId ? { databaseConnectionId: input.databaseConnectionId } : {}),
+      ...(input.agentId ? { agentId: input.agentId } : {}),
       metadata: structuredClone(input.metadata),
       status: 'active',
       idempotencyKey: input.idempotencyKey,
@@ -125,6 +127,20 @@ export class InMemoryExternalConversationStore implements ExternalConversationSt
   async getConversation(conversationId: string): Promise<ExternalConversationRecord | undefined> {
     const record = this.conversations.get(conversationId);
     return record ? cloneConversation(record) : undefined;
+  }
+
+  async listConversations(
+    input: Parameters<ExternalConversationStore['listConversations']>[0],
+  ): Promise<ExternalConversationRecord[]> {
+    return [...this.conversations.values()]
+      .filter(
+        (record) =>
+          record.tenantId === input.tenantId &&
+          (!input.clientId || record.clientId === input.clientId),
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, input.limit ?? 100)
+      .map(cloneConversation);
   }
 
   async reserveExecution(
@@ -167,6 +183,20 @@ export class InMemoryExternalConversationStore implements ExternalConversationSt
   async getExecution(executionId: string): Promise<ExternalExecutionRecord | undefined> {
     const record = this.executions.get(executionId);
     return record ? cloneExecution(record) : undefined;
+  }
+
+  async listExecutions(
+    input: Parameters<ExternalConversationStore['listExecutions']>[0],
+  ): Promise<ExternalExecutionRecord[]> {
+    return [...this.executions.values()]
+      .filter(
+        (record) =>
+          record.tenantId === input.tenantId &&
+          (!input.clientId || record.clientId === input.clientId),
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, input.limit ?? 100)
+      .map(cloneExecution);
   }
 
   async bindAcceptedExecution(
@@ -251,9 +281,9 @@ export class PgExternalConversationStore implements ExternalConversationStore {
     const inserted = await this.pool.query(
       `INSERT INTO ${this.tables.conversations} (
          conversation_id,client_id,tenant_id,service_account_user_id,
-         external_conversation_id,database_connection_id,metadata_json,
+         external_conversation_id,database_connection_id,agent_id,metadata_json,
          idempotency_key,request_hash
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
        ON CONFLICT DO NOTHING RETURNING *`,
       [
         conversationId,
@@ -262,6 +292,7 @@ export class PgExternalConversationStore implements ExternalConversationStore {
         input.serviceAccountUserId,
         input.externalConversationId,
         input.databaseConnectionId ?? null,
+        input.agentId ?? null,
         JSON.stringify(input.metadata),
         input.idempotencyKey,
         input.requestHash,
@@ -285,6 +316,19 @@ export class PgExternalConversationStore implements ExternalConversationStore {
       [conversationId],
     );
     return result.rows[0] ? conversationRow(result.rows[0]) : undefined;
+  }
+
+  async listConversations(
+    input: Parameters<ExternalConversationStore['listConversations']>[0],
+  ): Promise<ExternalConversationRecord[]> {
+    await this.init();
+    const result = await this.pool.query(
+      `SELECT * FROM ${this.tables.conversations}
+       WHERE tenant_id=$1 AND ($2::text IS NULL OR client_id=$2)
+       ORDER BY updated_at DESC,conversation_id LIMIT $3`,
+      [input.tenantId, input.clientId ?? null, Math.min(Math.max(input.limit ?? 100, 1), 500)],
+    );
+    return result.rows.map(conversationRow);
   }
 
   async reserveExecution(
@@ -331,6 +375,19 @@ export class PgExternalConversationStore implements ExternalConversationStore {
       [executionId],
     );
     return result.rows[0] ? executionRow(result.rows[0]) : undefined;
+  }
+
+  async listExecutions(
+    input: Parameters<ExternalConversationStore['listExecutions']>[0],
+  ): Promise<ExternalExecutionRecord[]> {
+    await this.init();
+    const result = await this.pool.query(
+      `SELECT * FROM ${this.tables.executions}
+       WHERE tenant_id=$1 AND ($2::text IS NULL OR client_id=$2)
+       ORDER BY created_at DESC,execution_id LIMIT $3`,
+      [input.tenantId, input.clientId ?? null, Math.min(Math.max(input.limit ?? 100, 1), 500)],
+    );
+    return result.rows.map(executionRow);
   }
 
   async bindAcceptedExecution(

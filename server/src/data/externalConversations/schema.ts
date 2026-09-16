@@ -31,6 +31,7 @@ export function externalConversationSchemaStatements(tables: ExternalConversatio
       external_conversation_id TEXT NOT NULL,
       session_id TEXT,
       database_connection_id TEXT,
+      agent_id TEXT,
       metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','closed')),
       idempotency_key TEXT NOT NULL,
@@ -40,6 +41,7 @@ export function externalConversationSchemaStatements(tables: ExternalConversatio
       UNIQUE (client_id, external_conversation_id),
       UNIQUE (client_id, idempotency_key)
     )`,
+    `ALTER TABLE ${conversations} ADD COLUMN IF NOT EXISTS agent_id TEXT`,
     `CREATE UNIQUE INDEX IF NOT EXISTS ${tables.conversations}_session_uidx
       ON ${conversations}(session_id) WHERE session_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS ${tables.conversations}_tenant_updated_idx

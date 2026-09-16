@@ -20,6 +20,7 @@ function principal(overrides: Partial<ExternalClientPrincipal> = {}): ExternalCl
       keyPrefix: 'ky_ext_prefix',
       scopes: ['conversations:write', 'executions:read'],
       allowedConnectionIds: ['dbc-1'],
+      allowedAgentIds: ['oa-1'],
       status: 'active',
       createdAt: '2026-09-16T00:00:00.000Z',
       createdBy: 'admin',
@@ -75,6 +76,10 @@ function testApp(options: { running?: boolean } = {}) {
       store,
       headlessClient: { submit },
       outputCollector: outputCollector as never,
+      orgAgentStore: {
+        get: (id: string) =>
+          id === 'oa-1' ? { id, tenantId: 'tenant-a', enabled: true } : undefined,
+      } as never,
     }),
   );
   return { app, store, submit, outputCollector };
@@ -217,5 +222,27 @@ describe('External Agent public API', () => {
     });
     expect(conflict.status).toBe(409);
     expect(conflict.body.code).toBe('idempotency_conflict');
+  });
+
+  it('pins an allowlisted organization Agent while preserving the personal Agent default', async () => {
+    const { app, submit } = testApp();
+    const created = await apiRequest(app, '/v1/conversations', {
+      idempotencyKey: 'org-agent-conversation',
+      body: { external_conversation_id: 'org-agent-1', agent_id: 'oa-1' },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.agent_id).toBe('oa-1');
+    await apiRequest(app, `/v1/conversations/${created.body.id}/messages`, {
+      idempotencyKey: 'org-agent-message',
+      body: { message: '请按组织专家规则分析' },
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'oa-1' }));
+
+    const denied = await apiRequest(app, '/v1/conversations', {
+      idempotencyKey: 'org-agent-denied',
+      body: { external_conversation_id: 'org-agent-denied', agent_id: 'oa-other' },
+    });
+    expect(denied.status).toBe(404);
+    expect(denied.body.code).toBe('agent_not_found');
   });
 });

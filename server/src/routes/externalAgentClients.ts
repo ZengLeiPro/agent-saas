@@ -14,6 +14,7 @@ import { checkTenantAccess } from '../data/tenants/access.js';
 import { TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { UserStore } from '../data/users/store.js';
+import type { OrgAgentStore } from '../data/orgAgents/store.js';
 
 const createSchema = z.object({
   tenantId: z.string().regex(TENANT_SLUG_PATTERN).optional(),
@@ -21,6 +22,7 @@ const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
   scopes: z.array(z.enum(EXTERNAL_CLIENT_SCOPES)).min(1).optional(),
   allowedConnectionIds: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
+  allowedAgentIds: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
   expiresAt: z.iso.datetime().optional(),
 });
 
@@ -32,6 +34,7 @@ export interface ExternalAgentClientsRouterDeps {
   store?: ExternalClientStore;
   userStore?: UserStore;
   tenantStore?: TenantStore;
+  orgAgentStore?: Pick<OrgAgentStore, 'get'>;
 }
 
 function requireDependencies(
@@ -154,6 +157,16 @@ export function createExternalAgentClientsAdminRouter(
     }
 
     const key = generateExternalApiKey();
+    const allowedAgentIds = [...new Set(parsed.data.allowedAgentIds ?? [])];
+    if (
+      allowedAgentIds.some((id) => {
+        const agent = deps.orgAgentStore?.get(id);
+        return !agent || agent.tenantId !== tenantId || !agent.enabled;
+      })
+    ) {
+      res.status(404).json({ error: 'Agent not found', code: 'agent_not_found' });
+      return;
+    }
     const record = await deps.store.create({
       tenantId,
       serviceAccountUserId: parsed.data.serviceAccountUserId,
@@ -162,6 +175,7 @@ export function createExternalAgentClientsAdminRouter(
       keyPrefix: key.keyPrefix,
       scopes: (parsed.data.scopes ?? [...EXTERNAL_CLIENT_SCOPES]) as ExternalClientScope[],
       allowedConnectionIds: [...new Set(parsed.data.allowedConnectionIds ?? [])],
+      allowedAgentIds,
       ...(parsed.data.expiresAt ? { expiresAt: parsed.data.expiresAt } : {}),
       actorUserId: req.user!.sub,
     });
@@ -209,6 +223,45 @@ export function createExternalAgentClientsAdminRouter(
       actorUserId: req.user!.sub,
     });
     res.json({ client: toExternalClientView(updated!) });
+  });
+
+  router.put('/:clientId/agents', async (req, res) => {
+    if (!requireDependencies(deps, res)) return;
+    const parsed = z
+      .object({ agentIds: z.array(z.string().trim().min(1).max(128)).max(100) })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid body', issues: parsed.error.issues });
+      return;
+    }
+    const record = await deps.store.get(req.params.clientId);
+    if (!record || !canAccessRecord(req, record)) {
+      res.status(404).json({ error: 'API Client not found', code: 'api_client_not_found' });
+      return;
+    }
+    const agentIds = [...new Set(parsed.data.agentIds)];
+    if (
+      agentIds.some((id) => {
+        const agent = deps.orgAgentStore?.get(id);
+        return !agent || agent.tenantId !== record.tenantId || !agent.enabled;
+      })
+    ) {
+      res.status(404).json({ error: 'Agent not found', code: 'agent_not_found' });
+      return;
+    }
+    const updated = await deps.store.setAllowedAgentIds({
+      clientId: record.clientId,
+      tenantId: record.tenantId,
+      allowedAgentIds: agentIds,
+      actorUserId: req.user!.sub,
+    });
+    if (!updated) {
+      res
+        .status(409)
+        .json({ error: 'API Client changed concurrently', code: 'api_client_conflict' });
+      return;
+    }
+    res.json({ client: toExternalClientView(updated) });
   });
 
   return router;

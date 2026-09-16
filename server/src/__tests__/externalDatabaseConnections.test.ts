@@ -74,6 +74,9 @@ class MemoryConnectionStore implements DatabaseConnectionStore {
     return next;
   }
   async recordQueryAudit(_input: DatabaseQueryAuditInput) {}
+  async listQueryAudit() {
+    return [];
+  }
 }
 
 let server: Server;

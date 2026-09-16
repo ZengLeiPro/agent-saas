@@ -18,6 +18,7 @@ function clone(record: ExternalClientRecord): ExternalClientRecord {
     ...record,
     scopes: [...record.scopes],
     allowedConnectionIds: [...record.allowedConnectionIds],
+    allowedAgentIds: [...record.allowedAgentIds],
   };
 }
 
@@ -37,6 +38,7 @@ function rowToRecord(row: Record<string, unknown>): ExternalClientRecord {
     allowedConnectionIds: Array.isArray(row.allowed_connection_ids)
       ? row.allowed_connection_ids.map(String)
       : [],
+    allowedAgentIds: Array.isArray(row.allowed_agent_ids) ? row.allowed_agent_ids.map(String) : [],
     status: row.status as ExternalClientRecord['status'],
     ...(row.expires_at
       ? { expiresAt: new Date(row.expires_at as string | Date).toISOString() }
@@ -69,6 +71,7 @@ export class InMemoryExternalClientStore implements ExternalClientStore {
       keyPrefix: input.keyPrefix,
       scopes: [...input.scopes],
       allowedConnectionIds: [...(input.allowedConnectionIds ?? [])],
+      allowedAgentIds: [...(input.allowedAgentIds ?? [])],
       status: 'active',
       ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
       createdAt: now,
@@ -148,10 +151,27 @@ export class InMemoryExternalClientStore implements ExternalClientStore {
     input: Parameters<ExternalClientStore['setAllowedConnectionIds']>[0],
   ): Promise<ExternalClientRecord | undefined> {
     const record = this.records.get(input.clientId);
-    if (!record || record.tenantId !== input.tenantId || record.status !== 'active') return undefined;
+    if (!record || record.tenantId !== input.tenantId || record.status !== 'active')
+      return undefined;
     const updated = {
       ...record,
       allowedConnectionIds: [...new Set(input.allowedConnectionIds)],
+      updatedAt: new Date().toISOString(),
+      updatedBy: input.actorUserId,
+    };
+    this.records.set(input.clientId, updated);
+    return clone(updated);
+  }
+
+  async setAllowedAgentIds(
+    input: Parameters<ExternalClientStore['setAllowedAgentIds']>[0],
+  ): Promise<ExternalClientRecord | undefined> {
+    const record = this.records.get(input.clientId);
+    if (!record || record.tenantId !== input.tenantId || record.status !== 'active')
+      return undefined;
+    const updated = {
+      ...record,
+      allowedAgentIds: [...new Set(input.allowedAgentIds)],
       updatedAt: new Date().toISOString(),
       updatedBy: input.actorUserId,
     };
@@ -204,9 +224,9 @@ export class PgExternalClientStore implements ExternalClientStore {
       `
       INSERT INTO ${this.table} (
         client_id, tenant_id, service_account_user_id, name, key_hash, key_prefix,
-        scopes, allowed_connection_ids, status, expires_at,
+        scopes, allowed_connection_ids, allowed_agent_ids, status, expires_at,
         created_at, created_by, updated_at, updated_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10,$11,$10,$11)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'active',$10,$11,$12,$11,$12)
       RETURNING *
     `,
       [
@@ -218,6 +238,7 @@ export class PgExternalClientStore implements ExternalClientStore {
         input.keyPrefix,
         input.scopes,
         input.allowedConnectionIds ?? [],
+        input.allowedAgentIds ?? [],
         input.expiresAt ?? null,
         now,
         input.actorUserId,
@@ -307,6 +328,20 @@ export class PgExternalClientStore implements ExternalClientStore {
        WHERE client_id=$1 AND tenant_id=$2 AND status='active'
        RETURNING *`,
       [input.clientId, input.tenantId, [...new Set(input.allowedConnectionIds)], input.actorUserId],
+    );
+    return result.rows[0] ? rowToRecord(result.rows[0]) : undefined;
+  }
+
+  async setAllowedAgentIds(
+    input: Parameters<ExternalClientStore['setAllowedAgentIds']>[0],
+  ): Promise<ExternalClientRecord | undefined> {
+    await this.init();
+    const result = await this.pool.query(
+      `UPDATE ${this.table}
+       SET allowed_agent_ids=$3,updated_at=NOW(),updated_by=$4
+       WHERE client_id=$1 AND tenant_id=$2 AND status='active'
+       RETURNING *`,
+      [input.clientId, input.tenantId, [...new Set(input.allowedAgentIds)], input.actorUserId],
     );
     return result.rows[0] ? rowToRecord(result.rows[0]) : undefined;
   }

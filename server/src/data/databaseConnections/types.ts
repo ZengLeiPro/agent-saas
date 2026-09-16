@@ -69,6 +69,11 @@ export interface DatabaseQueryAuditInput {
   errorCode?: string;
 }
 
+export interface DatabaseQueryAuditRecord extends DatabaseQueryAuditInput {
+  auditId: string;
+  createdAt: string;
+}
+
 export interface DatabaseConnectionStore {
   create(input: CreateDatabaseConnectionInput): Promise<DatabaseConnectionRecord>;
   get(connectionId: string): Promise<DatabaseConnectionRecord | undefined>;
@@ -93,6 +98,11 @@ export interface DatabaseConnectionStore {
     actorUserId: string;
   }): Promise<DatabaseConnectionRecord | undefined>;
   recordQueryAudit(input: DatabaseQueryAuditInput): Promise<void>;
+  listQueryAudit(input: {
+    tenantId: string;
+    connectionId?: string;
+    limit?: number;
+  }): Promise<DatabaseQueryAuditRecord[]>;
 }
 
 export function toDatabaseConnectionView(record: DatabaseConnectionRecord): DatabaseConnectionView {

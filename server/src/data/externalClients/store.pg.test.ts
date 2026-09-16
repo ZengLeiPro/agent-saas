@@ -38,14 +38,24 @@ describePg('External Agent API Client PostgreSQL contract', () => {
       keyPrefix: 'ky_ext_test_a',
       scopes: ['conversations:write', 'executions:read'],
       allowedConnectionIds: ['readonly-db'],
+      allowedAgentIds: ['oa-1'],
       actorUserId: 'admin-a',
     });
     expect(await store.get(created.clientId)).toMatchObject({
       tenantId: 'tenant-a',
       keyHash: 'hash-a',
       allowedConnectionIds: ['readonly-db'],
+      allowedAgentIds: ['oa-1'],
     });
     expect(await store.findByKeyHash('hash-a')).toMatchObject({ clientId: created.clientId });
+    await expect(
+      store.setAllowedAgentIds({
+        clientId: created.clientId,
+        tenantId: 'tenant-a',
+        allowedAgentIds: ['oa-2'],
+        actorUserId: 'admin-agents',
+      }),
+    ).resolves.toMatchObject({ allowedAgentIds: ['oa-2'] });
 
     const rotated = await store.rotateKey({
       clientId: created.clientId,

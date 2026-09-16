@@ -8,6 +8,7 @@ export interface ExternalConversationRecord {
   externalConversationId: string;
   sessionId?: string;
   databaseConnectionId?: string;
+  agentId?: string;
   metadata: Record<string, unknown>;
   status: ExternalConversationStatus;
   idempotencyKey: string;
@@ -50,11 +51,17 @@ export interface ExternalConversationStore {
     serviceAccountUserId: string;
     externalConversationId: string;
     databaseConnectionId?: string;
+    agentId?: string;
     metadata: Record<string, unknown>;
     idempotencyKey: string;
     requestHash: string;
   }): Promise<IdempotentCreateResult<ExternalConversationRecord>>;
   getConversation(conversationId: string): Promise<ExternalConversationRecord | undefined>;
+  listConversations(input: {
+    tenantId: string;
+    clientId?: string;
+    limit?: number;
+  }): Promise<ExternalConversationRecord[]>;
   reserveExecution(input: {
     conversation: ExternalConversationRecord;
     idempotencyKey: string;
@@ -63,6 +70,11 @@ export interface ExternalConversationStore {
     requestedReasoningEffort?: string;
   }): Promise<IdempotentCreateResult<ExternalExecutionRecord>>;
   getExecution(executionId: string): Promise<ExternalExecutionRecord | undefined>;
+  listExecutions(input: {
+    tenantId: string;
+    clientId?: string;
+    limit?: number;
+  }): Promise<ExternalExecutionRecord[]>;
   bindAcceptedExecution(input: {
     executionId: string;
     conversationId: string;

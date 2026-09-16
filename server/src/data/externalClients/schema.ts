@@ -11,6 +11,7 @@ export function externalClientSchemaStatements(table: string): string[] {
       key_prefix TEXT NOT NULL,
       scopes TEXT[] NOT NULL,
       allowed_connection_ids TEXT[] NOT NULL DEFAULT '{}',
+      allowed_agent_ids TEXT[] NOT NULL DEFAULT '{}',
       status TEXT NOT NULL CHECK (status IN ('active', 'revoked')),
       expires_at TIMESTAMPTZ,
       last_used_at TIMESTAMPTZ,
@@ -21,6 +22,7 @@ export function externalClientSchemaStatements(table: string): string[] {
       revoked_at TIMESTAMPTZ,
       revoked_by TEXT
     )`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS allowed_agent_ids TEXT[] NOT NULL DEFAULT '{}'`,
     `CREATE INDEX IF NOT EXISTS ${table}_tenant_created_idx ON ${table} (tenant_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS ${table}_service_account_idx ON ${table} (service_account_user_id)`,
   ];

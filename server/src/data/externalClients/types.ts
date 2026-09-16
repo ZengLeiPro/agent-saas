@@ -12,6 +12,7 @@ export interface ExternalClientRecord {
   keyPrefix: string;
   scopes: ExternalClientScope[];
   allowedConnectionIds: string[];
+  allowedAgentIds: string[];
   status: ExternalClientStatus;
   expiresAt?: string;
   lastUsedAt?: string;
@@ -35,6 +36,7 @@ export interface CreateExternalClientInput {
   keyPrefix: string;
   scopes: ExternalClientScope[];
   allowedConnectionIds?: string[];
+  allowedAgentIds?: string[];
   expiresAt?: string;
   actorUserId: string;
 }
@@ -58,6 +60,12 @@ export interface ExternalClientStore {
     clientId: string;
     tenantId: string;
     allowedConnectionIds: string[];
+    actorUserId: string;
+  }): Promise<ExternalClientRecord | undefined>;
+  setAllowedAgentIds(input: {
+    clientId: string;
+    tenantId: string;
+    allowedAgentIds: string[];
     actorUserId: string;
   }): Promise<ExternalClientRecord | undefined>;
   touchLastUsed(clientId: string, usedAt: string): Promise<void>;

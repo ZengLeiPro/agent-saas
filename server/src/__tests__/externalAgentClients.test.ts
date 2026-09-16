@@ -91,6 +91,10 @@ async function createRig(): Promise<Rig> {
       store,
       userStore,
       tenantStore,
+      orgAgentStore: {
+        get: (id: string) =>
+          id === 'oa-1' ? { id, tenantId: 'tenant-a', enabled: true } : undefined,
+      } as never,
     }),
   );
   const server = await new Promise<Server>((resolve) => {
@@ -238,5 +242,23 @@ describe('External Agent API Client P0', () => {
     });
     expect(adminAccount.status).toBe(409);
     await expect(adminAccount.json()).resolves.toMatchObject({ code: 'invalid_service_account' });
+  });
+
+  it('只允许绑定同租户已启用的组织 Agent', async () => {
+    const created = await post('', rig.users.adminA, {
+      serviceAccountUserId: rig.users.serviceA.id,
+      name: '组织专家集成',
+      allowedAgentIds: ['oa-1'],
+    });
+    expect(created.status).toBe(201);
+    const body = (await created.json()) as KeyResponse;
+    expect(body.client.allowedAgentIds).toEqual(['oa-1']);
+
+    const denied = await fetch(`${rig.baseUrl}/${body.client.clientId}/agents`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-test-user': rig.users.adminA.username },
+      body: JSON.stringify({ agentIds: ['oa-other'] }),
+    });
+    expect(denied.status).toBe(404);
   });
 });

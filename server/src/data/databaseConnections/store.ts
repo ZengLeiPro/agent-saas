@@ -13,6 +13,7 @@ import type {
   DatabaseConnectionRecord,
   DatabaseConnectionStore,
   DatabaseQueryAuditInput,
+  DatabaseQueryAuditRecord,
 } from './types.js';
 
 type PgPool = pg.Pool;
@@ -206,5 +207,34 @@ export class PgDatabaseConnectionStore implements DatabaseConnectionStore {
         input.errorCode ?? null,
       ],
     );
+  }
+
+  async listQueryAudit(
+    input: Parameters<DatabaseConnectionStore['listQueryAudit']>[0],
+  ): Promise<DatabaseQueryAuditRecord[]> {
+    await this.init();
+    const result = await this.pool.query(
+      `SELECT * FROM ${this.tables.queryAudit}
+       WHERE tenant_id=$1 AND ($2::text IS NULL OR connection_id=$2)
+       ORDER BY created_at DESC,audit_id DESC LIMIT $3`,
+      [input.tenantId, input.connectionId ?? null, Math.min(Math.max(input.limit ?? 100, 1), 500)],
+    );
+    return result.rows.map((row) => ({
+      auditId: String(row.audit_id),
+      connectionId: String(row.connection_id),
+      tenantId: String(row.tenant_id),
+      apiClientId: String(row.api_client_id),
+      conversationId: String(row.conversation_id),
+      sessionId: String(row.session_id),
+      runId: String(row.run_id),
+      sqlHash: String(row.sql_hash),
+      status: row.status as DatabaseQueryAuditRecord['status'],
+      durationMs: Number(row.duration_ms),
+      rowCount: Number(row.row_count),
+      resultBytes: Number(row.result_bytes),
+      truncated: Boolean(row.truncated),
+      ...(row.error_code ? { errorCode: String(row.error_code) } : {}),
+      createdAt: new Date(row.created_at as string | Date).toISOString(),
+    }));
   }
 }

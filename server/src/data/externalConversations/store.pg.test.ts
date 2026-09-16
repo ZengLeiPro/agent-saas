@@ -53,6 +53,7 @@ describePg('External Agent conversation PostgreSQL contract', () => {
       tenantId: 'tenant-a',
       serviceAccountUserId: 'svc-a',
       externalConversationId: 'external-1',
+      agentId: 'oa-1',
       metadata: { order: 'SO-1' },
       idempotencyKey: 'conversation-request-1',
       requestHash: 'conversation-hash-1',
@@ -63,13 +64,14 @@ describePg('External Agent conversation PostgreSQL contract', () => {
       tenantId: 'tenant-a',
       serviceAccountUserId: 'svc-a',
       externalConversationId: 'external-1',
+      agentId: 'oa-1',
       metadata: { order: 'SO-1' },
       idempotencyKey: 'conversation-request-1',
       requestHash: 'conversation-hash-1',
     });
     expect(replay).toMatchObject({
       outcome: 'replay',
-      record: { conversationId: first.record.conversationId },
+      record: { conversationId: first.record.conversationId, agentId: 'oa-1' },
     });
 
     const execution = await store.reserveExecution({

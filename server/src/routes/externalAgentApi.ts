@@ -13,6 +13,8 @@ import type {
 } from '../data/externalConversations/index.js';
 import type { FinalOutputCollector } from '../externalAgent/finalOutputCollector.js';
 import type { HeadlessWebClient } from '../externalAgent/headlessWebClient.js';
+import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import type { ExternalApiAdmissionController } from '../externalAgent/admissionController.js';
 
 const metadataSchema = z
   .record(z.string().min(1).max(80), z.unknown())
@@ -22,6 +24,7 @@ const metadataSchema = z
 const createConversationSchema = z.object({
   external_conversation_id: z.string().trim().min(1).max(200),
   database_connection_id: z.string().trim().min(1).max(128).optional(),
+  agent_id: z.string().trim().min(1).max(128).optional(),
   metadata: metadataSchema.optional(),
 });
 
@@ -43,6 +46,8 @@ export interface ExternalAgentApiRouterDeps {
   store?: ExternalConversationStore;
   headlessClient?: HeadlessWebClient;
   outputCollector?: FinalOutputCollector;
+  orgAgentStore?: Pick<OrgAgentStore, 'get'>;
+  admission?: Pick<ExternalApiAdmissionController, 'acquire'>;
 }
 
 function canonicalize(value: unknown): unknown {
@@ -74,6 +79,7 @@ function conversationView(record: ExternalConversationRecord) {
     ...(record.databaseConnectionId
       ? { database_connection: { id: record.databaseConnectionId } }
       : {}),
+    ...(record.agentId ? { agent_id: record.agentId } : {}),
     metadata: record.metadata,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
@@ -121,6 +127,26 @@ export function createExternalAgentApiRouter(deps: ExternalAgentApiRouterDeps): 
       return;
     }
     res.locals.externalPrincipal = result.principal;
+    const decision = deps.admission?.acquire(result.principal.client.clientId);
+    if (decision && !decision.allowed) {
+      res.setHeader('Retry-After', String(decision.retryAfterSeconds ?? 60));
+      const concurrent = decision.reason === 'concurrency_limit';
+      res.status(429).json({
+        error: concurrent ? 'Concurrent request limit exceeded' : 'Rate limit exceeded',
+        code: concurrent ? 'concurrency_limit_exceeded' : 'rate_limit_exceeded',
+      });
+      return;
+    }
+    if (decision?.release) {
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        decision.release?.();
+      };
+      res.once('finish', release);
+      res.once('close', release);
+    }
     next();
   });
 
@@ -152,6 +178,19 @@ export function createExternalAgentApiRouter(deps: ExternalAgentApiRouterDeps): 
         .json({ error: 'Database connection not found', code: 'database_connection_not_found' });
       return;
     }
+    const agentId = parsed.data.agent_id;
+    if (agentId) {
+      const agent = deps.orgAgentStore?.get(agentId);
+      if (
+        !principal.client.allowedAgentIds.includes(agentId) ||
+        !agent ||
+        agent.tenantId !== principal.tenantId ||
+        !agent.enabled
+      ) {
+        res.status(404).json({ error: 'Agent not found', code: 'agent_not_found' });
+        return;
+      }
+    }
     const hash = requestHash(parsed.data);
     const created = await deps.store.createConversation({
       clientId: principal.client.clientId,
@@ -159,6 +198,7 @@ export function createExternalAgentApiRouter(deps: ExternalAgentApiRouterDeps): 
       serviceAccountUserId: principal.serviceAccountUserId,
       externalConversationId: parsed.data.external_conversation_id,
       ...(connectionId ? { databaseConnectionId: connectionId } : {}),
+      ...(agentId ? { agentId } : {}),
       metadata: parsed.data.metadata ?? {},
       idempotencyKey: key,
       requestHash: hash,
@@ -241,6 +281,7 @@ export function createExternalAgentApiRouter(deps: ExternalAgentApiRouterDeps): 
         message: parsed.data.message,
         clientMessageId: execution.clientMessageId,
         ...(conversation.sessionId ? { sessionId: conversation.sessionId } : {}),
+        ...(conversation.agentId ? { agentId: conversation.agentId } : {}),
         ...(parsed.data.model !== 'inherit' ? { model: parsed.data.model } : {}),
         ...(parsed.data.reasoning ? { reasoning: parsed.data.reasoning } : {}),
         externalContext: {

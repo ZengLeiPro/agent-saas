@@ -24,8 +24,8 @@ describe('管理后台导航契约', () => {
   });
 
   it('配置面保留业务系统统一入口', () => {
-    expect(managementPagesFor('config', 'organization')).toHaveLength(18);
-    expect(managementPagesFor('config', 'platform')).toHaveLength(13);
+    expect(managementPagesFor('config', 'organization')).toHaveLength(19);
+    expect(managementPagesFor('config', 'platform')).toHaveLength(14);
     expect(
       managementPagesFor('config', 'platform').some(
         (page) => page.routeId === 'platform.runtime.system-deliveries',

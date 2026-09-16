@@ -158,6 +158,7 @@ export interface HeadlessChatSubmission {
   message: string;
   clientMessageId: string;
   sessionId?: string;
+  agentId?: string;
   model?: string;
   reasoning?: { enabled: true; effort?: string };
   externalContext?: {
@@ -654,7 +655,12 @@ export class WebChannel implements BaseChannel {
         action: 'chat', clientCapabilities: ['chat_submission_v1'],
         submission: {
           version: CHAT_SUBMISSION_VERSION, text: input.message, clientMsgId: input.clientMessageId,
-          target: { ...(input.sessionId ? { sessionId: input.sessionId } : {}), agentTarget: { kind: 'personal', tenantId: input.tenantId } },
+          target: {
+            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            agentTarget: input.agentId
+              ? { kind: 'org-agent', tenantId: input.tenantId, orgAgentId: input.agentId }
+              : { kind: 'personal', tenantId: input.tenantId },
+          },
           deliveryMode: 'queue', ...(input.model ? { model: input.model } : {}), attachments: [],
         },
       });

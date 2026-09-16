@@ -92,6 +92,9 @@ const externalClientEvidencePaths = [
   'docs/release/外部Agent多轮调用P1迁移审核-20260916.md',
   'server/src/__tests__/databaseQueryPostgres.pg.test.ts',
   'docs/release/外部Agent数据库P2迁移审核-20260916.md',
+  'server/src/__tests__/externalAgentApi.test.ts',
+  'server/src/__tests__/externalAgentOperations.test.ts',
+  'docs/release/外部Agent运营与组织智能体P3P4迁移审核-20260916.md',
 ];
 const gwsAuthInjectionReviewPaths = [
   'server/src/app/runtimeGovernanceConnectors.ts',

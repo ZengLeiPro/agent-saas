@@ -79,6 +79,7 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   {
     id: "resource-center", label: "资源中心", routes: [
       route("platform", "resource-center", "business-systems", "业务系统", ["platform-console", "resource-center", "business-systems"], { entity: "optional" }),
+      route("platform", "resource-center", "external-agents", "外部 Agent", ["platform-console", "resource-center", "external-agents"]),
       route("platform", "resource-center", "agent-templates", "智能体模板", ["platform-console", "resource-center", "agent-templates"], { entity: "optional" }),
       route("platform", "resource-center", "models", "模型", ["platform-console", "resource-center", "models"], { entity: "optional" }),
       route("platform", "resource-center", "skills", "技能", ["platform-console", "resource-center", "skills"], { entity: "optional" }),
@@ -137,6 +138,7 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   {
     id: "agents", label: "智能体与资源", routes: [
       route("organization", "agents", "business-systems", "业务系统", ["tenant-admin", "agents", "business-systems"], { entity: "optional" }),
+      route("organization", "agents", "external-agents", "外部 Agent", ["tenant-admin", "agents", "external-agents"]),
       route("organization", "agents", "org-agents", "组织智能体", ["tenant-admin", "agents", "org-agents"], { entity: "optional" }),
       route("organization", "agents", "workflows", "工作流", ["tenant-admin", "agents", "workflows"]),
       route("organization", "agents", "dingtalk-accounts", "钉钉账号", ["tenant-admin", "agents", "dingtalk-accounts"]),

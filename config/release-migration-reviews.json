@@ -45227,37 +45227,37 @@
         {
           "path": "server/src/data/externalClients/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:61f2713d06cedf846d668f85ce136e6e452807623926ead049abcc26a38c741e",
+          "targetDigest": "sha256:79ec14266a39173d1fb194ed695779a25102968c98635f9b533b011a6d7f0514",
           "classification": "expand",
-          "reason": "新增外部调用身份专用 PostgreSQL 存储并在 advisory lock 内幂等执行新表初始化；P2 仅增加 allowed_connection_ids 的租户内原子替换写入，不新增结构、不改动或回填既有数据。"
+          "reason": "新增外部调用身份专用 PostgreSQL 存储并在 advisory lock 内幂等初始化；P2/P4 增加连接与组织 Agent 白名单的租户内原子替换写入，仅扩展字段，不改写历史数据。"
         },
         {
           "path": "server/src/data/externalClients/schema.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:bfff29fe5d316525058f44676eb1e9b24e8a1edcb1eea1052e818f2b66e88e03",
+          "targetDigest": "sha256:257b46e026330cba5ba9ed8a28a604ebc268726bf35036049c1c343d065c0e66",
           "classification": "expand",
-          "reason": "只新增 API Client 表、主键、Key 哈希唯一约束、状态约束和两个普通查询索引；无删除、收窄、重命名或历史数据改写。"
+          "reason": "API Client 表新增 allowed_agent_ids 非空数组列且默认空数组，并使用 IF NOT EXISTS 兼容既有部署；无删除、收窄、重命名或历史数据改写。"
         },
         {
           "path": "server/src/data/externalConversations/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:3c089ef84d249f13e569b921cb2ffaf6e43297e2d40740736d3ebddf1ebaf4c3",
+          "targetDigest": "sha256:29ce40b2648569e21c6cc514e2356a2b87b9c1802ce953b07d89fbd60052f20e",
           "classification": "expand",
-          "reason": "新增外部 conversation/execution PostgreSQL 存储；只在 advisory lock 内初始化本批新表，运行期使用幂等 INSERT、查询和受事务保护的 session/run 绑定，不修改或回填既有结构。"
+          "reason": "外部 conversation/execution 存储增加租户级运营查询，并持久化可选组织 Agent 绑定；只做兼容性字段扩展和幂等读写，不修改或回填历史记录。"
         },
         {
           "path": "server/src/data/externalConversations/schema.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:004eb7d732bebe4da7cce1ce27424db4f0b40faa4ca8cac4207472b866cd7968",
+          "targetDigest": "sha256:19515099933b45947211afc26de03f96c261a3671bc0e25f9d7fcf6615534796",
           "classification": "expand",
-          "reason": "只新增外部会话与执行两张表、到 P0 API Client 表的外键以及幂等、session、run 和查询索引；无删除、收窄、重命名或历史数据改写。"
+          "reason": "conversation 表新增可空 agent_id 并使用 IF NOT EXISTS 兼容既有部署；空值继续表示个人 Agent，无删除、收窄、重命名或历史数据改写。"
         },
         {
           "path": "server/src/data/databaseConnections/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a47bf021f642bc8f14773807f3ba2db563bd22bdd92149c6f67c4ffd6ecc236e",
+          "targetDigest": "sha256:6bed270a384bafb1ae7062c9eb4f1a85b97cb93f0455628a14859d53fdfaf280",
           "classification": "expand",
-          "reason": "新增外部客户数据库连接 PostgreSQL 存储；只在 advisory lock 内初始化本批新表，运行期保存非敏感元数据、SecretVault 引用和 SQL 哈希审计，不修改或回填既有结构。"
+          "reason": "新增外部客户数据库连接 PostgreSQL 存储；P3 增加租户级只读查询审计列表，仍只保存非敏感元数据、SecretVault 引用和 SQL 哈希，不修改或回填既有结构。"
         },
         {
           "path": "server/src/data/databaseConnections/schema.ts",
@@ -45270,7 +45270,7 @@
       "evidence": [
         {
           "path": "server/src/data/externalClients/store.pg.test.ts",
-          "digest": "sha256:c3ded59e527ed51fcb866586864114dcd9a905aeb17b6c4e3395161a94b33a7f"
+          "digest": "sha256:4d8cccb1ed1de9f9b15a8d89049b94d48feb20998cd4b8624c6050718cb5a085"
         },
         {
           "path": "docs/release/外部Agent调用身份P0迁移审核-20260915.md",
@@ -45278,7 +45278,7 @@
         },
         {
           "path": "server/src/data/externalConversations/store.pg.test.ts",
-          "digest": "sha256:564de23047e15a789d1bac0b97558e916b85530c2271da2e64d6e05c58513be5"
+          "digest": "sha256:1618f032e36bc95ef287a4a3a85bb977ede79513b9dbb97b41b70fc0cef95124"
         },
         {
           "path": "docs/release/外部Agent多轮调用P1迁移审核-20260916.md",
@@ -45291,6 +45291,18 @@
         {
           "path": "docs/release/外部Agent数据库P2迁移审核-20260916.md",
           "digest": "sha256:7a5b1f0e064c52bbff83d71551465d9e35ce25acd64d72e16e077c0f5d02a867"
+        },
+        {
+          "path": "server/src/__tests__/externalAgentApi.test.ts",
+          "digest": "sha256:e42af50fa4f8f17f8b7c3c02be7ed6e0120130ea70a1aa7e80c78c384c25f89d"
+        },
+        {
+          "path": "server/src/__tests__/externalAgentOperations.test.ts",
+          "digest": "sha256:3b6b16b2bacab617c1fb2eb15e1362a8e42c57cdf1b3b867dce6b27107ffc8e2"
+        },
+        {
+          "path": "docs/release/外部Agent运营与组织智能体P3P4迁移审核-20260916.md",
+          "digest": "sha256:9f09a32153a5427f90f7127b84c47026d71ddbf0d4a9535e584ba6087c322c47"
         }
       ]
     }

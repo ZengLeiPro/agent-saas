@@ -121,16 +121,10 @@ export function loadMigrationReviews({
   const exact = reviews.find(({ review }) => review.baselineSha === baseline);
   if (exact) {
     assertMatchesSnapshots(exact.review, exact.entries, baselineSnapshot, targetSnapshot);
-    const entries =
-      relevantPaths === undefined
-        ? exact.entries
-        : new Map([...exact.entries].filter(([path]) => relevantPaths.has(path)));
-    return {
-      entries,
-      digest: migrationSourceDigest(JSON.stringify(exact.review)),
-    };
   }
 
+  // 精确基线记录先完成 fail-closed 校验，再与其他内容兼容的独立审核合成。
+  // 否则后续 PR 新增的独立 schema 审核会被旧基线的精确记录遮蔽。
   const compatible = reviews.filter(({ review, entries }) =>
     matchesSnapshots(review, entries, baselineSnapshot, targetSnapshot),
   );
@@ -139,6 +133,7 @@ export function loadMigrationReviews({
   const classifications = new Map();
   for (const candidate of compatible) {
     for (const [path, entry] of candidate.entries) {
+      if (exact && candidate !== exact && exact.entries.has(path)) continue;
       const existing = classifications.get(path);
       if (existing && existing !== entry.classification) {
         throw new Error(`Content-equivalent migration reviews conflict for: ${path}`);
@@ -148,14 +143,15 @@ export function loadMigrationReviews({
   }
 
   // 多个已审核 PR 可以同时累积在生产基线之后。只合成本次迁移闭包真实需要的路径，
-  // 但每一项仍须在同一实际生产基线和目标快照上逐字节兼容；不能让范围较小的后续
-  // 审核覆盖或丢弃先前独立审核。冲突已在上方 fail-closed。
+  // 但每一项仍须在同一实际生产基线和目标快照上逐字节兼容；精确记录对已有路径
+  // 保持权威，后续审核只能补充新路径。非精确记录间的冲突仍在上方 fail-closed。
   const entries = new Map();
   const selected = [];
   for (const candidate of compatible) {
     let contributes = false;
     for (const [path, entry] of candidate.entries) {
       if (relevantPaths !== undefined && !relevantPaths.has(path)) continue;
+      if (exact && candidate !== exact && exact.entries.has(path)) continue;
       entries.set(path, entry);
       contributes = true;
     }

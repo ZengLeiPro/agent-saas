@@ -119,6 +119,40 @@ test('精确记录失效时禁止绕到内容兼容的旧记录', () => {
   assert.throws(() => load(f), /source changed/u);
 });
 
+test('精确基线审核与后续内容兼容的独立审核可以合成', () => {
+  const f = fixture();
+  const extraPath = 'server/src/data/extra/migrations.ts';
+  const extraEvidence = 'docs/release/额外迁移审核.md';
+  const extraSource = 'export const sql = "CREATE TABLE IF NOT EXISTS extra(id text)";';
+  f.targets[extraPath] = extraSource;
+  f.targets[extraEvidence] = '额外审核证据';
+  const later = {
+    baselineSha: 'c'.repeat(40),
+    files: [
+      {
+        path: extraPath,
+        baselineDigest: null,
+        targetDigest: digest(extraSource),
+        classification: 'expand',
+        reason: '后续独立追加表。',
+      },
+    ],
+    evidence: [{ path: extraEvidence, digest: digest('额外审核证据') }],
+  };
+  later.files.push({
+    path: PATH,
+    baselineDigest: digest(before),
+    targetDigest: digest(after),
+    classification: 'contract',
+    reason: '后续记录不得覆盖精确基线结论。',
+  });
+  f.reviews = [f.review, later];
+
+  const loaded = load(f, BASELINE, new Set([PATH, extraPath]));
+  assert.deepEqual([...loaded.entries.keys()].sort(), [PATH, extraPath].sort());
+  assert.equal(loaded.entries.get(PATH).classification, 'expand');
+});
+
 test('内容兼容记录按本次迁移路径合成，且结论冲突时阻断', () => {
   const f = fixture();
   const extraPath = 'server/src/data/extra/migrations.ts';

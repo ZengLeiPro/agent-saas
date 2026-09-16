@@ -152,6 +152,27 @@ interface ActiveStreamEntry {
   runId?: string;
   clientMsgId?: string;
 }
+export interface HeadlessChatSubmission {
+  userId: string;
+  tenantId: string;
+  message: string;
+  clientMessageId: string;
+  sessionId?: string;
+  agentId?: string;
+  model?: string;
+  reasoning?: { enabled: true; effort?: string };
+  externalContext?: {
+    apiClientId: string;
+    conversationId: string;
+    externalConversationId: string;
+    databaseConnectionId?: string;
+    metadata: Record<string, unknown>;
+  };
+}
+export type HeadlessChatSubmissionResult =
+  | { status: 'accepted'; sessionId: string; runId: string; submissionStatus: 'accepted' | 'queued' | 'running' | 'completed' }
+  | { status: 'rejected'; code: string; message: string }
+  | { status: 'unknown'; message: string };
 export class WebChannel implements BaseChannel {
   readonly name = 'web' as const;
   private displayConfig: WebMessageDisplayConfig;
@@ -168,6 +189,8 @@ export class WebChannel implements BaseChannel {
   private submissionProcessingTails = new Map<string, Promise<void>>();
   /** Requests that opted into the M20-05 structured ACK protocol. */
   private structuredInteractionRequestIds = new Set<string>();
+  private readonly headlessReasoningBySubmission = new Map<string, NonNullable<HeadlessChatSubmission['reasoning']>>();
+  private readonly headlessContextBySubmission = new Map<string, NonNullable<HeadlessChatSubmission['externalContext']>>();
   /** 返回当前活跃流数量（供 ChannelManager 聚合） */
   getActiveStreamCount(): number {
     return this.activeStreams.size;
@@ -577,6 +600,76 @@ export class WebChannel implements BaseChannel {
   /** 获取 EventBus 实例（供 routes / runtime 等外部模块使用） */
   getEventBus(): EventBus | undefined {
     return this.eventBus;
+  }
+  /** 服务端无界面入口：复用 canonical WebChannel 入队，但不暴露内部流事件。 */
+  async submitHeadlessChat(input: HeadlessChatSubmission): Promise<HeadlessChatSubmissionResult> {
+    if (!this.config.enqueueRuntime || this.config.enqueueRuntime.enabled === false) {
+      return { status: 'rejected', code: 'runtime_unavailable', message: 'Durable Agent runtime unavailable' };
+    }
+    const account = this.userStore?.findById(input.userId);
+    if (!account || account.disabled || account.tenantId !== input.tenantId || account.role !== 'user') {
+      return { status: 'rejected', code: 'account_disabled', message: 'Service account unavailable' };
+    }
+    const key = `${input.tenantId}|${input.userId}|${input.clientMessageId}`;
+    if (input.reasoning) this.headlessReasoningBySubmission.set(key, input.reasoning);
+    if (input.externalContext) this.headlessContextBySubmission.set(key, input.externalContext);
+    return new Promise<HeadlessChatSubmissionResult>((resolve) => {
+      let settled = false;
+      const finish = (result: HeadlessChatSubmissionResult) => {
+        if (settled) return;
+        settled = true; clearTimeout(timer); fakeSocket.readyState = 3; resolve(result);
+      };
+      const fakeSocket = {
+        OPEN: 1, readyState: 1,
+        send: (payload: string) => {
+          try {
+            const data = (JSON.parse(payload) as { data?: Record<string, unknown> }).data;
+            if (data?.type === 'chat_ack') {
+              const sessionId = typeof data.sessionId === 'string' ? data.sessionId : undefined;
+              const runId = typeof data.runId === 'string' ? data.runId : undefined;
+              const status = data.status;
+              if (sessionId && runId && (status === 'accepted' || status === 'queued' || status === 'running' || status === 'completed')) {
+                finish({ status: 'accepted', sessionId, runId, submissionStatus: status });
+              }
+            } else if (data?.type === 'chat_rejected') {
+              finish({ status: 'rejected', code: typeof data.reason_code === 'string' ? data.reason_code : 'submission_rejected', message: typeof data.reason === 'string' ? data.reason : 'Agent submission rejected' });
+            } else if (data?.type === 'error' && data.submissionState === 'unknown') {
+              finish({ status: 'unknown', message: 'Agent submission outcome is unknown' });
+            } else if (data?.type === 'done' && typeof data.error === 'string') {
+              finish({ status: 'rejected', code: 'runtime_submission_failed', message: data.error });
+            }
+          } catch { /* 其他流事件由 durable store 保存。 */ }
+        },
+        on: () => fakeSocket, removeListener: () => fakeSocket,
+        close: () => { fakeSocket.readyState = 3; },
+      };
+      const timer = setTimeout(() => finish({ status: 'unknown', message: 'Agent submission acknowledgement timed out' }), 15_000);
+      timer.unref?.();
+      const client: WsClient = {
+        ws: fakeSocket as unknown as WebSocket,
+        user: { sub: account.id, username: account.username, role: 'user', tenantId: account.tenantId },
+        alive: true, authenticated: true, connectedAt: Date.now(), lastActivityAt: Date.now(),
+        userAgent: 'KY-Agent-External-API/1',
+      };
+      this.handleChat(client, {
+        action: 'chat', clientCapabilities: ['chat_submission_v1'],
+        submission: {
+          version: CHAT_SUBMISSION_VERSION, text: input.message, clientMsgId: input.clientMessageId,
+          target: {
+            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            agentTarget: input.agentId
+              ? { kind: 'org-agent', tenantId: input.tenantId, orgAgentId: input.agentId }
+              : { kind: 'personal', tenantId: input.tenantId },
+          },
+          deliveryMode: 'queue', ...(input.model ? { model: input.model } : {}), attachments: [],
+        },
+      });
+      const processing = this.chatProcessingTails.get(fakeSocket as unknown as WebSocket);
+      void processing?.finally(() => {
+        this.headlessReasoningBySubmission.delete(key);
+        this.headlessContextBySubmission.delete(key);
+      });
+    });
   }
   /**
    * Scheduler/wake 后台执行路径的 Web stream bridge。
@@ -2850,6 +2943,8 @@ export class WebChannel implements BaseChannel {
       try {
         const enqueueCwd = targetCwd || resolveUserCwd(this.config.agentCwd!, userIdentity);
         const existingSessionRecord = await enqueueRuntime.sessionCatalog.get(enqueueSessionId);
+        const headlessSubmissionKey = `${user?.tenantId ?? 'tenant'}|${user?.sub ?? 'anon'}|${clientMsgId}`;
+        const headlessContext = this.headlessContextBySubmission.get(headlessSubmissionKey);
         // policy 必须在首条消息入队前 pin；共享配置已在权威语音校验前刷新，避免 Web 预建 Session
         // 把刚开启 delegation 的新会话永久写成 v1。
         const enqueueOwner = sessionOwner ?? userIdentity;
@@ -2870,12 +2965,21 @@ export class WebChannel implements BaseChannel {
           workspaceId: enqueueWorkspaceId,
           status: 'running',
           ...(orgAgentId ? { orgAgentId } : {}),
-          memoryPolicyVersion: resolveSessionMemoryPolicy({
-            existing: existingSessionRecord,
-            delegationEnabled: this.config.memoryWriteDelegationEnabled?.(enqueueOwner?.tenantId) === true,
-            channel: 'web',
-            ...(orgAgentId ? { orgAgentId } : {}),
-          }),
+          ...(headlessContext
+            ? {
+                sessionSource: 'external_api' as const,
+                externalApi: headlessContext,
+                memoryPolicyVersion: 'v2' as const,
+                memoryAutomationEligible: false,
+              }
+            : {
+                memoryPolicyVersion: resolveSessionMemoryPolicy({
+                  existing: existingSessionRecord,
+                  delegationEnabled: this.config.memoryWriteDelegationEnabled?.(enqueueOwner?.tenantId) === true,
+                  channel: 'web',
+                  ...(orgAgentId ? { orgAgentId } : {}),
+                }),
+              }),
         });
         if (existingSessionRecord) {
           await enqueueRuntime.sessionCatalog.upsert(sessionRecord);
@@ -2902,6 +3006,8 @@ export class WebChannel implements BaseChannel {
             sandboxProfile: sessionRecord.sandboxProfile,
             ...(sessionRecord.executionTarget ? { executionTarget: sessionRecord.executionTarget } : {}),
             ...(sessionRecord.orgAgentId ? { orgAgentId: sessionRecord.orgAgentId } : {}),
+            ...(sessionRecord.sessionSource ? { sessionSource: sessionRecord.sessionSource } : {}),
+            ...(sessionRecord.externalApi ? { externalApi: sessionRecord.externalApi } : {}),
             agentTarget,
             agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
             agentTargetSnapshot: {
@@ -2976,6 +3082,7 @@ export class WebChannel implements BaseChannel {
           ...(model ? { model } : {}),
           attachments: canonicalAttachments,
         };
+        const headlessReasoning = this.headlessReasoningBySubmission.get(headlessSubmissionKey);
         const enqueuedRun = await enqueueRuntime.scheduler.enqueue({
           runId: enqueueRunId,
           sessionId: enqueueSessionId,
@@ -2995,6 +3102,8 @@ export class WebChannel implements BaseChannel {
             steeringAcceptedAt,
             ...(approvalPolicy ? { approvalPolicy } : {}),
             ...(guardrailMark ? { guardrail: guardrailMark } : {}),
+            ...(headlessReasoning ? { externalApiReasoning: headlessReasoning } : {}),
+            ...(headlessContext ? { externalApi: headlessContext } : {}),
             outputTransactionMode: context.outputTransactionMode,
             chatSubmission: authoritativeChatSubmission,
             wakeMessage: {

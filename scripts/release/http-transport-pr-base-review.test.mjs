@@ -77,12 +77,32 @@ const gwsPersistReviewPaths = [
   'server/src/connectors/runtimeState.ts',
 ];
 const gwsPersistEvidence = 'docs/release/gws凭据持久化无结构变更审核-20260914.md';
+const externalClientReviewPaths = [
+  'server/src/data/externalClients/store.ts',
+  'server/src/data/externalClients/schema.ts',
+  'server/src/data/externalConversations/store.ts',
+  'server/src/data/externalConversations/schema.ts',
+  'server/src/data/databaseConnections/store.ts',
+  'server/src/data/databaseConnections/schema.ts',
+];
+const externalClientEvidencePaths = [
+  'server/src/data/externalClients/store.pg.test.ts',
+  'docs/release/外部Agent调用身份P0迁移审核-20260915.md',
+  'server/src/data/externalConversations/store.pg.test.ts',
+  'docs/release/外部Agent多轮调用P1迁移审核-20260916.md',
+  'server/src/__tests__/databaseQueryPostgres.pg.test.ts',
+  'docs/release/外部Agent数据库P2迁移审核-20260916.md',
+  'server/src/__tests__/externalAgentApi.test.ts',
+  'server/src/__tests__/externalAgentOperations.test.ts',
+  'docs/release/外部Agent运营与组织智能体P3P4迁移审核-20260916.md',
+];
 const gwsAuthInjectionReviewPaths = [
   'server/src/app/runtimeGovernanceConnectors.ts',
   'server/src/data/oauthGrants/store.ts',
   'server/src/data/oauthGrants/types.ts',
 ];
-const gwsAuthInjectionEvidence = 'docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md';
+const gwsAuthInjectionEvidence =
+  'docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md';
 const auditedPaths = [
   ...new Set([
     transport,
@@ -96,6 +116,7 @@ const auditedPaths = [
     taskboardReviewDispatch,
     ...kyAppV2ReviewPaths,
     ...gwsPersistReviewPaths,
+    ...externalClientReviewPaths,
     ...gwsAuthInjectionReviewPaths,
   ]),
 ];
@@ -108,6 +129,7 @@ const evidencePaths = [
   grokEgressEvidence,
   kyAppV2Evidence,
   gwsPersistEvidence,
+  ...externalClientEvidencePaths,
   gwsAuthInjectionEvidence,
   'docs/release/平台演示模式V49迁移审核-20260916.md',
 ];
@@ -116,8 +138,15 @@ const expandPaths = [
   ...grokExpandPaths,
   'server/src/runtime/runStoreSchema.ts',
   'server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts',
+  ...externalClientReviewPaths,
   'server/src/data/governance-schema/v49PlatformDemoMigration.ts',
 ];
+const exactBaselineAuditedPaths = auditedPaths.filter(
+  (path) => !externalClientReviewPaths.includes(path),
+);
+const exactBaselineEvidencePaths = evidencePaths.filter(
+  (path) => !externalClientEvidencePaths.includes(path),
+);
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
 const target = git('rev-parse', 'HEAD').trim();
@@ -160,7 +189,7 @@ test('HTTP baseline retains exact byte-bound reviews across Zhipu, scope retirem
 });
 
 test('both reviews reject changed target bytes, baseline bytes and changed or missing evidence', () => {
-  for (const path of [...auditedPaths, ...evidencePaths]) {
+  for (const path of [...exactBaselineAuditedPaths, ...exactBaselineEvidencePaths]) {
     assert.throws(
       () =>
         loadMigrationReviews({
@@ -173,7 +202,7 @@ test('both reviews reject changed target bytes, baseline bytes and changed or mi
       missingOrChangedError(path),
     );
   }
-  for (const path of auditedPaths) {
+  for (const path of exactBaselineAuditedPaths) {
     if (!baselineSnapshot.repositoryPaths.has(path)) continue;
     assert.throws(
       () =>
@@ -187,7 +216,7 @@ test('both reviews reject changed target bytes, baseline bytes and changed or mi
       /requires re-review/u,
     );
   }
-  for (const path of evidencePaths) {
+  for (const path of exactBaselineEvidencePaths) {
     assert.throws(
       () =>
         loadMigrationReviews({
@@ -196,6 +225,23 @@ test('both reviews reject changed target bytes, baseline bytes and changed or mi
           targetSnapshot: snapshot(target, {}, [path]),
         }),
       missingOrChangedError(path),
+    );
+  }
+});
+
+test('外部调用身份审核在当前精确基线上保持源码和证据字节绑定', () => {
+  const externalBaseline = '27fea278e5d883dd3a5d8fa99067ec6b4c853426';
+  for (const path of [...externalClientReviewPaths, ...externalClientEvidencePaths]) {
+    assert.throws(
+      () =>
+        loadMigrationReviews({
+          baseline: externalBaseline,
+          baselineSnapshot: snapshot(externalBaseline),
+          targetSnapshot: snapshot(target, {
+            [path]: `${git('show', `${target}:${path}`)}\nchanged`,
+          }),
+        }),
+      /source changed and requires re-review|evidence changed or is invalid/u,
     );
   }
 });
@@ -221,6 +267,7 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
         taskboardReviewDispatch,
         ...kyAppV2ReviewPaths,
         ...gwsPersistReviewPaths,
+        ...externalClientReviewPaths,
         ...gwsAuthInjectionReviewPaths,
       ]),
     ].sort(),
@@ -248,6 +295,7 @@ test('PR642 baseline retains scope retirement plus the independently reviewed Gr
       taskboardReviewDispatch,
       ...kyAppV2ReviewPaths,
       ...gwsPersistReviewPaths,
+      ...externalClientReviewPaths,
       ...gwsAuthInjectionReviewPaths,
     ]),
   ];

@@ -67,6 +67,13 @@ export interface RunContext extends OrgAgentWorkerRunContext {
   };
   workerId?: string;
   channelContext: ChannelContext;
+  externalApi?: {
+    apiClientId: string;
+    conversationId: string;
+    externalConversationId: string;
+    databaseConnectionId?: string;
+    metadata: Record<string, unknown>;
+  };
   approvalPolicy?: ToolApprovalPolicyOptions;
   /** Immutable Agent Profile identity pinned on SessionMeta. */
   profileId?: string;

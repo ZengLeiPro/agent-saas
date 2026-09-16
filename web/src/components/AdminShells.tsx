@@ -1,4 +1,5 @@
 import { PlatformSystemsPage } from '@/components/BusinessSystems/PlatformSystemsPage';
+import { ExternalAgentAdminPage } from '@/components/ExternalAgentAdmin/ExternalAgentAdminPage';
 import { LegacySystemDeliveryPage } from '@/components/SystemDelivery/SystemDeliveryPage';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Loader2, X } from "lucide-react";
@@ -631,6 +632,8 @@ export function PlatformAdminShell({
     switch (governanceRoute.routeId) {
       case "platform.resource-center.business-systems":
         return <PlatformSystemsPage systemId={governanceRoute.entityId} />;
+      case "platform.resource-center.external-agents":
+        return <ExternalAgentAdminPage />;
       case "platform.runtime.system-deliveries":
         return <LegacySystemDeliveryPage executionId={governanceRoute.entityId} systemId={new URLSearchParams(governanceRoute.search?.replace(/^\?/, "")).get("systemId") ?? undefined} />;
       case "platform.overview.overview":

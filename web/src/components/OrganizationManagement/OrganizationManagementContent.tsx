@@ -1,4 +1,5 @@
 import { OrganizationSystemsPage } from '@/components/BusinessSystems/OrganizationSystemsPage';
+import { ExternalAgentAdminPage } from '@/components/ExternalAgentAdmin/ExternalAgentAdminPage';
 import { lazy, Suspense, type ReactNode } from 'react';
 
 import { GovernanceCapabilityNotice } from '@/components/GovernanceConsole';
@@ -61,6 +62,9 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   Record<string, OrganizationManagementRenderer>
 > = {
   'organization.agents.business-systems': ({ tenantId, route }) => <OrganizationSystemsPage key={tenantId} tenantId={tenantId} installationId={route.entityId} />,
+  'organization.agents.external-agents': ({ tenantId }) => (
+    <ExternalAgentAdminPage tenantId={tenantId} />
+  ),
   'organization.overview.overview': ({ tenantId }) => (
     <TenantOverviewSection
       tenantId={tenantId}

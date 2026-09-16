@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
   Dialog,
@@ -62,14 +63,25 @@ export function buildMemberAccessRules(
   userId: string,
   authorize: boolean,
 ): AssignmentRule[] {
+  return buildBulkMemberAccessRules(assignments, [userId], authorize);
+}
+
+export function buildBulkMemberAccessRules(
+  assignments: AssignmentSet['assignments'],
+  userIds: string[],
+  authorize: boolean,
+): AssignmentRule[] {
+  const selectedIds = new Set(userIds);
   const rules = assignments
-    .filter((rule) => !(rule.assigneeType === 'user' && rule.assigneeId === userId))
+    .filter((rule) => !(rule.assigneeType === 'user' && selectedIds.has(rule.assigneeId ?? '')))
     .map(({ assigneeType, assigneeId, effect }) => ({
       assigneeType,
       ...(assigneeType === 'everyone' ? {} : { assigneeId }),
       effect,
     }));
-  rules.push({ assigneeType: 'user', assigneeId: userId, effect: authorize ? 'allow' : 'deny' });
+  for (const userId of selectedIds) {
+    rules.push({ assigneeType: 'user', assigneeId: userId, effect: authorize ? 'allow' : 'deny' });
+  }
   return rules;
 }
 
@@ -85,21 +97,26 @@ export function InstallationAccessOverview({
   const [appliedQuery, setAppliedQuery] = useState('');
   const [cursor, setCursor] = useState('');
   const [cursorHistory, setCursorHistory] = useState<string[]>([]);
-  const [pendingUser, setPendingUser] = useState<AccessOverview['users'][number] | null>(null);
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [pendingChange, setPendingChange] = useState<{
+    users: AccessOverview['users'];
+    authorize: boolean;
+  } | null>(null);
   const [preview, setPreview] = useState<AssignmentPreview | null>(null);
   const [command, setCommand] = useState<{
     expectedVersion: number;
     assignments: AssignmentRule[];
   } | null>(null);
-  const [busyUserId, setBusyUserId] = useState('');
+  const [busyKey, setBusyKey] = useState('');
   const [mutationError, setMutationError] = useState('');
   const resource = useManagementResource<AccessOverview>(
     `${installationPath(installationId, '/access-overview')}?${new URLSearchParams({ kind, ...(appliedQuery ? { query: appliedQuery } : {}), ...(cursor ? { cursor } : {}) })}`,
   );
 
-  async function prepareMemberChange(user: AccessOverview['users'][number]) {
-    if (busyUserId) return;
-    setBusyUserId(user.userId);
+  async function prepareMemberChange(users: AccessOverview['users'], authorize: boolean) {
+    if (busyKey || users.length === 0) return;
+    const operationKey = users.length === 1 ? users[0].userId : 'bulk';
+    setBusyKey(operationKey);
     setMutationError('');
     try {
       const baseline = await governanceAccessApi.getAssignment<AssignmentSet>(
@@ -109,7 +126,11 @@ export function InstallationAccessOverview({
       );
       const nextCommand = {
         expectedVersion: baseline.version,
-        assignments: buildMemberAccessRules(baseline.assignments, user.userId, !user.authorized),
+        assignments: buildBulkMemberAccessRules(
+          baseline.assignments,
+          users.map((user) => user.userId),
+          authorize,
+        ),
       };
       const nextPreview = await previewResourceAssignment<AssignmentPreview>(
         'system_installation',
@@ -119,17 +140,17 @@ export function InstallationAccessOverview({
       );
       setCommand(nextCommand);
       setPreview(nextPreview);
-      setPendingUser(user);
+      setPendingChange({ users, authorize });
     } catch (cause) {
       setMutationError(cause instanceof Error ? cause.message : '无法预览成员授权变更');
     } finally {
-      setBusyUserId('');
+      setBusyKey('');
     }
   }
 
   async function commitMemberChange() {
-    if (!pendingUser || !preview || !command || busyUserId) return;
-    setBusyUserId(pendingUser.userId);
+    if (!pendingChange || !preview || !command || busyKey) return;
+    setBusyKey(pendingChange.users.length === 1 ? pendingChange.users[0].userId : 'bulk');
     setMutationError('');
     try {
       await updateResourceAssignment(
@@ -138,52 +159,74 @@ export function InstallationAccessOverview({
         { ...command, ...preview },
         tenantId,
       );
-      setPendingUser(null);
+      setPendingChange(null);
       setPreview(null);
       setCommand(null);
+      setSelectedUserIds(new Set());
       resource.reload();
     } catch (cause) {
       setMutationError(cause instanceof Error ? cause.message : '成员授权变更失败');
     } finally {
-      setBusyUserId('');
+      setBusyKey('');
     }
   }
+  const selectableUsers = resource.data?.users.filter((user) => !user.authorized) ?? [];
+  const selectedUsers = selectableUsers.filter((user) => selectedUserIds.has(user.userId));
+  const allSelectableSelected =
+    selectableUsers.length > 0 && selectedUsers.length === selectableUsers.length;
+  const someSelectableSelected = selectedUsers.length > 0 && !allSelectableSelected;
   return (
     <section className="space-y-3 rounded border p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="font-medium">成员授权</h3>
           <p className="text-xs text-muted-foreground">
-            查看组织成员当前状态，并可逐行授权或取消授权。
+            查看组织成员当前状态，并可逐行或批量授权。
           </p>
         </div>
-        <div className="flex gap-2" role="tablist" aria-label="授权对象">
-          <Button
-            size="sm"
-            role="tab"
-            aria-selected={kind === 'user'}
-            variant={kind === 'user' ? 'default' : 'outline'}
-            onClick={() => {
-              setKind('user');
-              setCursor('');
-              setCursorHistory([]);
-            }}
-          >
-            成员
-          </Button>
-          <Button
-            size="sm"
-            role="tab"
-            aria-selected={kind === 'agent'}
-            variant={kind === 'agent' ? 'default' : 'outline'}
-            onClick={() => {
-              setKind('agent');
-              setCursor('');
-              setCursorHistory([]);
-            }}
-          >
-            智能体
-          </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {kind === 'user' ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={selectedUsers.length === 0 || Boolean(busyKey)}
+              onClick={() => void prepareMemberChange(selectedUsers, true)}
+            >
+              {busyKey === 'bulk'
+                ? '处理中…'
+                : `批量授权${selectedUsers.length ? `（${selectedUsers.length}）` : ''}`}
+            </Button>
+          ) : null}
+          <div className="flex gap-2" role="tablist" aria-label="授权对象">
+            <Button
+              size="sm"
+              role="tab"
+              aria-selected={kind === 'user'}
+              variant={kind === 'user' ? 'default' : 'outline'}
+              onClick={() => {
+                setKind('user');
+                setCursor('');
+                setCursorHistory([]);
+                setSelectedUserIds(new Set());
+              }}
+            >
+              成员
+            </Button>
+            <Button
+              size="sm"
+              role="tab"
+              aria-selected={kind === 'agent'}
+              variant={kind === 'agent' ? 'default' : 'outline'}
+              onClick={() => {
+                setKind('agent');
+                setCursor('');
+                setCursorHistory([]);
+                setSelectedUserIds(new Set());
+              }}
+            >
+              智能体
+            </Button>
+          </div>
         </div>
       </div>
       <form
@@ -193,6 +236,7 @@ export function InstallationAccessOverview({
           setAppliedQuery(query.trim());
           setCursor('');
           setCursorHistory([]);
+          setSelectedUserIds(new Set());
         }}
       >
         <Input
@@ -222,6 +266,20 @@ export function InstallationAccessOverview({
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr>
+                      <th className="w-10">
+                        <Checkbox
+                          aria-label="选择本页未授权成员"
+                          checked={someSelectableSelected ? 'indeterminate' : allSelectableSelected}
+                          disabled={selectableUsers.length === 0 || Boolean(busyKey)}
+                          onCheckedChange={(checked) =>
+                            setSelectedUserIds(
+                              checked === true
+                                ? new Set(selectableUsers.map((user) => user.userId))
+                                : new Set(),
+                            )
+                          }
+                        />
+                      </th>
                       <th>用户</th>
                       <th>所属部门</th>
                       <th>个人授权</th>
@@ -231,6 +289,19 @@ export function InstallationAccessOverview({
                   <tbody>
                     {resource.data.users.map((item) => (
                       <tr className="border-t" key={item.userId}>
+                        <td>
+                          <Checkbox
+                            aria-label={`选择${item.displayName}`}
+                            checked={selectedUserIds.has(item.userId)}
+                            disabled={item.authorized || Boolean(busyKey)}
+                            onCheckedChange={(checked) => {
+                              const next = new Set(selectedUserIds);
+                              if (checked === true) next.add(item.userId);
+                              else next.delete(item.userId);
+                              setSelectedUserIds(next);
+                            }}
+                          />
+                        </td>
                         <td className="py-2">
                           {item.displayName}
                           <div className="text-xs text-muted-foreground">{item.username}</div>
@@ -246,10 +317,10 @@ export function InstallationAccessOverview({
                             type="button"
                             size="sm"
                             variant={item.authorized ? 'outline' : 'default'}
-                            disabled={Boolean(busyUserId)}
-                            onClick={() => void prepareMemberChange(item)}
+                            disabled={Boolean(busyKey)}
+                            onClick={() => void prepareMemberChange([item], !item.authorized)}
                           >
-                            {busyUserId === item.userId
+                            {busyKey === item.userId
                               ? '处理中…'
                               : item.authorized
                                 ? '取消授权'
@@ -286,6 +357,7 @@ export function InstallationAccessOverview({
                 const history = [...cursorHistory];
                 setCursor(history.pop() ?? '');
                 setCursorHistory(history);
+                setSelectedUserIds(new Set());
               }}
             >
               上一页
@@ -298,6 +370,7 @@ export function InstallationAccessOverview({
                 if (!resource.data?.nextCursor) return;
                 setCursorHistory((history) => [...history, cursor]);
                 setCursor(resource.data.nextCursor);
+                setSelectedUserIds(new Set());
               }}
             >
               下一页
@@ -311,10 +384,10 @@ export function InstallationAccessOverview({
         </>
       )}
       <Dialog
-        open={Boolean(pendingUser && preview)}
+        open={Boolean(pendingChange && preview)}
         onOpenChange={(open) => {
-          if (!open && !busyUserId) {
-            setPendingUser(null);
+          if (!open && !busyKey) {
+            setPendingChange(null);
             setPreview(null);
             setCommand(null);
           }
@@ -322,11 +395,19 @@ export function InstallationAccessOverview({
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{pendingUser?.authorized ? '取消成员授权' : '授权成员'}</DialogTitle>
+            <DialogTitle>
+              {pendingChange?.authorize
+                ? pendingChange.users.length > 1
+                  ? '批量授权成员'
+                  : '授权成员'
+                : '取消成员授权'}
+            </DialogTitle>
             <DialogDescription>
-              {pendingUser?.authorized
-                ? `确认取消“${pendingUser.displayName}”访问该业务系统的权限？`
-                : `确认授权“${pendingUser?.displayName ?? ''}”访问该业务系统？`}
+              {pendingChange?.users.length && pendingChange.users.length > 1
+                ? `确认授权选中的 ${pendingChange.users.length} 名成员访问该业务系统？`
+                : pendingChange?.authorize
+                  ? `确认授权“${pendingChange.users[0]?.displayName ?? ''}”访问该业务系统？`
+                  : `确认取消“${pendingChange?.users[0]?.displayName ?? ''}”访问该业务系统的权限？`}
             </DialogDescription>
           </DialogHeader>
           {preview?.impact ? (
@@ -344,13 +425,13 @@ export function InstallationAccessOverview({
           <DialogFooter>
             <Button
               variant="outline"
-              disabled={Boolean(busyUserId)}
-              onClick={() => setPendingUser(null)}
+              disabled={Boolean(busyKey)}
+              onClick={() => setPendingChange(null)}
             >
               取消
             </Button>
-            <Button disabled={Boolean(busyUserId)} onClick={() => void commitMemberChange()}>
-              {busyUserId ? '提交中…' : '确认'}
+            <Button disabled={Boolean(busyKey)} onClick={() => void commitMemberChange()}>
+              {busyKey ? '提交中…' : '确认'}
             </Button>
           </DialogFooter>
         </DialogContent>

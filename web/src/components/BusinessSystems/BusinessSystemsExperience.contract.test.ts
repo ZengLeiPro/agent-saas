@@ -9,6 +9,7 @@ describe('业务系统配置体验契约', () => {
     expect(platformSource.match(/<TabsTrigger\b/g)).toHaveLength(2);
     expect(platformSource).toContain('系统配置');
     expect(platformSource).toContain('组织接入');
+    expect(platformSource).not.toContain('高级信息');
   });
 
   it('组织实例只保留接入概览和访问授权两个一级页签', () => {

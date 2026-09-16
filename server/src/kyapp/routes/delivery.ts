@@ -10,6 +10,7 @@ import { validateManifest, type Manifest } from '@kaiyan/ky-app-contract';
 import { requirePlatformAdmin } from '../../auth/middleware.js';
 import { isPlatformAdmin } from '../../auth/types.js';
 import type { GovernanceAuditStore } from '../../data/governance-audit/types.js';
+import type { PgMembershipStore } from '../../data/memberships/store.js';
 import type { KyAppDiagnostics } from '../delivery/diagnostics.js';
 import type { KyAppOnboardService } from '../delivery/onboard.js';
 import type { KyAppDeliveryMetrics } from '../delivery/metrics.js';
@@ -78,6 +79,7 @@ export function createKyAppDeliveryRouter(options: {
   metrics?: KyAppDeliveryMetrics;
   diagnostics?: KyAppDiagnostics;
   audit?: GovernanceAuditStore;
+  memberships?: Pick<PgMembershipStore, 'listMemberships'>;
 }): Router {
   const router = Router();
 
@@ -201,25 +203,45 @@ export function createKyAppDeliveryRouter(options: {
         installation.systemId,
         installation.installationId,
       );
-      const diagnostic = (
-        execution?.request.mode === 'existing'
-          ? (await options.connectionSettings?.get(installation.systemId))?.settings.diagnostic
-          : execution?.request.diagnostic
-      ) as
+      const systemDiagnostic = (await options.connectionSettings?.get(installation.systemId))
+        ?.settings.diagnostic;
+      const diagnostic = (systemDiagnostic ?? execution?.request.diagnostic) as
         | {
             readOnlyCapabilityId?: unknown;
             readOnlyInput?: unknown;
           }
         | undefined;
-      const adminUserId = isPlatformAdmin(req.user) ? execution?.result.adminUserId : req.user.sub;
+      let adminUserId = req.user.sub;
+      if (isPlatformAdmin(req.user)) {
+        const deliveredAdminUserId =
+          typeof execution?.result.adminUserId === 'string'
+            ? execution.result.adminUserId
+            : undefined;
+        const memberships = options.memberships
+          ? await options.memberships.listMemberships(installation.tenantId)
+          : [];
+        const activeAdmins = memberships
+          .filter(
+            (membership) => membership.status === 'active' && membership.persona === 'org_admin',
+          )
+          .sort((left, right) => Number(right.isOwner) - Number(left.isOwner));
+        adminUserId = options.memberships
+          ? (activeAdmins.find((membership) => membership.userId === deliveredAdminUserId)
+              ?.userId ??
+            activeAdmins[0]?.userId ??
+            '')
+          : (deliveredAdminUserId ?? '');
+      }
+      if (typeof adminUserId !== 'string' || adminUserId === '') {
+        return sendKyAppError(req, res, 'conflict', '组织缺少可用于诊断的有效管理员');
+      }
       if (
-        typeof adminUserId !== 'string' ||
         typeof diagnostic?.readOnlyCapabilityId !== 'string' ||
         typeof diagnostic.readOnlyInput !== 'object' ||
         diagnostic.readOnlyInput === null ||
         Array.isArray(diagnostic.readOnlyInput)
       ) {
-        return sendKyAppError(req, res, 'conflict', '交付记录缺少管理员或只读能力诊断夹具');
+        return sendKyAppError(req, res, 'conflict', '系统配置缺少只读能力诊断夹具');
       }
       const report = await options.diagnostics.run(iid.data, {
         adminUserId,

@@ -126,3 +126,85 @@ describe('KY App 离场执行', () => {
     expect(test.planOffboarding).not.toHaveBeenCalled();
   });
 });
+
+describe('KY App 一键诊断', () => {
+  it('平台管理员不依赖旧交付记录，使用系统配置和有效组织管理员执行诊断', async () => {
+    const run = vi.fn().mockResolvedValue({
+      installationId: 'iid-1',
+      checkedAt: '2026-09-16T00:00:00.000Z',
+      passed: true,
+      checks: [],
+    });
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.user = {
+        sub: 'platform-1',
+        username: 'root',
+        tenantId: 'pantheon',
+        role: 'admin',
+      };
+      next();
+    });
+    app.use(
+      '/api/app-contract/v1',
+      createKyAppDeliveryRouter({
+        store: { getByIdentity: vi.fn().mockResolvedValue(null) } as never,
+        systems: {
+          getInstallation: vi.fn().mockResolvedValue({
+            installationId: 'iid-1',
+            tenantId: 'tenant-a',
+            systemId: 'demo',
+            status: 'enabled',
+          }),
+        } as never,
+        connectionSettings: {
+          get: vi.fn().mockResolvedValue({
+            settings: {
+              diagnostic: {
+                readOnlyCapabilityId: 'order.search',
+                readOnlyInput: { keyword: 'SO-1' },
+              },
+            },
+          }),
+        } as never,
+        memberships: {
+          listMemberships: vi.fn().mockResolvedValue([
+            {
+              tenantId: 'tenant-a',
+              userId: 'member-1',
+              persona: 'member',
+              isOwner: false,
+              status: 'active',
+            },
+            {
+              tenantId: 'tenant-a',
+              userId: 'admin-owner',
+              persona: 'org_admin',
+              isOwner: true,
+              status: 'active',
+            },
+          ]),
+        },
+        diagnostics: { run } as never,
+      }),
+    );
+    const server = app.listen(0);
+    servers.push(server);
+    await new Promise<void>((resolve) => server.once('listening', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('测试端口不可用');
+
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/app-contract/v1/installations/iid-1/diagnose`,
+      { method: 'POST' },
+    );
+
+    expect(response.status).toBe(200);
+    expect(run).toHaveBeenCalledWith('iid-1', {
+      adminUserId: 'admin-owner',
+      readOnlyCapabilityId: 'order.search',
+      readOnlyInput: { keyword: 'SO-1' },
+    });
+  });
+});

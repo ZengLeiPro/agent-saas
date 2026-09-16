@@ -12,6 +12,7 @@ import type { RenderItem } from './types';
 import {
   buildBusinessStepCatalog,
   businessStepSelectionKey,
+  businessStepTimingByPlanId,
   findBusinessStepDetail,
   type BusinessStepFollowMode,
   type BusinessStepSelection,
@@ -181,8 +182,11 @@ export function useBusinessStepDetail({
     setFollowMode('follow');
   }, [selectedPlan, selection]);
 
+  const timingByPlanId = useMemo(() => businessStepTimingByPlanId(catalog), [catalog]);
+
   return {
     catalog,
+    timingByPlanId,
     selection,
     followMode,
     selectedPlan,

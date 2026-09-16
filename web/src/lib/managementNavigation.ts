@@ -415,10 +415,11 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     description: '管理平台管理员和注册策略。',
     iconKey: 'key',
     routeId: 'platform.org-business.platform-admins',
-    aliases: ['platform.org-business.signup'],
+    aliases: ['platform.org-business.signup', 'platform.org-business.demo-access'],
     tabs: [
       tab('admins', '平台管理员', 'platform.org-business.platform-admins'),
       tab('signup', '注册管理', 'platform.org-business.signup'),
+      tab('demo-access', '演示访问', 'platform.org-business.demo-access'),
     ],
   },
 

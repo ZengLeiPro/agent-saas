@@ -44,6 +44,7 @@ import {
 } from "./lazySettingsComponents";
 import { useUnifiedSettingsWorkspace } from "@/hooks/useUnifiedSettingsWorkspace";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { usePlatformDemoEntryAllowed } from "@/hooks/usePlatformDemoEntryAllowed";
 import { isAnalysisRoute, useUnifiedAnalysisWorkspace } from "@/hooks/useUnifiedAnalysisWorkspace";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
@@ -104,7 +105,8 @@ export function DesktopLayout(props: LayoutProps) {
     governanceRoute, closeOrganizationSettings: closeSettings,
   });
   const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
-  const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null }); const { open: handleOpenAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, setActiveTab });
+  const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null });
+  const platformDemoEntryAllowed = usePlatformDemoEntryAllowed({ active: accessTarget !== null || settingsMode, authEnabled, authLoading, userId: authUser?.id }); const { open: handleOpenAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, setActiveTab });
   const handleReturnToNewSession = useCallback(() => {
     newPersonalSession();
     setActiveTab('chat');
@@ -391,6 +393,7 @@ export function DesktopLayout(props: LayoutProps) {
         isAdmin={isAdmin}
         isPlatformAdmin={isPlatformAdmin}
         settingsAccess={managementAccess}
+        platformDemoEntryAllowed={platformDemoEntryAllowed}
         hasMore={hasMoreSessions}
         isLoadingMore={isLoadingMoreSessions}
         onLoadMore={loadMoreSessions}
@@ -773,6 +776,7 @@ export function DesktopLayout(props: LayoutProps) {
           <ManagementWorkspaceContent
             route={governanceRoute}
             access={managementAccess}
+            platformDemoEntryAllowed={platformDemoEntryAllowed}
             onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
             platformAdminSection={platformAdminSection}
             platformAdminEntityId={platformAdminEntityId}

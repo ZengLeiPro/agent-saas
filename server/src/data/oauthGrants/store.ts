@@ -273,8 +273,36 @@ export class PgOAuthGrantStore {
         [input.grantId, input.tenantId, input.subjectUserId],
       );
       if (existing.rows[0]) {
+        const current = grantFromRow(existing.rows[0]);
+        // Re-approve after disconnect/revoke: status may be active again via recordProjection,
+        // but leftover revocation_stage must be cleared or runtime token injection stays blocked.
+        const needsReactivate = input.status === 'active'
+          && (current.status !== 'active' || Boolean(current.revocationStage));
+        if (!needsReactivate) {
+          await client.query('COMMIT');
+          return current;
+        }
+        const reactivated = await client.query(
+          `UPDATE ${this.grantsTable} SET
+             status=$4,scope_summary_json=$5::jsonb,approved_at=$6,
+             expires_at=$7,last_used_at=$8,
+             revocation_stage=NULL,revocation_attempt=0,revocation_next_retry_at=NULL,
+             revocation_last_error_code=NULL,revocation_requested_by=NULL,revocation_purpose=NULL,
+             version=version+1,updated_at=NOW()
+           WHERE grant_id=$1 AND tenant_id=$2 AND subject_user_id=$3 RETURNING *`,
+          [input.grantId, input.tenantId, input.subjectUserId, input.status,
+            JSON.stringify(input.scopeSummary), input.approvedAt, input.expiresAt ?? null, input.lastUsedAt ?? null],
+        );
+        const approvalId = `oar-ensure-${createHash('sha256').update(`${input.grantId}|${input.action}|${input.purpose}|reactivate`).digest('hex').slice(0, 32)}`;
+        await client.query(
+          `INSERT INTO ${this.approvalsTable} (
+             approval_id,grant_id,tenant_id,subject_user_id,action,scope_summary_json,purpose,actor_user_id
+           ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8) ON CONFLICT (approval_id) DO NOTHING`,
+          [approvalId, input.grantId, input.tenantId, input.subjectUserId, input.action,
+            JSON.stringify(input.scopeSummary), input.purpose, input.actorUserId],
+        );
         await client.query('COMMIT');
-        return grantFromRow(existing.rows[0]);
+        return grantFromRow(reactivated.rows[0]);
       }
       const result = await client.query(
         `INSERT INTO ${this.grantsTable} (
@@ -314,6 +342,12 @@ export class PgOAuthGrantStore {
          ON CONFLICT (grant_id) DO UPDATE SET
            status=EXCLUDED.status,scope_summary_json=EXCLUDED.scope_summary_json,
            expires_at=EXCLUDED.expires_at,last_used_at=EXCLUDED.last_used_at,
+           revocation_stage=CASE WHEN EXCLUDED.status='active' THEN NULL ELSE ${this.grantsTable}.revocation_stage END,
+           revocation_attempt=CASE WHEN EXCLUDED.status='active' THEN 0 ELSE ${this.grantsTable}.revocation_attempt END,
+           revocation_next_retry_at=CASE WHEN EXCLUDED.status='active' THEN NULL ELSE ${this.grantsTable}.revocation_next_retry_at END,
+           revocation_last_error_code=CASE WHEN EXCLUDED.status='active' THEN NULL ELSE ${this.grantsTable}.revocation_last_error_code END,
+           revocation_requested_by=CASE WHEN EXCLUDED.status='active' THEN NULL ELSE ${this.grantsTable}.revocation_requested_by END,
+           revocation_purpose=CASE WHEN EXCLUDED.status='active' THEN NULL ELSE ${this.grantsTable}.revocation_purpose END,
            version=${this.grantsTable}.version+1,updated_at=NOW()
          WHERE ${this.grantsTable}.tenant_id=EXCLUDED.tenant_id
            AND ${this.grantsTable}.subject_user_id=EXCLUDED.subject_user_id

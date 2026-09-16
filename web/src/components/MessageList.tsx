@@ -253,6 +253,7 @@ export const MessageList = memo(function MessageList({
   // 选择、跟随、历史重映射与焦点恢复由专用 hook 统一维护；详情面板仅在选中后按需加载。
   const bubbleItems = useMemo(() => groupIntoBubbles(mainThreadItems), [mainThreadItems]);
   const {
+    timingByPlanId: businessStepTimingByPlanId,
     selection: businessStepSelection,
     followMode: businessStepFollowMode,
     selectedPlan: selectedBusinessStepPlan,
@@ -728,9 +729,8 @@ export const MessageList = memo(function MessageList({
               return (
                 <ErrorBoundary key={sub.id} inline>
                   <Suspense fallback={<div role="status" className="px-3 py-2 text-sm text-muted-foreground">正在加载业务步骤</div>}><BusinessStepFlow
-                    event={sub}
-                    sessionId={sessionId}
-                    selected={businessStepSelection}
+                    event={sub} sessionId={sessionId} selected={businessStepSelection}
+                    timingByTodoKey={businessStepTimingByPlanId.get(sub.id)}
                     onSelect={businessStepDetailMode ? selectBusinessStep : undefined}
                   /></Suspense>
                 </ErrorBoundary>

@@ -3,7 +3,7 @@ export interface ContextRecallSubject {
   tenantId: string;
   userId: string;
   /** Server-resolved organization access mode; never accepted from model or client input. */
-  accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only';
+  accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only' | 'platform_demo';
   workspaceId?: string;
   sessionId?: string;
   orgAgentId?: string;

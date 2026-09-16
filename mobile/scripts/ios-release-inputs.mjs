@@ -91,7 +91,7 @@ export async function resolveReleaseInputs(context, inputs, dependencies) {
   // normalized source/run/attempt values. Removed UI inputs are not overrides.
   assert.ok(inputs && typeof inputs === 'object' && !Array.isArray(inputs), '无效的发布参数');
   for (const key of Object.keys(inputs)) {
-    assert.ok(['operation', 'build_run'].includes(key), `不再支持发布参数 ${key}`);
+    assert.ok(['operation', 'build_run', 'marketing_version'].includes(key), `不再支持发布参数 ${key}`);
   }
   const label = inputs.operation ?? DEFAULT_RELEASE_OPERATION;
   assert.ok(Object.hasOwn(RELEASE_OPERATIONS, label), '未知的 iOS 执行操作');
@@ -99,11 +99,18 @@ export async function resolveReleaseInputs(context, inputs, dependencies) {
   // Validate manual main context before any network request, including retry.
   validateDispatch(context, { operation: 'build' });
   assert.equal(typeof (inputs.build_run ?? ''), 'string', '原构建必须是链接或编号');
+  assert.equal(typeof (inputs.marketing_version ?? ''), 'string', '营销版本必须是字符串');
   const reference = (inputs.build_run ?? '').trim();
+  const marketingVersionInput = (inputs.marketing_version ?? '').trim();
   if (operation !== 'testflight') {
     assert.equal(reference, '', '新构建不能填写原构建运行链接或编号；请清空或选择重试');
-    return validateDispatch(context, { operation });
+    return {
+      ...validateDispatch(context, { operation }),
+      marketingVersionInput,
+    };
   }
+  // Retry locks the IPA identity; marketing_version must not reallocate or rewrite it.
+  assert.equal(marketingVersionInput, '', '重试已有构建的发布不能填写营销版本；请清空 marketing_version，系统会沿用原 IPA 身份');
   const buildRunId = parseBuildRunReference(reference, context.repository);
   assert.notEqual(buildRunId, String(context.runId), '重试必须引用之前的构建运行');
   const resolved = await resolveRetryBuild(context, buildRunId, dependencies);
@@ -112,6 +119,7 @@ export async function resolveReleaseInputs(context, inputs, dependencies) {
     artifactId: resolved.artifactId,
     artifactDigest: resolved.artifactDigest,
     workflowSha: resolved.workflowSha,
+    marketingVersionInput: '',
   };
 }
 

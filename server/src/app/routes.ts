@@ -4,7 +4,7 @@ import { compensateAutomationSession, ensureAutomationSession } from './sessionA
 import type { Express, Request, Response } from 'express';
 import type { AppRuntime } from './runtime.js'; import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
 import { publishAdminCommittedConfigIdentity, registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
-import { registerGovernanceRoutes } from './governanceRoutes.js';
+import { registerGovernanceRoutes } from './governanceRoutes.js'; import { registerPlatformDemoRoutes } from './platformDemoRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
 import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
 import { createContextAdminConsumerStore, createContextAdminTargetOrganizationAccess,
@@ -952,7 +952,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         }),
       );
     }
-    registerGovernanceRoutes(app, runtime, { webChannel, executeUserOffboarding });
+    registerGovernanceRoutes(app, runtime, { webChannel, executeUserOffboarding }); registerPlatformDemoRoutes(app, runtime);
     if (
       runtime.governanceMigrationControlStore &&
       runtime.membershipStore &&

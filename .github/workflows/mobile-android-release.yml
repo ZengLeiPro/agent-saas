@@ -1,0 +1,302 @@
+name: Android 企业 APK 构建
+run-name: ${{ github.event_name == 'pull_request' && 'Android Workflow 检查' || format('Android {0} · {1}', inputs.operation, github.sha) }}
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-android-release.yml'
+      - '.github/actions/setup-pnpm/**'
+      - '.github/pnpm-standalone.sha256'
+      - '.nvmrc'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: '执行操作'
+        type: choice
+        required: true
+        default: '仅构建企业 APK'
+        options:
+          - '仅构建企业 APK'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('android-contract-{0}', github.event.pull_request.number) || 'mobile-android-enterprise-release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: '1'
+  EXPO_NO_TELEMETRY: '1'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  contract:
+    name: Android / Workflow 契约与 fail-closed 检查
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: 检出待合并代码（无发布凭据）
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: 安装已锁定 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 安装已锁定 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: 安装锁定依赖
+        run: pnpm install --frozen-lockfile
+      - name: 回归测试签名插件、分发、清单与 Actions 计划（不连接 Expo/Play）
+        run: |
+          node --test mobile/plugins/withAndroidSigningConfig.test.js
+          node --test mobile/scripts/android-distribution.test.mjs
+          node --test mobile/scripts/release-manifest.test.mjs
+          node --test mobile/scripts/android-actions.test.mjs
+          bash -n mobile/scripts/build.sh
+          bash -n mobile/scripts/build-android-native.sh
+          bash -n mobile/scripts/load-android-production-config.sh
+      - name: 企业清洁预构建（无签名凭据）
+        # Policy gate only: prebuilds in a temp dir and does NOT leave mobile/android/.
+        run: node mobile/scripts/run-native-prebuild-gate.mjs --profile enterprise
+      # prebuild-gate ≠ workspace android tree; materialize gradlew for the Gradle fail-closed check.
+      - name: 安装 JDK 17（Gradle 契约检查）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 物化 workspace Android 工程（无签名凭据）
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_V1_PROFILE: production
+          MOBILE_BUILD_PLATFORM: android
+          MOBILE_ANDROID_DISTRIBUTION: enterprise
+        run: pnpm exec expo prebuild --clean --no-install --platform android
+      - name: Gradle release 缺凭据 fail-closed
+        run: pnpm -F mobile test:android-signing:gradle
+
+  plan:
+    name: Android / 发布准入
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      do_build: ${{ steps.plan.outputs.do_build }}
+      artifact_name: ${{ steps.plan.outputs.artifact_name }}
+      version_code: ${{ steps.plan.outputs.version_code }}
+    steps:
+      - name: 检出调度版本
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 安装 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: 自动解析发布来源并等待该提交的 main CI（最多 20 分钟）
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node mobile/scripts/android-actions.mjs plan
+
+  build_android:
+    name: Android / 企业 APK 签名构建
+    needs: plan
+    if: needs.plan.outputs.do_build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: mobile-build-android-enterprise
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+    env:
+      ANDROID_SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+      ANDROID_VERSION_CODE: ${{ needs.plan.outputs.version_code }}
+    steps:
+      - name: 检出可信调度代码
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 检出精确应用源码（与调度代码隔离）
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 安装已锁定 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 安装已锁定 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: source/.nvmrc
+          cache: pnpm
+          cache-dependency-path: source/pnpm-lock.yaml
+      - name: 校验发布配置、main CI 和手动触发授权
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node mobile/scripts/android-actions.mjs guard-build source
+      - name: 按锁文件安装应用依赖（尚未注入签名凭据）
+        working-directory: source
+        run: pnpm install --frozen-lockfile
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 安装 Android SDK 命令行工具并接受许可证
+        uses: android-actions/setup-android@v3
+        with:
+          # Pin packages for Expo prebuild + Gradle assembleRelease (and EAS local).
+          # cmdline-tools come from the action; do not request deprecated SDK 'tools'.
+          # NDK r27b matches EAS image ubuntu-24.04-jdk-17-ndk-r27b-sdk-55.
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.1.12297006 cmake;3.22.1'
+      - name: 物化 release keystore 与 ephemeral credentials.json
+        id: signing
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${ANDROID_RELEASE_KEYSTORE_BASE64:?ANDROID_RELEASE_KEYSTORE_BASE64 is required}"
+          : "${ANDROID_RELEASE_STORE_PASSWORD:?ANDROID_RELEASE_STORE_PASSWORD is required}"
+          : "${ANDROID_RELEASE_KEY_ALIAS:?ANDROID_RELEASE_KEY_ALIAS is required}"
+          : "${ANDROID_RELEASE_KEY_PASSWORD:?ANDROID_RELEASE_KEY_PASSWORD is required}"
+          KEYSTORE_PATH="$RUNNER_TEMP/android-release.keystore"
+          node - "$KEYSTORE_PATH" <<'NODE'
+          const fs = require('node:fs');
+          const path = process.argv[2];
+          const encoded = (process.env.ANDROID_RELEASE_KEYSTORE_BASE64 || '').replace(/[ \t\r\n]/g, '');
+          if (!encoded) {
+            console.error('[Android Actions] ANDROID_RELEASE_KEYSTORE_BASE64 missing');
+            process.exit(3);
+          }
+          if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+            console.error('[Android Actions] ANDROID_RELEASE_KEYSTORE_BASE64 is not valid Base64');
+            process.exit(3);
+          }
+          const data = Buffer.from(encoded, 'base64');
+          const canonical = data.toString('base64');
+          if (!data.length || canonical.replace(/=+$/, '') !== encoded.replace(/=+$/, '')) {
+            console.error('[Android Actions] ANDROID_RELEASE_KEYSTORE_BASE64 decode mismatch');
+            process.exit(3);
+          }
+          fs.writeFileSync(path, data, { mode: 0o600 });
+          NODE
+          # Ephemeral EAS local credentials; never upload as an artifact.
+          umask 077
+          node - "$KEYSTORE_PATH" "source/mobile/credentials.json" <<'NODE'
+          const fs = require('node:fs');
+          const keystorePath = process.argv[2];
+          const outPath = process.argv[3];
+          const payload = {
+            android: {
+              keystore: {
+                keystorePath,
+                keystorePassword: process.env.ANDROID_RELEASE_STORE_PASSWORD,
+                keyAlias: process.env.ANDROID_RELEASE_KEY_ALIAS,
+                keyPassword: process.env.ANDROID_RELEASE_KEY_PASSWORD,
+              },
+            },
+          };
+          fs.writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          echo "keystore_path=$KEYSTORE_PATH" >> "$GITHUB_OUTPUT"
+      - name: 可选注入 EXPO_TOKEN
+        env:
+          EXPO_TOKEN_VALUE: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -n "${EXPO_TOKEN_VALUE:-}" ]; then
+            echo "EXPO_TOKEN=${EXPO_TOKEN_VALUE}" >> "$GITHUB_ENV"
+          fi
+      - name: 构建企业 APK（无 EXPO_TOKEN 时 Gradle；有 token 时 EAS local）
+        working-directory: source
+        env:
+          ANDROID_RELEASE_KEYSTORE_PATH: ${{ steps.signing.outputs.keystore_path }}
+          ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          export GITHUB_SHA="$ANDROID_SOURCE_SHA"
+          export MOBILE_SOURCE_GIT_SHA="$ANDROID_SOURCE_SHA"
+          bash mobile/scripts/build.sh android --distribution enterprise
+      - name: 校验 APK 存在并记录证书指纹（不含口令）
+        working-directory: source
+        run: |
+          set -euo pipefail
+          APK="mobile/builds/AgentSaaS-enterprise-${ANDROID_VERSION_CODE}.apk"
+          test -f "$APK"
+          SHA256="$(sha256sum "$APK" | awk '{print $1}')"
+          {
+            echo "### Android enterprise APK"
+            echo
+            echo "Source: \`$ANDROID_SOURCE_SHA\`"
+            echo
+            echo "Artifact: \`$APK\`"
+            echo
+            echo "APK SHA-256: \`$SHA256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if command -v apksigner >/dev/null 2>&1; then
+            apksigner verify --print-certs "$APK" | tee "$RUNNER_TEMP/apk-certs.txt" >/dev/null
+            CERT_LINE="$(grep -m1 'SHA-256 digest:' "$RUNNER_TEMP/apk-certs.txt" || true)"
+            if [ -n "$CERT_LINE" ]; then
+              echo >> "$GITHUB_STEP_SUMMARY"
+              echo "Signer $CERT_LINE" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          node -e '
+            const fs=require("node:fs");
+            const crypto=require("node:crypto");
+            const apk=process.argv[1];
+            const sha=process.argv[2];
+            const code=process.argv[3];
+            const source=process.argv[4];
+            const buf=fs.readFileSync(apk);
+            const record={
+              schemaVersion:1,
+              kind:"github-android-enterprise-apk",
+              package:"com.agentsaas.mobile",
+              versionCode:Number(code),
+              marketingVersion:JSON.parse(fs.readFileSync("mobile/release-manifest.json","utf8")).version.marketingVersion,
+              sourceGitSha:source,
+              apkSha256:crypto.createHash("sha256").update(buf).digest("hex"),
+              distribution:"enterprise",
+            };
+            if(record.apkSha256!==sha) process.exit(2);
+            fs.writeFileSync("mobile/builds/android-release.json", `${JSON.stringify(record,null,2)}\n`);
+          ' "$APK" "$SHA256" "$ANDROID_VERSION_CODE" "$ANDROID_SOURCE_SHA"
+      - name: 保存企业 APK 制品（不含 keystore / credentials）
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.plan.outputs.artifact_name }}
+          path: |
+            source/mobile/builds/*.apk
+            source/mobile/builds/android-release.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+          overwrite: false
+      - name: 清理 ephemeral 签名材料
+        if: always()
+        run: |
+          set +e
+          rm -f "$RUNNER_TEMP/android-release.keystore" source/mobile/credentials.json
+          rm -f "$RUNNER_TEMP/apk-certs.txt"

@@ -8,12 +8,14 @@ import { navigateSettingsRoute } from '@/lib/urlSync';
 import type { GovernanceRouteState } from '@/lib/governanceNavigation';
 import type { SettingsModalProps } from './SettingsModal';
 import { SettingsModal } from './SettingsEntry';
+import { PLATFORM_DEMO_MENU_LABEL } from '@agent/shared/lib/platformDemoConstants';
 
 interface MobileSettingsModalProps extends Omit<SettingsModalProps, 'managementGroups'> {
   governanceRoute: GovernanceRouteState | null;
   managementStatus: 'loading' | 'refreshing' | 'ready' | 'error';
   tenantEntryAllowed: boolean;
   platformEntryAllowed: boolean;
+  platformDemoEntryAllowed?: boolean;
   organizationTargetId?: string | null;
 }
 
@@ -22,6 +24,7 @@ export default function MobileSettingsModal({
   managementStatus,
   tenantEntryAllowed,
   platformEntryAllowed,
+  platformDemoEntryAllowed = false,
   organizationTargetId,
   ...settingsProps
 }: MobileSettingsModalProps) {
@@ -49,6 +52,21 @@ export default function MobileSettingsModal({
             icon: Settings2,
             onSelect: () => navigateSettingsRoute(managementRouteForPage(page, governanceRoute)),
           })),
+        }]
+      : []),
+    ...(ready && !platformEntryAllowed && platformDemoEntryAllowed
+      ? [{
+          id: 'platform-demo',
+          label: PLATFORM_DEMO_MENU_LABEL,
+          items: [{
+            id: 'overview',
+            label: '演示总览',
+            icon: Settings2,
+            onSelect: () => {
+              const page = managementPagesFor('config', 'platform')[0];
+              if (page) navigateSettingsRoute(managementRouteForPage(page, governanceRoute));
+            },
+          }],
         }]
       : []),
   ];

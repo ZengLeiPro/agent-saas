@@ -154,7 +154,7 @@
 | Android 渠道决策                | Store、Enterprise 或两者唯一值；首发/升级/回滚方式和批准人                                     | M00-03、M10-04；E3                        | blocked  |
 | 组织账号 / Team / EAS / signing | Apple/Google/Expo 组织账号、Team ID、EAS project、证书、Android signer 指纹、robot token owner | M00-02、M10-03/04、M60-04；E2/E4/E5       | blocked  |
 | 现网最高版本升级链              | iOS/Android 最高线上/内测版本、bundle/package、build/versionCode、签名及 N-1→RC 连续性         | M10-03/04、M70-02；E/F                    | blocked  |
-| 最低 OS / iPad                  | 最低 iOS、最新 iOS、Android 范围；是否正式支持 iPad                                            | M10-05、M60-02、M70-01                    | blocked  |
+| 最低 OS / iPad                  | 最低 iOS、最新 iOS、Android 范围；产品已正式宣称支持 iPad（P0 宽屏脚手架）；真机矩阵仍待 QA     | M10-05、M60-02、M70-01                    | 部分     |
 | 测试账号 / 禁用策略             | 普通 A/B、管理员、禁用用户、密码/SMS 能力开关、审核账号托管方式                                | M20-04/06、M30-01、M70-01；B/F            | blocked  |
 | 隐私正式声明                    | 隐私政策、保留/删除、位置/音频/文件口径、Apple Privacy、Google Data Safety                     | M10-05；D5                                | blocked  |
 | 商店身份                        | 商店名称、图标、bundle/package 是否沿用 `com.agentsaas.mobile`                                 | M10-03、M60-04；E                         | blocked  |

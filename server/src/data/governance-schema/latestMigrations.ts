@@ -11,6 +11,7 @@ import { governanceV45KyAppConnectionSettingsStatements } from './v45KyAppConnec
 import { governanceV46OrgGroupBindingGenerationStatements } from './v46OrgGroupBindingGenerationMigration.js';
 import { governanceV47DwsDurableReceiverStatements } from './v47DwsDurableReceiverMigration.js';
 import { governanceV48KyAppAsymmetricIdentityStatements } from './v48KyAppAsymmetricIdentityMigration.js';
+import { governanceV49PlatformDemoStatements } from './v49PlatformDemoMigration.js';
 
 export function governanceLatestMigrations(prefix: string) {
   return [
@@ -27,5 +28,6 @@ export function governanceLatestMigrations(prefix: string) {
     { version: 46, statements: governanceV46OrgGroupBindingGenerationStatements(prefix) },
     { version: 47, statements: governanceV47DwsDurableReceiverStatements(prefix) },
     { version: 48, statements: governanceV48KyAppAsymmetricIdentityStatements(prefix) },
+    { version: 49, statements: governanceV49PlatformDemoStatements(prefix) },
   ];
 }

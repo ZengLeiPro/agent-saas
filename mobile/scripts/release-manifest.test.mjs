@@ -93,7 +93,7 @@ function commandEvidence(result) {
   return `status=${result.status}\nstdout=${result.stdout ?? ''}\nstderr=${result.stderr ?? ''}`;
 }
 
-test('M10-03 manifest schema accepts the checked-in iOS-first release record', () => {
+test('M10-03 manifest schema accepts the checked-in enterprise-unlocked release record', () => {
   const manifest = cloneManifest();
   assert.equal(validateManifestSchema(manifest), manifest);
   assert.equal(manifest.verification.identity, 'verified');
@@ -101,9 +101,11 @@ test('M10-03 manifest schema accepts the checked-in iOS-first release record', (
   assert.equal(manifest.identity.iosAscAppId, '6808382989');
   assert.equal(manifest.identity.iosTestFlightInternalGroupName, 'kaiyan');
   assert.equal(manifest.verification.versions, 'verified');
-  assert.equal(manifest.version.androidVersionCode, null);
-  assert.equal(manifest.target.distribution, null);
-  assert.equal(manifest.verification.distribution, 'pending-external-verification');
+  assert.equal(manifest.version.androidVersionCode, 1);
+  assert.equal(manifest.target.distribution, 'enterprise');
+  assert.equal(manifest.verification.distribution, 'verified');
+  assert.equal(manifest.version.latestPublished.androidVersionCode, null);
+  assert.equal(manifest.target.gitSha, null);
   assert.equal(manifest.oauthCallback.enabled.production, false);
   assert.deepEqual(manifest.oauthCallback.profiles.production, []);
 });
@@ -181,8 +183,11 @@ test('M10-03 monotonic release rules reject regressions and reused build integer
 test('M10-03 production requires verified identity/version facts and all release target fields', () => {
   const manifest = cloneManifest();
   manifest.target.profile = null;
+  manifest.target.distribution = null;
+  manifest.version.androidVersionCode = null;
   manifest.verification.identity = 'pending-external-verification';
   manifest.verification.versions = 'pending-external-verification';
+  manifest.verification.distribution = 'pending-external-verification';
   assert.throws(
     () =>
       assertProductionReady(manifest, {
@@ -203,7 +208,7 @@ test('M10-03 production requires verified identity/version facts and all release
   );
 });
 
-test('M10-03 iOS-first production does not invent Android, OAuth, or prior-version facts', () => {
+test('M10-03 iOS production stays ready while Android enterprise unlock leaves latestPublished unset', () => {
   const manifest = cloneManifest();
   assert.doesNotThrow(() =>
     assertProductionReady(manifest, {
@@ -213,7 +218,15 @@ test('M10-03 iOS-first production does not invent Android, OAuth, or prior-versi
       sourceGitSha: FULL_GIT_SHA,
     }),
   );
-  assert.equal(manifest.version.androidVersionCode, null);
+  assert.doesNotThrow(() =>
+    assertProductionReady(manifest, {
+      profile: 'production',
+      platform: 'android',
+      distribution: 'enterprise',
+      sourceGitSha: FULL_GIT_SHA,
+    }),
+  );
+  assert.equal(manifest.version.androidVersionCode, 1);
   assert.deepEqual(manifest.version.latestPublished, {
     marketingVersion: null,
     iosBuildNumber: null,
@@ -282,17 +295,19 @@ test('M10-03 conflicting profile declarations fail closed', () => {
   );
 });
 
-test('M10-03 development and preview configs generate without external store facts', () => {
+test('M10-03 development and preview configs generate without production store gates', () => {
   const { manifest, staticExpoConfig } = loadRepositoryInputs();
   for (const profile of ['development', 'preview']) {
     const context = { profile, sourceGitSha: FULL_GIT_SHA };
     const config = createExpoConfig(staticExpoConfig, { manifest, context });
     assert.doesNotThrow(() => assertExpoIdentityMatchesManifest(config, manifest, context));
-    assert.equal(config.android.versionCode, undefined);
+    // Non-production profiles skip assertProductionReady, but createExpoConfig still
+    // surfaces checked-in androidVersionCode when the manifest field is non-null.
+    assert.equal(config.android.versionCode, 1);
     assert.equal(config.extra.releaseManifest.profile, profile);
     assert.deepEqual(config.extra.oauthCallback.allowlist, ['agent-saas://oauth/callback']);
     assert.equal(config.android.intentFilters[0].autoVerify, false);
-    assert.equal(config.extra.releaseManifest.version.androidVersionCode, 'not-set');
+    assert.equal(config.extra.releaseManifest.version.androidVersionCode, 1);
   }
 });
 
@@ -423,15 +438,32 @@ test('M10-03 mobile public Expo config matches manifest identity and exposes art
     expoConfig.ios.infoPlist.AgentSaaSReleaseSourceGitSHA,
     expoConfig.extra.releaseManifest.sourceGitSha,
   );
-  assert.equal(expoConfig.extra.releaseManifest.version.androidVersionCode, 'not-set');
+  assert.equal(expoConfig.extra.releaseManifest.version.androidVersionCode, 1);
 });
 
-test('M10-03 production config is fail closed with the checked-in unverified manifest', () => {
+test('M10-03 checked-in enterprise-unlocked manifest authorizes android/enterprise production config', () => {
   const { staticExpoConfig, manifest } = loadRepositoryInputs();
+  const context = {
+    profile: 'production',
+    platform: 'android',
+    distribution: 'enterprise',
+    sourceGitSha: FULL_GIT_SHA,
+  };
+  const config = createExpoConfig(staticExpoConfig, { manifest, context });
+  assert.equal(config.android.versionCode, 1);
+  assert.equal(config.extra.releaseManifest.version.androidVersionCode, 1);
+  assert.equal(config.extra.releaseManifest.profile, 'production');
+  assert.doesNotThrow(() => assertExpoIdentityMatchesManifest(config, manifest, context));
+});
+
+test('M10-03 production config is fail closed with an intentionally unverified fixture', () => {
+  const { staticExpoConfig } = loadRepositoryInputs();
+  const unverified = cloneManifest();
+  unverified.verification.distribution = 'pending-external-verification';
   assert.throws(
     () =>
       createExpoConfig(staticExpoConfig, {
-        manifest,
+        manifest: unverified,
         context: {
           profile: 'production',
           platform: 'android',
@@ -443,7 +475,7 @@ test('M10-03 production config is fail closed with the checked-in unverified man
   );
 });
 
-test('M10-03 checked-in production manifest authorizes iOS without Android release facts', () => {
+test('M10-03 checked-in production manifest print-build-values includes androidVersionCode 1', () => {
   const sourceGitSha = spawnSync('git', ['rev-parse', 'HEAD'], {
     cwd: REPOSITORY_ROOT,
     encoding: 'utf8',
@@ -462,7 +494,7 @@ test('M10-03 checked-in production manifest authorizes iOS without Android relea
     maxBuffer: 8 * 1024 * 1024,
   });
   assert.equal(result.status, 0, commandEvidence(result));
-  assert.equal(result.stdout, '1.0.0|\n');
+  assert.equal(result.stdout, '1.0.0|1\n');
 });
 
 test('M10-03 build script reads release version through the manifest verifier', () => {

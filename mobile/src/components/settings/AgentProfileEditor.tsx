@@ -49,17 +49,24 @@ import {
 import { getServerUrl } from "../../platform/mobileConfig";
 import { isV1RouteAllowed } from "../../v1/v1Capabilities";
 import { getV1BuildProfile } from "../../v1/v1Runtime";
+import { useBreakpoint } from "../../hooks/useBreakpoint";
+import { PersonaEditorBody } from "./PersonaEditorBody";
 
 interface AgentProfileEditorProps {
   username?: string;
   title: string;
   activityDetail: string;
+  /** md+ settings detail pane: inline chrome; persona nests instead of stack push */
+  embedded?: boolean;
+  onRequestClose?: () => void;
 }
 
 export function AgentProfileEditor({
   username: targetUsername,
   title,
   activityDetail,
+  embedded = false,
+  onRequestClose,
 }: AgentProfileEditorProps) {
   useEffect(() => {
     reportActivity("agent_profile_viewed", { detail: activityDetail });
@@ -67,7 +74,9 @@ export function AgentProfileEditor({
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { isMdUp } = useBreakpoint();
   const { user } = useAuth();
+  const [nestedDoc, setNestedDoc] = useState<"persona" | "memory" | null>(null);
   const customSkillsEnabled = (
     user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features
   ).customSkillsEnabled;
@@ -198,26 +207,31 @@ export function AgentProfileEditor({
       onPress: () => void handleResetAvatar(),
     });
   }
+  const openDoc = (mode: "persona" | "memory") => {
+    if (!username) return;
+    // md+: nest in settings detail / this screen (deep-link /persona-editor stays full-screen)
+    if (isMdUp) {
+      setNestedDoc(mode);
+      return;
+    }
+    router.push({
+      pathname: "/persona-editor",
+      params: { username, mode },
+    });
+  };
+
   if (showPersonaEditor) {
     actionRows.push({
       key: "persona",
       Icon: Palette,
       label: "人格定义",
-      onPress: () =>
-        router.push({
-          pathname: "/persona-editor",
-          params: { username: username!, mode: "persona" },
-        }),
+      onPress: () => openDoc("persona"),
     });
     actionRows.push({
       key: "memory",
       Icon: Layers,
       label: "Agent 记忆",
-      onPress: () =>
-        router.push({
-          pathname: "/persona-editor",
-          params: { username: username!, mode: "memory" },
-        }),
+      onPress: () => openDoc("memory"),
     });
   }
   if (showSkills) {
@@ -319,6 +333,21 @@ export function AgentProfileEditor({
           alignItems: "center",
           paddingTop: 100,
         },
+        embeddedChrome: {
+          flexDirection: "row" as const,
+          alignItems: "center" as const,
+          minHeight: 48,
+          paddingHorizontal: spacing.sm,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: colors.border,
+          gap: spacing.sm,
+        },
+        embeddedTitle: {
+          flex: 1,
+          ...fontScale.base,
+          color: colors.foreground,
+          fontWeight: "600" as const,
+        },
         modalOverlay: {
           flex: 1,
           backgroundColor: colors.overlayHeavy,
@@ -346,16 +375,23 @@ export function AgentProfileEditor({
   const headerTitle =
     realName && targetUsername ? `${realName} 的 Agent` : title;
 
-  return (
-    <>
-      <Stack.Screen
-        options={{
-          title: headerTitle,
-        }}
+  if (nestedDoc && username) {
+    return (
+      <PersonaEditorBody
+        username={username}
+        mode={nestedDoc}
+        embedded
+        onRequestClose={() => setNestedDoc(null)}
       />
+    );
+  }
+
+  const body = (
+    <>
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
+        testID={embedded ? "agent-profile-pane" : "agent-profile-screen"}
       >
         {loading ? (
           <View style={styles.loadingCenter}>
@@ -501,6 +537,37 @@ export function AgentProfileEditor({
           )}
         </Pressable>
       </Modal>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background }} testID="agent-profile-embedded-root">
+        <View style={styles.embeddedChrome} testID="agent-profile-embedded-chrome">
+          <TouchableOpacity
+            onPress={() => onRequestClose?.()}
+            hitSlop={8}
+            accessibilityLabel="返回"
+          >
+            <X size={22} color={colors.foreground} strokeWidth={2} />
+          </TouchableOpacity>
+          <Text style={styles.embeddedTitle} numberOfLines={1}>
+            {headerTitle}
+          </Text>
+        </View>
+        {body}
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <Stack.Screen
+        options={{
+          title: headerTitle,
+        }}
+      />
+      {body}
     </>
   );
 }

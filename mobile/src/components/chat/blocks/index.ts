@@ -11,6 +11,13 @@ export { BusinessStepFlow, BusinessStepPlanUpdate } from './BusinessStepFlow';
 export { BusinessStepStatusIcon, BusinessStepTimelineRow } from './BusinessStepTimeline';
 export { BlockActionProvider, useBlockActionContext } from './BlockActionContext';
 export { MessageCitationCard } from './CitationCard';
+export {
+  ChatRightSlotProvider,
+  useChatRightSlot,
+  type ChatRightArtifactPreviewRequest,
+  type ChatRightFilePreviewRequest,
+  type ChatRightSlotContextValue,
+} from './ChatRightSlotContext';
 export { ContextCitationSheet, type ContextCitationSheetProps } from './ContextCitationSheet';
 export { DetailLines, type DetailVariant } from './DetailLines';
 export { FileDownloadCard } from './FileDownloadCard';

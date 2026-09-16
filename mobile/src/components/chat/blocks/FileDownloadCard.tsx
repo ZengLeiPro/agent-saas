@@ -11,6 +11,9 @@ import {
   mobileArtifactWarning,
   selectMobileArtifactViewer,
 } from '../../../lib/artifactViewAdapter';
+import { useChatRightSlot } from './ChatRightSlotContext';
+import { shouldOpenArtifactInRightSlot } from '../../../lib/artifactRightSlot';
+import { useBreakpoint } from '../../../hooks/useBreakpoint';
 import { CATEGORY_ICON, useMessageStyles } from './shared';
 
 // --- File Download ---
@@ -24,6 +27,8 @@ export function FileDownloadCard({
   const colors = useColors();
   const typo = useChatTypography();
   const styles = useMessageStyles(colors, typo);
+  const rightSlot = useChatRightSlot();
+  const { isMdUp } = useBreakpoint();
   const [resolvedSize, setResolvedSize] = useState(message.fileSize);
   const [downloading, setDownloading] = useState(false);
 
@@ -113,12 +118,35 @@ export function FileDownloadCard({
       );
       return;
     }
+    if (
+      artifactId &&
+      shouldOpenArtifactInRightSlot(isMdUp) &&
+      rightSlot?.openArtifactPreview({
+        artifactId,
+        fileName: message.fileName,
+        fileSize: resolvedSize || message.fileSize,
+      })
+    ) {
+      return;
+    }
     if (!artifactId && isPreviewable && onPreviewMd) {
       onPreviewMd(message.filePath);
       return;
     }
     await handleDownload();
-  }, [artifactId, isRetiredHtml, isPreviewable, onPreviewMd, message.filePath, handleDownload]);
+  }, [
+    artifactId,
+    isRetiredHtml,
+    isPreviewable,
+    onPreviewMd,
+    message.filePath,
+    message.fileName,
+    message.fileSize,
+    resolvedSize,
+    handleDownload,
+    isMdUp,
+    rightSlot,
+  ]);
 
   return (
     <TouchableOpacity

@@ -33,6 +33,7 @@ export interface DesktopSessionSidebarProps {
   onCloseSettings?: () => void;
   isAdmin?: boolean;
   settingsAccess?: ManagementSettingsAccess;
+  platformDemoEntryAllowed?: boolean;
   /** 平台 admin（跨组织管理者）。组织管理入口对 admin 可见，平台管理入口仅平台 admin 可见。 */
   isPlatformAdmin?: boolean;
   hasMore?: boolean;

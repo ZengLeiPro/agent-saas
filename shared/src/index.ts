@@ -410,7 +410,6 @@ export { registerRefresh, unregisterRefresh, refreshAll } from './lib/refreshBus
 
 // Lib - auth fetch / resource fetch
 export { authFetch, authFetchResource, setOnUnauthorized } from './lib/authFetch';
-
 // Lib - 安全 JSON 解析（content-type 非 JSON 时抛带上下文错误）
 export { parseJsonResponse } from './lib/parseJsonResponse';
 
@@ -791,34 +790,26 @@ export type {
 
 // Lib - Agent 活动分组折叠摘要 / runtime_status 中文标签
 export {
-  getActiveItemIndex,
-  getActivityDurationMs,
-  getCompletedGroupTitle,
-  getRuntimeStatusLabel,
-  getRuntimeStatusMeta,
-  getRuntimeStatusTone,
-  isActiveActivity,
-  isWaitingForUserAction,
-  selectActivityGroupSummary,
+  getActiveItemIndex, getActivityDurationMs, getCompletedGroupTitle,
+  getRuntimeStatusLabel, getRuntimeStatusMeta, getRuntimeStatusTone,
+  isActiveActivity, isWaitingForUserAction, selectActivityGroupSummary,
+  activityLeafInterval, activityWallClockDurationMs, collectActivityTimingLeaves,
+  earliestLiveStartedAtMs, mergeIntervalDurationMs, orphanDurationFallbackMs,
 } from './lib/activityGroupSummary';
 export type {
-  GroupSummaryInfo,
-  RuntimeStatus,
-  RuntimeStatusIcon,
+  GroupSummaryInfo, RuntimeStatus, RuntimeStatusIcon,
+  ActivityTimingLeaf, TimeInterval,
 } from './lib/activityGroupSummary';
 
-// Lib - 业务步骤状态语义（步骤流 / 时间线 / 详情面板共用）
+// Lib - 业务步骤状态语义 + 目录墙钟耗时（步骤流 / 时间线 / 详情面板共用）
 export {
-  businessStepOverallStatus,
-  isEndedWithoutTerminal,
-  outcomeToneMeta,
-  todoAccessibleStatus,
-  todoStatusMeta,
-  businessStepResultPlaceholder,
-  type BusinessStepIcon,
-  type BusinessStepOverallLabel,
-  type BusinessStepOverallStatus,
-  type BusinessStepStatusMeta,
+  businessStepOverallStatus, isEndedWithoutTerminal, outcomeToneMeta,
+  todoAccessibleStatus, todoStatusMeta, businessStepResultPlaceholder,
+  buildBusinessStepCatalog, businessStepTimingByPlanId, businessStepTimingByTodoKey,
+  resolveBusinessStepDurationMs,
+  type BusinessStepIcon, type BusinessStepOverallLabel, type BusinessStepOverallStatus,
+  type BusinessStepStatusMeta, type BusinessStepCatalog, type BusinessStepDetailView,
+  type BusinessStepPlanView, type BusinessStepTodoTiming,
 } from './lib/businessStepStatus';
 
 // Lib - 右侧企业系统面板（与 ToolPresentation 同源，无独立数据通道）

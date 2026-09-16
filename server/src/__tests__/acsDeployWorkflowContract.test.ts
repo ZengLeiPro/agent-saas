@@ -390,7 +390,7 @@ describe('ACS deployment and classifier contract', () => {
       'include: ${{ fromJSON(needs.ci_plan.outputs.test_matrix) }}',
     );
     expect(ciWorkflow).toContain(
-      "image: ${{ matrix.workspace == 'server' && 'postgres:16-alpine' || '' }}",
+      "image: ${{ matrix.workspace == 'server' && 'agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/postgres:16-alpine' || '' }}",
     );
     expect(ciWorkflow).toContain(
       'TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test',

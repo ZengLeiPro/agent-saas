@@ -38,10 +38,15 @@ env:
   ACR_REGISTRY: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com
   ACR_REPOSITORY: agent-saas/acs-sandbox
 
+defaults:
+  run:
+    shell: bash   # 自建 runner 的容器里默认 sh，很多 step 用 pipefail 等 bash 语法
+
 jobs:
   guard:
     name: 验证部署请求与固定的业务源码
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 5
     permissions:
       contents: read
@@ -68,7 +73,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 45
     environment: staging
     permissions:
@@ -105,7 +111,7 @@ jobs:
         run: node scripts/release/deployment-engine.mjs .github/workflows/deploy-staging.yml "$RUNNER_TEMP/deployment-engine.json"
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 配置 Node.js
         uses: actions/setup-node@v5
@@ -294,7 +300,8 @@ jobs:
       evidence_artifact_id: ${{ steps.fresh_authority.outputs.artifact-id }}
     needs: [ensure-evidence-writer, guard]
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 45
     environment: production
     permissions:
@@ -378,7 +385,7 @@ jobs:
 
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
@@ -745,7 +752,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 50
     environment: staging
     permissions:
@@ -847,7 +855,8 @@ jobs:
     name: 自动触发生产环境发布
     needs: build-deploy-verify
     if: success() && github.ref == 'refs/heads/main' && inputs.promote_to_production == true
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 5
     permissions:
       contents: read
@@ -887,7 +896,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 120
     environment: staging
     env:
@@ -982,7 +992,7 @@ jobs:
         run: node scripts/release/deployment-engine.mjs .github/workflows/deploy-staging.yml "$RUNNER_TEMP/deployment-engine.json"
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:

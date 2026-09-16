@@ -36,12 +36,17 @@ env:
   NODE_VERSION: '22.23.1'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+defaults:
+  run:
+    shell: bash   # 自建 runner 的容器里默认 sh，很多 step 用 pipefail 等 bash 语法
+
 jobs:
   # ── 门禁计划：PR 只跑受影响工作区 + affected 测试、不收集覆盖率；
   #    push main / dispatch 全量分片 + 覆盖率。PR 选择子集，main 保留权威全量验证。
   ci_plan:
     name: 预检 / 规划
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 5
     outputs:
       acs_required: ${{ steps.acs.outputs.required }}
@@ -96,7 +101,8 @@ jobs:
   # Stable required check; an intentional PR no-op succeeds, but a failed plan never does.
   acs-impact-gate:
     name: ACS Impact Gate
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 25
     needs: ci_plan
     if: ${{ !cancelled() }}
@@ -127,14 +133,7 @@ jobs:
 
       - name: 配置 pnpm
         if: needs.ci_plan.outputs.acs_required == 'true'
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        if: needs.ci_plan.outputs.acs_required == 'true'
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 安装依赖
         id: acs_install
@@ -251,7 +250,8 @@ jobs:
 
   preflight_checks:
     name: 预检 / 静态检查
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 15
 
     steps:
@@ -262,13 +262,7 @@ jobs:
           fetch-depth: 0
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
@@ -278,7 +272,8 @@ jobs:
 
   migration_reviews:
     name: 预检 / 历史迁移审核
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 15
     steps:
       - name: 检出代码
@@ -286,12 +281,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
       - name: 校验已审核的生产迁移基线
@@ -301,7 +291,8 @@ jobs:
   # 覆盖率以 blob 形式上传，由独立 coverage_reports job 用 vitest --merge-reports 合并。
   tests:
     name: 预检 / 测试（${{ matrix.workspace }} ${{ matrix.shard }}/${{ matrix.total }}）
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 15
     needs: ci_plan
     strategy:
@@ -313,7 +304,7 @@ jobs:
     # 避免 Web/Shared 为未使用的数据库多付容器初始化时间。
     services:
       postgres:
-        image: ${{ matrix.workspace == 'server' && 'postgres:16-alpine' || '' }}
+        image: ${{ matrix.workspace == 'server' && 'agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/postgres:16-alpine' || '' }}
         env:
           POSTGRES_USER: agent_test
           POSTGRES_PASSWORD: ci-only-password
@@ -336,14 +327,7 @@ jobs:
 
       - name: 配置 pnpm
         if: matrix.workspace != 'none'
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        if: matrix.workspace != 'none'
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 安装依赖
         if: matrix.workspace != 'none'
@@ -374,13 +358,14 @@ jobs:
 
   postgres_contracts:
     name: 预检 / PostgreSQL 契约
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 15
     needs: ci_plan
     if: needs.ci_plan.outputs.postgres == 'true'
     services:
       postgres:
-        image: postgres:16-alpine
+        image: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/postgres:16-alpine
         env:
           POSTGRES_USER: agent_test
           POSTGRES_PASSWORD: ci-only-password
@@ -400,13 +385,7 @@ jobs:
           fetch-depth: 0
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
@@ -424,7 +403,8 @@ jobs:
 
   web_production:
     name: 预检 / Web 生产构建
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 15
     needs: ci_plan
     if: needs.ci_plan.outputs.web_production == 'true'
@@ -434,13 +414,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
@@ -451,7 +425,8 @@ jobs:
   # Metro 导出 iOS+Android bundle 是 Mobile 门禁里最慢的一步，独立成 job 与契约测试并行。
   mobile_router_export:
     name: 预检 / 移动端路由导出
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 15
     needs: ci_plan
     if: needs.ci_plan.outputs.mobile == 'true'
@@ -461,14 +436,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
@@ -478,7 +446,8 @@ jobs:
 
   mobile_contract:
     name: 预检 / 移动端与原生发布契约
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 20
     needs: ci_plan
     if: needs.ci_plan.outputs.mobile == 'true'
@@ -488,14 +457,19 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
-      - name: 配置 Node.js 22.23.1 与工作区缓存
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+      # 工具链由 container 镜像固定（ci-node:<NODE_VERSION>），不再用 actions/setup-node：
+      # 自建 runner 出网走代理，该 action 每次从 GitHub 拉 383MB 的 node-versions 包（实测 6 分钟），
+      # 其 cache: pnpm 又要往返同量级的 store 缓存，直接把 job 拖过超时。
+      - name: 校验容器内 Node 版本
+        run: |
+          set -euo pipefail
+          actual="$(node -v)"
+          test "$actual" = "v${NODE_VERSION}" || {
+            echo "::error title=mobile_contract::容器 Node 版本 $actual 与 NODE_VERSION v${NODE_VERSION} 不一致，请同步更新 container 镜像 tag"
+            exit 1
+          }
 
       - name: 按锁文件安装工作区依赖
         run: pnpm install --frozen-lockfile
@@ -568,7 +542,8 @@ jobs:
 
   release_packages:
     name: 预检 / 真实发布包
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 20
     needs: ci_plan
     if: needs.ci_plan.outputs.release_packages == 'true'
@@ -576,7 +551,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:16-alpine
+        image: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/postgres:16-alpine
         env:
           POSTGRES_USER: agent_test
           POSTGRES_PASSWORD: ci-only-password
@@ -594,12 +569,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v5
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
       - name: 构建同一提交的不可变发布包
@@ -617,7 +587,8 @@ jobs:
 
   writer_bundle:
     name: 预检 / Writer 真实入口
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 10
     needs: ci_plan
     if: needs.ci_plan.outputs.release_packages == 'true'
@@ -625,12 +596,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v5
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
       - name: 从 Writer bundle 验证两种入口及能力
@@ -638,24 +604,33 @@ jobs:
 
   browser_smoke:
     name: 预检 / 浏览器应用壳
-    runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    runs-on: kaiyan-linux
+    # -b2 在 ci-node:22.23.1 基础上预装了 Playwright chromium 的系统依赖，
+    # job 以 uid 1001 运行、无法在 step 里提权 apt-get，故依赖必须来自镜像。
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1-b2
+    timeout-minutes: 20
     needs: ci_plan
     if: needs.ci_plan.outputs.browser_smoke == 'true'
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
+      # 不用 actions/setup-node：容器镜像已经是 node ${{ env.NODE_VERSION }}，
+      # 而该 action 会从 GitHub 拉 383MB 的 node-versions 包（自建 runner 出网走代理，实测 6 分钟），
+      # 连带 cache: pnpm 恢复同量级 store 缓存，直接吃满本 job 的超时预算。
+      - name: 校验容器内 Node 版本
+        run: |
+          set -euo pipefail
+          actual="$(node -v)"
+          test "$actual" = "v${NODE_VERSION}" || {
+            echo "::error title=browser_smoke::容器 Node 版本 $actual 与 NODE_VERSION v${NODE_VERSION} 不一致，请同步更新 container 镜像 tag"
+            exit 1
+          }
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
       - name: 安装 Chromium
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install chromium
       - name: 运行隔离应用壳协议烟测
         run: pnpm exec playwright test -c e2e/ky-app-shell.playwright.config.ts
       - name: 保存浏览器失败证据
@@ -671,7 +646,8 @@ jobs:
   # 本汇总 Job 都会明确失败；计划跳过的门禁只在计划说明跳过时才被接受。
   coverage_reports:
     name: 覆盖率汇总
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 10
     needs: [ci_plan, tests]
     if: ${{ !cancelled() && needs.tests.result == 'success' && needs.ci_plan.outputs.coverage == 'true' }}
@@ -681,13 +657,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
@@ -742,7 +712,8 @@ jobs:
 
   build:
     name: Build & Check
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 15
     needs:
       [
@@ -820,7 +791,8 @@ jobs:
 
   deploy_plan:
     name: 规划生产部署
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     environment: production
     timeout-minutes: 5
     needs: build
@@ -955,7 +927,8 @@ jobs:
   # 后入口文件（no-cache），保证 index.html 引用的资源先就位。
   deploy-web-oss:
     name: 将 Web 部署到 OSS
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     environment: production
     timeout-minutes: 15
     # 只接受 deploy_plan 已证明无需 ECS。
@@ -996,13 +969,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
-
-      - name: 配置 Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
@@ -1635,7 +1602,8 @@ jobs:
     name: 清理已退役 Workflow 注册项
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 5
     permissions:
       contents: read

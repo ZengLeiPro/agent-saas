@@ -46,6 +46,10 @@ env:
   FASTLANE_HIDE_CHANGELOG: '1'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+defaults:
+  run:
+    shell: bash   # 自建 runner 的容器里默认 sh，很多 step 用 pipefail 等 bash 语法
+
 jobs:
   contract:
     name: iOS / Workflow 与 macOS 工具链检查
@@ -58,7 +62,7 @@ jobs:
         with:
           persist-credentials: false
       - name: 安装已锁定 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 安装已锁定 Node.js
         uses: actions/setup-node@v5
         with:
@@ -95,7 +99,8 @@ jobs:
   plan:
     name: iOS / 发布准入
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/node:22-bookworm
     timeout-minutes: 25
     environment: mobile-submit-ios-testflight
     permissions:
@@ -165,7 +170,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: 安装已锁定 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 安装已锁定 Node.js
         uses: actions/setup-node@v5
         with:
@@ -248,7 +253,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: 安装已锁定 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 安装已锁定 Node.js
         uses: actions/setup-node@v5
         with:

@@ -265,13 +265,17 @@ test('PR 计划先检查真实变更路径的发布分类，失败传递到汇�
 
 test('pnpm 只从固定二进制安装，不再经过 npm registry 自举', () => {
   assert.doesNotMatch(workflow, /pnpm\/action-setup/u);
-  assert.match(workflow, /uses: \.\/\.github\/actions\/setup-pnpm/u);
+  // 自建 ACS runner（ARC 无共享卷模式）下 runner 侧没有 checkout，本地 composite action 读不到 action.yml，
+  // 因此引用同仓远程路径 ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main；本地路径写法仍兼容。
+  const setupPnpmRef = /uses: (?:\.\/|ZengLeiPro\/agent-saas\/)\.github\/actions\/setup-pnpm(?:@main)?/u;
+  assert.match(workflow, setupPnpmRef);
   // composite action 依赖已 checkout 的仓库文件，每个 job 里必须先 checkout。
   for (const job of workflow.split(/\n(?=  [a-z_-]+:\n)/u)) {
-    if (!job.includes('uses: ./.github/actions/setup-pnpm')) continue;
+    const ref = job.search(setupPnpmRef);
+    if (ref === -1) continue;
     assert.ok(
       job.indexOf('uses: actions/checkout@') > -1 &&
-        job.indexOf('uses: actions/checkout@') < job.indexOf('uses: ./.github/actions/setup-pnpm'),
+        job.indexOf('uses: actions/checkout@') < ref,
       `setup-pnpm runs before checkout in job:\n${job.slice(0, 80)}`,
     );
   }
@@ -282,9 +286,10 @@ test('Mobile gate 固定工具链、全量跑一遍且只上传失败日志', ()
   assert.ok(match, 'mobile_contract job is missing');
   const job = match[0];
   for (const marker of [
-    'node-version: ${{ env.NODE_VERSION }}',
-    'cache: pnpm',
-    'cache-dependency-path: pnpm-lock.yaml',
+    // 工具链由 container 镜像固定（自建 runner 上 actions/setup-node 要从 GitHub 拉 383MB，
+    // 走代理实测 6 分钟，会把 job 拖过超时），改为断言镜像 tag 与容器内版本校验。
+    'container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1',
+    'test "$actual" = "v${NODE_VERSION}"',
     'pnpm install --frozen-lockfile',
     'pnpm -F @agent/shared typecheck && pnpm -F mobile typecheck',
     'pnpm -F mobile lint:maestro && pnpm -F mobile lint:m70-01 && pnpm -F mobile lint:m70-02',

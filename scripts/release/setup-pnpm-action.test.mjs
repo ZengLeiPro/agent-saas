@@ -66,9 +66,10 @@ test('所有 workflow 都改用固定二进制安装 pnpm', () => {
       /pnpm\/action-setup/u,
       `${name} still bootstraps pnpm via npm registry`,
     );
+    // 自建 ACS runner（无共享卷）下本地 composite action 不可用，允许同仓远程引用 @main。
     assert.match(
       workflow,
-      /uses: \.\/\.github\/actions\/setup-pnpm/u,
+      /uses: (?:\.\/|ZengLeiPro\/agent-saas\/)\.github\/actions\/setup-pnpm(?:@main)?/u,
       `${name} does not use setup-pnpm`,
     );
   }

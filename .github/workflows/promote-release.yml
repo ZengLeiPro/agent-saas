@@ -46,10 +46,15 @@ env:
   ACR_REGISTRY: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com
   ACR_REPOSITORY: agent-saas/acs-sandbox
 
+defaults:
+  run:
+    shell: bash   # 自建 runner 的容器里默认 sh，很多 step 用 pipefail 等 bash 语法
+
 jobs:
   dispatch:
     name: 校验生产操作与互斥参数
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 5
     permissions:
       contents: read
@@ -72,7 +77,8 @@ jobs:
     name: 发布不可变 RC 到生产
     needs: dispatch
     if: github.ref == 'refs/heads/main' && needs.dispatch.outputs.operation == 'promote'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     timeout-minutes: 180
     environment: production
     env:
@@ -105,7 +111,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
@@ -1351,7 +1357,8 @@ jobs:
     if: github.ref == 'refs/heads/main' && (needs.dispatch.outputs.operation == 'web-recovery-audit' || needs.dispatch.outputs.operation == 'web-recovery-repair')
     permissions:
       contents: read
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1
     environment: production
     timeout-minutes: 25
     env:
@@ -1373,7 +1380,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-pnpm
+      - uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.1'

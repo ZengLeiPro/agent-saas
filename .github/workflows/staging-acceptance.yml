@@ -25,11 +25,16 @@ concurrency:
 env:
   NODE_VERSION: '22.23.1'
 
+defaults:
+  run:
+    shell: bash   # 自建 runner 的容器里默认 sh，很多 step 用 pipefail 等 bash 语法
+
 jobs:
   acceptance:
     name: 运行可选的浏览器与 Agent 验收
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: kaiyan-linux
+    container: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/base/ci-node:22.23.1-b2
     timeout-minutes: 120
     environment: staging
     env:
@@ -71,7 +76,7 @@ jobs:
           fetch-depth: 0
 
       - name: 配置 pnpm
-        uses: ./.github/actions/setup-pnpm
+        uses: ZengLeiPro/agent-saas/.github/actions/setup-pnpm@main
       - name: 配置符合运行时契约的精确 Node 版本
         uses: actions/setup-node@v5
         with:
@@ -187,7 +192,7 @@ jobs:
           touch "$RUNNER_TEMP/staging-acceptance-fixtures-touched"
           node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
             > "$RUNNER_TEMP/staging-fixture-reset-before.json"
-          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright install chromium
 
       - name: 验收执行前立即复核精确 RC
         run: |

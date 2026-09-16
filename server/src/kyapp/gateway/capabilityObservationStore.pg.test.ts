@@ -110,6 +110,38 @@ function snapshot(
     });
   });
 
+  it('同时识别旧版键与带 authMode 的 V2 快照键', async () => {
+    await snapshots.save(snapshot('session-legacy-key', 'u-legacy-key'));
+    await snapshots.save(
+      snapshot('session-v2-key', 'u-v2-key', {
+        key: `install-1:${digest}:v2_asymmetric`,
+        entries: [entry({ authMode: 'v2_asymmetric' })],
+      }),
+    );
+    await snapshots.save(
+      snapshot('session-multi-v2-key', 'u-multi-v2-key', {
+        key: `install-1:${digest}:v2_asymmetric|install-2:${digest}:v1_symmetric`,
+        entries: [entry({ authMode: 'v2_asymmetric' })],
+      }),
+    );
+
+    for (const userId of ['u-legacy-key', 'u-v2-key', 'u-multi-v2-key']) {
+      expect(await observations.get('tenant-a', 'install-1', userId, digest)).toMatchObject({
+        userId,
+        status: 'ready',
+        enabledCapabilityCount: 1,
+      });
+    }
+
+    const listed = await observations.listForInstallation('tenant-a', 'install-1', digest);
+    expect(
+      listed
+        .filter((item) => item.userId.endsWith('-key'))
+        .map((item) => item.userId)
+        .sort(),
+    ).toEqual(['u-legacy-key', 'u-multi-v2-key', 'u-v2-key']);
+  });
+
   it('批量读取每个用户的最新会话事实，不把旧快照误报为可用', async () => {
     await snapshots.save(snapshot('session-old', 'u-latest'));
     await snapshots.save(snapshot('session-new', 'u-latest', { entries: [] }));
@@ -132,5 +164,6 @@ function snapshot(
 
   it('登记 digest 变化后不复用旧会话结果', async () => {
     expect(await observations.get('tenant-a', 'install-1', 'u1', 'b'.repeat(64))).toBeNull();
+    expect(await observations.get('tenant-a', 'install-1', 'u-v2-key', 'b'.repeat(64))).toBeNull();
   });
 });

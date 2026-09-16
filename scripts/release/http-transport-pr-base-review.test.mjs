@@ -80,17 +80,22 @@ const gwsPersistEvidence = 'docs/release/gws凭据持久化无结构变更审核
 const externalClientReviewPaths = [
   'server/src/data/externalClients/store.ts',
   'server/src/data/externalClients/schema.ts',
+  'server/src/data/externalConversations/store.ts',
+  'server/src/data/externalConversations/schema.ts',
 ];
 const externalClientEvidencePaths = [
   'server/src/data/externalClients/store.pg.test.ts',
   'docs/release/外部Agent调用身份P0迁移审核-20260915.md',
+  'server/src/data/externalConversations/store.pg.test.ts',
+  'docs/release/外部Agent多轮调用P1迁移审核-20260916.md',
 ];
 const gwsAuthInjectionReviewPaths = [
   'server/src/app/runtimeGovernanceConnectors.ts',
   'server/src/data/oauthGrants/store.ts',
   'server/src/data/oauthGrants/types.ts',
 ];
-const gwsAuthInjectionEvidence = 'docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md';
+const gwsAuthInjectionEvidence =
+  'docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md';
 const auditedPaths = [
   ...new Set([
     transport,

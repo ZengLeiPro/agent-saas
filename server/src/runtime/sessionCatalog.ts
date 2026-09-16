@@ -21,7 +21,7 @@ import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 
 export type RuntimeSessionStatus = 'running' | 'idle' | 'waiting_approval' | 'finished' | 'error';
 export type MemoryPolicyVersion = 'v1' | 'v2';
-export type RuntimeSessionSource = 'taskboard_execution' | 'memory_consolidation';
+export type RuntimeSessionSource = 'taskboard_execution' | 'memory_consolidation' | 'external_api';
 
 export interface OrgAgentCollectionAssignmentPin {
   collectionId: string;
@@ -143,6 +143,13 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
   memoryPolicyVersion?: MemoryPolicyVersion;
   /** 稳定会话来源；不能依赖 sessionId 命名约定判断。 */
   sessionSource?: RuntimeSessionSource;
+  externalApi?: {
+    apiClientId: string;
+    conversationId: string;
+    externalConversationId: string;
+    databaseConnectionId?: string;
+    metadata: Record<string, unknown>;
+  };
   /** 是否允许后台自动记忆；false 永久 fail-closed。 */
   memoryAutomationEligible?: boolean;
   /** Server-authored top-level Sandbox workload classification. Legacy records may omit it. */
@@ -259,6 +266,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(record.orgAgentSnapshot ? { orgAgentSnapshot: record.orgAgentSnapshot } : {}),
       ...(memoryPolicyVersion ? { memoryPolicyVersion } : {}),
       ...(record.sessionSource ? { sessionSource: record.sessionSource } : {}),
+      ...(record.externalApi ? { externalApi: record.externalApi } : {}),
       ...(memoryAutomationEligible !== undefined ? { memoryAutomationEligible } : {}),
       ...(sandboxWorkloadDescriptor ? { sandboxWorkloadDescriptor } : {}),
       ...(record.profileId ? { profileId: record.profileId } : {}),
@@ -299,9 +307,10 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(meta.memoryPolicyVersion === 'v1' || meta.memoryPolicyVersion === 'v2'
         ? { memoryPolicyVersion: meta.memoryPolicyVersion }
         : {}),
-      ...(meta.sessionSource === 'taskboard_execution' || meta.sessionSource === 'memory_consolidation'
+      ...(meta.sessionSource === 'taskboard_execution' || meta.sessionSource === 'memory_consolidation' || meta.sessionSource === 'external_api'
         ? { sessionSource: meta.sessionSource }
         : {}),
+      ...(meta.externalApi ? { externalApi: meta.externalApi } : {}),
       ...(typeof meta.memoryAutomationEligible === 'boolean'
         ? { memoryAutomationEligible: meta.memoryAutomationEligible }
         : {}),
@@ -341,6 +350,7 @@ export function createRuntimeSessionRecord(args: {
   orgAgentSnapshot?: OrgAgentSessionSnapshot;
   memoryPolicyVersion?: MemoryPolicyVersion;
   sessionSource?: RuntimeSessionSource;
+  externalApi?: RuntimeSessionRecord['externalApi'];
   memoryAutomationEligible?: boolean;
   sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
   profileBinding?: AgentProfileSessionBinding;
@@ -372,6 +382,7 @@ export function createRuntimeSessionRecord(args: {
     ...(args.orgAgentSnapshot ? { orgAgentSnapshot: args.orgAgentSnapshot } : {}),
     ...(args.memoryPolicyVersion ? { memoryPolicyVersion: args.memoryPolicyVersion } : {}),
     ...(sessionSource ? { sessionSource } : {}),
+    ...(args.externalApi ? { externalApi: args.externalApi } : {}),
     ...(memoryAutomationEligible !== undefined ? { memoryAutomationEligible } : {}),
     sandboxWorkloadDescriptor: args.sandboxWorkloadDescriptor ?? { kind: 'interactive' },
     ...(args.profileBinding ?? {}),

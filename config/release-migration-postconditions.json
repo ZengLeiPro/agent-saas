@@ -30,6 +30,34 @@
       ]
     },
     {
+      "path": "server/src/data/externalConversations/store.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:3c089ef84d249f13e569b921cb2ffaf6e43297e2d40740736d3ebddf1ebaf4c3",
+      "checks": [
+        {
+          "id": "external-agent-conversation-store-schema",
+          "configPath": "runtimeEventStore",
+          "description": "外部 Agent conversation 与 execution 表、列、外键和幂等身份索引满足多轮调用契约",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_external_api_clients') AS clients,to_regclass($1 || '_external_conversations') AS conversations,to_regclass($1 || '_external_executions') AS executions), conversation_columns AS (SELECT count(*)=13 AS ok FROM refs,pg_attribute WHERE attrelid=refs.conversations AND attname IN ('conversation_id','client_id','tenant_id','service_account_user_id','external_conversation_id','session_id','database_connection_id','metadata_json','status','idempotency_key','request_hash','created_at','updated_at') AND NOT attisdropped), execution_columns AS (SELECT count(*)=17 AS ok FROM refs,pg_attribute WHERE attrelid=refs.executions AND attname IN ('execution_id','conversation_id','client_id','tenant_id','service_account_user_id','run_id','session_id','client_message_id','idempotency_key','request_hash','submission_status','requested_model','requested_reasoning_effort','error_code','error_message','created_at','updated_at') AND NOT attisdropped), foreign_keys AS (SELECT count(*)=3 AS ok FROM refs,pg_constraint WHERE contype='f' AND convalidated AND ((conrelid=refs.conversations AND confrelid=refs.clients) OR (conrelid=refs.executions AND confrelid IN (refs.conversations,refs.clients)))), identities AS (SELECT count(*)=2 AS ok FROM refs,pg_index WHERE indrelid IN (refs.conversations,refs.executions) AND indisunique AND indisvalid AND indisready AND indpred IS NOT NULL AND pg_get_indexdef(indexrelid) LIKE ANY(ARRAY['%session_id%','%run_id%'])) SELECT refs.clients IS NOT NULL AND refs.conversations IS NOT NULL AND refs.executions IS NOT NULL AND conversation_columns.ok AND execution_columns.ok AND foreign_keys.ok AND identities.ok AS ok FROM refs,conversation_columns,execution_columns,foreign_keys,identities",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/externalConversations/schema.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:004eb7d732bebe4da7cce1ce27424db4f0b40faa4ca8cac4207472b866cd7968",
+      "checks": [
+        {
+          "id": "external-agent-conversation-schema",
+          "configPath": "runtimeEventStore",
+          "description": "外部 Agent conversation 与 execution DDL 已创建完整结构和受约束的一对一运行身份",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_external_api_clients') AS clients,to_regclass($1 || '_external_conversations') AS conversations,to_regclass($1 || '_external_executions') AS executions), conversation_columns AS (SELECT count(*)=13 AS ok FROM refs,pg_attribute WHERE attrelid=refs.conversations AND attname IN ('conversation_id','client_id','tenant_id','service_account_user_id','external_conversation_id','session_id','database_connection_id','metadata_json','status','idempotency_key','request_hash','created_at','updated_at') AND NOT attisdropped), execution_columns AS (SELECT count(*)=17 AS ok FROM refs,pg_attribute WHERE attrelid=refs.executions AND attname IN ('execution_id','conversation_id','client_id','tenant_id','service_account_user_id','run_id','session_id','client_message_id','idempotency_key','request_hash','submission_status','requested_model','requested_reasoning_effort','error_code','error_message','created_at','updated_at') AND NOT attisdropped), foreign_keys AS (SELECT count(*)=3 AS ok FROM refs,pg_constraint WHERE contype='f' AND convalidated AND ((conrelid=refs.conversations AND confrelid=refs.clients) OR (conrelid=refs.executions AND confrelid IN (refs.conversations,refs.clients)))), identities AS (SELECT count(*)=2 AS ok FROM refs,pg_index WHERE indrelid IN (refs.conversations,refs.executions) AND indisunique AND indisvalid AND indisready AND indpred IS NOT NULL AND pg_get_indexdef(indexrelid) LIKE ANY(ARRAY['%session_id%','%run_id%'])) SELECT refs.clients IS NOT NULL AND refs.conversations IS NOT NULL AND refs.executions IS NOT NULL AND conversation_columns.ok AND execution_columns.ok AND foreign_keys.ok AND identities.ok AS ok FROM refs,conversation_columns,execution_columns,foreign_keys,identities",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
       "path": "server/src/data/toolDescriptionStore.ts",
       "baselineDigest": null,
       "targetDigest": "sha256:22f8f62231493106df759b7401df2002d8865e9923a6b4a44bf603707a4792e6",

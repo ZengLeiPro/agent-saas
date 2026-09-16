@@ -93,7 +93,14 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
    */
   memoryPolicyVersion?: 'v1' | 'v2';
   /** 平台内部来源；memory_consolidation 会话保留审计数据但不对用户展示。 */
-  sessionSource?: 'taskboard_execution' | 'memory_consolidation';
+  sessionSource?: 'taskboard_execution' | 'memory_consolidation' | 'external_api';
+  externalApi?: {
+    apiClientId: string;
+    conversationId: string;
+    externalConversationId: string;
+    databaseConnectionId?: string;
+    metadata: Record<string, unknown>;
+  };
   memoryAutomationEligible?: boolean;
   /** 顶层 Sandbox workload 分类；子会话继承父值，禁止按 sessionId 形状推断。 */
   sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;

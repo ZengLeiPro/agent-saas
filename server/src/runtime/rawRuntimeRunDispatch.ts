@@ -217,6 +217,24 @@ import { buildTenantRemoteHandWireEnv } from './rawRuntimeWireEnv.js';
 export { buildTenantRemoteHandWireEnv } from './rawRuntimeWireEnv.js';
 export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
 const logger = createLogger('RawRuntime');
+export function applyExternalApiReasoningOverride(
+  providerOptions: ModelProviderOptions | undefined,
+  runtimeMetadata: Record<string, unknown> | undefined,
+): ModelProviderOptions | undefined {
+  const raw = runtimeMetadata?.externalApiReasoning;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return providerOptions;
+  const reasoning = raw as Record<string, unknown>;
+  if (reasoning.enabled !== true || reasoning.effort === undefined) return providerOptions;
+  if (typeof reasoning.effort !== 'string' || !reasoning.effort.trim()) {
+    throw new Error('外部 Agent reasoning effort 无效');
+  }
+  const effort = reasoning.effort.trim();
+  const capability = providerOptions?.reasoningEffortCapability;
+  if (capability?.support !== 'supported' || !capability.values?.includes(effort)) {
+    throw new Error(`当前模型不接受 reasoning effort=${effort}`);
+  }
+  return { ...providerOptions, reasoningEffort: effort };
+}
 export type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import { serverRemoteHandRegistrationOptions } from './serverRemoteHandRegistration.js';
@@ -891,6 +909,12 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
         return;
       }
+    }
+    try {
+      modelProviderOptions = applyExternalApiReasoningOverride(modelProviderOptions, options.runtimeIsolationMetadata);
+    } catch (error) {
+      yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+      return;
     }
     if (!apiKey && modelRequiresApiKey(modelProviderOptions)) {
       yield { type: 'error', error: 'Raw runtime 缺少 OPENAI_API_KEY 或模型组 apiKey' };
@@ -1624,6 +1648,13 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         return;
       }
     }
+    try {
+      modelProviderOptions = applyExternalApiReasoningOverride(modelProviderOptions, request.runtimeIsolationMetadata);
+    } catch (error) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
+      yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+      return;
+    }
     if (!apiKey && modelRequiresApiKey(modelProviderOptions)) {
       if (lockHandle) await lockHandle.release().catch(() => undefined);
       yield { type: 'error', error: 'Raw approval resume 缺少 OPENAI_API_KEY 或模型组 apiKey' };
@@ -2093,6 +2124,13 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
         return;
       }
+    }
+    try {
+      modelProviderOptions = applyExternalApiReasoningOverride(modelProviderOptions, request.runtimeIsolationMetadata);
+    } catch (error) {
+      if (lockHandle) await lockHandle.release().catch(() => undefined);
+      yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+      return;
     }
     if (!apiKey && modelRequiresApiKey(modelProviderOptions)) {
       if (lockHandle) await lockHandle.release().catch(() => undefined);

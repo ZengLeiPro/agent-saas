@@ -45237,6 +45237,20 @@
           "targetDigest": "sha256:bfff29fe5d316525058f44676eb1e9b24e8a1edcb1eea1052e818f2b66e88e03",
           "classification": "expand",
           "reason": "只新增 API Client 表、主键、Key 哈希唯一约束、状态约束和两个普通查询索引；无删除、收窄、重命名或历史数据改写。"
+        },
+        {
+          "path": "server/src/data/externalConversations/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3c089ef84d249f13e569b921cb2ffaf6e43297e2d40740736d3ebddf1ebaf4c3",
+          "classification": "expand",
+          "reason": "新增外部 conversation/execution PostgreSQL 存储；只在 advisory lock 内初始化本批新表，运行期使用幂等 INSERT、查询和受事务保护的 session/run 绑定，不修改或回填既有结构。"
+        },
+        {
+          "path": "server/src/data/externalConversations/schema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:004eb7d732bebe4da7cce1ce27424db4f0b40faa4ca8cac4207472b866cd7968",
+          "classification": "expand",
+          "reason": "只新增外部会话与执行两张表、到 P0 API Client 表的外键以及幂等、session、run 和查询索引；无删除、收窄、重命名或历史数据改写。"
         }
       ],
       "evidence": [
@@ -45247,6 +45261,14 @@
         {
           "path": "docs/release/外部Agent调用身份P0迁移审核-20260915.md",
           "digest": "sha256:ffecb42f58f630f5ceb2bab9d7011cf3247caae26817653da3a01eb18e972dca"
+        },
+        {
+          "path": "server/src/data/externalConversations/store.pg.test.ts",
+          "digest": "sha256:564de23047e15a789d1bac0b97558e916b85530c2271da2e64d6e05c58513be5"
+        },
+        {
+          "path": "docs/release/外部Agent多轮调用P1迁移审核-20260916.md",
+          "digest": "sha256:3f088ddb917ad7dde35110c3dea5783a014984b3d9f12c05c663130050308949"
         }
       ]
     }

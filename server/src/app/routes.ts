@@ -95,7 +95,11 @@ import { createConnectorDictionaryOrgRouter } from '../routes/connectorDictionar
 import { createImageGenPricingAdminRouter } from '../routes/imageGenPricingAdmin.js';
 import { createEgressConfigAdminRouter } from '../routes/egressConfigAdmin.js';
 import { createMemoryPollingAdminRouter } from '../routes/memoryPollingAdmin.js';
-import { createSystemPromptsAdminRouter } from '../routes/systemPromptsAdmin.js'; import { createExternalAgentClientsAdminRouter } from '../routes/externalAgentClients.js'; import { PgExternalClientStore } from '../data/externalClients/index.js';
+import { createSystemPromptsAdminRouter } from '../routes/systemPromptsAdmin.js'; import { createExternalAgentClientsAdminRouter } from '../routes/externalAgentClients.js'; import { ExternalClientAuthenticator, PgExternalClientStore } from '../data/externalClients/index.js';
+import { PgExternalConversationStore } from '../data/externalConversations/index.js';
+import { createExternalAgentApiRouter } from '../routes/externalAgentApi.js';
+import { createHeadlessWebClient } from '../externalAgent/headlessWebClient.js';
+import { FinalOutputCollector } from '../externalAgent/finalOutputCollector.js';
 import { createAgentRuntimeProfilesAdminRouter } from '../routes/agentRuntimeProfilesAdmin.js';
 import { createConfigStatusAdminRouter } from '../routes/configStatusAdmin.js';
 import { createAdminConfigOperationsRouter } from '../routes/adminConfigOperations.js';
@@ -143,6 +147,13 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   if (nativeOAuthHandoff)
     app.use('/api/connectors', createNativeOAuthHandoffRouter(nativeOAuthHandoff));
   const { channelManager } = runtime;
+  const webChannel = channelManager.getChannel<WebChannel>('web');
+  const externalClientStore = runtime.runtimePgEventStore
+    ? new PgExternalClientStore(runtime.runtimePgEventStore.pool, { tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined })
+    : undefined;
+  const externalConversationStore = runtime.runtimePgEventStore
+    ? new PgExternalConversationStore(runtime.runtimePgEventStore.pool, { tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined })
+    : undefined;
   let kyAppRoutesRegistered = false;
   const getRuntimeAdmissionSnapshot = resolveRuntimeAdmissionSnapshotReader(
     runtime.processRole, runtime.getRuntimeAdmissionSnapshot,
@@ -167,7 +178,17 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
-  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus })); app.use('/api/admin/external-agent-clients', requireAdmin, createExternalAgentClientsAdminRouter({ store: runtime.runtimePgEventStore ? new PgExternalClientStore(runtime.runtimePgEventStore.pool, { tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined }) : undefined, userStore: runtime.userStore, tenantStore: runtime.tenantStore }));
+  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus })); app.use('/api/admin/external-agent-clients', requireAdmin, createExternalAgentClientsAdminRouter({ store: externalClientStore, userStore: runtime.userStore, tenantStore: runtime.tenantStore }));
+  app.use('/v1', createExternalAgentApiRouter({
+    authenticator: externalClientStore && runtime.userStore
+      ? new ExternalClientAuthenticator({ store: externalClientStore, userStore: runtime.userStore, tenantStore: runtime.tenantStore })
+      : undefined,
+    store: externalConversationStore,
+    headlessClient: webChannel ? createHeadlessWebClient(webChannel) : undefined,
+    outputCollector: runtime.runtimeRunStore && runtime.sessionCatalog
+      ? new FinalOutputCollector({ runStore: runtime.runtimeRunStore, sessionCatalog: runtime.sessionCatalog, eventStoreFor: runtime.runtimeEventStoreFor })
+      : undefined,
+  }));
   if (runtime.sessionAutomationStore && runtime.sessionAutomationCommandService && runtime.sessionCatalog) {
     app.use('/api', createSessionAutomationsRouter({ store: runtime.sessionAutomationStore,
       service: runtime.sessionAutomationCommandService, sessionCatalog: runtime.sessionCatalog,
@@ -305,7 +326,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       targetOrganizationAccess: createContextAdminTargetOrganizationAccess(runtime),
     }),
   );
-  const webChannel = channelManager.getChannel<WebChannel>('web');
   app.use(
     '/api',
     createSessionsRouter({

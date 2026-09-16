@@ -844,9 +844,19 @@ jobs:
           fi
           jq -e --arg sha "$RELEASE_SOURCE_SHA" '.ok == true and .releaseSha == $sha and (.affectedComponents | type == "array")' "$RUNNER_TEMP/acs-authority.json" >/dev/null
           if jq -e '.affectedComponents | index("acs") != null' "$RUNNER_TEMP/acs-authority.json" >/dev/null; then
-            RELEASE_SHA="$RELEASE_SOURCE_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image-prepared.json" \
+            # Workspace-relative path: k8s LCA nests absolute runner.temp uploads as __w/_temp/...
+            mkdir -p "$GITHUB_WORKSPACE/.ci"
+            RELEASE_SHA="$RELEASE_SOURCE_SHA" OUTPUT_FILE="$GITHUB_WORKSPACE/.ci/acs-image-prepared.json" \
               bash scripts/release/wait-for-acr-image.sh
             echo 'include_acs=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: 暂存 ACS 诊断到工作区相对路径
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p .ci
+          if [ -s "$RUNNER_TEMP/acr-recovery-report.json" ]; then
+            cp "$RUNNER_TEMP/acr-recovery-report.json" .ci/acr-recovery-report.json
           fi
       - name: 保存同一次运行的已验证镜像与诊断
         if: always()
@@ -855,9 +865,10 @@ jobs:
           name: prepared-acs-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
           retention-days: 14
+          # Relative to $GITHUB_WORKSPACE so download lands at $RUNNER_TEMP/.ci/... (no __w/_temp nest).
           path: |
-            ${{ runner.temp }}/acs-image-prepared.json
-            ${{ runner.temp }}/acr-recovery-report.json
+            .ci/acs-image-prepared.json
+            .ci/acr-recovery-report.json
 
   promote-production:
     name: 自动触发生产环境发布
@@ -1105,12 +1116,13 @@ jobs:
             : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing staging secret ACR_READ_ACCESS_KEY_ID}"
             : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing staging secret ACR_READ_ACCESS_KEY_SECRET}"
             include_acs=true
-            test -s "$RUNNER_TEMP/acs-image-prepared.json"
+            # Download of workspace-relative upload preserves .ci/ under the download root.
+            test -s "$RUNNER_TEMP/.ci/acs-image-prepared.json"
             # Recheck immutable build identity immediately before mutation; no waiting
             # or webhook writes while holding the Staging deployment slot.
             ACR_SINGLE_PROBE=true RELEASE_SHA="$RELEASE_SOURCE_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image.json" \
               timeout --kill-after=5s 120s bash scripts/release/wait-for-acr-image.sh
-            diff <(jq -S . "$RUNNER_TEMP/acs-image-prepared.json") \
+            diff <(jq -S . "$RUNNER_TEMP/.ci/acs-image-prepared.json") \
                  <(jq -S . "$RUNNER_TEMP/acs-image.json")
           fi
           echo "INCLUDE_ACS=$include_acs" >> "$GITHUB_ENV"

@@ -317,6 +317,7 @@ export function registerKyAppRoutes(
       ...(onboard ? { onboard } : {}),
       ...(assembly.deliveryMetrics ? { metrics: assembly.deliveryMetrics } : {}),
       diagnostics: assembly.diagnostics,
+      ...(runtime.membershipStore ? { memberships: runtime.membershipStore } : {}),
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
     }),
   );

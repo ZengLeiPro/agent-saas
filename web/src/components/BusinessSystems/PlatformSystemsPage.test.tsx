@@ -98,7 +98,8 @@ describe('业务系统统一入口', () => {
     await screen.findByText('演示系统');
     expect(screen.getByRole('button', { name: '发布版本' })).toBeTruthy();
     expect(screen.queryByLabelText('Manifest JSON 文件')).toBeNull();
-    fireEvent.click(screen.getByText('历史版本与高级信息'));
+    expect(screen.queryByText('高级信息')).toBeNull();
+    fireEvent.click(screen.getByText('历史版本'));
     expect(screen.queryByLabelText('Manifest JSON 文件')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '查看全部能力' }));
     expect(screen.getByText('查询用户')).toBeTruthy();

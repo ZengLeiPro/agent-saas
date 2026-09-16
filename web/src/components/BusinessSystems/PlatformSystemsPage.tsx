@@ -36,13 +36,14 @@ function SystemCatalog() {
   if (!resource.data) return <ResourceState error={resource.error} retry={resource.reload} />;
   return (
     <section className="space-y-5">
-      <SettingsPanelHeader
-        title="业务系统"
-        description="登记系统配置，并跟踪各组织的接入进度。"
-      />
+      <SettingsPanelHeader title="业务系统" description="登记系统配置，并跟踪各组织的接入进度。" />
       {resource.data.allowedActions?.includes('register_version') && (
         <ManifestUpload
-          onRegistered={(id) => navigateGovernance(governanceRoute(routeId, { entityId: id, search: window.location.search }))}
+          onRegistered={(id) =>
+            navigateGovernance(
+              governanceRoute(routeId, { entityId: id, search: window.location.search }),
+            )
+          }
         />
       )}
       {!resource.data.systems.length ? (
@@ -75,16 +76,16 @@ function SystemCatalog() {
                     <Button
                       variant="outline"
                       onClick={() =>
-                        navigateGovernance(governanceRoute(routeId, { entityId: system.systemId, search: window.location.search }))
+                        navigateGovernance(
+                          governanceRoute(routeId, {
+                            entityId: system.systemId,
+                            search: window.location.search,
+                          }),
+                        )
                       }
                     >
                       管理
                     </Button>
-                    <details className="mt-2 text-xs">
-                      <summary className="cursor-pointer text-muted-foreground">高级信息</summary>
-                      <p>系统 ID：{system.systemId}</p>
-                      <p>外部写能力：{system.metrics.externalWriteCapabilityCount}</p>
-                    </details>
                   </td>
                 </tr>
               ))}
@@ -260,13 +261,10 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
           </section>
           <details className="rounded-xl border bg-card p-4 shadow-sm">
             <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
-              历史版本与高级信息 <ChevronDown className="h-4 w-4" />
+              历史版本 <ChevronDown className="h-4 w-4" />
             </summary>
-            <div className="mt-4 space-y-4">
+            <div className="mt-4">
               <SystemVersions detail={detail} />
-              <p className="break-all text-xs text-muted-foreground">
-                完整发布摘要：{detail.definition.publishedDigest ?? '暂无'}
-              </p>
             </div>
           </details>
         </TabsContent>

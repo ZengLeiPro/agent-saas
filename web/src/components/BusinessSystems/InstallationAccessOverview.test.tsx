@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildMemberAccessRules } from './InstallationAccessOverview';
+import { buildBulkMemberAccessRules, buildMemberAccessRules } from './InstallationAccessOverview';
 
 const mocks = vi.hoisted(() => ({
   getAssignment: vi.fn(),
@@ -105,6 +105,25 @@ describe('业务系统成员逐行授权规则', () => {
     ]);
   });
 
+  it('批量授权去重成员并保留未选中的现有规则', () => {
+    expect(
+      buildBulkMemberAccessRules(
+        [
+          { assigneeType: 'everyone', effect: 'allow' },
+          { assigneeType: 'user', assigneeId: 'user-1', effect: 'deny' },
+          { assigneeType: 'user', assigneeId: 'user-2', effect: 'deny' },
+        ],
+        ['user-1', 'user-1', 'user-3'],
+        true,
+      ),
+    ).toEqual([
+      { assigneeType: 'everyone', effect: 'allow' },
+      { assigneeType: 'user', assigneeId: 'user-2', effect: 'deny' },
+      { assigneeType: 'user', assigneeId: 'user-1', effect: 'allow' },
+      { assigneeType: 'user', assigneeId: 'user-3', effect: 'allow' },
+    ]);
+  });
+
   it('成员表移除非必要列，并通过签名预览确认后逐行取消授权', async () => {
     const { InstallationAccessOverview } = await import('./InstallationAccessOverview');
     render(<InstallationAccessOverview installationId="iid-1" tenantId="tenant-a" />);
@@ -125,6 +144,34 @@ describe('业务系统成员逐行授权规则', () => {
         'tenant-a',
       ),
     );
+    expect(mocks.reload).toHaveBeenCalled();
+  });
+
+  it('选择未授权成员后通过同一套预览和版本校验批量授权', async () => {
+    const { InstallationAccessOverview } = await import('./InstallationAccessOverview');
+    render(<InstallationAccessOverview installationId="iid-1" tenantId="tenant-a" />);
+
+    const batchButton = screen.getByRole('button', { name: '批量授权' });
+    expect(batchButton.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择李四' }));
+    fireEvent.click(screen.getByRole('button', { name: '批量授权（1）' }));
+
+    await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
+    expect(mocks.preview).toHaveBeenCalledWith(
+      'system_installation',
+      'iid-1',
+      {
+        expectedVersion: 2,
+        assignments: [
+          { assigneeType: 'everyone', effect: 'allow' },
+          { assigneeType: 'user', assigneeId: 'user-2', effect: 'allow' },
+        ],
+      },
+      'tenant-a',
+    );
+    expect(screen.getByRole('dialog').textContent).toContain('授权成员');
+    fireEvent.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => expect(mocks.update).toHaveBeenCalled());
     expect(mocks.reload).toHaveBeenCalled();
   });
 });

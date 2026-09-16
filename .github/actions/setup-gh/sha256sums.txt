@@ -1,0 +1,9 @@
+# sha256 of extracted gh binaries used by .github/actions/setup-gh.
+# Format: <sha256>  <asset>@<version> where asset is the release directory name
+# (gh_<version>_linux_amd64 or gh_<version>_linux_arm64). Bump together with
+# the action default version input:
+#   ver=2.101.0 arch=amd64
+#   curl -fsSL -o gh.tgz "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz"
+#   tar xzf gh.tgz && sha256sum "gh_${ver}_linux_${arch}/bin/gh"
+ea857a3f0f7d4276cf5848b236542c5048e2eaa7bdd1b6ddec238f8793e74bff  gh_2.101.0_linux_amd64@2.101.0
+76f657388c2270fb5049305afe683b741fb7c50fba0e15b09338189123f66557  gh_2.101.0_linux_arm64@2.101.0

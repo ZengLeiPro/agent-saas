@@ -68,6 +68,8 @@ import type { ContextStore } from '../context/store/index.js';
 import type { ContextSourceAuthorizationRegistry } from '../context/retrieval/index.js';
 import type { DerivedContextStore } from '../context/derived/index.js';
 import type { PgCredentialStore } from '../data/credentials/index.js';
+import type { DatabaseConnectionStore } from '../data/databaseConnections/index.js';
+import type { DatabaseQueryExecutor } from '../databaseQuery/index.js';
 import type { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { PgAgentResourceStore } from '../data/agentResources/index.js';
@@ -379,6 +381,10 @@ export interface AppRuntime {
   derivedContextStore?: DerivedContextStore;
   /** P2 Credential 治理事实模型；影子回填 legacy connector 连接，仅读取不拦截。 */
   credentialStore?: PgCredentialStore;
+  /** 外部 Agent 客户数据库连接元数据；凭据只保存在 SecretVault。 */
+  databaseConnectionStore?: DatabaseConnectionStore;
+  /** 外部 Agent 客户数据库只读查询执行器。 */
+  databaseQueryExecutor?: DatabaseQueryExecutor;
   /** 版本化 Connector Catalog；与 Tool Presentation Dictionary 严格分离。 */
   connectorCatalogStore?: PgConnectorCatalogStore;
   /** Execution Provider 与 Environment Template/Version 事实模型。 */

@@ -4,7 +4,7 @@
     {
       "path": "server/src/data/externalClients/store.ts",
       "baselineDigest": null,
-      "targetDigest": "sha256:bd3f6d9073012451b5313561485830a65cd5ba2dd5f97eb8f95a65aab87589e3",
+      "targetDigest": "sha256:61f2713d06cedf846d668f85ce136e6e452807623926ead049abcc26a38c741e",
       "checks": [
         {
           "id": "external-agent-api-client-store-schema",
@@ -53,6 +53,34 @@
           "configPath": "runtimeEventStore",
           "description": "外部 Agent conversation 与 execution DDL 已创建完整结构和受约束的一对一运行身份",
           "sql": "WITH refs AS (SELECT to_regclass($1 || '_external_api_clients') AS clients,to_regclass($1 || '_external_conversations') AS conversations,to_regclass($1 || '_external_executions') AS executions), conversation_columns AS (SELECT count(*)=13 AS ok FROM refs,pg_attribute WHERE attrelid=refs.conversations AND attname IN ('conversation_id','client_id','tenant_id','service_account_user_id','external_conversation_id','session_id','database_connection_id','metadata_json','status','idempotency_key','request_hash','created_at','updated_at') AND NOT attisdropped), execution_columns AS (SELECT count(*)=17 AS ok FROM refs,pg_attribute WHERE attrelid=refs.executions AND attname IN ('execution_id','conversation_id','client_id','tenant_id','service_account_user_id','run_id','session_id','client_message_id','idempotency_key','request_hash','submission_status','requested_model','requested_reasoning_effort','error_code','error_message','created_at','updated_at') AND NOT attisdropped), foreign_keys AS (SELECT count(*)=3 AS ok FROM refs,pg_constraint WHERE contype='f' AND convalidated AND ((conrelid=refs.conversations AND confrelid=refs.clients) OR (conrelid=refs.executions AND confrelid IN (refs.conversations,refs.clients)))), identities AS (SELECT count(*)=2 AS ok FROM refs,pg_index WHERE indrelid IN (refs.conversations,refs.executions) AND indisunique AND indisvalid AND indisready AND indpred IS NOT NULL AND pg_get_indexdef(indexrelid) LIKE ANY(ARRAY['%session_id%','%run_id%'])) SELECT refs.clients IS NOT NULL AND refs.conversations IS NOT NULL AND refs.executions IS NOT NULL AND conversation_columns.ok AND execution_columns.ok AND foreign_keys.ok AND identities.ok AS ok FROM refs,conversation_columns,execution_columns,foreign_keys,identities",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/databaseConnections/store.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:a47bf021f642bc8f14773807f3ba2db563bd22bdd92149c6f67c4ffd6ecc236e",
+      "checks": [
+        {
+          "id": "external-database-connection-store-schema",
+          "configPath": "runtimeEventStore",
+          "description": "外部数据库连接与仅哈希查询审计表、敏感字段隔离、外键和查询索引满足只读工具契约",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_external_database_connections') AS connections,to_regclass($1 || '_external_database_query_audit') AS audit), connection_columns AS (SELECT count(*)=23 AS ok FROM refs,pg_attribute WHERE attrelid=refs.connections AND attnum>0 AND NOT attisdropped), audit_columns AS (SELECT count(*)=15 AS ok FROM refs,pg_attribute WHERE attrelid=refs.audit AND attnum>0 AND NOT attisdropped), sensitive_absent AS (SELECT NOT EXISTS (SELECT 1 FROM refs,pg_attribute WHERE attrelid IN (refs.connections,refs.audit) AND attnum>0 AND NOT attisdropped AND attname IN ('password','token','sql','query_result')) AS ok), required_columns AS (SELECT count(*)=8 AS ok FROM refs,pg_attribute WHERE (attrelid=refs.connections AND attname IN ('connection_id','tenant_id','secret_ref','allowed_schemas','allowed_tables','sensitive_columns')) OR (attrelid=refs.audit AND attname IN ('sql_hash','error_code'))), foreign_key AS (SELECT count(*)=1 AS ok FROM refs,pg_constraint WHERE conrelid=refs.audit AND confrelid=refs.connections AND contype='f' AND convalidated), indexes_ok AS (SELECT count(*)=3 AS ok FROM refs,pg_index WHERE indrelid IN (refs.connections,refs.audit) AND indisvalid AND indisready AND NOT indisunique AND indexrelid IN (to_regclass(left($1 || '_external_database_connections_tenant_status_idx',63)),to_regclass(left($1 || '_external_database_query_audit_tenant_created_idx',63)),to_regclass(left($1 || '_external_database_query_audit_connection_created_idx',63)))) SELECT refs.connections IS NOT NULL AND refs.audit IS NOT NULL AND connection_columns.ok AND audit_columns.ok AND sensitive_absent.ok AND required_columns.ok AND foreign_key.ok AND indexes_ok.ok AS ok FROM refs,connection_columns,audit_columns,sensitive_absent,required_columns,foreign_key,indexes_ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/databaseConnections/schema.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:698ff292c8e6e65046613848fec96aad4e13b02dcf11b99c2a6c345c30ac24ea",
+      "checks": [
+        {
+          "id": "external-database-connection-schema",
+          "configPath": "runtimeEventStore",
+          "description": "外部数据库连接 DDL 已创建完整元数据与仅哈希审计结构，未持久化密码、token、SQL 或结果",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_external_database_connections') AS connections,to_regclass($1 || '_external_database_query_audit') AS audit), connection_columns AS (SELECT count(*)=23 AS ok FROM refs,pg_attribute WHERE attrelid=refs.connections AND attnum>0 AND NOT attisdropped), audit_columns AS (SELECT count(*)=15 AS ok FROM refs,pg_attribute WHERE attrelid=refs.audit AND attnum>0 AND NOT attisdropped), sensitive_absent AS (SELECT NOT EXISTS (SELECT 1 FROM refs,pg_attribute WHERE attrelid IN (refs.connections,refs.audit) AND attnum>0 AND NOT attisdropped AND attname IN ('password','token','sql','query_result')) AS ok), required_columns AS (SELECT count(*)=8 AS ok FROM refs,pg_attribute WHERE (attrelid=refs.connections AND attname IN ('connection_id','tenant_id','secret_ref','allowed_schemas','allowed_tables','sensitive_columns')) OR (attrelid=refs.audit AND attname IN ('sql_hash','error_code'))), foreign_key AS (SELECT count(*)=1 AS ok FROM refs,pg_constraint WHERE conrelid=refs.audit AND confrelid=refs.connections AND contype='f' AND convalidated), indexes_ok AS (SELECT count(*)=3 AS ok FROM refs,pg_index WHERE indrelid IN (refs.connections,refs.audit) AND indisvalid AND indisready AND NOT indisunique AND indexrelid IN (to_regclass(left($1 || '_external_database_connections_tenant_status_idx',63)),to_regclass(left($1 || '_external_database_query_audit_tenant_created_idx',63)),to_regclass(left($1 || '_external_database_query_audit_connection_created_idx',63)))) SELECT refs.connections IS NOT NULL AND refs.audit IS NOT NULL AND connection_columns.ok AND audit_columns.ok AND sensitive_absent.ok AND required_columns.ok AND foreign_key.ok AND indexes_ok.ok AS ok FROM refs,connection_columns,audit_columns,sensitive_absent,required_columns,foreign_key,indexes_ok",
           "params": ["$tablePrefix"]
         }
       ]

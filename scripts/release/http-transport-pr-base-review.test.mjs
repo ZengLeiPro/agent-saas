@@ -82,12 +82,16 @@ const externalClientReviewPaths = [
   'server/src/data/externalClients/schema.ts',
   'server/src/data/externalConversations/store.ts',
   'server/src/data/externalConversations/schema.ts',
+  'server/src/data/databaseConnections/store.ts',
+  'server/src/data/databaseConnections/schema.ts',
 ];
 const externalClientEvidencePaths = [
   'server/src/data/externalClients/store.pg.test.ts',
   'docs/release/外部Agent调用身份P0迁移审核-20260915.md',
   'server/src/data/externalConversations/store.pg.test.ts',
   'docs/release/外部Agent多轮调用P1迁移审核-20260916.md',
+  'server/src/__tests__/databaseQueryPostgres.pg.test.ts',
+  'docs/release/外部Agent数据库P2迁移审核-20260916.md',
 ];
 const gwsAuthInjectionReviewPaths = [
   'server/src/app/runtimeGovernanceConnectors.ts',

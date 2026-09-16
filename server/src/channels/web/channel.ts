@@ -2959,13 +2959,21 @@ export class WebChannel implements BaseChannel {
           workspaceId: enqueueWorkspaceId,
           status: 'running',
           ...(orgAgentId ? { orgAgentId } : {}),
-          ...(headlessContext ? { sessionSource: 'external_api' as const, externalApi: headlessContext } : {}),
-          memoryPolicyVersion: resolveSessionMemoryPolicy({
-            existing: existingSessionRecord,
-            delegationEnabled: this.config.memoryWriteDelegationEnabled?.(enqueueOwner?.tenantId) === true,
-            channel: 'web',
-            ...(orgAgentId ? { orgAgentId } : {}),
-          }),
+          ...(headlessContext
+            ? {
+                sessionSource: 'external_api' as const,
+                externalApi: headlessContext,
+                memoryPolicyVersion: 'v2' as const,
+                memoryAutomationEligible: false,
+              }
+            : {
+                memoryPolicyVersion: resolveSessionMemoryPolicy({
+                  existing: existingSessionRecord,
+                  delegationEnabled: this.config.memoryWriteDelegationEnabled?.(enqueueOwner?.tenantId) === true,
+                  channel: 'web',
+                  ...(orgAgentId ? { orgAgentId } : {}),
+                }),
+              }),
         });
         if (existingSessionRecord) {
           await enqueueRuntime.sessionCatalog.upsert(sessionRecord);

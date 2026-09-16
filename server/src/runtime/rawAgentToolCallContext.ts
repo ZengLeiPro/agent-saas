@@ -13,6 +13,7 @@ export function buildRawAgentToolCallContext(
     env: context.env,
     sessionId: context.sessionId,
     runId: context.runId,
+    ...(context.externalApi ? { externalApi: context.externalApi } : {}),
     ...(context.automationFence ? { automationFence: context.automationFence } : {}),
     ...(context.memoryMaintenanceMode
       ? { memoryMaintenanceMode: context.memoryMaintenanceMode }

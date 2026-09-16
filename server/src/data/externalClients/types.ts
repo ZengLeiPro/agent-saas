@@ -54,6 +54,12 @@ export interface ExternalClientStore {
     clientId: string;
     actorUserId: string;
   }): Promise<ExternalClientRecord | undefined>;
+  setAllowedConnectionIds(input: {
+    clientId: string;
+    tenantId: string;
+    allowedConnectionIds: string[];
+    actorUserId: string;
+  }): Promise<ExternalClientRecord | undefined>;
   touchLastUsed(clientId: string, usedAt: string): Promise<void>;
 }
 

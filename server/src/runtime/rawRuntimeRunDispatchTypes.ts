@@ -160,6 +160,8 @@ export interface RawRuntimeRunDispatchConfig {
   memoryControlProviders?: import('../agent/toolRuntime.js').ToolProvider[];
   /** Host-fenced tools visible only to matching session automation Runs. */
   sessionAutomationProvider?: import('../agent/toolRuntime.js').ToolProvider;
+  /** 仅在受信任 external_api 会话上下文中可见的客户数据库只读工具。 */
+  databaseQueryProvider?: import('../agent/toolRuntime.js').ToolProvider;
   /** Durable budget/provider/interaction guard for automation Runs. */
   sessionAutomationRuntimeGuard?: SessionAutomationRuntimeGuard;
   /** Optional personal agent registry. */

@@ -129,6 +129,10 @@ import { PgAssignmentStore } from '../data/assignments/index.js';
 import { PgDirectoryGroupStore } from '../data/directoryGroups/index.js';
 import { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 import { PgCredentialStore } from '../data/credentials/index.js';
+import { PgDatabaseConnectionStore } from '../data/databaseConnections/index.js';
+import { DatabaseQueryExecutor } from '../databaseQuery/index.js';
+import { DatabaseQueryReadonlyToolProvider } from '../agent/databaseQueryReadonlyToolProvider.js';
+import { PgExternalClientStore } from '../data/externalClients/index.js';
 import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import { PgEnvironmentStore } from '../data/environments/index.js';
 import { PgAgentResourceStore } from '../data/agentResources/index.js';
@@ -606,6 +610,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let entitlementStore: PgEntitlementStore | undefined;
   let directoryGroupStore: PgDirectoryGroupStore | undefined; let oauthGrantStore: PgOAuthGrantStore | undefined; let assignmentStore: PgAssignmentStore | undefined; let contextStore: ContextStore | undefined;
   let credentialStore: PgCredentialStore | undefined;
+  let databaseConnectionStore: PgDatabaseConnectionStore | undefined;
+  let databaseQueryExecutor: DatabaseQueryExecutor | undefined;
   let connectorCatalogStore: PgConnectorCatalogStore | undefined;
   let environmentStore: PgEnvironmentStore | undefined;
   let agentResourceStore: PgAgentResourceStore | undefined;
@@ -1628,6 +1634,25 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, membershipStore, orgAgentStore, orgGroupAgentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
       isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, ...(pgRunStore ? { runStore: pgRunStore } : {}), resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
   });
+  let databaseQueryProvider: DatabaseQueryReadonlyToolProvider | undefined;
+  if (pgEventStore) {
+    const tablePrefix = config.runtimeEventStore?.backend === 'pg'
+      ? config.runtimeEventStore.tablePrefix
+      : undefined;
+    databaseConnectionStore = new PgDatabaseConnectionStore(pgEventStore.pool, { tablePrefix });
+    const externalClients = new PgExternalClientStore(pgEventStore.pool, { tablePrefix });
+    await Promise.all([databaseConnectionStore.init(), externalClients.init()]);
+    databaseQueryExecutor = new DatabaseQueryExecutor({
+      store: databaseConnectionStore,
+      vault: secretVault,
+      fetchImpl: egressFetch,
+    });
+    databaseQueryProvider = new DatabaseQueryReadonlyToolProvider({
+      store: databaseConnectionStore,
+      externalClients,
+      executor: databaseQueryExecutor,
+    });
+  }
   const toolDescriptionStore = await initializeToolDescriptionStore(pgEventStore?.pool, config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined); const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd, uploadManager,
     sharedDir,
@@ -1650,7 +1675,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryWriteDelegationEnabled: (tenantId) => tenantId
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
-    ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
+    ...memoryContextTools, ...(databaseQueryProvider ? { databaseQueryProvider } : {}), agentStore, orgAgentStore, tenantStore,
     ...createOrgAgentChannelPolicyRuntimeOptions(orgGroupAgentStore, agentDwsAccountStore, orgAgentStore, userStore, membershipStore, assignmentStore),
     environmentStore,
     taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => refreshPublishedConfig(true), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
@@ -2918,7 +2943,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentOptionsConfig, tokenUsageStore,
     webPushService: runtimeWebPush.service, apnsService: runtimeWebPush.apnsService, billingService,
     governanceAuditStore, membershipStore, entitlementStore, directoryGroupStore, oauthGrantStore,
-    assignmentStore, contextStore, contextSourceAuthorizationRegistry, derivedContextStore, credentialStore, connectorCatalogStore,
+    assignmentStore, contextStore, contextSourceAuthorizationRegistry, derivedContextStore, credentialStore,
+    databaseConnectionStore, databaseQueryExecutor, connectorCatalogStore,
     environmentStore,
     agentResourceStore,
     skillGovernanceStore,

@@ -98,6 +98,7 @@ import { createMemoryPollingAdminRouter } from '../routes/memoryPollingAdmin.js'
 import { createSystemPromptsAdminRouter } from '../routes/systemPromptsAdmin.js'; import { createExternalAgentClientsAdminRouter } from '../routes/externalAgentClients.js'; import { ExternalClientAuthenticator, PgExternalClientStore } from '../data/externalClients/index.js';
 import { PgExternalConversationStore } from '../data/externalConversations/index.js';
 import { createExternalAgentApiRouter } from '../routes/externalAgentApi.js';
+import { createExternalDatabaseConnectionsAdminRouter } from '../routes/externalDatabaseConnections.js';
 import { createHeadlessWebClient } from '../externalAgent/headlessWebClient.js';
 import { FinalOutputCollector } from '../externalAgent/finalOutputCollector.js';
 import { createAgentRuntimeProfilesAdminRouter } from '../routes/agentRuntimeProfilesAdmin.js';
@@ -179,6 +180,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
   app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus })); app.use('/api/admin/external-agent-clients', requireAdmin, createExternalAgentClientsAdminRouter({ store: externalClientStore, userStore: runtime.userStore, tenantStore: runtime.tenantStore }));
+  app.use('/api/admin/external-database-connections', requireAdmin, createExternalDatabaseConnectionsAdminRouter({
+    store: runtime.databaseConnectionStore,
+    externalClients: externalClientStore,
+    vault: runtime.secretVault,
+    executor: runtime.databaseQueryExecutor,
+  }));
   app.use('/v1', createExternalAgentApiRouter({
     authenticator: externalClientStore && runtime.userStore
       ? new ExternalClientAuthenticator({ store: externalClientStore, userStore: runtime.userStore, tenantStore: runtime.tenantStore })

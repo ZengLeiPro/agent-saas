@@ -143,6 +143,21 @@ export class InMemoryExternalClientStore implements ExternalClientStore {
     if (!record) return;
     this.records.set(clientId, { ...record, lastUsedAt: usedAt });
   }
+
+  async setAllowedConnectionIds(
+    input: Parameters<ExternalClientStore['setAllowedConnectionIds']>[0],
+  ): Promise<ExternalClientRecord | undefined> {
+    const record = this.records.get(input.clientId);
+    if (!record || record.tenantId !== input.tenantId || record.status !== 'active') return undefined;
+    const updated = {
+      ...record,
+      allowedConnectionIds: [...new Set(input.allowedConnectionIds)],
+      updatedAt: new Date().toISOString(),
+      updatedBy: input.actorUserId,
+    };
+    this.records.set(input.clientId, updated);
+    return clone(updated);
+  }
 }
 
 function safeIdentifier(value: string): string {
@@ -280,5 +295,19 @@ export class PgExternalClientStore implements ExternalClientStore {
       clientId,
       usedAt,
     ]);
+  }
+
+  async setAllowedConnectionIds(
+    input: Parameters<ExternalClientStore['setAllowedConnectionIds']>[0],
+  ): Promise<ExternalClientRecord | undefined> {
+    await this.init();
+    const result = await this.pool.query(
+      `UPDATE ${this.table}
+       SET allowed_connection_ids=$3,updated_at=NOW(),updated_by=$4
+       WHERE client_id=$1 AND tenant_id=$2 AND status='active'
+       RETURNING *`,
+      [input.clientId, input.tenantId, [...new Set(input.allowedConnectionIds)], input.actorUserId],
+    );
+    return result.rows[0] ? rowToRecord(result.rows[0]) : undefined;
   }
 }

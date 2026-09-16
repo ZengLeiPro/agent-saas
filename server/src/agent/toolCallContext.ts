@@ -30,6 +30,13 @@ export interface ToolCallContext {
   env?: Record<string, string>;
   sessionId?: string;
   runId?: string;
+  externalApi?: {
+    apiClientId: string;
+    conversationId: string;
+    externalConversationId: string;
+    databaseConnectionId?: string;
+    metadata: Record<string, unknown>;
+  };
   automationFence?: {
     automationId: string;
     incarnationId: string;

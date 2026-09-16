@@ -392,6 +392,7 @@ export async function collectRuntimeTooling(
       tenantStore: config.tenantStore,
     }));
   }
+  if (config.databaseQueryProvider) providers.push(config.databaseQueryProvider);
   // 4. Web 工具（平台托管网络出站，不走 workspace hand / shell）
   if (config.webTools && config.webTools.enabled !== false) {
     const webProvider = new WebToolProvider(config.webTools, config.webFetchImpl ?? fetch);
@@ -1301,6 +1302,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         workerId: options.runtimeWorkerId,
         ...(automationFenceFromMetadata(options.runtimeIsolationMetadata) ? { automationFence: automationFenceFromMetadata(options.runtimeIsolationMetadata)! } : {}),
         channelContext: context,
+        ...(sessionRecord.externalApi ? { externalApi: sessionRecord.externalApi } : {}),
         approvalPolicy,
         ...(replaySourceSession ? {
           replaySourceSessionId: replaySourceSession.sessionId,
@@ -1966,6 +1968,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           sandboxPolicy,
           workerId: request.runtimeWorkerId, ...(automationFenceFromMetadata(request.runtimeIsolationMetadata) ? { automationFence: automationFenceFromMetadata(request.runtimeIsolationMetadata)! } : {}),
           channelContext: request.context,
+          ...(sessionRecord.externalApi ? { externalApi: sessionRecord.externalApi } : {}),
           approvalPolicy,
           ...(boundProfile ? {
             profileId: boundProfile.binding.profileId,
@@ -2456,6 +2459,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           sandboxPolicy,
           workerId: request.runtimeWorkerId, ...(automationFenceFromMetadata(request.runtimeIsolationMetadata) ? { automationFence: automationFenceFromMetadata(request.runtimeIsolationMetadata)! } : {}),
           channelContext: request.context,
+          ...(sessionRecord.externalApi ? { externalApi: sessionRecord.externalApi } : {}),
           approvalPolicy,
           ...(boundProfile ? {
             profileId: boundProfile.binding.profileId,

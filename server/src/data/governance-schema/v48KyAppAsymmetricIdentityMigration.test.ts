@@ -6,7 +6,7 @@ import { governanceV48KyAppAsymmetricIdentityStatements } from './v48KyAppAsymme
 describe('V48 KY App 非对称身份 expand migration', () => {
   it('只追加 V2 表列且版本连续', () => {
     const statements = governanceV48KyAppAsymmetricIdentityStatements('safe');
-    expect(governanceLatestMigrations('safe').at(-1)).toEqual({ version: 48, statements });
+    expect(governanceLatestMigrations('safe').find(({ version }) => version === 48)).toEqual({ version: 48, statements });
     const sql = statements.join('\n');
     expect(sql).toContain('safe_ky_app_enrollment_operations');
     expect(sql).toContain('safe_ky_app_deployment_keys');

@@ -590,7 +590,7 @@ export function DesktopSessionSidebar({
   onSettingsNavigate,
   onCloseSettings,
   isAdmin = false,
-  settingsAccess = { status: "ready", personalAllowed: true, tenantEntryAllowed: false, platformEntryAllowed: false, retry: () => undefined },
+  settingsAccess = { status: "ready", personalAllowed: true, tenantEntryAllowed: false, platformEntryAllowed: false, retry: () => undefined }, platformDemoEntryAllowed = false,
   isPlatformAdmin = false,
   hasMore,
   isLoadingMore,
@@ -1296,7 +1296,7 @@ export function DesktopSessionSidebar({
     return <DeferredUnifiedSettingsSidebar
         hidden={hidden}
         className={className}
-        access={settingsAccess}
+        access={settingsAccess} platformDemoEntryAllowed={platformDemoEntryAllowed}
         personalAgentEnabled={personalAgentEnabled}
         target={settingsTarget}
         activeSection={activeSettingsSection}

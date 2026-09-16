@@ -39,7 +39,7 @@ export class KyAppOutboundError extends Error {
 export interface KyAppOutboundRequest {
   /** 安装实例登记的 baseUrl（host 白名单的唯一来源）。 */
   baseUrl: string;
-  /** 以 `/` 开头的绝对路径，例如 `/ky/v1/events`。 */
+  /** 以 `/` 开头的业务系统绝对路径。 */
   path: string;
   method: 'GET' | 'POST';
   /** SAT 等额外请求头；`X-KY-Request-Id` 由出站层根据 requestId 统一注入。 */

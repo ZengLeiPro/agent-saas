@@ -129,12 +129,14 @@ export function createKyAppRouter(options: KyAppRouterConfig): {
 
   // ---- platform 行 ----
 
-  app.get('/ky/v1/manifest', async (c) => {
+  const manifestHandler = async (c: Context<{ Variables: KyAppVariables }>) => {
     await authenticate(c);
     return c.json(options.manifest);
-  });
+  };
+  app.get('/ky/v1/manifest', manifestHandler);
+  app.get('/ky/v2/manifest', manifestHandler);
 
-  app.get('/ky/v1/health/ready', async (c) => {
+  const readyHandler = async (c: Context<{ Variables: KyAppVariables }>) => {
     await authenticate(c);
     const ready = await buildHealthReady({
       appVersion: options.health.appVersion,
@@ -160,49 +162,65 @@ export function createKyAppRouter(options: KyAppRouterConfig): {
       jwksKids: () => runtime.jwks.kids(),
     });
     return c.json(ready);
-  });
+  };
+  app.get('/ky/v1/health/ready', readyHandler);
+  app.get('/ky/v2/health/ready', readyHandler);
 
-  app.post('/ky/v1/events', async (c) => {
+  const eventsHandler = async (c: Context<{ Variables: KyAppVariables }>) => {
     await authenticate(c);
     const ack = await options.events.handle(await c.req.json().catch(() => null));
     return c.json(ack);
-  });
+  };
+  app.post('/ky/v1/events', eventsHandler);
+  app.post('/ky/v2/events', eventsHandler);
 
   // ---- user / local_* 行 ----
 
-  app.get('/ky/v1/me', async (c) => {
+  const meHandler = async (c: Context<{ Variables: KyAppVariables }>) => {
     const identity = await authenticate(c);
     const me = await options.buildMe(identity);
     c.header(HTTP_HEADERS.permVersion, me.permVersion);
     return c.json(me);
-  });
+  };
+  app.get('/ky/v1/me', meHandler);
+  app.get('/ky/v2/me', meHandler);
 
   // ---- agent 行 ----
 
-  app.post('/ky/v1/capabilities/:capabilityId', async (c) => {
+  const capabilityHandler = async (c: Context<{ Variables: KyAppVariables }>) => {
     // §3.1-6：`jti` 占用在鉴权与输入校验之后、执行之前，所以这里先不消费。
     const identity = await authenticate(c, false);
     const sat = requireSat(identity);
+    const capabilityId = c.req.param('capabilityId');
+    if (!capabilityId) throw new KyAppError('invalid_input', { message: '缺少 capabilityId' });
     const body = await c.req.json().catch(() => null);
     const response = await options.capabilities.invoke({
-      capabilityId: c.req.param('capabilityId'),
+      capabilityId,
       identity: sat,
       idempotencyKey: c.req.header(HTTP_HEADERS.idempotencyKey) ?? null,
       body,
     });
     return c.json(response);
-  });
+  };
+  app.post('/ky/v1/capabilities/:capabilityId', capabilityHandler);
+  app.post('/ky/v2/capabilities/:capabilityId', capabilityHandler);
 
-  app.get('/ky/v1/capabilities/:capabilityId/executions/:lcid', async (c) => {
+  const executionHandler = async (c: Context<{ Variables: KyAppVariables }>) => {
     const identity = await authenticate(c);
     const sat = requireSat(identity);
+    const capabilityId = c.req.param('capabilityId');
+    const lcid = c.req.param('lcid');
+    if (!capabilityId || !lcid)
+      throw new KyAppError('invalid_input', { message: '能力路径不完整' });
     const result = await options.capabilities.queryExecution({
-      capabilityId: c.req.param('capabilityId'),
+      capabilityId,
       identity: sat,
-      lcid: c.req.param('lcid'),
+      lcid,
     });
     return c.json(result);
-  });
+  };
+  app.get('/ky/v1/capabilities/:capabilityId/executions/:lcid', executionHandler);
+  app.get('/ky/v2/capabilities/:capabilityId/executions/:lcid', executionHandler);
 
   registerLocalRoutes(app, runtime);
   registerTestRoutes(app, runtime);

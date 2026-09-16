@@ -16,6 +16,7 @@ import { ActivityIndicator, Alert, Linking, StyleSheet, Text, View } from 'react
 import { fetchMyMcp, startMyMcpOAuth, type McpServerSummary } from '@agent/shared';
 import { governanceAccessApi, type OAuthGrantResponse } from '@agent/shared/lib/governanceApi';
 import { ConnectorCard } from './ConnectorCard';
+import { ResponsiveCardGrid } from '../layout';
 import { EmptyState } from '../ui';
 import { EntityIcons } from '../../lib/icons';
 import { spacing, typography, useColors } from '../../theme';
@@ -221,47 +222,49 @@ export function McpConnectorList() {
       ) : servers.length === 0 ? (
         <EmptyState icon={EntityIcons.connector} title="暂无可用的自定义 MCP 服务器" />
       ) : (
-        servers.map((server) => {
-          const grant = grants.find(
-            (item) => item.connectorId === server.id && item.status !== 'revoked',
-          );
-          const connected = grant?.status === 'active';
-          const legacyWithoutGrant = server.oauth?.status === 'connected' && !grant;
-          const status = resolveCredentialConnectorStatus({
-            loading: false,
-            status: connected ? 'connected' : 'disconnected',
-            runtimeEnabled: true,
-            available: server.oauth?.platformConfigured !== false,
-          });
-          const notice = !server.oauth?.platformConfigured
-            ? '平台尚未配置该连接器 OAuth'
-            : legacyWithoutGrant
-              ? 'OAuth Grant 权威记录不可用，已阻止客户端自行操作'
-              : !connected && !redirectAvailable
-                ? OAUTH_DEGRADED_NOTICE
-                : null;
-          return (
-            <ConnectorCard
-              key={server.id}
-              name={server.name}
-              description={server.oauth?.provider ?? 'MCP 连接器'}
-              status={status}
-              statusLabel={connectorStatusLabel(status)}
-              actionLabel={connected ? '撤销' : grant ? '重新连接' : '连接'}
-              busy={busyId === server.id || busyId === grant?.grantId}
-              disabled={
-                !server.oauth?.platformConfigured ||
-                legacyWithoutGrant ||
-                (!connected && !redirectAvailable)
-              }
-              notice={notice}
-              onPress={() =>
-                connected && grant ? void revoke(grant.grantId, server.name) : void connect(server)
-              }
-              testID={`connector-card-mcp-${server.id}`}
-            />
-          );
-        })
+        <ResponsiveCardGrid testID="mcp-connectors-grid">
+          {servers.map((server) => {
+            const grant = grants.find(
+              (item) => item.connectorId === server.id && item.status !== 'revoked',
+            );
+            const connected = grant?.status === 'active';
+            const legacyWithoutGrant = server.oauth?.status === 'connected' && !grant;
+            const status = resolveCredentialConnectorStatus({
+              loading: false,
+              status: connected ? 'connected' : 'disconnected',
+              runtimeEnabled: true,
+              available: server.oauth?.platformConfigured !== false,
+            });
+            const notice = !server.oauth?.platformConfigured
+              ? '平台尚未配置该连接器 OAuth'
+              : legacyWithoutGrant
+                ? 'OAuth Grant 权威记录不可用，已阻止客户端自行操作'
+                : !connected && !redirectAvailable
+                  ? OAUTH_DEGRADED_NOTICE
+                  : null;
+            return (
+              <ConnectorCard
+                key={server.id}
+                name={server.name}
+                description={server.oauth?.provider ?? 'MCP 连接器'}
+                status={status}
+                statusLabel={connectorStatusLabel(status)}
+                actionLabel={connected ? '撤销' : grant ? '重新连接' : '连接'}
+                busy={busyId === server.id || busyId === grant?.grantId}
+                disabled={
+                  !server.oauth?.platformConfigured ||
+                  legacyWithoutGrant ||
+                  (!connected && !redirectAvailable)
+                }
+                notice={notice}
+                onPress={() =>
+                  connected && grant ? void revoke(grant.grantId, server.name) : void connect(server)
+                }
+                testID={`connector-card-mcp-${server.id}`}
+              />
+            );
+          })}
+        </ResponsiveCardGrid>
       )}
     </View>
   );

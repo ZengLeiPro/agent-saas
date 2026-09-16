@@ -13,7 +13,7 @@ const uiHref = nonEmpty.refine(
 export const governanceDomainSchema = z.enum([
   'agent', 'skill', 'connector', 'memory', 'file', 'automation', 'model_tool', 'environment',
 ]);
-export const governancePersonaSchema = z.enum(['platform_admin', 'org_admin', 'member']);
+export const governancePersonaSchema = z.enum(['platform_admin', 'org_admin', 'member', 'platform_demo']);
 export const accessStateSchema = z.enum([
   'allowed', 'denied', 'needs_assignment', 'needs_user_authorization',
   'runtime_approval_required',

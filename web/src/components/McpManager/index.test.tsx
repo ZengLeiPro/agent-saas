@@ -138,7 +138,7 @@ describe("McpManager 连接器目录", () => {
 
     fireEvent.change(screen.getByPlaceholderText("server id，如 github"), { target: { value: "new-server" } });
     fireEvent.change(screen.getByPlaceholderText("显示名称"), { target: { value: "新服务" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存 Server" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并生效" }));
 
     await waitFor(() => {
       expect(upsertMcpServer).toHaveBeenCalledWith(expect.objectContaining({

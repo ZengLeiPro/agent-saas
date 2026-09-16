@@ -5,6 +5,11 @@ import { serverLogger } from '../utils/logger.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgGovernanceAuditStore, type GovernanceAuditStore } from '../data/governance-audit/index.js';
 import { PgMembershipStore } from '../data/memberships/index.js';
+import {
+  configurePlatformDemoRuntimeStores,
+  PgPlatformDemoCapabilityStore,
+  PgPlatformDemoSessionStore,
+} from '../platformDemo/index.js';
 import { normalizeLegacyEntitlementSettings, PgEntitlementStore } from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
 import { PgDirectoryGroupStore } from '../data/directoryGroups/index.js';
@@ -209,6 +214,16 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
       tablePrefix: tablePrefix,
     });
     await membershipStore.init();
+    configurePlatformDemoRuntimeStores({
+      capabilities: new PgPlatformDemoCapabilityStore({
+        pool: pgEventStore.pool,
+        tablePrefix,
+      }),
+      sessions: new PgPlatformDemoSessionStore({
+        pool: pgEventStore.pool,
+        tablePrefix,
+      }),
+    });
     if (userStore && tenantStore) {
       try {
         const backfill = await membershipStore.backfillLegacyIdentities({

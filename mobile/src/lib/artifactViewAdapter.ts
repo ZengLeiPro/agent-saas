@@ -1,3 +1,11 @@
+/**
+ * Mobile Artifact safe-view adapter (M50-02 / M50-03).
+ *
+ * - html viewKind → download-only (no in-app HTML/WebView engine).
+ * - On md+ chat, FileDownloadCard opens ArtifactPreviewPane in the right slot
+ *   (text/image inline; pdf/audio/video system-open; download-only notice).
+ * - Phone <768 keeps download/share via openOrShareUrl.
+ */
 import {
   authFetch,
   ARTIFACT_VIEW_POLICY_VERSION,

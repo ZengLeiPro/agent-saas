@@ -20,6 +20,10 @@ public_origin="${5:?public Web origin is required}"
 concurrency="${6:-4}"
 request_timeout="${7:-60}"
 diagnostics="${8:-}"
+# Optional 9th arg or OSS_INTERNAL=1: Shenzhen ECS publishes via oss-*-internal (same contract as #689).
+internal_flag="${9:-}"
+if [ -z "$internal_flag" ] && [ "${OSS_INTERNAL:-}" = 1 ]; then internal_flag=internal; fi
+case "$internal_flag" in ''|internal) ;; *) echo 'Web asset internal flag must be empty or internal' >&2; exit 1 ;; esac
 [ -z "$diagnostics" ] || install -d -m 0700 "$diagnostics"
 [[ "$concurrency" =~ ^[1-8]$ ]] || { echo 'Web asset concurrency must be 1..8' >&2; exit 1; }
 [[ "$request_timeout" =~ ^[1-9][0-9]*$ ]] && [ "${#request_timeout}" -le 3 ] && \
@@ -143,14 +147,14 @@ if [ "$mode" = batch ]; then
       sleep 0.1
     done
   }
-  echo "Verifying immutable Web assets: total=$total concurrency=$concurrency requestTimeout=${request_timeout}s"
+  echo "Verifying immutable Web assets: total=$total concurrency=$concurrency requestTimeout=${request_timeout}s internal=${internal_flag:-public}"
   index=0
   while IFS= read -r -d '' source_path; do
     if [ "$active" -ge "$concurrency" ]; then wait_one; fi
     index=$((index + 1))
     bash "$script_dir/upload-web-assets-immutable.sh" --asset "$source_path" "$index/$total" "$work_dir/$index.result" \
       "$asset_root" "$target_base" "$credentials_path" "$oss_module_path" "$public_origin" \
-      "$concurrency" "$request_timeout" "$diagnostics" &
+      "$concurrency" "$request_timeout" "$diagnostics" "$internal_flag" &
     workers[$!]="$work_dir/$index.result"
     active=$((active + 1))
   done < "$work_dir/sources"
@@ -214,7 +218,7 @@ put_status=0
 run_request put node "$script_dir/put-web-asset-create-only.mjs" \
   "$upload_path" "$bucket" "${target_uri#"oss://$bucket/"}" "$region" \
   "$cache_control" "$expected_type" "$expected_encoding" \
-  "$credentials_path" "$oss_module_path" || put_status=$?
+  "$credentials_path" "$oss_module_path" "$internal_flag" || put_status=$?
 result=uploaded
 if [ "$put_status" -ne 0 ]; then
   if [ "$put_status" -ne 17 ] || \
@@ -227,13 +231,13 @@ fi
 # Keep HEAD + stored-byte SDK GET and exact cmp; never use transparent-gunzip CLI reads.
 readback="$work_dir/readback"
 run_request readback node "$script_dir/get-web-object.mjs" "$bucket" "${target_uri#"oss://$bucket/"}" "$region" \
-  "$readback" "$credentials_path" "$oss_module_path"
+  "$readback" "$credentials_path" "$oss_module_path" "$internal_flag"
 stage=byte-compare
 cmp "$upload_path" "$readback"
 if [ "$put_status" -eq 17 ]; then
   run_request metadata node "$script_dir/repair-web-asset-metadata.mjs" \
     "$upload_path" "$bucket" "${target_uri#"oss://$bucket/"}" "$region" \
-    "$cache_control" "$expected_type" "$expected_encoding" "$credentials_path" "$oss_module_path"
+    "$cache_control" "$expected_type" "$expected_encoding" "$credentials_path" "$oss_module_path" "$internal_flag"
   cat "$work_dir/metadata.out"
 fi
 # Verify the actual public origin, with bounded transient-error retries as well as

@@ -3,6 +3,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { governanceV41KyAppSystemStatements } from '../../data/governance-schema/v41KyAppSystemMigration.js';
 import { governanceV44KyAppDeliveryStatements } from '../../data/governance-schema/v44KyAppDeliveryMigration.js';
+import { governanceV48KyAppAsymmetricIdentityStatements } from '../../data/governance-schema/v48KyAppAsymmetricIdentityMigration.js';
 import { PgKyAppSystemStore } from '../systems/store.js';
 import { PLATFORM_ADMIN } from '../__tests__/harness.js';
 import { KyAppManagementQueries } from './managementQueries.js';
@@ -25,6 +26,7 @@ const url = process.env.TEST_DATABASE_URL;
     for (const sql of [
       ...governanceV41KyAppSystemStatements(prefix),
       ...governanceV44KyAppDeliveryStatements(prefix),
+      ...governanceV48KyAppAsymmetricIdentityStatements(prefix),
     ])
       await pool.query(sql);
     const result = await store.registerVersion({

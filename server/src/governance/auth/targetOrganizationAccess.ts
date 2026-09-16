@@ -4,9 +4,9 @@ import type { PgMembershipStore, TenantMembership } from '../../data/memberships
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { isActivePlatformAdminIdentity } from '../subject/platformIdentity.js';
 
-export type TargetOrganizationActorPersona = 'platform_admin' | 'org_admin' | 'member';
+export type TargetOrganizationActorPersona = 'platform_admin' | 'org_admin' | 'member' | 'platform_demo';
 export type TargetOrganizationAccessMode =
-  'platform_manage' | 'organization_manage' | 'effective_only';
+  'platform_manage' | 'organization_manage' | 'effective_only' | 'platform_demo';
 
 export interface TargetOrganizationAccess {
   actorUserId: string;

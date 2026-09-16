@@ -71,13 +71,13 @@ interface MeResponse {
 export const me = ref<MeResponse | null>(null);
 export const meState = ref<'loading' | 'ready' | 'error'>('loading');
 
-/** 拉一次 `/ky/v1/me`，菜单与 landing 都以它为准。 */
+/** 拉一次 V2 `/me`，菜单与 landing 都以它为准。 */
 export async function refreshMe(): Promise<void> {
   meState.value = 'loading';
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 10_000);
   try {
-    const response = await app.fetch('/ky/v1/me', { signal: controller.signal });
+    const response = await app.fetch('/ky/v2/me', { signal: controller.signal });
     let body: MeResponse;
     if (response.ok) body = (await response.json()) as MeResponse;
     else {

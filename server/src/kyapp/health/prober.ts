@@ -17,10 +17,8 @@ import type {
 } from '../installations/queries.js';
 import type { PgKyAppInstallationRuntimeStore } from '../installations/runtimeStore.js';
 import type { KyAppOutbound } from '../outbound.js';
+import { kyAppRuntimePaths } from '../protocol.js';
 import type { KyAppSatIssuer } from '../sat/issuer.js';
-
-export const KY_APP_LIVE_PATH = '/ky/v1/health/live';
-export const KY_APP_READY_PATH = '/ky/v1/health/ready';
 
 /** 交给 `alertNotifier.notifyExternal('ky_app_installation', …)` 的一条告警。 */
 export interface KyAppHealthAlert {
@@ -139,7 +137,7 @@ export class KyAppHealthProber {
     return result;
   }
 
-  /** `GET /ky/v1/health/live`：公开端点，不带 SAT；`maintenance` 不算失败。 */
+  /** 公开存活检查不带 SAT；`maintenance` 不算失败。 */
   private async probeLive(installation: KyAppInstallationBrief): Promise<number> {
     const before = await this.options.runtimeStore.get(installation.installationId);
     let status: 'ok' | 'maintenance' | 'failed' = 'failed';
@@ -147,17 +145,24 @@ export class KyAppHealthProber {
     try {
       const response = await this.options.outbound.request({
         baseUrl: installation.baseUrl,
-        path: KY_APP_LIVE_PATH,
+        path: kyAppRuntimePaths(installation.authMode).live,
         method: 'GET',
         requestId: randomUUID(),
       });
       if (response.status !== 200) {
         detail = `live 返回 HTTP ${response.status}`;
-      } else if (readString(response.json, 'status') === 'maintenance') {
+      } else if (
+        installation.authMode !== 'v2_asymmetric' &&
+        readString(response.json, 'status') === 'maintenance'
+      ) {
         status = 'maintenance';
         const eta = readNumber(response.json, 'etaMinutes');
         detail = eta === undefined ? '发布维护中' : `发布维护中，预计 ${eta} 分钟`;
-      } else if (readString(response.json, 'status') === 'ok') {
+      } else if (
+        (installation.authMode === 'v2_asymmetric' &&
+          (response.json as { ok?: unknown } | null)?.ok === true) ||
+        readString(response.json, 'status') === 'ok'
+      ) {
         status = 'ok';
       } else {
         detail = 'live 响应缺少 status';
@@ -204,7 +209,7 @@ export class KyAppHealthProber {
     return 0;
   }
 
-  /** `GET /ky/v1/health/ready`：`act=platform` SAT；digest 不一致只记录，不改状态机。 */
+  /** 就绪检查使用 `act=platform` SAT；digest 不一致只记录，不改状态机。 */
   private async probeReady(
     installation: KyAppInstallationBrief,
   ): Promise<{ digestMismatch: boolean }> {
@@ -219,7 +224,7 @@ export class KyAppHealthProber {
       });
       const response = await this.options.outbound.request({
         baseUrl: installation.baseUrl,
-        path: KY_APP_READY_PATH,
+        path: kyAppRuntimePaths(installation.authMode).ready,
         method: 'GET',
         requestId,
         headers: { authorization: `Bearer ${sat.token}` },

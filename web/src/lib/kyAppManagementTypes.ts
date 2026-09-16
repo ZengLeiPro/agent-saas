@@ -115,6 +115,7 @@ export interface InstallationManagement {
     origin: string;
     techContactUserId: string;
     status: string;
+    authMode?: 'v1_symmetric' | 'v2_asymmetric';
     registeredDigest: string | null;
     domainVerifiedAt: string | null;
   };

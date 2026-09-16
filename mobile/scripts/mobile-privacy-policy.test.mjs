@@ -426,6 +426,7 @@ test('M10-05 review document keeps every external privacy and system-support fac
   assert.match(review, /Google Play Data Safety/);
   assert.match(review, /没有代填任何答案/);
   assert.match(review, /iPad 支持口径/);
+  assert.match(review, /正式宣称支持 iPad/);
   assert.match(review, /最低系统版本/);
   assert.match(review, /真实 cloud backup \/ restore/);
   assert.match(review, /M30-01\/M30-02/);

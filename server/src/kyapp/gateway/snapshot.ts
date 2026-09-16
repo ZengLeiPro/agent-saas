@@ -3,7 +3,7 @@
  *
  * 快照键 `(sessionId, installationId, registeredDigest)`：
  * - 会话**首个 run** 创建，后续 run（含审批恢复 / 交互恢复 / 后台任务）只读；
- * - 能力集 = 登记 manifest ∩ `/ky/v1/me` 的 `capabilities[].enabled`；
+ * - 能力集 = 登记 manifest ∩ 用户能力视图的 `capabilities[].enabled`；
  * - 失效**仅**三种：新会话、`installation.*` 事件、`registeredDigest` 变化。
  *   菜单刷新、能力开关翻动都不影响当前会话（提示「能力已更新，将在新会话生效」）。
  * - fail-static：`/me` 或安装目录读取失败时**保留上次快照**；
@@ -38,6 +38,7 @@ export interface AppCapabilityEntry {
   /** 调用时随 SAT 带出的 `dig`。 */
   registeredDigest: string;
   baseUrl: string;
+  authMode?: 'v1_symmetric' | 'v2_asymmetric';
 }
 
 /** 冻结在会话上的工具面。 */
@@ -59,6 +60,7 @@ export interface AppVisibleInstallation {
   systemId: string;
   baseUrl: string;
   registeredDigest: string;
+  authMode?: 'v1_symmetric' | 'v2_asymmetric';
 }
 
 /**
@@ -73,7 +75,7 @@ export interface AppSnapshotSource {
   }): Promise<AppVisibleInstallation[]>;
   /** 读登记 digest 对应的 manifest；读不到 → `null`（digest fail-closed，跳过该实例）。 */
   readManifest(input: { systemId: string; digest: string }): Promise<Manifest | null>;
-  /** `/ky/v1/me` 的 `capabilities[].enabled`；不可用 → `null`（触发 fail-static）。 */
+  /** 用户能力视图的 `capabilities[].enabled`；不可用 → `null`（触发 fail-static）。 */
   readEnabledCapabilities(input: {
     installation: AppVisibleInstallation;
     tenantId: string;
@@ -101,7 +103,10 @@ const DEFAULT_MAX_SESSIONS = 2_000;
 
 function computeKey(installations: readonly AppVisibleInstallation[]): string {
   return installations
-    .map((item) => `${item.installationId}:${item.registeredDigest}`)
+    .map(
+      (item) =>
+        `${item.installationId}:${item.registeredDigest}:${item.authMode ?? 'v1_symmetric'}`,
+    )
     .sort()
     .join('|');
 }
@@ -356,6 +361,7 @@ export class AppToolSnapshotService {
       ...(capability.resultLink ? { resultLink: capability.resultLink } : {}),
       registeredDigest: installation.registeredDigest,
       baseUrl: installation.baseUrl,
+      authMode: installation.authMode,
     };
   }
 

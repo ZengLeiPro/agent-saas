@@ -73,6 +73,7 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
       route("platform", "org-business", "entitlements-billing", "权益与计费", ["platform-console", "org-business", "entitlements-billing"]),
       route("platform", "org-business", "signup", "注册管理", ["platform-console", "org-business", "signup"]),
       route("platform", "org-business", "platform-admins", "平台管理员", ["platform-console", "org-business", "platform-admins"], { entity: "optional" }),
+      route("platform", "org-business", "demo-access", "演示访问", ["platform-console", "org-business", "demo-access"]),
     ],
   },
   {

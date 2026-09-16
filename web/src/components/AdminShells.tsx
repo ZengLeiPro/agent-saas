@@ -39,6 +39,7 @@ import {
   PlatformOrganizationGovernance,
   PlatformTemplateCatalogPage,
 } from "@/components/PlatformGovernance/PlatformGovernancePage";
+const PlatformDemoAccessPage = lazy(() => import("@/components/PlatformDemo/PlatformDemoAccessPage").then((m) => ({ default: m.PlatformDemoAccessPage })));
 
 // 直接内嵌而不走 render prop：本面板只依赖 tenantId/tenantName，走 prop 就得在
 // Desktop 两处 + Mobile 两处各传一遍，漏一处该 section 会空白（见 renderOrgAgents 注释）。
@@ -402,7 +403,7 @@ export function TenantAdminShell({
   ];
 
   const settingsContent = isPlatformAdmin && !explicitPlatformTenantId
-    ? <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />
+    ? <GovernanceCapabilityNotice title="请先选择要管理的组织" mode="gate" />
     : (
       <>
         {tenantSectionsToRender.map(({ id, node }) => {
@@ -436,16 +437,18 @@ export function TenantAdminShell({
 
   const governanceContent = (() => {
     if (!governanceRoute) return null;
-    if (!effectiveTenantId) return (
-      <div className="flex h-full min-h-0 flex-col bg-card">
-        {!governanceContentEmbedded && (
+    if (!effectiveTenantId) {
+      // 统一设置壳已渲染壳级选择器 + 紧凑引导；嵌入路径不再重复巨型空态。
+      if (governanceContentEmbedded) return null;
+      return (
+        <div className="flex h-full min-h-0 flex-col bg-card">
           <OrganizationScopeBanner route={governanceRoute} dirtyController={dirtyController} settingsMode />
-        )}
-        <div className="min-h-0 flex-1 overflow-auto">
-          <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <GovernanceCapabilityNotice title="请先选择要管理的组织" mode="gate" />
+          </div>
         </div>
-      </div>
-    );
+      );
+    }
     return (
       <OrganizationManagementContent
         route={governanceRoute}
@@ -479,7 +482,7 @@ export function TenantAdminShell({
   }
 
   const content = (() => {
-    if (!effectiveTenantId) return <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />;
+    if (!effectiveTenantId) return <GovernanceCapabilityNotice title="请先选择要管理的组织" mode="gate" />;
     if (active === "usage") return renderUsage(effectiveTenantId);
     if (active === "qa") return <QaConsole tenantId={effectiveTenantId} />;
     if (active === "audit") return <AuditEventsPanel scope="tenant" tenantId={effectiveTenantId} tenantName={currentTenant?.name} />;
@@ -579,6 +582,7 @@ export function PlatformAdminShell({
     { id: "tenants", render: renderTenants },
     { id: "signup", render: () => renderSignupConfig ? renderSignupConfig() : null },
     { id: "platform-admins", render: () => <PlatformAdminsPage /> },
+    { id: "demo-access", render: () => <PlatformDemoAccessPage /> },
     { id: "agent-templates", render: () => <PlatformTemplateCatalogPage kind="agent" /> },
     { id: "environment-templates", render: () => <PlatformTemplateCatalogPage kind="environment" /> },
     { id: "models", render: renderModels },
@@ -643,6 +647,8 @@ export function PlatformAdminShell({
         return renderSignupConfig ? renderSignupConfig() : <GovernanceCapabilityNotice title="注册管理" />;
       case "platform.org-business.platform-admins":
         return <PlatformAdminsPage />;
+      case "platform.org-business.demo-access":
+        return <Suspense fallback={<SettingsSectionFallback />}><PlatformDemoAccessPage /></Suspense>;
       case "platform.resource-center.agent-templates":
         return <PlatformTemplateCatalogPage kind="agent" />;
       case "platform.resource-center.environment-templates":

@@ -73,6 +73,7 @@ vi.mock('react-native', async () => {
     Linking: { openURL: vi.fn() },
     Platform: { OS: 'ios', select: (o: Record<string, unknown>) => o.ios },
     Dimensions: { get: () => ({ width: 390, height: 844 }) },
+    useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
   };
 });
 

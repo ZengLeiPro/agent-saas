@@ -322,6 +322,146 @@
           "params": ["$tablePrefix"]
         }
       ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v49PlatformDemoMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:bc25413edcc63afef458e9572e8f7d27dc7c565b07cd0ecaae69479405840b39",
+      "checks": [
+        {
+          "id": "platform-demo-mode-schema",
+          "configPath": "runtimeEventStore",
+          "description": "平台演示 capability grants 与 demo_session 表及关键列、索引已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_membership_capability_grants') AS grants, to_regclass($1 || '_platform_demo_sessions') AS sessions), grant_cols AS (SELECT count(*)=7 AS ok FROM refs, pg_attribute WHERE attrelid=refs.grants AND attname IN ('tenant_id','user_id','capability','granted_by','granted_at','revoked_at','revoked_by') AND NOT attisdropped), session_cols AS (SELECT count(*)=7 AS ok FROM refs, pg_attribute WHERE attrelid=refs.sessions AND attname IN ('session_key','actor_user_id','actor_tenant_id','section_id','draft_json','updated_at','expires_at') AND NOT attisdropped) SELECT refs.grants IS NOT NULL AND refs.sessions IS NOT NULL AND grant_cols.ok AND session_cols.ok AS ok FROM refs, grant_cols, session_cols",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/governance-schema/migrationRunner.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
+      "checks": [
+        {
+          "id": "governance-migration-runner-schema-versions",
+          "configPath": "runtimeEventStore",
+          "description": "治理 schema_versions 元数据表已创建，可记录已应用迁移版本",
+          "sql": "SELECT to_regclass($1 || '_governance_schema_versions') IS NOT NULL AND (SELECT count(*) = 2 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 || '_governance_schema_versions' AND column_name IN ('version', 'applied_at')) AS ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/apns/store.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+      "checks": [
+        {
+          "id": "apns-device-delivery-schema",
+          "configPath": "runtimeEventStore",
+          "description": "APNs 设备与投递表及关键列已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_apns_devices') AS devices, to_regclass($1 || '_apns_deliveries') AS deliveries), device_cols AS (SELECT count(*) = 10 AS ok FROM refs, pg_attribute WHERE attrelid = refs.devices AND attname IN ('id','tenant_id','user_id','token','token_hash','environment','device_name','app_version','created_at','updated_at') AND NOT attisdropped), delivery_cols AS (SELECT count(*) = 6 AS ok FROM refs, pg_attribute WHERE attrelid = refs.deliveries AND attname IN ('device_id','event_key','status','error','created_at','updated_at') AND NOT attisdropped) SELECT refs.devices IS NOT NULL AND refs.deliveries IS NOT NULL AND device_cols.ok AND delivery_cols.ok AS ok FROM refs, device_cols, delivery_cols",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/apns/store.ts",
+      "baselineDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+      "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+      "checks": [
+        {
+          "id": "apns-device-delivery-schema",
+          "configPath": "runtimeEventStore",
+          "description": "APNs 设备与投递表及关键列已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_apns_devices') AS devices, to_regclass($1 || '_apns_deliveries') AS deliveries), device_cols AS (SELECT count(*) = 10 AS ok FROM refs, pg_attribute WHERE attrelid = refs.devices AND attname IN ('id','tenant_id','user_id','token','token_hash','environment','device_name','app_version','created_at','updated_at') AND NOT attisdropped), delivery_cols AS (SELECT count(*) = 6 AS ok FROM refs, pg_attribute WHERE attrelid = refs.deliveries AND attname IN ('device_id','event_key','status','error','created_at','updated_at') AND NOT attisdropped) SELECT refs.devices IS NOT NULL AND refs.deliveries IS NOT NULL AND device_cols.ok AND delivery_cols.ok AS ok FROM refs, device_cols, delivery_cols",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/apns/store.ts",
+      "baselineDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+      "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+      "checks": [
+        {
+          "id": "apns-device-delivery-schema",
+          "configPath": "runtimeEventStore",
+          "description": "APNs 设备与投递表及关键列已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_apns_devices') AS devices, to_regclass($1 || '_apns_deliveries') AS deliveries), device_cols AS (SELECT count(*) = 10 AS ok FROM refs, pg_attribute WHERE attrelid = refs.devices AND attname IN ('id','tenant_id','user_id','token','token_hash','environment','device_name','app_version','created_at','updated_at') AND NOT attisdropped), delivery_cols AS (SELECT count(*) = 6 AS ok FROM refs, pg_attribute WHERE attrelid = refs.deliveries AND attname IN ('device_id','event_key','status','error','created_at','updated_at') AND NOT attisdropped) SELECT refs.devices IS NOT NULL AND refs.deliveries IS NOT NULL AND device_cols.ok AND delivery_cols.ok AS ok FROM refs, device_cols, delivery_cols",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+      "checks": [
+        {
+          "id": "ky-app-v44-delivery-schema",
+          "configPath": "runtimeEventStore",
+          "description": "KY App V44 交付编排与交付记录表及关键列已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_ky_app_onboard_executions') AS executions, to_regclass($1 || '_ky_app_delivery_records') AS deliveries), exec_cols AS (SELECT count(*) = 8 AS ok FROM refs, pg_attribute WHERE attrelid = refs.executions AND attname IN ('execution_id','tenant_id','system_id','installation_id','request_digest','status','current_step','created_at') AND NOT attisdropped), delivery_cols AS (SELECT count(*) = 6 AS ok FROM refs, pg_attribute WHERE attrelid = refs.deliveries AND attname IN ('installation_id','tenant_id','system_id','checklist_json','offboarding_status','created_at') AND NOT attisdropped) SELECT refs.executions IS NOT NULL AND refs.deliveries IS NOT NULL AND exec_cols.ok AND delivery_cols.ok AS ok FROM refs, exec_cols, delivery_cols",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:ef9534237aaad294f2d33beb3efe603f47ff6754877eb3789ec1d5aba07e5fd8",
+      "checks": [
+        {
+          "id": "skill-presentation-v38-schema",
+          "configPath": "runtimeEventStore",
+          "description": "V38 skill_presentations 表已经建立",
+          "sql": "SELECT to_regclass($1 || '_skill_presentations') IS NOT NULL AS ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+      "checks": [
+        {
+          "id": "ky-app-v41-system-schema",
+          "configPath": "runtimeEventStore",
+          "description": "KY App V41 系统定义与安装相关表已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_ky_app_system_definitions') AS definitions, to_regclass($1 || '_ky_app_tenant_system_installations') AS installations) SELECT refs.definitions IS NOT NULL AND refs.installations IS NOT NULL AS ok FROM refs",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+      "checks": [
+        {
+          "id": "ky-app-v42-directory-schema",
+          "configPath": "runtimeEventStore",
+          "description": "KY App V42 目录变更日志与状态表已经建立",
+          "sql": "WITH refs AS (SELECT to_regclass($1 || '_ky_app_directory_change_log') AS change_log, to_regclass($1 || '_ky_app_directory_state') AS state) SELECT refs.change_log IS NOT NULL AND refs.state IS NOT NULL AS ok FROM refs",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+      "checks": [
+        {
+          "id": "ky-app-v43-session-tool-snapshot-schema",
+          "configPath": "runtimeEventStore",
+          "description": "KY App V43 会话工具快照表已经建立",
+          "sql": "SELECT to_regclass($1 || '_ky_app_session_tool_snapshots') IS NOT NULL AS ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
     }
   ]
 }

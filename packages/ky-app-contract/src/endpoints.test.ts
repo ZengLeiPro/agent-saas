@@ -28,6 +28,8 @@ describe('§3.3 公开行', () => {
     for (const actor of ACTORS) {
       expect(allow(actor, 'GET', '/ky/v1/health/live')).toBe(true);
       expect(allow(actor, 'GET', '/ky/v1/attest')).toBe(true);
+      expect(allow(actor, 'GET', '/ky/v2/health/live')).toBe(true);
+      expect(allow(actor, 'GET', '/ky/v2/attest')).toBe(true);
     }
   });
 
@@ -60,6 +62,9 @@ describe('§3.3 platform 行', () => {
     ['GET', '/ky/v1/health/ready'],
     ['GET', '/ky/v1/manifest'],
     ['POST', '/ky/v1/events'],
+    ['GET', '/ky/v2/health/ready'],
+    ['GET', '/ky/v2/manifest'],
+    ['POST', '/ky/v2/events'],
   ];
 
   it('只有 platform 可达', () => {
@@ -76,6 +81,10 @@ describe('§3.3 agent 行', () => {
     for (const actor of ACTORS) {
       expect(allow(actor, 'POST', '/ky/v1/capabilities/order.create')).toBe(actor === 'agent');
       expect(allow(actor, 'GET', '/ky/v1/capabilities/order.create/executions/lc_9c2')).toBe(
+        actor === 'agent',
+      );
+      expect(allow(actor, 'POST', '/ky/v2/capabilities/order.create')).toBe(actor === 'agent');
+      expect(allow(actor, 'GET', '/ky/v2/capabilities/order.create/executions/lc_9c2')).toBe(
         actor === 'agent',
       );
     }
@@ -97,6 +106,7 @@ describe('§3.3 /ky/v1/me 行', () => {
     for (const actor of ACTORS) {
       const expected = actor === 'user' || actor === 'local_admin' || actor === 'local_user';
       expect(allow(actor, 'GET', '/ky/v1/me'), actor).toBe(expected);
+      expect(allow(actor, 'GET', '/ky/v2/me'), actor).toBe(expected);
     }
   });
 });

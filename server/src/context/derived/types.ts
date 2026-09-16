@@ -120,7 +120,7 @@ export interface ReviewRoleGate {
   mayCorrectOrganization(input: {
     tenantId: string;
     actorId: string;
-    accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only';
+    accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only' | 'platform_demo';
   }): Promise<boolean>;
 }
 

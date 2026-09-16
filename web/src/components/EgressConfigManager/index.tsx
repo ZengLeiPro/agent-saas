@@ -86,6 +86,12 @@ function ProbeRow({ label, result }: { label: string; result: EgressProbeRespons
   );
 }
 
+
+function autoTextareaRows(value: string, minRows = 3, maxRows = 16) {
+  const lines = value.length === 0 ? 1 : value.split("\n").length;
+  return Math.min(maxRows, Math.max(minRows, lines + 1));
+}
+
 export function EgressConfigManager() {
   const { platformReadOnly } = useAuth();
   const [view, setView] = useState<EgressConfigAdminView | null>(null);
@@ -193,13 +199,13 @@ export function EgressConfigManager() {
             </Button>
             <Button size="sm" onClick={() => void save()} disabled={platformReadOnly || busy || !dirty}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-              保存配置
+              保存并生效
             </Button>
           </div>
         }
       />
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-auto pb-2">
+      <div className="space-y-4 pb-2">
         {message && (
           <div className={message.includes("已保存并应用")
             ? "rounded-md border border-success/30 bg-success-subtle px-3 py-2 text-sm text-success-ink"
@@ -270,7 +276,8 @@ export function EgressConfigManager() {
             >
               <Textarea
                 aria-label="走代理的域名"
-                rows={4}
+                rows={autoTextareaRows(listToLines(draft.server.matchDomains), 3, 16)}
+                className="overflow-hidden"
                 value={listToLines(draft.server.matchDomains)}
                 placeholder={"openai.com\ngithub.com\ngoogle.com"}
                 onChange={(event) => patchServer({ matchDomains: linesToList(event.target.value) })}
@@ -284,7 +291,8 @@ export function EgressConfigManager() {
             >
               <Textarea
                 aria-label="强制直连的域名"
-                rows={3}
+                rows={autoTextareaRows(listToLines(draft.server.bypassDomains), 3, 16)}
+                className="overflow-hidden"
                 value={listToLines(draft.server.bypassDomains)}
                 onChange={(event) => patchServer({ bypassDomains: linesToList(event.target.value) })}
                 disabled={platformReadOnly || loading}
@@ -412,7 +420,8 @@ export function EgressConfigManager() {
             >
               <Textarea
                 aria-label="容器绕过代理地址"
-                rows={3}
+                rows={autoTextareaRows(listToLines(draft.sandbox.noProxy), 3, 16)}
+                className="overflow-hidden"
                 value={listToLines(draft.sandbox.noProxy)}
                 onChange={(event) => patchSandbox({ noProxy: linesToList(event.target.value) })}
                 disabled={platformReadOnly || loading}

@@ -591,7 +591,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
               暂无成员账号，请先添加并完成 OAuth 授权。
             </div>
           ) : (
-            <Table containerClassName="max-h-[65vh]">
+            <Table containerClassName="max-h-[65vh] overflow-auto">
               <TableHeader>
                 <TableRow>
                   <TableHead>Agent</TableHead>

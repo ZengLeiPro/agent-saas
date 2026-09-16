@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { generateKeyPairSync } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -64,9 +65,10 @@ for (const value of ['', '0', '01', '-1', '1e2', '9007199254740992', '$(echo 101
 test('default and build-only use the dispatch SHA without reading any old run', async () => {
   const noNetwork = { api: () => assert.fail('unexpected API call'), pages: () => assert.fail('unexpected API call') };
   for (const [label, operation] of Object.entries(RELEASE_OPERATIONS).filter(([, value]) => value !== 'testflight')) {
-    assert.deepEqual(await resolveReleaseInputs(context, { operation: label, build_run: '' }, noNetwork), { operation, sourceSha: dispatchSha, buildRunId: '202', buildAttempt: '1' });
+    assert.deepEqual(await resolveReleaseInputs(context, { operation: label, build_run: '' }, noNetwork), { operation, sourceSha: dispatchSha, buildRunId: '202', buildAttempt: '1', marketingVersionInput: '' });
   }
   assert.equal((await resolveReleaseInputs(context, {}, noNetwork)).operation, 'build-and-testflight');
+  assert.equal((await resolveReleaseInputs(context, { marketing_version: ' 1.2.3 ' }, noNetwork)).marketingVersionInput, '1.2.3');
 });
 
 for (const inputs of [
@@ -88,9 +90,16 @@ for (const change of [{ event: 'pull_request' }, { ref: 'refs/heads/feature' }, 
   });
 }
 
+
+test('retry hard-rejects marketing_version so IPA identity stays locked', async () => {
+  const deps = backend();
+  await assert.rejects(resolveReleaseInputs(context, { ...retry, marketing_version: '1.2.3' }, deps), /营销版本/);
+  assert.equal(deps.calls.length, 0);
+});
+
 test('retry resolves producing attempt 1 even when latest attempt is 3, and source differs from workflow/main', async () => {
   const deps = backend();
-  assert.deepEqual(await resolveReleaseInputs(context, retry, deps), { operation: 'testflight', sourceSha, buildRunId: '101', buildAttempt: '1', artifactId: '303', artifactDigest: artifact.digest, workflowSha });
+  assert.deepEqual(await resolveReleaseInputs(context, retry, deps), { operation: 'testflight', sourceSha, buildRunId: '101', buildAttempt: '1', artifactId: '303', artifactDigest: artifact.digest, workflowSha, marketingVersionInput: '' });
   assert.ok(deps.calls.includes('/actions/runs/101/attempts/1/jobs'));
   assert.ok(!deps.calls.includes('/actions/runs/101/attempts/3/jobs'));
 });
@@ -198,7 +207,10 @@ function cliFixture(t) {
   mkdirSync(join(root, 'mobile'), { recursive: true });
   const git = (...args) => execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   git('init', '-q', '-b', 'main');
-  writeFileSync(join(root, 'mobile/release-manifest.json'), JSON.stringify({ version: { iosBuildNumber: 6 } }));
+  writeFileSync(join(root, 'mobile/release-manifest.json'), JSON.stringify({
+    identity: { iosAscAppId: '6808382989' },
+    version: { iosBuildNumber: 6, marketingVersion: '0.0.1' },
+  }));
   git('add', '.'); git('commit', '-qm', 'original app');
   const source = git('rev-parse', 'HEAD');
   git('commit', '--allow-empty', '-qm', 'original workflow');
@@ -206,16 +218,31 @@ function cliFixture(t) {
   git('commit', '--allow-empty', '-qm', 'new dispatch');
   const sha = git('rev-parse', 'HEAD');
   git('update-ref', 'refs/remotes/origin/main', sha);
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const ascKey = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const preload = join(directory, 'fetch.mjs');
   writeFileSync(preload, `import assert from 'node:assert/strict';
 import { readFileSync, appendFileSync } from 'node:fs';
 const routes = JSON.parse(readFileSync(process.env.TEST_ROUTES));
 globalThis.fetch = async (url, options) => {
   assert.equal(options.method ?? 'GET', 'GET');
-  const path = String(url).replace('https://api.github.com/repos/${repository}', '');
+  const href = String(url);
+  if (href.startsWith('https://api.appstoreconnect.apple.com/v1')) {
+    const path = href.slice('https://api.appstoreconnect.apple.com/v1'.length);
+    appendFileSync(process.env.TEST_CALLS, 'ASC:' + path + '\\n');
+    for (const [key, value] of Object.entries(routes)) {
+      if (!key.startsWith('ASC:')) continue;
+      const pattern = key.slice(4);
+      if (path === pattern || path.startsWith(pattern + '?') || path.startsWith(pattern + '/')) {
+        return { ok: true, status: 200, json: async () => value };
+      }
+    }
+    assert.fail('Unexpected ASC request: ' + path);
+  }
+  const path = href.replace('https://api.github.com/repos/${repository}', '');
   appendFileSync(process.env.TEST_CALLS, path + '\\n');
   assert.ok(Object.hasOwn(routes, path), 'Unexpected API request: ' + path);
-  return { ok: true, json: async () => routes[path] };
+  return { ok: true, status: 200, json: async () => routes[path] };
 };`);
   const currentRun = { ...run, head_sha: workflow };
   const originalArtifact = { ...artifact, name: artifactName(source, '101', '1'), workflow_run: { id: 101, head_sha: workflow } };
@@ -228,23 +255,35 @@ globalThis.fetch = async (url, options) => {
     [`/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=${source}&per_page=100&page=1`]: { workflow_runs: [ciFor(source)] },
     [`/actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=${sha}&per_page=100&page=1`]: { workflow_runs: [ciFor(sha)] },
     '/actions/runs/100/attempts/1/jobs?per_page=100&page=1': { jobs: ciJobs },
+    'ASC:/apps/6808382989/appStoreVersions': {
+      data: [{ attributes: { versionString: '2.3.4', appStoreState: 'READY_FOR_SALE', platform: 'IOS' } }],
+    },
   };
-  return { directory, root, source, workflow, sha, routes, originalArtifact, execute(inputs, command = 'plan', extraEnv = {}) {
+  return { directory, root, source, workflow, sha, routes, originalArtifact, ascKey, execute(inputs, command = 'plan', extraEnv = {}) {
     routes['/actions/runs/100'] ??= ciFor(inputs.operation === retry.operation ? source : sha);
     const event = join(directory, 'event.json'); const output = join(directory, 'output'); const calls = join(directory, 'calls');
     writeFileSync(event, JSON.stringify({ inputs })); writeFileSync(output, ''); writeFileSync(calls, '');
     writeFileSync(join(directory, 'routes.json'), JSON.stringify(routes));
     const result = spawnSync(process.execPath, ['--import', preload, resolve(import.meta.dirname, 'ios-actions.mjs'), command, root], {
       encoding: 'utf8', timeout: 10_000,
-      env: { ...process.env, GITHUB_REPOSITORY: repository, GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: sha, GITHUB_RUN_ID: '202', GITHUB_RUN_ATTEMPT: '1', GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: join(directory, 'summary'), RUNNER_TEMP: directory, GH_TOKEN: 'synthetic-read-only', TEST_ROUTES: join(directory, 'routes.json'), TEST_CALLS: calls, ...extraEnv },
+      env: {
+        ...process.env, GITHUB_REPOSITORY: repository, GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+        GITHUB_SHA: sha, GITHUB_RUN_ID: '202', GITHUB_RUN_ATTEMPT: '1', GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: join(directory, 'summary'), RUNNER_TEMP: directory, GH_TOKEN: 'synthetic-read-only',
+        TEST_ROUTES: join(directory, 'routes.json'), TEST_CALLS: calls,
+        APP_STORE_CONNECT_API_KEY_P8: ascKey,
+        APP_STORE_CONNECT_API_KEY_ID: 'TESTKEY001',
+        APP_STORE_CONNECT_ISSUER_ID: '69a6de84-4e94-47e3-e053-5b8c7c11a4d1',
+        ...extraEnv,
+      },
     });
     assert.ifError(result.error);
     const rawOutput = readFileSync(output, 'utf8');
-    return { ...result, rawOutput, values: Object.fromEntries(rawOutput.trim().split('\n').filter(Boolean).map((line) => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)]; })), calls: readFileSync(calls, 'utf8') };
+    return { ...result, rawOutput, values: Object.fromEntries(rawOutput.trim().split(/\n/).filter(Boolean).map((line) => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)]; })), calls: readFileSync(calls, 'utf8') };
   } };
 }
 
-test('actual CLI default plan binds dispatch SHA and only constructs a new build', (t) => {
+test('actual CLI default plan binds dispatch SHA, resolves ASC marketing version, and only constructs a new build', (t) => {
   const f = cliFixture(t); const result = f.execute({});
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.values.source_sha, f.sha);
@@ -252,7 +291,21 @@ test('actual CLI default plan binds dispatch SHA and only constructs a new build
   assert.equal(result.values.do_testflight, 'true');
   assert.equal(result.values.build_run_attempt, '1');
   assert.equal(result.values.retry_artifact_id, '');
+  assert.equal(result.values.marketing_version, '2.3.4');
+  assert.equal(result.values.marketing_version_source, 'live');
   assert.doesNotMatch(result.calls, /\/runs\/101/u);
+  assert.match(result.calls, /ASC:\/apps\/6808382989\/appStoreVersions/u);
+});
+
+test('actual CLI filled marketing_version must be >= ASC published', (t) => {
+  const f = cliFixture(t);
+  const low = f.execute({ marketing_version: '2.3.3' });
+  assert.notEqual(low.status, 0);
+  assert.match(low.stderr, /2\.3\.4/);
+  const ok = f.execute({ marketing_version: '2.3.4' });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(ok.values.marketing_version, '2.3.4');
+  assert.equal(ok.values.marketing_version_source, 'input');
 });
 
 test('actual CLI retry paginates artifacts, retains original SHA and producing attempt, and pins ID', (t) => {
@@ -268,8 +321,10 @@ test('actual CLI retry paginates artifacts, retains original SHA and producing a
   assert.equal(result.values.retry_artifact_id, '303');
   assert.equal(result.values.retry_artifact_digest, artifact.digest);
   assert.equal(result.values.retry_workflow_sha, f.workflow);
+  assert.equal(result.values.marketing_version, '');
   assert.match(result.calls, /artifacts\?per_page=100&page=2/u);
   assert.doesNotMatch(result.calls, /attempts\/3\/jobs/u);
+  assert.doesNotMatch(result.calls, /ASC:/u);
 });
 
 test('actual CLI latest failed CI wins over older green CI and produces no plan', (t) => {
@@ -301,10 +356,11 @@ test('actual resolve-artifact detects a replaced ID before download even if name
   assert.match(result.stderr, /制品 ID/u);
 });
 
-test('workflow exposes only two localized inputs and keeps publication isolated', () => {
+test('workflow exposes localized inputs including optional marketing_version and keeps publication isolated', () => {
   const workflow = readFileSync(resolve(import.meta.dirname, '../../.github/workflows/mobile-ios-release.yml'), 'utf8');
   const form = workflow.split('  workflow_dispatch:')[1].split('\npermissions:')[0];
-  assert.deepEqual([...form.matchAll(/^      ([a-z_]+):$/gmu)].map((match) => match[1]), ['operation', 'build_run']);
+  assert.deepEqual([...form.matchAll(/^      ([a-z_]+):$/gmu)].map((match) => match[1]), ['operation', 'build_run', 'marketing_version']);
+  assert.match(form, /marketing_version:/u);
   for (const label of Object.keys(RELEASE_OPERATIONS)) assert.ok(form.includes(label));
   assert.ok(form.includes(`default: '${DEFAULT_RELEASE_OPERATION}'`));
   assert.doesNotMatch(workflow, /inputs\.(?:source_sha|build_run_id|build_run_attempt)/u);
@@ -316,4 +372,12 @@ test('workflow exposes only two localized inputs and keeps publication isolated'
   assert.match(publish, /IOS_EXPECTED_WORKFLOW_SHA/u);
   assert.doesNotMatch(publish, /build\.sh|expo prebuild/u);
   assert.doesNotMatch(workflow, /continue-on-error: true/u);
+  const plan = workflow.split('  plan:')[1].split('  build_ios:')[0];
+  assert.match(plan, /environment: mobile-submit-ios-testflight/u);
+  assert.match(plan, /APP_STORE_CONNECT_API_KEY_P8/u);
+  assert.match(plan, /marketing_version:/u);
+  const build = workflow.split('  build_ios:')[1].split('  publish_testflight:')[0];
+  assert.match(build, /apply-marketing-version/u);
+  assert.match(build, /MOBILE_MARKETING_VERSION/u);
+  assert.doesNotMatch(workflow, /git commit|git push|latestPublished/u);
 });

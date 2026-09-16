@@ -19,7 +19,7 @@ import type { DirectoryStalenessGate } from '../directory/staleness.js';
 import type { KyAppRouterConfig, KyRequestIdentity } from './types.js';
 
 /** `disabled` 状态下仍然可达的端点前缀（§3.7）。 */
-const ALWAYS_REACHABLE = ['/ky/v1/events', '/ky/v1/health/'];
+const ALWAYS_REACHABLE = ['/ky/v1/events', '/ky/v1/health/', '/ky/v2/events', '/ky/v2/health/'];
 
 export interface AuthenticateInput {
   method: string;

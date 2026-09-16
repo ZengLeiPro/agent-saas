@@ -18,6 +18,7 @@ export interface KyAppInstallationBrief {
   status: KyAppInstallation['status'];
   stateVersion: number;
   registeredDigest: string | null;
+  authMode?: 'v1_symmetric' | 'v2_asymmetric';
 }
 
 function rowToBrief(row: Record<string, unknown>): KyAppInstallationBrief {
@@ -30,6 +31,7 @@ function rowToBrief(row: Record<string, unknown>): KyAppInstallationBrief {
     status: String(row.status) as KyAppInstallation['status'],
     stateVersion: Number(row.state_version),
     registeredDigest: row.registered_digest === null ? null : String(row.registered_digest),
+    authMode: row.auth_mode === 'v2_asymmetric' ? 'v2_asymmetric' : 'v1_symmetric',
   };
 }
 
@@ -40,7 +42,7 @@ export async function listEnabledKyAppInstallations(
 ): Promise<KyAppInstallationBrief[]> {
   const result = await pool.query(
     `SELECT installation_id, tenant_id, system_id, base_url, origin, status,
-            state_version, registered_digest
+            state_version, registered_digest, auth_mode
      FROM ${table} WHERE status = 'enabled' ORDER BY installation_id`,
   );
   return result.rows.map((row) => rowToBrief(row as Record<string, unknown>));
@@ -53,7 +55,7 @@ export async function listLiveKyAppInstallations(
 ): Promise<KyAppInstallationBrief[]> {
   const result = await pool.query(
     `SELECT installation_id, tenant_id, system_id, base_url, origin, status,
-            state_version, registered_digest
+            state_version, registered_digest, auth_mode
      FROM ${table} WHERE status <> 'deleted' ORDER BY installation_id`,
   );
   return result.rows.map((row) => rowToBrief(row as Record<string, unknown>));
@@ -92,7 +94,7 @@ export class KyAppInstallationDirectory {
   async listProbeable(): Promise<KyAppInstallationBrief[]> {
     const result = await this.pool.query(
       `SELECT installation_id, tenant_id, system_id, base_url, origin, status,
-              state_version, registered_digest
+              state_version, registered_digest, auth_mode
        FROM ${this.table}
        WHERE status = 'enabled' OR (status = 'pending' AND domain_verified_at IS NOT NULL)
        ORDER BY installation_id`,

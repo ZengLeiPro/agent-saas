@@ -127,7 +127,7 @@ export function MemberBudgetAuditCard({
           </div>
         ) : null}
         {entries.length ? (
-          <Table className="min-w-[900px]" containerClassName="max-h-[360px] rounded-lg border">
+          <Table className="min-w-[900px]" containerClassName="max-h-[360px] overflow-auto rounded-lg border">
             <TableHeader>
               <TableRow>
                 <TableHead>时间</TableHead>

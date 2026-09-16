@@ -262,11 +262,63 @@ test('缺失或非法公开入口在 OSS 写入前拒绝', async () => {
 });
 
 test('两条生产发布入口均显式传入真实站点域名', async () => {
-  for (const name of ['ci.yml', 'promote-release.yml']) {
-    const workflow = await readFile(join(repositoryRoot, '.github/workflows', name), 'utf8');
-    assert.match(
-      workflow,
-      /upload-web-assets-immutable\.sh \\\n[^\n]+"https:\/\/agent\.kaiyan\.net"/u,
+  const ci = await readFile(join(repositoryRoot, '.github/workflows/ci.yml'), 'utf8');
+  assert.match(
+    ci,
+    /upload-web-assets-immutable\.sh \\\n[^\n]+"https:\/\/agent\.kaiyan\.net"/u,
+  );
+  let promote = await readFile(
+    join(repositoryRoot, '.github/workflows/promote-release.yml'),
+    'utf8',
+  );
+  if (!promote.includes('publish-web-assets-on-ecs.sh')) {
+    promote = await readFile(
+      join(repositoryRoot, 'scripts/release/_pending_workflow/promote-release.yml'),
+      'utf8',
     );
   }
+  // Production promote publishes hashed assets on Shenzhen ECS; origin still required.
+  assert.match(promote, /publish-web-assets-on-ecs\.sh/u);
+  assert.match(promote, /'https:\/\/agent\.kaiyan\.net' 8 60/u);
+});
+
+test('internal flag reaches ali-oss client options', async () => {
+  const root = await setupFixture();
+  const aliOss = await readFile(join(root, 'fake-ali-oss.cjs'), 'utf8');
+  await writeFile(
+    join(root, 'fake-ali-oss.cjs'),
+    aliOss.replace(
+      "if (options.region !== 'oss-cn-shenzhen') throw new Error('unexpected ali-oss region: ' + options.region);",
+      "if (options.region !== 'oss-cn-shenzhen') throw new Error('unexpected ali-oss region: ' + options.region);\n" +
+        "    if (options.internal !== true) throw new Error('expected internal OSS endpoint');",
+    ),
+  );
+  const result = spawnSync(
+    'bash',
+    [
+      join(repositoryRoot, 'scripts/release/upload-web-assets-immutable.sh'),
+      join(root, 'assets'),
+      'oss://web-bucket/assets',
+      join(root, 'credentials.json'),
+      join(root, 'fake-ali-oss.cjs'),
+      'https://web.example.com',
+      '4',
+      '60',
+      '',
+      'internal',
+    ],
+    {
+      cwd: join(root, 'workflow-cwd'),
+      env: {
+        ...process.env,
+        PATH: `${join(root, 'bin')}:${process.env.PATH}`,
+        OSS_REGION: 'cn-shenzhen',
+        FAKE_OSS_ROOT: join(root, 'oss'),
+        FAKE_OSS_LOG: join(root, 'oss.log'),
+      },
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /internal=internal/u);
 });

@@ -64,6 +64,8 @@ const kyAppV2ReviewPaths = [
   'server/src/data/governance-schema/latestMigrations.ts',
   'server/src/data/governance-schema/migrations.ts',
   'server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts',
+  'server/src/data/governance-schema/v49PlatformDemoMigration.ts',
+  'shared/src/types/governance.ts',
   'server/src/kyapp/enrollment/store.ts',
   'server/src/kyapp/systems/store.ts',
   'server/src/kyapp/workload/deploymentKeyStore.ts',
@@ -83,6 +85,12 @@ const externalClientEvidencePaths = [
   'server/src/data/externalClients/store.pg.test.ts',
   'docs/release/外部Agent调用身份P0迁移审核-20260915.md',
 ];
+const gwsAuthInjectionReviewPaths = [
+  'server/src/app/runtimeGovernanceConnectors.ts',
+  'server/src/data/oauthGrants/store.ts',
+  'server/src/data/oauthGrants/types.ts',
+];
+const gwsAuthInjectionEvidence = 'docs/release/PR731-gws-runtime-auth-injection无结构变更审核-20260916.md';
 const auditedPaths = [
   ...new Set([
     transport,
@@ -97,6 +105,7 @@ const auditedPaths = [
     ...kyAppV2ReviewPaths,
     ...gwsPersistReviewPaths,
     ...externalClientReviewPaths,
+    ...gwsAuthInjectionReviewPaths,
   ]),
 ];
 const evidencePaths = [
@@ -109,6 +118,8 @@ const evidencePaths = [
   kyAppV2Evidence,
   gwsPersistEvidence,
   ...externalClientEvidencePaths,
+  gwsAuthInjectionEvidence,
+  'docs/release/平台演示模式V49迁移审核-20260916.md',
 ];
 const expandPaths = [
   providerStore,
@@ -116,6 +127,7 @@ const expandPaths = [
   'server/src/runtime/runStoreSchema.ts',
   'server/src/data/governance-schema/v48KyAppAsymmetricIdentityMigration.ts',
   ...externalClientReviewPaths,
+  'server/src/data/governance-schema/v49PlatformDemoMigration.ts',
 ];
 const exactBaselineAuditedPaths = auditedPaths.filter(
   (path) => !externalClientReviewPaths.includes(path),
@@ -244,6 +256,7 @@ test('PR641 baseline preserves Zhipu, scope retirement and the independently byt
         ...kyAppV2ReviewPaths,
         ...gwsPersistReviewPaths,
         ...externalClientReviewPaths,
+        ...gwsAuthInjectionReviewPaths,
       ]),
     ].sort(),
   );
@@ -271,6 +284,7 @@ test('PR642 baseline retains scope retirement plus the independently reviewed Gr
       ...kyAppV2ReviewPaths,
       ...gwsPersistReviewPaths,
       ...externalClientReviewPaths,
+      ...gwsAuthInjectionReviewPaths,
     ]),
   ];
   const loaded = loadMigrationReviews({

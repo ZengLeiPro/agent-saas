@@ -7,6 +7,8 @@ import {
   parseOssUri,
   createInternalOssSigner,
   buildFetchPlan,
+  stagingFetchExtras,
+  buildStagingFetchPlan,
 } from './sign-promotion-artifact-urls.mjs';
 
 const digest = 'b'.repeat(64);
@@ -50,6 +52,35 @@ test('按 Manifest 为需部署组件签发内网 GET URL，keep 的组件不进
   assert.equal(plan.artifacts[0].digest, digest);
   assert.equal(plan.artifacts[0].size, 12);
   assert.match(plan.artifacts[0].source, /\/opt\/agent-saas-app\/releases\/b{64}\/\.release\/server-bundle\.tgz/u);
+});
+
+
+test('Web deploy 时生产拉取计划包含 web-assets.tgz 内网 URL', () => {
+  const webDigest = 'd'.repeat(64);
+  const value = {
+    components: {
+      api: { action: 'keep' },
+      acs: { action: 'keep' },
+      web: { action: 'deploy', artifactDigest: `sha256:${webDigest}` },
+    },
+    artifacts: {
+      webAssets: {
+        digest: `sha256:${webDigest}`,
+        size: 99,
+        uri: 'oss://agent-saas-release-records/rc-20260915-149/web-assets.tgz',
+      },
+    },
+  };
+  const plan = buildFetchPlan(value, (uri) => {
+    assert.equal(uri, 'oss://agent-saas-release-records/rc-20260915-149/web-assets.tgz');
+    return 'https://agent-saas-release-records.oss-cn-shenzhen-internal.aliyuncs.com/rc-20260915-149/web-assets.tgz';
+  });
+  assert.equal(plan.artifacts.length, 1);
+  assert.equal(plan.artifacts[0].filename, 'web-assets.tgz');
+  assert.equal(plan.artifacts[0].digest, webDigest);
+  assert.equal(plan.artifacts[0].size, 99);
+  assert.equal(plan.artifacts[0].source, undefined);
+  assert.match(plan.artifacts[0].url, /oss-cn-shenzhen-internal/);
 });
 
 test('摘要或体积与 Manifest 不一致时拒绝签发', () => {
@@ -126,4 +157,103 @@ test('CLI 从凭据文件签发，不读 process.env', async () => {
   assert.equal(plan.schemaVersion, 1);
   assert.equal(plan.artifacts[0].filename, 'server-bundle.tgz');
   assert.match(plan.artifacts[0].url, /^https:\/\//u);
+});
+
+const webDigest = 'c'.repeat(64);
+const acsDigest = 'd'.repeat(64);
+const runtimeDigest = 'e'.repeat(64);
+
+function stagingManifest() {
+  return {
+    releaseId: 'rc-20260915-01',
+    components: {
+      api: { action: 'deploy', artifactDigest: `sha256:${digest}` },
+      acs: { action: 'deploy', orchestratorArtifactDigest: `sha256:${acsDigest}` },
+      web: { action: 'deploy', artifactDigest: `sha256:${webDigest}` },
+    },
+    artifacts: {
+      serverBundle: {
+        digest: `sha256:${digest}`,
+        size: 12,
+        uri: 'oss://agent-saas-staging-releases/rc-20260915-01/server-bundle.tgz',
+      },
+      acsOrchestrator: {
+        digest: `sha256:${acsDigest}`,
+        size: 8,
+        uri: 'oss://agent-saas-staging-releases/rc-20260915-01/acs-orchestrator.tgz',
+      },
+      webAssets: {
+        digest: `sha256:${webDigest}`,
+        size: 20,
+        uri: 'oss://agent-saas-staging-releases/rc-20260915-01/web-assets.tgz',
+      },
+    },
+  };
+}
+
+function stagingIndex() {
+  return {
+    artifacts: {
+      stagingRuntimeAssets: {
+        path: 'staging-runtime-assets.tgz',
+        digest: `sha256:${runtimeDigest}`,
+        size: 32,
+      },
+    },
+  };
+}
+
+test('Staging 计划包含 web 与 runtime assets，忽略 keep 语义并使用预发复用路径', () => {
+  const signed = [];
+  const plan = buildStagingFetchPlan(
+    stagingManifest(),
+    stagingIndex(),
+    'oss://agent-saas-staging-releases',
+    (uri) => {
+      signed.push(uri);
+      return `https://agent-saas-staging-releases.oss-cn-shenzhen-internal.aliyuncs.com/${uri.slice(6)}`;
+    },
+  );
+  assert.deepEqual(signed, [
+    'oss://agent-saas-staging-releases/rc-20260915-01/server-bundle.tgz',
+    'oss://agent-saas-staging-releases/rc-20260915-01/acs-orchestrator.tgz',
+    'oss://agent-saas-staging-releases/rc-20260915-01/web-assets.tgz',
+    'oss://agent-saas-staging-releases/rc-20260915-01/staging-runtime-assets.tgz',
+  ]);
+  assert.equal(plan.schemaVersion, 1);
+  assert.deepEqual(
+    plan.artifacts.map((entry) => entry.filename),
+    ['server-bundle.tgz', 'acs-orchestrator.tgz', 'web-assets.tgz', 'staging-runtime-assets.tgz'],
+  );
+  assert.equal(plan.artifacts[2].digest, webDigest);
+  assert.equal(plan.artifacts[2].size, 20);
+  assert.equal(plan.artifacts[3].digest, runtimeDigest);
+  assert.equal(plan.artifacts[3].size, 32);
+  assert.equal(
+    plan.artifacts[3].source,
+    `/opt/agent-saas-staging/releases/rc-20260915-01/.release/staging-runtime-assets.tgz`,
+  );
+});
+
+test('Staging extras 拒绝错误路径、非 oss URI 与摘要不一致', () => {
+  const value = stagingManifest();
+  value.artifacts.webAssets.size = '20';
+  assert.throws(
+    () => stagingFetchExtras(value, stagingIndex(), 'oss://agent-saas-staging-releases'),
+    /does not match Manifest/,
+  );
+  const badIndex = stagingIndex();
+  badIndex.artifacts.stagingRuntimeAssets.path = 'other.tgz';
+  assert.throws(
+    () => stagingFetchExtras(stagingManifest(), badIndex, 'oss://agent-saas-staging-releases'),
+    /runtime assets path/,
+  );
+  assert.throws(
+    () => stagingFetchExtras(stagingManifest(), stagingIndex(), 'https://example.com/bucket'),
+    /Unsafe OSS artifact URI/,
+  );
+  const keep = stagingManifest();
+  keep.components.api.action = 'keep';
+  const extras = stagingFetchExtras(keep, stagingIndex(), 'oss://agent-saas-staging-releases');
+  assert.equal(extras[0].filename, 'server-bundle.tgz');
 });

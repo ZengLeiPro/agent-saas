@@ -9,6 +9,7 @@ import React, { useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { CapabilityTabBar } from '../../src/components/capabilities/CapabilityTabBar';
 import { ExpertCard } from '../../src/components/capabilities/ExpertCard';
+import { ResponsiveCardGrid } from '../../src/components/layout';
 import { EmptyState, Input } from '../../src/components/ui';
 import { EntityIcons } from '../../src/lib/icons';
 import { useCapabilityContext } from '../../src/hooks/useCapabilityContext';
@@ -68,14 +69,16 @@ export default function CapabilityExpertsScreen() {
         ) : filtered.length === 0 ? (
           <EmptyState icon={EntityIcons.expert} title="没有找到匹配的企业专家" />
         ) : (
-          filtered.map((expert) => (
-            <ExpertCard
-              key={expert.id}
-              expert={expert}
-              onStart={startExpertConversation}
-              testID={`expert-card-${expert.id}`}
-            />
-          ))
+          <ResponsiveCardGrid testID="experts-card-grid">
+            {filtered.map((expert) => (
+              <ExpertCard
+                key={expert.id}
+                expert={expert}
+                onStart={startExpertConversation}
+                testID={`expert-card-${expert.id}`}
+              />
+            ))}
+          </ResponsiveCardGrid>
         )}
       </ScrollView>
     </View>

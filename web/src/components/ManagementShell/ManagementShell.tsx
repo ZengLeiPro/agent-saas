@@ -1,6 +1,7 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { OrganizationScopeBanner } from '@/components/GovernanceConsole';
+import { GovernanceCapabilityNotice, OrganizationScopeBanner } from '@/components/GovernanceConsole';
+import { useAuth } from '@/contexts/AuthContext';
 import type { SettingsDirtyController } from '@/components/PersonalSettings/dirtyRegistry';
 import type { ManagementSettingsAccess } from '@/hooks/useManagementSettingsAccess';
 import {
@@ -206,12 +207,15 @@ export function ManagementShell({
   dirtyController?: SettingsDirtyController;
   children: ReactNode;
 }) {
+  const { isPlatformAdmin } = useAuth();
   const page = managementPageForRoute(route);
   const collectionRoute = governanceCollectionRoute(route);
   const layout = page ? managementLayoutForPage(page) : null;
   const detailTabs = detailTabDefinition(route);
   const activePageTab = page ? activeManagementTab(page, route) : null;
   const [headerActionsTarget, setHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
+  // 平台管理员必须显式选择组织；未选时只展示壳级选择器 + 紧凑引导，不渲染子 Tab/内容。
+  const awaitingOrganizationScope = route.area === 'organization' && isPlatformAdmin && !route.orgId;
   if (!page) {
     return (
       <div className="h-full overflow-hidden bg-muted/20 p-4 md:p-8">
@@ -226,7 +230,7 @@ export function ManagementShell({
 
   return (
     <div
-      className={cn('h-full overflow-y-auto bg-muted/20', SETTINGS_PRODUCT_SURFACE_CLASS)}
+      className={cn('h-full overflow-auto bg-muted/20', SETTINGS_PRODUCT_SURFACE_CLASS)}
       data-testid="management-shell"
       data-surface={page.surface}
       data-layout={layout ?? undefined}
@@ -259,27 +263,37 @@ export function ManagementShell({
               route={route}
               dirtyController={dirtyController}
               settingsMode={page.surface === 'config'}
-              className={page.tabs?.length ? 'mb-4 rounded-lg border' : undefined}
+              className={awaitingOrganizationScope
+                ? 'sticky top-0 z-10 mb-4 rounded-lg border'
+                : page.tabs?.length
+                  ? 'sticky top-0 z-10 mb-4 rounded-lg border'
+                  : 'sticky top-0 z-10'}
             />
           ) : null}
-          <ManagementTabs route={route} />
-          <DetailTabs route={route} />
-          <div
-            className="mt-6 min-w-0 [&>*]:mx-0 [&>*]:max-w-none"
-            data-testid="management-page-content"
-            id="management-page-panel"
-            role={page.tabs?.length || detailTabs ? 'tabpanel' : undefined}
-            tabIndex={page.tabs?.length || detailTabs ? 0 : undefined}
-            aria-labelledby={detailTabs
-              ? `management-detail-tab-${route.routeId}-${route.tab === 'configuration' ? 'entitlements' : route.tab}`
-              : activePageTab
-                ? `management-page-tab-${page.id}-${activePageTab.id}`
-                : undefined}
-          >
-            <SettingsPanelHeaderPortalProvider target={headerActionsTarget}>
-              {children}
-            </SettingsPanelHeaderPortalProvider>
-          </div>
+          {awaitingOrganizationScope ? (
+            <GovernanceCapabilityNotice title="请先选择要管理的组织" mode="gate" />
+          ) : (
+            <>
+              <ManagementTabs route={route} />
+              <DetailTabs route={route} />
+              <div
+                className="mt-6 min-w-0 [&>*]:mx-0 [&>*]:max-w-none"
+                data-testid="management-page-content"
+                id="management-page-panel"
+                role={page.tabs?.length || detailTabs ? 'tabpanel' : undefined}
+                tabIndex={page.tabs?.length || detailTabs ? 0 : undefined}
+                aria-labelledby={detailTabs
+                  ? `management-detail-tab-${route.routeId}-${route.tab === 'configuration' ? 'entitlements' : route.tab}`
+                  : activePageTab
+                    ? `management-page-tab-${page.id}-${activePageTab.id}`
+                    : undefined}
+              >
+                <SettingsPanelHeaderPortalProvider target={headerActionsTarget}>
+                  {children}
+                </SettingsPanelHeaderPortalProvider>
+              </div>
+            </>
+          )}
         </div>
       </main>
     </div>

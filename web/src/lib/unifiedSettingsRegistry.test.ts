@@ -39,6 +39,7 @@ const EXPECTED_KEYS = [
   "platform:tenants",
   "platform:signup",
   "platform:platform-admins",
+  "platform:demo-access",
   "platform:agent-templates",
   "platform:environment-templates",
   "platform:models",
@@ -67,12 +68,12 @@ function expectUnique(values: readonly string[]) {
 }
 
 describe("unified settings registry", () => {
-  it("穷举唯一的 37 个叶子，scope 数量固定为 8/11/18", () => {
+  it("穷举唯一的 38 个叶子，scope 数量固定为 8/11/19", () => {
     expect(SETTINGS_REGISTRY.map((entry) => entry.key)).toEqual(EXPECTED_KEYS);
     expectUnique(SETTINGS_REGISTRY.map((entry) => entry.key));
     expect(settingsSectionsForScope("personal")).toHaveLength(8);
     expect(settingsSectionsForScope("tenant")).toHaveLength(11);
-    expect(settingsSectionsForScope("platform")).toHaveLength(18);
+    expect(settingsSectionsForScope("platform")).toHaveLength(19);
   });
 
   it("保持 path、route 表示与 scope 内 id 唯一", () => {

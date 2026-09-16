@@ -450,7 +450,7 @@ export function ModelManager() {
         )}
       />
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-auto">
+      <div className="space-y-4">
       {notice && <div role="status" className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">{notice}</div>}
       {error && <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"><CircleAlert className="mt-0.5 size-4 shrink-0" />{error}</div>}
 

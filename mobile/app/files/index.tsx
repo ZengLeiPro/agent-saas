@@ -3,9 +3,10 @@
  * 文件夹视图 / 所有文件（recursive）切换、列表 / 网格布局切换（偏好持久化）、
  * 面包屑、下拉刷新、多选删除（ActionSheet 二次确认）、空态与骨架。
  * 管理员额外有根目录入口与 owner 过滤（`useUsers` 只读列表）。
+ * md+：列表|预览 master-detail，文件夹钻取栏内更新；窄屏仍 push `/files/browse` 与 `/files/preview`。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, type View as RNView } from 'react-native';
+import { View, Text, StyleSheet, type View as RNView } from 'react-native';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import SegmentedControl from '@react-native-segmented-control/segmented-control';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,11 +31,16 @@ import { useFileSelection } from '../../src/hooks/useFileSelection';
 import { useUsers } from '../../src/hooks/useUsers';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { sortFileEntries } from '../../src/lib/fileSort';
+import { FILES_ADMIN_ROOT, FILES_USER_ROOT } from '../../src/lib/fileEntryPress';
 import { hapticLight } from '../../src/lib/haptics';
 import { glassFree } from '../../src/lib/headerItems';
 import { useColors } from '../../src/theme';
+import { useBreakpoint } from '../../src/hooks/useBreakpoint';
+import { MasterDetailSplit } from '../../src/components/layout';
+import { FilePreviewBody, filePreviewDisplayName } from '../../src/components/files/preview/FilePreviewBody';
+import { MarkdownPreviewBody, markdownPreviewTitle } from '../../src/components/chat/MarkdownPreviewBody';
+import type { FilePreviewNavTarget } from '../../src/hooks/useFileEntryPress';
 
-const ROOT_PATH = 'assets';
 const VIEW_MODES: FileViewMode[] = ['all', 'folder'];
 const VIEW_LABELS = ['全部', '文件夹'];
 /** 与 Web 的分段控件宽度观感对齐 */
@@ -53,6 +59,10 @@ export default function FilesScreen() {
   const { user: authUser } = useAuth();
   const isAdmin = authUser?.role === 'admin';
   const { users } = useUsers(isAdmin);
+  const { isMdUp } = useBreakpoint();
+  const [panePreview, setPanePreview] = useState<FilePreviewNavTarget | null>(null);
+  const [browsePath, setBrowsePath] = useState(FILES_USER_ROOT);
+  const [isRootBrowse, setIsRootBrowse] = useState(false);
 
   const [ownerFilter, setOwnerFilter] = useState<string | null>(authUser?.username ?? null);
   // authUser 异步加载完成后同步默认值
@@ -64,7 +74,10 @@ export default function FilesScreen() {
   const { sortPrefs, layoutMode, updateSort, updateLayoutMode } = useFileBrowserPrefs();
   const sort = sortPrefs[viewMode];
 
-  const effectiveOwner = isAdmin ? (ownerFilter ?? undefined) : undefined;
+  const paneFolder = isMdUp && viewMode === 'folder';
+  const listPath = paneFolder ? browsePath : FILES_USER_ROOT;
+  const listRoot = paneFolder && isRootBrowse;
+  const effectiveOwner = listRoot ? undefined : isAdmin ? (ownerFilter ?? undefined) : undefined;
   const {
     entries: rawEntries,
     loading,
@@ -74,17 +87,42 @@ export default function FilesScreen() {
     hasMore,
     error,
   } = useFileList(
-    ROOT_PATH,
+    listPath,
     viewMode === 'all',
     effectiveOwner,
+    listRoot ? true : undefined,
   );
   const entries = useMemo(
     () => sortFileEntries(rawEntries, sort.key, sort.order),
     [rawEntries, sort.key, sort.order],
   );
 
-  const selection = useFileSelection({ owner: effectiveOwner, onDeleted: refresh });
-  const { press } = useFileEntryPress({ owner: effectiveOwner });
+  const selection = useFileSelection({ owner: effectiveOwner, root: listRoot, onDeleted: refresh });
+  const handleOpenPreview = useCallback(
+    (target: FilePreviewNavTarget) => {
+      if (!isMdUp) return false;
+      setPanePreview(target);
+      return true;
+    },
+    [isMdUp],
+  );
+  const handleOpenFolder = useCallback(
+    (path: string) => {
+      if (!isMdUp) return false;
+      setViewMode('folder');
+      setBrowsePath(path);
+      setPanePreview(null);
+      selection.exitSelectMode();
+      return true;
+    },
+    [isMdUp, selection],
+  );
+  const { press } = useFileEntryPress({
+    owner: effectiveOwner,
+    root: listRoot,
+    onOpenPreview: handleOpenPreview,
+    onOpenFolder: handleOpenFolder,
+  });
 
   const handlePress = useCallback(
     (entry: FileEntry) => {
@@ -102,6 +140,25 @@ export default function FilesScreen() {
     () => entries.filter((entry) => selection.selectedPaths.has(entry.path)),
     [entries, selection.selectedPaths],
   );
+
+  const handleBreadcrumbNavigate = useCallback(
+    (target: string) => {
+      setBrowsePath(target);
+      if (target === FILES_USER_ROOT) setIsRootBrowse(false);
+      setPanePreview(null);
+      selection.exitSelectMode();
+    },
+    [selection],
+  );
+
+  const handleViewModeChange = useCallback((nextMode: FileViewMode) => {
+    setViewMode(nextMode);
+    if (nextMode === 'all') {
+      setBrowsePath(FILES_USER_ROOT);
+      setIsRootBrowse(false);
+      setPanePreview(null);
+    }
+  }, []);
 
   // ── 头部下拉菜单 ────────────────────────────────────────────────
   const [menuVisible, setMenuVisible] = useState(false);
@@ -145,13 +202,21 @@ export default function FilesScreen() {
           void refresh();
           return;
         case 'root':
-          router.push({ pathname: '/files/browse', params: { path: '.', root: 'true' } });
+          if (isMdUp) {
+            setViewMode('folder');
+            setBrowsePath(FILES_ADMIN_ROOT);
+            setIsRootBrowse(true);
+            setPanePreview(null);
+            selection.exitSelectMode();
+            return;
+          }
+          router.push({ pathname: '/files/browse', params: { path: FILES_ADMIN_ROOT, root: 'true' } });
           return;
         case 'owner':
           setOwnerFilter(action.username);
       }
     },
-    [updateLayoutMode, updateSort, viewMode, sort, refresh, router],
+    [updateLayoutMode, updateSort, viewMode, sort, refresh, router, isMdUp, selection],
   );
 
   const headerTitle = useCallback(
@@ -161,12 +226,12 @@ export default function FilesScreen() {
         selectedIndex={VIEW_MODES.indexOf(viewMode)}
         onChange={(event) => {
           const nextMode = VIEW_MODES[event.nativeEvent.selectedSegmentIndex];
-          if (nextMode) setViewMode(nextMode);
+          if (nextMode) handleViewModeChange(nextMode);
         }}
         style={SEGMENT_STYLE}
       />
     ),
-    [viewMode],
+    [viewMode, handleViewModeChange],
   );
 
   const leftButton = useCallback(
@@ -204,21 +269,14 @@ export default function FilesScreen() {
     [selection, entries, openMenu],
   );
 
-  return (
-    <View style={[styles.container, { backgroundColor: colors.card }]} testID="files-screen">
-      <Stack.Screen
-        options={{
-          title: '',
-          headerTitle,
-          headerLeft: leftButton,
-          unstable_headerLeftItems: () => [glassFree(leftButton())],
-          headerRight: rightButton,
-          unstable_headerRightItems: () => [glassFree(rightButton())],
-        }}
-      />
-
+  const listBody = (
+    <>
       {viewMode === 'folder' ? (
-        <FileBreadcrumb currentPath={ROOT_PATH} onNavigate={() => {}} />
+        <FileBreadcrumb
+          currentPath={listPath}
+          rootLabel={listRoot ? '根目录' : '文件'}
+          onNavigate={paneFolder ? handleBreadcrumbNavigate : () => {}}
+        />
       ) : null}
 
       <FileBrowserBody
@@ -231,7 +289,7 @@ export default function FilesScreen() {
         layoutMode={layoutMode}
         onRefresh={refresh}
         onPress={handlePress}
-        onDelete={handleDeleteOne}
+        onDelete={listRoot ? undefined : handleDeleteOne}
         contentPaddingBottom={selection.selectMode ? insets.bottom + 70 : insets.bottom}
         showPath={viewMode === 'all'}
         emptyVariant={viewMode}
@@ -257,6 +315,72 @@ export default function FilesScreen() {
         anchorTop={menuAnchor}
         align="right"
       />
+    </>
+  );
+
+  const detailPane =
+    panePreview == null ? null : panePreview.route === '/chat/markdown-preview' ? (
+      <View style={styles.detail} testID="files-pane-markdown">
+        <View style={[styles.detailHeader, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.detailTitle, { color: colors.foreground }]} numberOfLines={1}>
+            {markdownPreviewTitle(panePreview.filePath)}
+          </Text>
+        </View>
+        <MarkdownPreviewBody
+          filePath={panePreview.filePath}
+          {...(effectiveOwner ? { owner: effectiveOwner } : {})}
+          onNavigatePreview={(next) =>
+            setPanePreview({
+              ...panePreview,
+              route: '/chat/markdown-preview',
+              filePath: next,
+              name: markdownPreviewTitle(next),
+            })
+          }
+        />
+      </View>
+    ) : (
+      <View style={styles.detail} testID="files-pane-preview">
+        <View style={[styles.detailHeader, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.detailTitle, { color: colors.foreground }]} numberOfLines={1}>
+            {filePreviewDisplayName(panePreview.filePath, panePreview.name)}
+          </Text>
+        </View>
+        <FilePreviewBody
+          filePath={panePreview.filePath}
+          name={panePreview.name}
+          size={panePreview.size}
+          modifiedAt={panePreview.modifiedAt}
+          {...(effectiveOwner ? { owner: effectiveOwner } : {})}
+          {...(listRoot ? { root: true } : {})}
+        />
+      </View>
+    );
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.card }]} testID="files-screen">
+      <Stack.Screen
+        options={{
+          title: '',
+          headerTitle,
+          headerLeft: leftButton,
+          unstable_headerLeftItems: () => [glassFree(leftButton())],
+          headerRight: rightButton,
+          unstable_headerRightItems: () => [glassFree(rightButton())],
+        }}
+      />
+
+      {isMdUp ? (
+        <MasterDetailSplit
+          testID="files-master-detail"
+          emptyLabel="请选择文件"
+          emptyDescription="从左侧打开文件夹或选择文件预览。"
+          master={listBody}
+          detail={detailPane}
+        />
+      ) : (
+        <View style={styles.container}>{listBody}</View>
+      )}
     </View>
   );
 }
@@ -264,5 +388,17 @@ export default function FilesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  detail: {
+    flex: 1,
+  },
+  detailHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  detailTitle: {
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

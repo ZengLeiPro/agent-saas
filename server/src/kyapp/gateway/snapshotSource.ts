@@ -7,7 +7,7 @@
  *    `assignments` 不可用即 fail-closed 返回空。额外要求 `registeredDigest` 非空
  *    （digest 双重 fail-closed：没登记 digest 就不产生工具）。
  * 2. 登记 manifest —— 按 `registeredDigest` 取版本行，**不回落 publishedDigest**。
- * 3. `/ky/v1/me` 的 `capabilities[].enabled` —— 用 `act=user` SAT 出站直取。
+ * 3. 用户能力视图的 `capabilities[].enabled` —— 用 `act=user` SAT 出站直取。
  *    任何失败（签发被拒 / 出站失败 / 非 200 / 结构不对）都返回 `null`，
  *    交给 `AppToolSnapshotService` 做 fail-static，绝不当成「能力全关」。
  */
@@ -18,6 +18,7 @@ import type { Manifest } from '@kaiyan/ky-app-contract';
 import type { PgAssignmentStore } from '../../data/assignments/store.js';
 import type { KyAppPlatformConfig } from '../config.js';
 import type { KyAppOutbound } from '../outbound.js';
+import { kyAppRuntimePaths } from '../protocol.js';
 import { KyAppSatDeniedError, type KyAppPathPrefixes, type KyAppSatIssuer } from '../sat/issuer.js';
 import type {
   KyAppInstallation,
@@ -25,9 +26,6 @@ import type {
   KyAppSystemVersion,
 } from '../systems/types.js';
 import type { AppSnapshotSource, AppVisibleInstallation } from './snapshot.js';
-
-/** §4.2 端点路径。 */
-const ME_PATH = '/ky/v1/me';
 
 /** 快照只依赖系统目录的四个读方法，避免把 PG 实现类型拉进来。 */
 export interface KyAppSnapshotSystemReader {
@@ -110,6 +108,7 @@ export function createKyAppSnapshotSource(options: KyAppSnapshotSourceOptions): 
         systemId: installation.systemId,
         baseUrl: installation.baseUrl,
         registeredDigest: installation.registeredDigest,
+        authMode: installation.authMode,
       });
     }
     return visible;
@@ -160,7 +159,7 @@ export function createKyAppSnapshotSource(options: KyAppSnapshotSourceOptions): 
     const requestId = newRequestId();
     const result = await options.outbound.request({
       baseUrl: installation.baseUrl,
-      path: ME_PATH,
+      path: kyAppRuntimePaths(installation.authMode).me,
       method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
       requestId,

@@ -2152,7 +2152,7 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
                 <MemberBudgetMetric label="未归属用量" value={formatCredits(budgetData.summary.unattributedCredits)} hint="无法关联到员工" />
               </div>
               {budgetData.items.length > 0 ? (
-                <Table className="min-w-[980px]" containerClassName="max-h-[440px] rounded-lg border">
+                <Table className="min-w-[980px]" containerClassName="max-h-[440px] overflow-auto rounded-lg border">
                   <TableHeader>
                     <TableRow>
                       <TableHead>员工</TableHead>

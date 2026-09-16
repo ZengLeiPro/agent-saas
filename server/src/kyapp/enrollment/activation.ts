@@ -13,6 +13,7 @@ import type { KyAppPlatformConfig } from '../config.js';
 import type { PgKyAppInstallationRuntimeStore } from '../installations/runtimeStore.js';
 import type { KyAppInstallationService } from '../installations/service.js';
 import type { KyAppOutbound } from '../outbound.js';
+import { kyAppRuntimePaths } from '../protocol.js';
 import type { PgKyAppSystemStore } from '../systems/store.js';
 import type { KyAppV2Authenticator } from '../workload/authenticator.js';
 import type { PgDeploymentKeyStore } from '../workload/deploymentKeyStore.js';
@@ -94,6 +95,7 @@ export class KyAppV2ActivationService {
       throw new KyAppActivationError('当前发布版本不可读取', 'system_not_published');
     }
     const manifest = version.manifest as unknown as Manifest;
+    const paths = kyAppRuntimePaths('v2_asymmetric');
     const key = await this.options.deploymentKeys.current(input.installationId);
     if (!key || key.keyId !== input.keyId || key.generation !== input.generation) {
       throw new KyAppActivationError('当前部署公钥不可用', 'key_id_mismatch');
@@ -135,7 +137,7 @@ export class KyAppV2ActivationService {
     });
     const ready = await this.options.outbound.request({
       baseUrl: installation.baseUrl,
-      path: '/ky/v1/health/ready',
+      path: paths.ready,
       method: 'GET',
       requestId,
       headers: { authorization: `Bearer ${sat.token}` },
@@ -157,7 +159,7 @@ export class KyAppV2ActivationService {
     });
     const observedManifest = await this.options.outbound.request({
       baseUrl: installation.baseUrl,
-      path: '/ky/v1/manifest',
+      path: paths.manifest,
       method: 'GET',
       requestId: manifestRequestId,
       headers: { authorization: `Bearer ${manifestSat.token}` },
@@ -186,7 +188,7 @@ export class KyAppV2ActivationService {
     });
     const me = await this.options.outbound.request({
       baseUrl: installation.baseUrl,
-      path: '/ky/v1/me',
+      path: paths.me,
       method: 'GET',
       requestId: meRequestId,
       headers: { authorization: `Bearer ${userSat.token}` },

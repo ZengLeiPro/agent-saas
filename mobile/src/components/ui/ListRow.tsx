@@ -1,4 +1,4 @@
-import React, { Children, cloneElement, isValidElement, useCallback } from 'react';
+import React, { Children, cloneElement, isValidElement, useCallback, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -76,6 +76,7 @@ export function ListRow({
   const hasSwitch = switchValue !== undefined;
   const chevron = showChevron ?? (!!onPress && !hasSwitch);
   const titleColor = destructive ? colors.destructive : colors.foreground;
+  const [hovered, setHovered] = useState(false);
 
   const handlePress = useCallback(() => {
     hapticLight();
@@ -155,7 +156,11 @@ export function ListRow({
           accessibilityState={{ disabled }}
           disabled={disabled}
           onPress={handlePress}
-          style={({ pressed }) => (pressed ? { backgroundColor: colors.accent } : null)}
+          onHoverIn={() => setHovered(true)}
+          onHoverOut={() => setHovered(false)}
+          style={({ pressed }) =>
+            pressed || hovered ? { backgroundColor: colors.accent } : null
+          }
         >
           {content}
         </Pressable>

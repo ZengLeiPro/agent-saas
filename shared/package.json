@@ -12,6 +12,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./lib/governanceApi": "./src/lib/governanceApi.ts",
+    "./lib/platformDemoApi": "./src/lib/platformDemoApi.ts",
+    "./lib/platformDemoConstants": "./src/lib/platformDemoConstants.ts",
     "./lib/chatSubmission": "./src/lib/chatSubmission.ts",
     "./schemas/releaseManifest": "./src/schemas/releaseManifest.ts",
     "./types/governance": "./src/types/governance.ts",

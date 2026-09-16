@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ImagePlus, Loader2, PlayCircle, Plus, UserRound, X } from 'lucide-react';
+import { ImagePlus, Loader2, UserRound, X } from 'lucide-react';
 import { agentAvatarUrl, resolveApiAssetUrl } from '@/lib/apiBase';
 import { authFetch } from '@/lib/authFetch';
 
@@ -14,7 +14,6 @@ const AVATAR_PRESETS = [
   { key: 'cs', label: '跟单/客服' },
   { key: 'production', label: '项目/生产/交付' },
 ] as const;
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -35,6 +34,8 @@ import {
 import { useTenantKnowledgeOptions, useTenantSkillOptions, type OrgAgentConfiguration } from './hooks';
 import { OrgAgentAudienceSection } from './OrgAgentAudienceSection';
 import { OrgAgentDwsSection } from './OrgAgentDwsSection';
+import { OrgAgentFormStepSection } from './OrgAgentFormStepSection';
+import { OrgAgentGateSection } from './OrgAgentGateSection';
 import { OrgAgentRuntimeSection } from './OrgAgentRuntimeSection';
 import {
   assembleScopeDescription,
@@ -46,22 +47,6 @@ import {
   type OrgAgentGuardrailMode,
 } from './types';
 
-/** 门禁三档语义说明（radio label 旁的副标题） */
-const GATE_MODE_META: Array<{ value: OrgAgentGuardrailMode; label: string; hint: string }> = [
-  { value: 'off', label: '关闭', hint: '不跑门禁；所有问题都进入主对话。' },
-  { value: 'shadow', label: '影子模式', hint: '跑门禁并落库审计，但判定不生效——用于上线前 3-7 天调 scope。' },
-  { value: 'enforce', label: '生效', hint: '门禁生效，超范围问题直接返回拒绝话术，不进入主对话。' },
-];
-
-interface GateTestResult {
-  verdict?: 'in_scope' | 'off_topic' | 'uncertain';
-  wouldReject?: boolean;
-  latencyMs?: number;
-  reason?: string;
-  source?: string;
-  model?: string;
-  error?: string;
-}
 
 /**
  * 企业专家创建/编辑表单
@@ -101,12 +86,17 @@ export function OrgAgentFormDialog({
   const [uploading, setUploading] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newAllowExample, setNewAllowExample] = useState('');
-  const [newRejectExample, setNewRejectExample] = useState('');
-  const [gateTestOpen, setGateTestOpen] = useState(false);
-  const [gateTestMessage, setGateTestMessage] = useState('');
-  const [gateTestRunning, setGateTestRunning] = useState(false);
-  const [gateTestResult, setGateTestResult] = useState<GateTestResult | null>(null);
+  /** Bumps to remount gate section (clears draft chips + 试测 state) on form re-init. */
+  const [gateResetKey, setGateResetKey] = useState(0);
+  /** Accordion disclosure; runtime (advanced) starts collapsed. Toggling never remounts parent form values. */
+  const [stepOpen, setStepOpen] = useState({
+    role: true,
+    skills: true,
+    audience: true,
+    guardrail: true,
+    runtime: false,
+    channels: true,
+  });
   const [directoryGroups, setDirectoryGroups] = useState<Array<{ groupId: string; displayName: string }>>([]);
   const [directoryGroupsError, setDirectoryGroupsError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -152,6 +142,18 @@ export function OrgAgentFormDialog({
   }, [open, tenantId, editing?.id, initialValues]);
 
   useEffect(() => {
+    if (!open) return;
+    setStepOpen({
+      role: true,
+      skills: true,
+      audience: true,
+      guardrail: true,
+      runtime: false,
+      channels: true,
+    });
+  }, [open, editing?.id, initialValues]);
+
+  useEffect(() => {
     if (!open || !tenantId) {
       setDirectoryGroups([]);
       setDirectoryGroupsError('');
@@ -189,11 +191,7 @@ export function OrgAgentFormDialog({
     if (formInitializationKeyRef.current === initializationKey) return;
     formInitializationKeyRef.current = initializationKey;
     setError(null);
-    setNewAllowExample('');
-    setNewRejectExample('');
-    setGateTestOpen(false);
-    setGateTestResult(null);
-    setGateTestMessage('');
+    setGateResetKey((key) => key + 1);
     if (editing) {
       const definition = configuration?.version?.definition;
       const avatarStoredPath = definition?.avatar ?? editing.avatar ?? '';
@@ -266,98 +264,6 @@ export function OrgAgentFormDialog({
   const toggleInList = (list: string[], value: string, checked: boolean): string[] =>
     checked ? Array.from(new Set([...list, value])) : list.filter((item) => item !== value);
 
-  const addAllowExample = () => {
-    const trimmed = newAllowExample.trim();
-    if (!trimmed) return;
-    if (values.guardrailAllowExamples.includes(trimmed)) {
-      setNewAllowExample('');
-      return;
-    }
-    if (values.guardrailAllowExamples.length >= 10) {
-      setError('允许问示例最多 10 条');
-      return;
-    }
-    patch({ guardrailAllowExamples: [...values.guardrailAllowExamples, trimmed] });
-    setNewAllowExample('');
-  };
-
-  const removeAllowExample = (item: string) => {
-    patch({ guardrailAllowExamples: values.guardrailAllowExamples.filter((e) => e !== item) });
-  };
-
-  const addRejectExample = () => {
-    const trimmed = newRejectExample.trim();
-    if (!trimmed) return;
-    if (values.guardrailRejectExamples.includes(trimmed)) {
-      setNewRejectExample('');
-      return;
-    }
-    if (values.guardrailRejectExamples.length >= 10) {
-      setError('拒绝问示例最多 10 条');
-      return;
-    }
-    patch({ guardrailRejectExamples: [...values.guardrailRejectExamples, trimmed] });
-    setNewRejectExample('');
-  };
-
-  const removeRejectExample = (item: string) => {
-    patch({ guardrailRejectExamples: values.guardrailRejectExamples.filter((e) => e !== item) });
-  };
-
-  const buildAssembledScope = (): string =>
-    assembleScopeDescription({
-      mode: values.guardrailMode,
-      description: values.description,
-      allowExamples: values.guardrailAllowExamples,
-      rejectExamples: values.guardrailRejectExamples,
-      strictness: values.guardrailStrictness,
-      rawScope: values.guardrailScopeDescription,
-    });
-
-  const runGateTest = async () => {
-    const message = gateTestMessage.trim();
-    if (!message) {
-      setGateTestResult({ error: '请输入测试问题' });
-      return;
-    }
-    setGateTestRunning(true);
-    setGateTestResult(null);
-    try {
-      // 编辑模式走 /:id/gate-preview（B2 已实现）；新建模式无 id，用 dry-run 端点。
-      // 端点未上线时 fallback：本地判断 keyword 命中给 verdict，标记 source=local。
-      const path = editing
-        ? `/api/org-agents/${encodeURIComponent(editing.id)}/gate-preview`
-        : '/api/org-agents/gate-preview';
-      const res = await authFetch(path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          testMessage: message,
-          overrideScopeDescription: buildAssembledScope(),
-          overrideStrictness: values.guardrailStrictness,
-        }),
-      });
-      if (!res.ok) {
-        // 后端还没接线时给出本地占位提示（不是硬失败）
-        if (res.status === 404) {
-          setGateTestResult({
-            error: '后端 gate-preview 端点尚未部署（B2 计划内），本地无法预判。',
-          });
-        } else {
-          const data = await res.json().catch(() => ({}));
-          setGateTestResult({ error: (data as { error?: string }).error || `请求失败：${res.status}` });
-        }
-        return;
-      }
-      const data = (await res.json()) as GateTestResult;
-      setGateTestResult(data);
-    } catch (err) {
-      setGateTestResult({ error: err instanceof Error ? err.message : String(err) });
-    } finally {
-      setGateTestRunning(false);
-    }
-  };
-
   const handleSubmit = async () => {
     if (!values.name.trim()) {
       setError('名称不能为空');
@@ -429,7 +335,8 @@ export function OrgAgentFormDialog({
     save: async () => { if (!await handleSubmit()) throw new Error("Organization agent save failed"); },
     discard: () => {
       if (baselineValues) setValues(structuredClone(baselineValues));
-      setNewAllowExample(''); setNewRejectExample(''); setError(null);
+      setGateResetKey((key) => key + 1);
+      setError(null);
     },
     draft: values,
   });
@@ -449,7 +356,7 @@ export function OrgAgentFormDialog({
         <DialogHeader className="shrink-0 border-b px-6 py-4">
           <DialogTitle>{editing ? `配置「${editing.name}」` : '创建企业专家'}</DialogTitle>
           <DialogDescription>
-            在一个详情页配置身份、职责、能力、运行策略、访问范围、钉钉账号与话题门禁。
+            按步骤配置岗位、能力、谁能用；高级运行设置默认收起。钉钉接入仅在编辑已有专家时可见。
           </DialogDescription>
         </DialogHeader>
 
@@ -464,6 +371,13 @@ export function OrgAgentFormDialog({
           ) : null}
           {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
+          <OrgAgentFormStepSection
+            step="1"
+            title="岗位"
+            hint="名称、头像、简介、系统提示/职责与开场问题"
+            open={stepOpen.role}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, role: next }))}
+          >
           <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
             <div className="space-y-1.5">
               <Label>名称</Label>
@@ -602,9 +516,17 @@ export function OrgAgentFormDialog({
               placeholder="定义这个 Agent 的岗位职责、回答风格与知识来源要求"
             />
           </div>
+          </OrgAgentFormStepSection>
 
+          <OrgAgentFormStepSection
+            step="2"
+            title="能力"
+            hint="这个专家自带的技能与知识资源"
+            open={stepOpen.skills}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, skills: next }))}
+          >
           <div className="space-y-1.5">
-            <Label>固有技能</Label>
+            <Label>这个专家自带的技能</Label>
             <p className="text-xs text-muted-foreground">勾选后成为这位企业专家的固有能力；成员无需在个人设置中再次启用。</p>
             {skillsLoading ? (
               <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
@@ -632,7 +554,7 @@ export function OrgAgentFormDialog({
             )}
           </div>
 
-          <div className="space-y-1.5 rounded-xl border p-4">
+          <div className="space-y-1.5">
             <Label>知识资源</Label>
             <p className="text-xs text-muted-foreground">
               选择组织自有知识技能，保存后固化到 Agent 版本并注入运行时。
@@ -669,12 +591,15 @@ export function OrgAgentFormDialog({
               </p>
             )}
           </div>
+          </OrgAgentFormStepSection>
 
-          <OrgAgentRuntimeSection
-            value={values.runtime}
-            onChange={runtime => patch({ runtime })}
-          />
-
+          <OrgAgentFormStepSection
+            step="3"
+            title="谁能用"
+            hint="控制哪些成员或部门可以使用这位专家"
+            open={stepOpen.audience}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, audience: next }))}
+          >
           <OrgAgentAudienceSection
             values={values}
             tenantUsers={tenantUsers}
@@ -682,247 +607,50 @@ export function OrgAgentFormDialog({
             directoryGroupsError={directoryGroupsError}
             onChange={patch}
           />
+          </OrgAgentFormStepSection>
 
-          {/* ---------------- 门禁配置：填空题式（allow/reject chips + mode + strictness + 试测） ---------------- */}
-          <div className="space-y-3 rounded-xl border p-3">
-            <div className="space-y-1">
-              <div className="text-sm font-medium">话题门禁</div>
-              <div className="text-xs leading-5 text-muted-foreground">
-                不用写 prompt，只需告诉门禁"允许问什么 / 拒绝问什么"——保存时前端自动拼装成结构化 prompt 交给后端。
-              </div>
-            </div>
+          <OrgAgentFormStepSection
+            step="4"
+            title="只回答职责内的问题"
+            hint="可选 · 话题门禁；默认关闭，多数专家可先不上"
+            open={stepOpen.guardrail}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, guardrail: next }))}
+            badge="可选"
+          >
+          <OrgAgentGateSection
+            key={gateResetKey}
+            values={values}
+            agentId={editing?.id}
+            onChange={patch}
+            onError={setError}
+          />
+          </OrgAgentFormStepSection>
 
-            <div className="space-y-1.5">
-              <Label>门禁模式</Label>
-              <div role="radiogroup" aria-label="门禁模式" className="space-y-1">
-                {GATE_MODE_META.map((mode) => (
-                  <label
-                    key={mode.value}
-                    className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
-                  >
-                    <input
-                      type="radio"
-                      className="mt-1"
-                      name="guardrail-mode"
-                      value={mode.value}
-                      checked={values.guardrailMode === mode.value}
-                      onChange={() => patch({ guardrailMode: mode.value })}
-                    />
-                    <span className="min-w-0">
-                      <span className="block font-medium">{mode.label}</span>
-                      <span className="block text-xs text-muted-foreground">{mode.hint}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {values.guardrailMode !== 'off' && (
-              <>
-                <div className="space-y-1.5">
-                  <Label>允许问的问题类型</Label>
-                  <p className="text-xs text-muted-foreground">举 3-5 个例子，越具体越好。回车或点"添加"入列表。</p>
-                  {values.guardrailAllowExamples.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {values.guardrailAllowExamples.map((item) => (
-                        <Badge
-                          key={item}
-                          className="max-w-full items-center gap-1 border-0 bg-success/15 text-success"
-                        >
-                          <span className="truncate">{item}</span>
-                          <button
-                            type="button"
-                            aria-label={`删除允许项 ${item}`}
-                            className="inline-flex size-4 items-center justify-center rounded-full hover:bg-success/25"
-                            onClick={() => removeAllowExample(item)}
-                          >
-                            <X className="size-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      value={newAllowExample}
-                      onChange={(e) => setNewAllowExample(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addAllowExample();
-                        }
-                      }}
-                      placeholder="如：帮我审这份报价单"
-                      maxLength={200}
-                      aria-label="新增允许问示例"
-                    />
-                    <Button type="button" variant="outline" size="sm" onClick={addAllowExample}>
-                      <Plus className="mr-1 size-3" />添加
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>拒绝问的问题类型</Label>
-                  <p className="text-xs text-muted-foreground">举 3-5 个例子，帮助门禁识别越界问题。</p>
-                  {values.guardrailRejectExamples.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {values.guardrailRejectExamples.map((item) => (
-                        <Badge
-                          key={item}
-                          className="max-w-full items-center gap-1 border-0 bg-destructive/15 text-destructive"
-                        >
-                          <span className="truncate">{item}</span>
-                          <button
-                            type="button"
-                            aria-label={`删除拒绝项 ${item}`}
-                            className="inline-flex size-4 items-center justify-center rounded-full hover:bg-destructive/25"
-                            onClick={() => removeRejectExample(item)}
-                          >
-                            <X className="size-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      value={newRejectExample}
-                      onChange={(e) => setNewRejectExample(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addRejectExample();
-                        }
-                      }}
-                      placeholder="如：帮我写周报"
-                      maxLength={200}
-                      aria-label="新增拒绝问示例"
-                    />
-                    <Button type="button" variant="outline" size="sm" onClick={addRejectExample}>
-                      <Plus className="mr-1 size-3" />添加
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>拿不准时倾向</Label>
-                  <div role="radiogroup" aria-label="拿不准时倾向" className="space-y-1">
-                    <label className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40">
-                      <input
-                        type="radio"
-                        className="mt-1"
-                        name="guardrail-strictness"
-                        value="strict"
-                        checked={values.guardrailStrictness === 'strict'}
-                        onChange={() => patch({ guardrailStrictness: 'strict' })}
-                      />
-                      <span className="min-w-0">
-                        <span className="block font-medium">严格（拿不准 → 拒绝）</span>
-                        <span className="block text-xs text-muted-foreground">推荐用于报价、合同、法务等严肃业务。</span>
-                      </span>
-                    </label>
-                    <label className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40">
-                      <input
-                        type="radio"
-                        className="mt-1"
-                        name="guardrail-strictness"
-                        value="lenient"
-                        checked={values.guardrailStrictness === 'lenient'}
-                        onChange={() => patch({ guardrailStrictness: 'lenient' })}
-                      />
-                      <span className="min-w-0">
-                        <span className="block font-medium">宽松（拿不准 → 放行并打标）</span>
-                        <span className="block text-xs text-muted-foreground">推荐用于查询、情报类边界模糊场景。</span>
-                      </span>
-                    </label>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>拒绝话术</Label>
-                  <Input
-                    value={values.guardrailRejectionMessage}
-                    maxLength={500}
-                    onChange={(e) => patch({ guardrailRejectionMessage: e.target.value })}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>补充说明（可选）</Label>
-                  <textarea
-                    autoComplete="off"
-                    className="min-h-16 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                    value={values.guardrailScopeDescription}
-                    maxLength={2000}
-                    onChange={(e) => patch({ guardrailScopeDescription: e.target.value })}
-                    placeholder="想额外交代门禁的话（不必填）；填空题已覆盖大部分场景。"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between rounded-md border border-dashed bg-muted/30 px-3 py-2">
-                  <div className="min-w-0 space-y-0.5">
-                    <div className="text-xs font-medium">试测门禁</div>
-                    <div className="text-xs text-muted-foreground">
-                      输入 1 条测试问题，立即看门禁怎么判（判定 / 置信度 / 延迟）。
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setGateTestOpen((prev) => !prev);
-                      setGateTestResult(null);
-                    }}
-                  >
-                    <PlayCircle className="mr-1 size-3.5" />
-                    {gateTestOpen ? '收起' : '试测门禁'}
-                  </Button>
-                </div>
-
-                {gateTestOpen && (
-                  <div className="space-y-2 rounded-md border bg-background p-3">
-                    <div className="flex items-center gap-1.5">
-                      <Input
-                        value={gateTestMessage}
-                        onChange={(e) => setGateTestMessage(e.target.value)}
-                        placeholder="如：帮我审这份报价单"
-                        maxLength={2000}
-                        aria-label="试测问题"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            void runGateTest();
-                          }
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => { void runGateTest(); }}
-                        disabled={gateTestRunning || !gateTestMessage.trim()}
-                      >
-                        {gateTestRunning ? <Loader2 className="mr-1 size-3 animate-spin" /> : null}
-                        {gateTestRunning ? '试测中...' : '试测'}
-                      </Button>
-                    </div>
-                    {gateTestResult && (
-                      <GateTestResultView result={gateTestResult} />
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          <OrgAgentFormStepSection
+            step="5"
+            title="高级运行设置"
+            hint="高级 · 多数情况不用改（工作模式、模型、工具/MCP 等）"
+            open={stepOpen.runtime}
+            onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, runtime: next }))}
+            badge="高级"
+          >
+          <OrgAgentRuntimeSection
+            value={values.runtime}
+            onChange={runtime => patch({ runtime })}
+          />
+          </OrgAgentFormStepSection>
 
           {editing && tenantId ? (
-            <OrgAgentDwsSection tenantId={tenantId} agentId={editing.id} agentName={values.name || editing.name} />
-          ) : (
-            <div className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">
-              创建并保存企业专家后，可在同一详情页绑定钉钉成员账号。
-            </div>
-          )}
+            <OrgAgentFormStepSection
+              step="6"
+              title="渠道接入 / 钉钉"
+              hint="绑定钉钉成员账号；创建成功后可在此配置"
+              open={stepOpen.channels}
+              onOpenChange={(next) => setStepOpen((prev) => ({ ...prev, channels: next }))}
+            >
+              <OrgAgentDwsSection tenantId={tenantId} agentId={editing.id} agentName={values.name || editing.name} />
+            </OrgAgentFormStepSection>
+          ) : null}
 
           <div className="flex items-start justify-between gap-4 rounded-xl border p-3">
             <div>
@@ -933,6 +661,7 @@ export function OrgAgentFormDialog({
           </div>
         </div>
 
+
         <DialogFooter className="shrink-0 border-t px-6 py-4">
           <Button type="button" variant="outline" onClick={requestClose} disabled={saving}>取消</Button>
           <Button type="button" onClick={() => { void handleSubmit(); }} disabled={saving || configurationLoading}>
@@ -941,38 +670,5 @@ export function OrgAgentFormDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function GateTestResultView({ result }: { result: GateTestResult }) {
-  if (result.error) {
-    return <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{result.error}</div>;
-  }
-  const verdict = result.verdict;
-  const label =
-    verdict === 'in_scope' ? '通过（in_scope）'
-    : verdict === 'off_topic' ? '拒答（off_topic）'
-    : verdict === 'uncertain' ? '边界（uncertain）'
-    : '未知';
-  const color =
-    verdict === 'in_scope' ? 'text-success'
-    : verdict === 'off_topic' ? 'text-destructive'
-    : 'text-amber-600';
-  return (
-    <div className="space-y-1 text-xs">
-      <div className={`font-medium ${color}`}>{label}</div>
-      {typeof result.wouldReject === 'boolean' && (
-        <div className="text-muted-foreground">
-          实际动作：{result.wouldReject ? '返回拒绝话术' : '进入主对话'}
-        </div>
-      )}
-      {typeof result.latencyMs === 'number' && (
-        <div className="text-muted-foreground">延迟：{result.latencyMs} ms</div>
-      )}
-      {result.model && <div className="text-muted-foreground">模型：{result.model}</div>}
-      {result.reason && (
-        <div className="rounded bg-muted/40 px-2 py-1 text-muted-foreground">{result.reason}</div>
-      )}
-    </div>
   );
 }

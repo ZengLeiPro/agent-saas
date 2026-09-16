@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, RefreshCw, Stethoscope } from 'lucide-react';
+import { Activity, CircleAlert, CircleCheck, Clock3, RefreshCw, Stethoscope } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { installationPath, kyAppPost, KyAppManagementError } from '@/lib/kyAppManagementApi';
 import { useManagementResource, ResourceState } from './ManagementResource';
@@ -95,18 +95,53 @@ export function InstallationRuntime({
           刷新运行状态
         </Button>
       </div>
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p
+          role="alert"
+          className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+        >
+          {error}
+        </p>
+      )}
       {report && (
-        <div>
-          <p>
-            {report.passed ? '诊断通过' : '诊断未通过'} ·{' '}
-            {formatBusinessSystemTime(report.checkedAt)}
-          </p>
-          <ul>
+        <div className="overflow-hidden rounded-xl border bg-background">
+          <div
+            className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 ${
+              report.passed
+                ? 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/20'
+                : 'border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20'
+            }`}
+          >
+            <div className="flex items-center gap-2 font-medium">
+              {report.passed ? (
+                <CircleCheck className="h-4 w-4 text-emerald-600" />
+              ) : (
+                <CircleAlert className="h-4 w-4 text-amber-600" />
+              )}
+              {report.passed ? '全部检查通过' : '发现需要处理的问题'}
+            </div>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Clock3 className="h-3.5 w-3.5" />
+              {formatBusinessSystemTime(report.checkedAt)}
+            </span>
+          </div>
+          <ul className="divide-y">
             {report.checks.map((check) => (
-              <li className="border-b py-2 text-sm" key={check.id}>
-                <strong>{check.label}</strong> · {businessStatusLabel(check.status)}
-                <p>{check.detail}</p>
+              <li className="flex gap-3 px-4 py-3 text-sm" key={check.id}>
+                {check.status === 'passed' ? (
+                  <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                ) : (
+                  <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                )}
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <strong>{check.label}</strong>
+                    <span className="text-xs text-muted-foreground">
+                      {businessStatusLabel(check.status)}
+                    </span>
+                  </div>
+                  <p className="mt-1 break-words text-muted-foreground">{check.detail}</p>
+                </div>
               </li>
             ))}
           </ul>
@@ -152,7 +187,7 @@ export function InstallationReadPanel({
     installationPath(installationId, `/${suffix}`),
   );
   return (
-    <section className="space-y-2 rounded border p-3">
+    <section className="space-y-2 rounded-xl border bg-card p-4">
       <h3 className="font-medium">{title}</h3>
       {!resource.data ? (
         <ResourceState error={resource.error} retry={resource.reload} />

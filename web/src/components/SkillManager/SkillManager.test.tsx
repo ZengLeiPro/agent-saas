@@ -34,6 +34,8 @@ vi.mock('@agent/shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@agent/shared')>()),
   fetchTenantSkillPool: mocks.fetchTenantSkillPool,
   fetchTenantOwnSkills: mocks.fetchTenantOwnSkills,
+  fetchPoolSkillDeleteImpact: vi.fn(async () => ({ usersSelected: 0, tenantsConfigured: 0 })),
+  deletePoolSkill: vi.fn(async () => undefined),
 }));
 
 vi.mock('./hooks', () => ({
@@ -103,6 +105,18 @@ describe('SkillManager 技能操作可访问名称', () => {
     expect(screen.getByRole('button', { name: '提升技能 用户写作技能到全局' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '删除技能 用户写作技能' })).toBeTruthy();
   });
+
+  it('删除平台技能需输入技能 ID 才能确认', async () => {
+    const user = userEvent.setup();
+    render(<SkillManager />);
+    await user.click(screen.getByRole('button', { name: '删除技能 平台检索技能' }));
+    const dialog = await screen.findByRole('dialog');
+    const confirm = within(dialog).getByRole('button', { name: '删除' });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    await user.type(within(dialog).getByTestId('skill-delete-confirm-id'), 'platform-skill');
+    expect((confirm as HTMLButtonElement).disabled).toBe(false);
+  });
+
 
   it('从全平台切换为仅指定组织时先保留现有全部组织，避免空白 allow list', async () => {
     const user = userEvent.setup();

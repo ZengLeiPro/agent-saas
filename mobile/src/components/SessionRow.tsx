@@ -1,4 +1,4 @@
-import React, { useMemo, type MutableRefObject } from 'react';
+import React, { useMemo, useState, type MutableRefObject } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MessageCircle, Check } from 'lucide-react-native';
 import Animated from 'react-native-reanimated';
@@ -26,10 +26,14 @@ interface SessionRowProps {
   selectMode?: boolean;
   selected?: boolean;
   onSelectToggle?: () => void;
+  /** md+ master-detail: currently open session in the detail pane */
+  active?: boolean;
   /** Agent avatar info for this session's owner. */
   agentAvatar?: string;
   agentAvatarVersion?: number;
   agentAvatarUsername?: string;
+  /** md+ master list: slightly tighter row. Phone keeps default. */
+  dense?: boolean;
 }
 
 /**
@@ -37,8 +41,9 @@ interface SessionRowProps {
  * 隐藏头像会与分组行错位；移动端不再读取 Web 共享偏好
  * `showSessionListAvatar`，该偏好仅继续影响 Web 端侧边栏。
  */
-export const SessionRow = React.memo(function SessionRow({ session, actions, openRowRef, onPress, enableBackGesture, showOwner, selectMode, selected, onSelectToggle, agentAvatar, agentAvatarVersion, agentAvatarUsername }: SessionRowProps) {
+export const SessionRow = React.memo(function SessionRow({ session, actions, openRowRef, onPress, enableBackGesture, showOwner, selectMode, selected, onSelectToggle, active, agentAvatar, agentAvatarVersion, agentAvatarUsername, dense }: SessionRowProps) {
   const colors = useColors();
+  const [hovered, setHovered] = useState(false);
 
   const styles = useMemo(() => StyleSheet.create({
     swipeContainer: {
@@ -47,13 +52,16 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
     sessionRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      minHeight: 62,
+      minHeight: dense ? 56 : 62,
       paddingLeft: spacing.md,
       paddingRight: spacing.md,
-      paddingVertical: 10,
+      paddingVertical: dense ? 8 : 10,
       backgroundColor: colors.card,
     },
     sessionRowPressed: {
+      backgroundColor: colors.accent,
+    },
+    sessionRowActive: {
       backgroundColor: colors.accent,
     },
     selectContainer: {
@@ -149,7 +157,7 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
       backgroundColor: colors.destructive,
       marginRight: spacing.xs,
     },
-  }), [colors]);
+  }), [colors, dense]);
 
   const waitingLabel = getSessionWaitingLabel(session.runtimeStatus);
   const isRunning = session.isRunning === true && !waitingLabel;
@@ -175,7 +183,13 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
       testID={session.id}
       accessibilityLabel={`会话：${session.title || '新会话'}`}
       accessibilityRole="button"
-      style={({ pressed }) => [styles.sessionRow, pressed && styles.sessionRowPressed]}
+      style={({ pressed }) => [
+        styles.sessionRow,
+        active && styles.sessionRowActive,
+        (pressed || hovered) && styles.sessionRowPressed,
+      ]}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
       onPress={selectMode ? onSelectToggle : () => onPress(session.id)}
     >
       {selectMode && (
@@ -257,7 +271,9 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
     prev.showOwner === next.showOwner &&
     prev.selectMode === next.selectMode &&
     prev.selected === next.selected &&
+    prev.active === next.active &&
     prev.agentAvatar === next.agentAvatar &&
-    prev.agentAvatarVersion === next.agentAvatarVersion
+    prev.agentAvatarVersion === next.agentAvatarVersion &&
+    prev.dense === next.dense
   );
 });

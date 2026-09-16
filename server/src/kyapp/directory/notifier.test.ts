@@ -15,7 +15,9 @@ const CHANGED: DirectoryReconcileResult = {
   snapshotSeq: 42,
 };
 
-function installationDirectory(): KyAppInstallationDirectory {
+function installationDirectory(
+  authMode: 'v1_symmetric' | 'v2_asymmetric' = 'v1_symmetric',
+): KyAppInstallationDirectory {
   return {
     listEnabled: async () => [
       {
@@ -27,6 +29,7 @@ function installationDirectory(): KyAppInstallationDirectory {
         status: 'enabled',
         stateVersion: 3,
         registeredDigest: null,
+        authMode,
       },
     ],
   } as KyAppInstallationDirectory;
@@ -64,6 +67,30 @@ describe('目录变更通知', () => {
       payload: { targetSeq: 42 },
     });
     expect(JSON.stringify(requests[0])).not.toContain('displayName');
+  });
+
+  it('新版实例的目录通知只调用新版事件接口', async () => {
+    const outbound = {
+      request: vi.fn(async (input: { jsonBody: Record<string, unknown> }) => ({
+        status: 200,
+        json: { eventId: input.jsonBody.eventId, ack: true, stateVersion: 3 },
+      })),
+    } as unknown as KyAppOutbound;
+    const notifier = new DirectoryChangeNotifier({
+      directory: installationDirectory('v2_asymmetric'),
+      issuer: { issue: async () => ({ token: 'sat' }) } as unknown as KyAppSatIssuer,
+      outbound,
+      supportsFeature: () => true,
+    });
+
+    await notifier.notify([CHANGED]);
+
+    expect(outbound.request).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/ky/v2/events' }),
+    );
+    expect(outbound.request).not.toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/ky/v1/events' }),
+    );
   });
 
   it('旧实例未声明能力时完全跳过', async () => {

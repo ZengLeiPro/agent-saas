@@ -1,0 +1,101 @@
+name: Setup GitHub CLI (pinned release binary)
+description: >-
+  Install a pinned gh CLI binary from cli/cli GitHub Releases. Verifies a
+  pin next to this action, caches the binary per version/arch, and exposes
+  gh on PATH. Self-contained via GITHUB_ACTION_PATH so kaiyan-linux jobs can
+  call gh before (or without) a workspace checkout; do not rely on the
+  container image bundling gh.
+inputs:
+  version:
+    description: gh version without leading v (must exist in sha256sums.txt)
+    required: false
+    default: '2.101.0'
+runs:
+  using: composite
+  steps:
+    - name: Resolve pinned gh asset
+      id: resolve
+      shell: bash
+      env:
+        GH_SETUP_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        version="$GH_SETUP_VERSION"
+        if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "::error title=setup-gh::version must be major.minor.patch, got: $version"
+          exit 1
+        fi
+        case "$(uname -s)-$(uname -m)" in
+          Linux-x86_64) asset="gh_${version}_linux_amd64" ;;
+          Linux-aarch64|Linux-arm64) asset="gh_${version}_linux_arm64" ;;
+          *)
+            echo "::error title=setup-gh::unsupported runner platform $(uname -s)-$(uname -m)"
+            exit 2
+            ;;
+        esac
+        pin_file="$GITHUB_ACTION_PATH/sha256sums.txt"
+        expected="$(awk -v key="$asset@$version" '$2 == key { print $1 }' "$pin_file" | head -n1)"
+        if [ -z "$expected" ]; then
+          echo "::error title=setup-gh::$pin_file has no pinned digest for $asset@$version"
+          exit 1
+        fi
+        dir="$RUNNER_TOOL_CACHE/gh-cli/$version/$asset"
+        {
+          echo "version=$version"
+          echo "asset=$asset"
+          echo "archive=${asset}.tar.gz"
+          echo "expected=$expected"
+          echo "dir=$dir"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore cached gh binary
+      id: cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.resolve.outputs.dir }}
+        key: gh-cli-v1-${{ runner.os }}-${{ steps.resolve.outputs.asset }}-${{ steps.resolve.outputs.version }}
+
+    - name: Download gh from GitHub Releases
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_SETUP_VERSION: ${{ steps.resolve.outputs.version }}
+        GH_SETUP_ASSET: ${{ steps.resolve.outputs.asset }}
+        GH_SETUP_ARCHIVE: ${{ steps.resolve.outputs.archive }}
+        GH_SETUP_DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$GH_SETUP_DIR"
+        url="https://github.com/cli/cli/releases/download/v${GH_SETUP_VERSION}/${GH_SETUP_ARCHIVE}"
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 300 \
+          -o "$GH_SETUP_DIR/gh.download.tar.gz" "$url"
+        tar -xzf "$GH_SETUP_DIR/gh.download.tar.gz" -C "$GH_SETUP_DIR" "${GH_SETUP_ASSET}/bin/gh"
+        mv "$GH_SETUP_DIR/${GH_SETUP_ASSET}/bin/gh" "$GH_SETUP_DIR/gh"
+        rm -rf "$GH_SETUP_DIR/gh.download.tar.gz" "$GH_SETUP_DIR/${GH_SETUP_ASSET}"
+        chmod 0755 "$GH_SETUP_DIR/gh"
+
+    - name: Verify digest and expose gh on PATH
+      shell: bash
+      env:
+        GH_SETUP_VERSION: ${{ steps.resolve.outputs.version }}
+        GH_SETUP_EXPECTED_SHA256: ${{ steps.resolve.outputs.expected }}
+        GH_SETUP_DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        set -euo pipefail
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual="$(sha256sum "$GH_SETUP_DIR/gh" | awk '{ print $1 }')"
+        else
+          actual="$(shasum -a 256 "$GH_SETUP_DIR/gh" | awk '{ print $1 }')"
+        fi
+        if [ "$actual" != "$GH_SETUP_EXPECTED_SHA256" ]; then
+          rm -rf "$GH_SETUP_DIR"
+          echo "::error title=setup-gh::gh binary digest mismatch: expected $GH_SETUP_EXPECTED_SHA256 got $actual"
+          exit 1
+        fi
+        echo "$GH_SETUP_DIR" >> "$GITHUB_PATH"
+        installed="$("$GH_SETUP_DIR/gh" version | head -n1 | awk '{ print $3 }')"
+        if [ "$installed" != "$GH_SETUP_VERSION" ]; then
+          echo "::error title=setup-gh::gh reported $installed, expected $GH_SETUP_VERSION"
+          exit 1
+        fi
+        echo "gh $installed ready from $GH_SETUP_DIR (cache-hit=${{ steps.cache.outputs.cache-hit || 'false' }})"

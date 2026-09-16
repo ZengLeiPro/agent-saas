@@ -154,6 +154,7 @@ test('CI 计划：PR 只跑受影响工作区、非 import 图资源与未知路
     'scripts/ci-plan.mjs',
     '.github/workflows/ci.yml',
     '.github/actions/setup-pnpm/action.yml',
+    '.github/actions/setup-gh/action.yml',
     'package.json',
     'pnpm-lock.yaml',
     'config/max-lines-baseline.txt',
